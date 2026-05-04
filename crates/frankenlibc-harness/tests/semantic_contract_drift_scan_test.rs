@@ -307,14 +307,16 @@ fn new_untracked_contract_annotation_fails() {
         report["summary"]["untracked_contract_annotation_count"].as_u64(),
         Some(1)
     );
-    assert!(report["newly_found_drift"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|row| row["file_path"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("new-drift")));
+    assert!(
+        report["newly_found_drift"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["file_path"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("new-drift"))
+    );
 }
 
 #[test]
@@ -367,8 +369,10 @@ fn explicit_symbol_allowlist_turns_false_positive_into_allowed_drift() {
     );
     let allowed = report["allowed_drift"].as_array().unwrap();
     assert_eq!(allowed[0]["symbol"].as_str(), Some("fixture_only"));
-    assert!(allowed[0]["evidence_reason"]
-        .as_str()
-        .unwrap()
-        .contains("replay fixture"));
+    assert!(
+        allowed[0]["evidence_reason"]
+            .as_str()
+            .unwrap()
+            .contains("replay fixture")
+    );
 }

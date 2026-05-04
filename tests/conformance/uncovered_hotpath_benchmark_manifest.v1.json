@@ -1,0 +1,3073 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-b92jd.2.2",
+  "generated_at_utc": "2026-05-04T18:33:09Z",
+  "source_commit": "e92f61b5",
+  "purpose": "Fail-closed manifest for strict hot-path symbols not covered by the current benchmark suite map.",
+  "inputs": {
+    "support_matrix": "support_matrix.json",
+    "perf_budget_policy": "tests/conformance/perf_budget_policy.json",
+    "perf_regression_prevention": "tests/conformance/perf_regression_prevention.v1.json",
+    "benchmark_coverage_inventory": "tests/conformance/benchmark_coverage_inventory.v1.json",
+    "perf_baseline_spec": "tests/conformance/perf_baseline_spec.json",
+    "perf_baseline": "scripts/perf_baseline.json"
+  },
+  "input_digests": {
+    "benchmark_coverage_inventory": "e4532cab8cc55da76499f14b9f0dcbeb0be45d463e86e1844abb7e8d6a76c591",
+    "perf_baseline": "22cb5fcf7f762e268df2fb478b49ecbd8aa12502a19b4aaee23178fb37dbde3c",
+    "perf_baseline_spec": "e12a3ed8c5ab3b9164c8489351fc3950e9e8d9147639c9a3846ffd87840046af",
+    "perf_budget_policy": "49104d5ab4cc9a597c145d98384f2f7c6546d3105a5fee068a8a7f3d7410abc9",
+    "perf_regression_prevention": "5e10de7ffa4b714f7bc4d86517bd9c6cd7b7cf6c0cb9ad598a47d47d54c7c73c",
+    "support_matrix": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d"
+  },
+  "required_row_fields": [
+    "row_id",
+    "symbol",
+    "module",
+    "status",
+    "perf_class",
+    "benchmark_assignment",
+    "coverage_gap",
+    "safety",
+    "priority",
+    "artifact_refs",
+    "failure_signature"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "api_family",
+    "module",
+    "symbol",
+    "benchmark_id",
+    "runtime_modes",
+    "expected",
+    "actual",
+    "decision_path",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "current_covered_module_map": {
+    "string_abi": "string",
+    "malloc_abi": "malloc",
+    "pthread_abi": "pthread"
+  },
+  "summary": {
+    "total_strict_hotpath_symbols": 152,
+    "current_uncovered_symbol_count": 62,
+    "current_covered_symbol_count": 90,
+    "module_count": 8,
+    "modules": [
+      "c11threads_abi",
+      "ctype_abi",
+      "errno_abi",
+      "resolv_abi",
+      "stdio_abi",
+      "stdlib_abi",
+      "time_abi",
+      "wchar_abi"
+    ],
+    "coverage_blockers": [
+      "missing_benchmark_target_and_spec_suite",
+      "missing_pthread_baseline_spec_suite",
+      "missing_stdio_perf_baseline_spec_suite",
+      "missing_wchar_symbol_specific_benchmarks",
+      "requires_hermetic_resolver_lab_before_benchmark_target",
+      "requires_time_fixture_before_wall_clock_sensitive_benchmarks"
+    ],
+    "unsafe_benchmark_blocker_count": 2,
+    "duplicate_row_count": 0,
+    "missing_expected_row_count": 0,
+    "stale_support_matrix_row_count": 0
+  },
+  "modules": [
+    {
+      "module": "c11threads_abi",
+      "api_family": "pthread",
+      "symbol_count": 6,
+      "benchmark_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+      "suite_id": "pthread_threads",
+      "plan_kind": "extend_existing_thread_benches",
+      "coverage_blockers": [
+        "missing_pthread_baseline_spec_suite"
+      ],
+      "unsafe_benchmark_blockers": [],
+      "next_action": "Add c11 thread lifecycle cases to the pthread benchmark suite and collect strict/hardened baselines."
+    },
+    {
+      "module": "ctype_abi",
+      "api_family": "ctype",
+      "symbol_count": 14,
+      "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+      "suite_id": "ctype",
+      "plan_kind": "new_benchmark_family",
+      "coverage_blockers": [
+        "missing_benchmark_target_and_spec_suite"
+      ],
+      "unsafe_benchmark_blockers": [],
+      "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+    },
+    {
+      "module": "errno_abi",
+      "api_family": "errno",
+      "symbol_count": 1,
+      "benchmark_file": "crates/frankenlibc-bench/benches/errno_bench.rs",
+      "suite_id": "errno",
+      "plan_kind": "new_benchmark_family",
+      "coverage_blockers": [
+        "missing_benchmark_target_and_spec_suite"
+      ],
+      "unsafe_benchmark_blockers": [],
+      "next_action": "Create a TLS errno/h_errno accessor benchmark family with strict/hardened mode attribution."
+    },
+    {
+      "module": "resolv_abi",
+      "api_family": "resolver",
+      "symbol_count": 1,
+      "benchmark_file": "crates/frankenlibc-bench/benches/resolver_bench.rs",
+      "suite_id": "resolver",
+      "plan_kind": "new_hermetic_benchmark_family",
+      "coverage_blockers": [
+        "requires_hermetic_resolver_lab_before_benchmark_target"
+      ],
+      "unsafe_benchmark_blockers": [
+        "real_dns_network_io_disallowed"
+      ],
+      "next_action": "Use the hermetic NSS/resolver lab before timing resolver paths; real network/DNS is not an acceptable benchmark dependency."
+    },
+    {
+      "module": "stdio_abi",
+      "api_family": "stdio",
+      "symbol_count": 11,
+      "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+      "suite_id": "stdio",
+      "plan_kind": "extend_existing_benchmark_family",
+      "coverage_blockers": [
+        "missing_stdio_perf_baseline_spec_suite"
+      ],
+      "unsafe_benchmark_blockers": [],
+      "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+    },
+    {
+      "module": "stdlib_abi",
+      "api_family": "stdlib",
+      "symbol_count": 6,
+      "benchmark_file": "crates/frankenlibc-bench/benches/stdlib_bench.rs",
+      "suite_id": "stdlib",
+      "plan_kind": "new_benchmark_family",
+      "coverage_blockers": [
+        "missing_benchmark_target_and_spec_suite"
+      ],
+      "unsafe_benchmark_blockers": [],
+      "next_action": "Create conversion/search/random hot-path benchmarks with deterministic inputs and no process-global mutation leaks."
+    },
+    {
+      "module": "time_abi",
+      "api_family": "time",
+      "symbol_count": 1,
+      "benchmark_file": "crates/frankenlibc-bench/benches/time_bench.rs",
+      "suite_id": "time",
+      "plan_kind": "new_controlled_time_benchmark_family",
+      "coverage_blockers": [
+        "requires_time_fixture_before_wall_clock_sensitive_benchmarks"
+      ],
+      "unsafe_benchmark_blockers": [
+        "wall_clock_discontinuity_must_be_isolated"
+      ],
+      "next_action": "Benchmark pure conversion paths directly and gate wall-clock-sensitive paths behind controlled fixtures."
+    },
+    {
+      "module": "wchar_abi",
+      "api_family": "wchar",
+      "symbol_count": 22,
+      "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+      "suite_id": "string",
+      "plan_kind": "extend_existing_string_benchmark_family",
+      "coverage_blockers": [
+        "missing_wchar_symbol_specific_benchmarks"
+      ],
+      "unsafe_benchmark_blockers": [],
+      "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+    }
+  ],
+  "rows": [
+    {
+      "row_id": "c11threads_abi:mtx_lock",
+      "symbol": "mtx_lock",
+      "module": "c11threads_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "pthread",
+        "suite_id": "pthread_threads",
+        "benchmark_id": "pthread.mtx_lock",
+        "benchmark_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+        "plan_kind": "extend_existing_thread_benches",
+        "next_action": "Add c11 thread lifecycle cases to the pthread benchmark suite and collect strict/hardened baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_pthread_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 1,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:c11threads_abi:mtx_lock"
+    },
+    {
+      "row_id": "c11threads_abi:mtx_trylock",
+      "symbol": "mtx_trylock",
+      "module": "c11threads_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "pthread",
+        "suite_id": "pthread_threads",
+        "benchmark_id": "pthread.mtx_trylock",
+        "benchmark_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+        "plan_kind": "extend_existing_thread_benches",
+        "next_action": "Add c11 thread lifecycle cases to the pthread benchmark suite and collect strict/hardened baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_pthread_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 2,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:c11threads_abi:mtx_trylock"
+    },
+    {
+      "row_id": "c11threads_abi:mtx_unlock",
+      "symbol": "mtx_unlock",
+      "module": "c11threads_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "pthread",
+        "suite_id": "pthread_threads",
+        "benchmark_id": "pthread.mtx_unlock",
+        "benchmark_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+        "plan_kind": "extend_existing_thread_benches",
+        "next_action": "Add c11 thread lifecycle cases to the pthread benchmark suite and collect strict/hardened baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_pthread_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 3,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:c11threads_abi:mtx_unlock"
+    },
+    {
+      "row_id": "c11threads_abi:thrd_current",
+      "symbol": "thrd_current",
+      "module": "c11threads_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "pthread",
+        "suite_id": "pthread_threads",
+        "benchmark_id": "pthread.thrd_current",
+        "benchmark_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+        "plan_kind": "extend_existing_thread_benches",
+        "next_action": "Add c11 thread lifecycle cases to the pthread benchmark suite and collect strict/hardened baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_pthread_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 4,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:c11threads_abi:thrd_current"
+    },
+    {
+      "row_id": "c11threads_abi:thrd_equal",
+      "symbol": "thrd_equal",
+      "module": "c11threads_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "pthread",
+        "suite_id": "pthread_threads",
+        "benchmark_id": "pthread.thrd_equal",
+        "benchmark_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+        "plan_kind": "extend_existing_thread_benches",
+        "next_action": "Add c11 thread lifecycle cases to the pthread benchmark suite and collect strict/hardened baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_pthread_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 5,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:c11threads_abi:thrd_equal"
+    },
+    {
+      "row_id": "c11threads_abi:tss_get",
+      "symbol": "tss_get",
+      "module": "c11threads_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "pthread",
+        "suite_id": "pthread_threads",
+        "benchmark_id": "pthread.tss_get",
+        "benchmark_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+        "plan_kind": "extend_existing_thread_benches",
+        "next_action": "Add c11 thread lifecycle cases to the pthread benchmark suite and collect strict/hardened baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_pthread_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 6,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:c11threads_abi:tss_get"
+    },
+    {
+      "row_id": "ctype_abi:__ctype_b_loc",
+      "symbol": "__ctype_b_loc",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.ctype_b_loc",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 7,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:__ctype_b_loc"
+    },
+    {
+      "row_id": "ctype_abi:__ctype_tolower_loc",
+      "symbol": "__ctype_tolower_loc",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.ctype_tolower_loc",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 8,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:__ctype_tolower_loc"
+    },
+    {
+      "row_id": "ctype_abi:__ctype_toupper_loc",
+      "symbol": "__ctype_toupper_loc",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.ctype_toupper_loc",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 9,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:__ctype_toupper_loc"
+    },
+    {
+      "row_id": "ctype_abi:isalnum",
+      "symbol": "isalnum",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.isalnum",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 10,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:isalnum"
+    },
+    {
+      "row_id": "ctype_abi:isalpha",
+      "symbol": "isalpha",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.isalpha",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 11,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:isalpha"
+    },
+    {
+      "row_id": "ctype_abi:isdigit",
+      "symbol": "isdigit",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.isdigit",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 12,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:isdigit"
+    },
+    {
+      "row_id": "ctype_abi:islower",
+      "symbol": "islower",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.islower",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 13,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:islower"
+    },
+    {
+      "row_id": "ctype_abi:isprint",
+      "symbol": "isprint",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.isprint",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 14,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:isprint"
+    },
+    {
+      "row_id": "ctype_abi:ispunct",
+      "symbol": "ispunct",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.ispunct",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 15,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:ispunct"
+    },
+    {
+      "row_id": "ctype_abi:isspace",
+      "symbol": "isspace",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.isspace",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 16,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:isspace"
+    },
+    {
+      "row_id": "ctype_abi:isupper",
+      "symbol": "isupper",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.isupper",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 17,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:isupper"
+    },
+    {
+      "row_id": "ctype_abi:isxdigit",
+      "symbol": "isxdigit",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.isxdigit",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 18,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:isxdigit"
+    },
+    {
+      "row_id": "ctype_abi:tolower",
+      "symbol": "tolower",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.tolower",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 19,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:tolower"
+    },
+    {
+      "row_id": "ctype_abi:toupper",
+      "symbol": "toupper",
+      "module": "ctype_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "ctype",
+        "suite_id": "ctype",
+        "benchmark_id": "ctype.toupper",
+        "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 20,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:toupper"
+    },
+    {
+      "row_id": "errno_abi:__errno_location",
+      "symbol": "__errno_location",
+      "module": "errno_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "errno",
+        "suite_id": "errno",
+        "benchmark_id": "errno.errno_location",
+        "benchmark_file": "crates/frankenlibc-bench/benches/errno_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create a TLS errno/h_errno accessor benchmark family with strict/hardened mode attribution."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 21,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:errno_abi:__errno_location"
+    },
+    {
+      "row_id": "resolv_abi:__h_errno_location",
+      "symbol": "__h_errno_location",
+      "module": "resolv_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "resolver",
+        "suite_id": "resolver",
+        "benchmark_id": "resolver.h_errno_location",
+        "benchmark_file": "crates/frankenlibc-bench/benches/resolver_bench.rs",
+        "plan_kind": "new_hermetic_benchmark_family",
+        "next_action": "Use the hermetic NSS/resolver lab before timing resolver paths; real network/DNS is not an acceptable benchmark dependency."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "requires_hermetic_resolver_lab_before_benchmark_target",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": false,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": "real_dns_network_io_disallowed",
+        "required_fixture": "hermetic"
+      },
+      "priority": {
+        "rank": 22,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:resolv_abi:__h_errno_location"
+    },
+    {
+      "row_id": "stdio_abi:feof_unlocked",
+      "symbol": "feof_unlocked",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.feof_unlocked",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 23,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:feof_unlocked"
+    },
+    {
+      "row_id": "stdio_abi:ferror_unlocked",
+      "symbol": "ferror_unlocked",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.ferror_unlocked",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 24,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:ferror_unlocked"
+    },
+    {
+      "row_id": "stdio_abi:fflush_unlocked",
+      "symbol": "fflush_unlocked",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.fflush_unlocked",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 25,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fflush_unlocked"
+    },
+    {
+      "row_id": "stdio_abi:fgets_unlocked",
+      "symbol": "fgets_unlocked",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.fgets_unlocked",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 26,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fgets_unlocked"
+    },
+    {
+      "row_id": "stdio_abi:fputs_unlocked",
+      "symbol": "fputs_unlocked",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.fputs_unlocked",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 27,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fputs_unlocked"
+    },
+    {
+      "row_id": "stdio_abi:fread_unlocked",
+      "symbol": "fread_unlocked",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.fread_unlocked",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 28,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fread_unlocked"
+    },
+    {
+      "row_id": "stdio_abi:fwrite_unlocked",
+      "symbol": "fwrite_unlocked",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.fwrite_unlocked",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 29,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fwrite_unlocked"
+    },
+    {
+      "row_id": "stdio_abi:getc",
+      "symbol": "getc",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.getc",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 30,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:getc"
+    },
+    {
+      "row_id": "stdio_abi:getchar_unlocked",
+      "symbol": "getchar_unlocked",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.getchar_unlocked",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 31,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:getchar_unlocked"
+    },
+    {
+      "row_id": "stdio_abi:putc",
+      "symbol": "putc",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.putc",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 32,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:putc"
+    },
+    {
+      "row_id": "stdio_abi:putchar_unlocked",
+      "symbol": "putchar_unlocked",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.putchar_unlocked",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 33,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:putchar_unlocked"
+    },
+    {
+      "row_id": "stdlib_abi:hsearch",
+      "symbol": "hsearch",
+      "module": "stdlib_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdlib",
+        "suite_id": "stdlib",
+        "benchmark_id": "stdlib.hsearch",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdlib_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create conversion/search/random hot-path benchmarks with deterministic inputs and no process-global mutation leaks."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 34,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdlib_abi:hsearch"
+    },
+    {
+      "row_id": "stdlib_abi:hsearch_r",
+      "symbol": "hsearch_r",
+      "module": "stdlib_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdlib",
+        "suite_id": "stdlib",
+        "benchmark_id": "stdlib.hsearch_r",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdlib_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create conversion/search/random hot-path benchmarks with deterministic inputs and no process-global mutation leaks."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 35,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdlib_abi:hsearch_r"
+    },
+    {
+      "row_id": "stdlib_abi:lfind",
+      "symbol": "lfind",
+      "module": "stdlib_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdlib",
+        "suite_id": "stdlib",
+        "benchmark_id": "stdlib.lfind",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdlib_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create conversion/search/random hot-path benchmarks with deterministic inputs and no process-global mutation leaks."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 36,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdlib_abi:lfind"
+    },
+    {
+      "row_id": "stdlib_abi:lsearch",
+      "symbol": "lsearch",
+      "module": "stdlib_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdlib",
+        "suite_id": "stdlib",
+        "benchmark_id": "stdlib.lsearch",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdlib_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create conversion/search/random hot-path benchmarks with deterministic inputs and no process-global mutation leaks."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 37,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdlib_abi:lsearch"
+    },
+    {
+      "row_id": "stdlib_abi:tfind",
+      "symbol": "tfind",
+      "module": "stdlib_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdlib",
+        "suite_id": "stdlib",
+        "benchmark_id": "stdlib.tfind",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdlib_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create conversion/search/random hot-path benchmarks with deterministic inputs and no process-global mutation leaks."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 38,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdlib_abi:tfind"
+    },
+    {
+      "row_id": "stdlib_abi:tsearch",
+      "symbol": "tsearch",
+      "module": "stdlib_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "stdlib",
+        "suite_id": "stdlib",
+        "benchmark_id": "stdlib.tsearch",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdlib_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create conversion/search/random hot-path benchmarks with deterministic inputs and no process-global mutation leaks."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 39,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:stdlib_abi:tsearch"
+    },
+    {
+      "row_id": "time_abi:timespec_get",
+      "symbol": "timespec_get",
+      "module": "time_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "time",
+        "suite_id": "time",
+        "benchmark_id": "time.timespec_get",
+        "benchmark_file": "crates/frankenlibc-bench/benches/time_bench.rs",
+        "plan_kind": "new_controlled_time_benchmark_family",
+        "next_action": "Benchmark pure conversion paths directly and gate wall-clock-sensitive paths behind controlled fixtures."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "requires_time_fixture_before_wall_clock_sensitive_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": "wall_clock_discontinuity_must_be_isolated",
+        "required_fixture": "hermetic"
+      },
+      "priority": {
+        "rank": 40,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:time_abi:timespec_get"
+    },
+    {
+      "row_id": "wchar_abi:btowc",
+      "symbol": "btowc",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.btowc",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 41,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:btowc"
+    },
+    {
+      "row_id": "wchar_abi:mbrtowc",
+      "symbol": "mbrtowc",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.mbrtowc",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 42,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:mbrtowc"
+    },
+    {
+      "row_id": "wchar_abi:mbsrtowcs",
+      "symbol": "mbsrtowcs",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.mbsrtowcs",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 43,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:mbsrtowcs"
+    },
+    {
+      "row_id": "wchar_abi:wcrtomb",
+      "symbol": "wcrtomb",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcrtomb",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 44,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcrtomb"
+    },
+    {
+      "row_id": "wchar_abi:wcscat",
+      "symbol": "wcscat",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcscat",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 45,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcscat"
+    },
+    {
+      "row_id": "wchar_abi:wcschr",
+      "symbol": "wcschr",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcschr",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 46,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcschr"
+    },
+    {
+      "row_id": "wchar_abi:wcscmp",
+      "symbol": "wcscmp",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcscmp",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 47,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcscmp"
+    },
+    {
+      "row_id": "wchar_abi:wcscpy",
+      "symbol": "wcscpy",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcscpy",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 48,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcscpy"
+    },
+    {
+      "row_id": "wchar_abi:wcslen",
+      "symbol": "wcslen",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcslen",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 49,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcslen"
+    },
+    {
+      "row_id": "wchar_abi:wcsncmp",
+      "symbol": "wcsncmp",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcsncmp",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 50,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcsncmp"
+    },
+    {
+      "row_id": "wchar_abi:wcsncpy",
+      "symbol": "wcsncpy",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcsncpy",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 51,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcsncpy"
+    },
+    {
+      "row_id": "wchar_abi:wcsnlen",
+      "symbol": "wcsnlen",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcsnlen",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 52,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcsnlen"
+    },
+    {
+      "row_id": "wchar_abi:wcsrchr",
+      "symbol": "wcsrchr",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcsrchr",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 53,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcsrchr"
+    },
+    {
+      "row_id": "wchar_abi:wcsrtombs",
+      "symbol": "wcsrtombs",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcsrtombs",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 54,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcsrtombs"
+    },
+    {
+      "row_id": "wchar_abi:wcsstr",
+      "symbol": "wcsstr",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcsstr",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 55,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcsstr"
+    },
+    {
+      "row_id": "wchar_abi:wcswidth",
+      "symbol": "wcswidth",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wcswidth",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 56,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wcswidth"
+    },
+    {
+      "row_id": "wchar_abi:wctob",
+      "symbol": "wctob",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wctob",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 57,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wctob"
+    },
+    {
+      "row_id": "wchar_abi:wmemchr",
+      "symbol": "wmemchr",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wmemchr",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 58,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wmemchr"
+    },
+    {
+      "row_id": "wchar_abi:wmemcmp",
+      "symbol": "wmemcmp",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wmemcmp",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 59,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wmemcmp"
+    },
+    {
+      "row_id": "wchar_abi:wmemcpy",
+      "symbol": "wmemcpy",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wmemcpy",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 60,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wmemcpy"
+    },
+    {
+      "row_id": "wchar_abi:wmemmove",
+      "symbol": "wmemmove",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wmemmove",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 61,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wmemmove"
+    },
+    {
+      "row_id": "wchar_abi:wmemset",
+      "symbol": "wmemset",
+      "module": "wchar_abi",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "support_matrix_status": "Implemented",
+      "support_matrix_perf_class": "strict_hotpath",
+      "benchmark_assignment": {
+        "api_family": "wchar",
+        "suite_id": "string",
+        "benchmark_id": "wchar.wmemset",
+        "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+        "plan_kind": "extend_existing_string_benchmark_family",
+        "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
+      },
+      "coverage_gap": {
+        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
+        "current_coverage_state": "uncovered",
+        "current_coverage_blocker": "missing_wchar_symbol_specific_benchmarks",
+        "current_covered_modules": {
+          "string_abi": "string",
+          "malloc_abi": "malloc",
+          "pthread_abi": "pthread"
+        }
+      },
+      "safety": {
+        "can_benchmark_without_real_network": true,
+        "can_benchmark_without_system_mutation": true,
+        "unsafe_to_benchmark_reason": null,
+        "required_fixture": "deterministic_inputs"
+      },
+      "priority": {
+        "rank": 62,
+        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "scripts/perf_baseline.json"
+      ],
+      "failure_signature": "uncovered_hotpath_benchmark:wchar_abi:wmemset"
+    }
+  ],
+  "follow_up_beads": [
+    {
+      "bead": "bd-b92jd.2.3",
+      "scope": "Retire or narrow active perf waiver after this manifest and follow-up benchmark rows reduce risk."
+    },
+    {
+      "bead": "bd-b92jd.5.1",
+      "scope": "Provide hermetic resolver lab required before resolver hot-path timing avoids real DNS/network dependency."
+    },
+    {
+      "bead": "bd-b92jd.5.3",
+      "scope": "Provide deterministic pthread/malloc/stdio stress fixtures that can feed high-contention hot-path benchmarks."
+    }
+  ],
+  "closure_evidence": {
+    "generator": "scripts/generate_uncovered_hotpath_benchmark_manifest.py",
+    "gate": "scripts/check_uncovered_hotpath_benchmark_manifest.sh",
+    "committed_artifact": "tests/conformance/uncovered_hotpath_benchmark_manifest.v1.json",
+    "target_report": "target/conformance/uncovered_hotpath_benchmark_manifest.report.json",
+    "target_log": "target/conformance/uncovered_hotpath_benchmark_manifest.log.jsonl"
+  },
+  "artifact_hash": "67bfffabc75e22720a049663fc451cf6e6f31d7ab55556885d9fa38d21f394ec"
+}

@@ -206,14 +206,12 @@ fn missing_claim_field_fails() {
     );
     let report = parse_stdout_report(&output);
     assert_eq!(report["checks"]["docs_claim_fields"].as_str(), Some("fail"));
-    assert!(report["errors"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|error| error
+    assert!(report["errors"].as_array().unwrap().iter().any(|error| {
+        error
             .as_str()
             .unwrap_or_default()
-            .contains("user_recommendation")));
+            .contains("user_recommendation")
+    }));
 }
 
 #[test]
