@@ -1,0 +1,471 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-bp8fl.5.6",
+  "gate_id": "pthread-cancellation-robust-mutex-tls-v1",
+  "description": "Pthread hard-parts fixture pack for cancellation, cleanup handlers, robust mutex owner-death paths, fork-with-lock boundaries, timed waits, TLS destructor iteration, and negative deadlock classification at current L0 replacement level.",
+  "freshness": {
+    "required_source_commit": "current",
+    "artifact_policy": "fail closed when source artifacts or runner references are missing"
+  },
+  "sources": {
+    "pthread_abi": "crates/frankenlibc-abi/src/pthread_abi.rs",
+    "glibc_internal_abi": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+    "process_abi": "crates/frankenlibc-abi/src/process_abi.rs",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
+    "pthread_thread_fixtures": "tests/conformance/fixtures/pthread_thread.json",
+    "pthread_thread_stress": "tests/conformance/pthread_thread_stress_scenarios.v1.json",
+    "pthread_condvar_scenarios": "tests/conformance/pthread_condvar_integration_scenarios.v1.json",
+    "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
+    "user_visible_diagnostics": "tests/conformance/user_visible_diagnostics.v1.json",
+    "hard_parts_e2e_catalog": "tests/conformance/hard_parts_e2e_catalog.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "fixture_id",
+    "thread_count",
+    "operation",
+    "cancellation_state",
+    "runtime_mode",
+    "oracle_kind",
+    "expected_status",
+    "actual_status",
+    "errno",
+    "duration_ms",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "required_fixture_kinds": [
+    "cancellation_blocking_call",
+    "cleanup_handler_stack",
+    "robust_mutex_owner_dead",
+    "fork_with_lock_boundary",
+    "timed_wait_timeout",
+    "tls_destructor_iteration",
+    "negative_deadlock_timeout",
+    "cancellation_disabled_noop"
+  ],
+  "required_symbols": [
+    "_pthread_cleanup_pop",
+    "_pthread_cleanup_push",
+    "__call_tls_dtors",
+    "fork",
+    "pthread_atfork",
+    "pthread_cancel",
+    "pthread_cond_timedwait",
+    "pthread_join",
+    "pthread_key_create",
+    "pthread_mutex_consistent",
+    "pthread_mutex_lock",
+    "pthread_mutexattr_setrobust",
+    "pthread_setspecific",
+    "pthread_testcancel"
+  ],
+  "required_runtime_modes": [
+    "strict",
+    "hardened"
+  ],
+  "required_replacement_levels": [
+    "L0"
+  ],
+  "required_errno_classes": [
+    "none",
+    "ECANCELED",
+    "EOWNERDEAD",
+    "ETIMEDOUT",
+    "ENOSYS"
+  ],
+  "diagnostic_signatures": [
+    {
+      "id": "missing_field",
+      "meaning": "A required manifest, fixture, expected, or runner field is absent."
+    },
+    {
+      "id": "stale_artifact",
+      "meaning": "The fixture pack was not regenerated for the current source commit."
+    },
+    {
+      "id": "missing_source_artifact",
+      "meaning": "A source fixture, direct runner, isolated runner, or artifact reference is missing."
+    },
+    {
+      "id": "missing_fixture_kind",
+      "meaning": "Required pthread hard-part scenario coverage is absent."
+    },
+    {
+      "id": "cancellation_contract_gap",
+      "meaning": "Cancellation fixture attempts to claim full cancellation parity at L0."
+    },
+    {
+      "id": "robust_mutex_classification",
+      "meaning": "Robust mutex owner-death rows do not classify EOWNERDEAD and consistency recovery."
+    },
+    {
+      "id": "fork_lock_boundary",
+      "meaning": "Fork-with-lock rows are missing atfork or lock-boundary evidence."
+    },
+    {
+      "id": "tls_destructor_order",
+      "meaning": "TLS destructor rows do not preserve key/set-specific/destructor ordering evidence."
+    },
+    {
+      "id": "timeout_classification",
+      "meaning": "Timed wait or deadlock rows lack deterministic timeout classification."
+    }
+  ],
+  "fixture_rows": [
+    {
+      "fixture_id": "pthread.cancel.blocking.strict",
+      "fixture_kind": "cancellation_blocking_call",
+      "thread_count": 2,
+      "operation": "pthread_cancel_join_blocking_read",
+      "cancellation_state": "deferred-enabled",
+      "sync_primitive": "blocking-read",
+      "fork_behavior": "not_applicable",
+      "tls_destructor_sequence": "not_applicable",
+      "timeout_ms": 2000,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc_fixture",
+      "covered_symbols": [
+        "pthread_cancel",
+        "pthread_join"
+      ],
+      "expected": {
+        "status": "blocked",
+        "errno": "ENOSYS",
+        "order": "cancel_request_before_join_observation",
+        "failure_signature": "cancellation_contract_gap",
+        "user_diagnostic": "L0 records cancellation blocking-call evidence but does not advertise full async cancellation parity."
+      },
+      "artifact_refs": [
+        "tests/conformance/fixtures/pthread_thread.json",
+        "tests/conformance/user_visible_diagnostics.v1.json"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_pthread -- --nocapture --test-threads=1",
+        "artifact_refs": [
+          "crates/frankenlibc-abi/tests/conformance_diff_pthread.rs"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_thread_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs"
+        ]
+      }
+    },
+    {
+      "fixture_id": "pthread.cleanup.stack.hardened",
+      "fixture_kind": "cleanup_handler_stack",
+      "thread_count": 1,
+      "operation": "cleanup_push_pop_defer_restore",
+      "cancellation_state": "cleanup-stack-deferred",
+      "sync_primitive": "stack-local-cleanup-buffer",
+      "fork_behavior": "not_applicable",
+      "tls_destructor_sequence": "not_applicable",
+      "timeout_ms": 1000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "oracle_kind": "semantic_overlay",
+      "covered_symbols": [
+        "_pthread_cleanup_push",
+        "_pthread_cleanup_pop"
+      ],
+      "expected": {
+        "status": "pass",
+        "errno": "none",
+        "order": "push_before_pop_optional_execute",
+        "failure_signature": "none",
+        "user_diagnostic": "Cleanup stack push/pop ordering is executable evidence, not cancellation-delivery evidence."
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "tests/conformance/conformance_interaction_fixture_plan.v1.json"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_abi_test -- --nocapture --test-threads=1",
+        "artifact_refs": [
+          "crates/frankenlibc-abi/tests/pthread_abi_test.rs"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_thread_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs"
+        ]
+      }
+    },
+    {
+      "fixture_id": "pthread.robust.owner_dead.strict",
+      "fixture_kind": "robust_mutex_owner_dead",
+      "thread_count": 2,
+      "operation": "robust_mutex_owner_death_consistent",
+      "cancellation_state": "not_cancelled",
+      "sync_primitive": "robust-mutex",
+      "fork_behavior": "not_applicable",
+      "tls_destructor_sequence": "not_applicable",
+      "timeout_ms": 3000,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc_fixture",
+      "covered_symbols": [
+        "pthread_mutexattr_setrobust",
+        "pthread_mutex_consistent",
+        "pthread_mutex_lock"
+      ],
+      "expected": {
+        "status": "pass",
+        "errno": "EOWNERDEAD",
+        "order": "owner_exit_before_next_lock_then_consistent",
+        "failure_signature": "none",
+        "user_diagnostic": "Robust owner-death classification must distinguish EOWNERDEAD from deadlock or generic failure."
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-abi/src/pthread_abi.rs",
+        "tests/conformance/per_symbol_fixture_tests.v1.json"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_mutex_core_test -- --nocapture --test-threads=1",
+        "artifact_refs": [
+          "crates/frankenlibc-abi/tests/pthread_mutex_core_test.rs"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_mutex_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/pthread_mutex_conformance_test.rs"
+        ]
+      }
+    },
+    {
+      "fixture_id": "pthread.fork.lock.boundary.hardened",
+      "fixture_kind": "fork_with_lock_boundary",
+      "thread_count": 2,
+      "operation": "fork_with_env_allocator_and_atfork_locks",
+      "cancellation_state": "not_cancelled",
+      "sync_primitive": "atfork-lock-boundary",
+      "fork_behavior": "prepare_parent_child_order",
+      "tls_destructor_sequence": "not_applicable",
+      "timeout_ms": 3000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "oracle_kind": "semantic_overlay",
+      "covered_symbols": [
+        "pthread_atfork",
+        "fork"
+      ],
+      "expected": {
+        "status": "pass",
+        "errno": "none",
+        "order": "prepare_before_fork_parent_and_child_after",
+        "failure_signature": "none",
+        "user_diagnostic": "Fork-with-lock evidence records atfork boundary behavior but does not imply full loader-fork parity."
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-abi/src/process_abi.rs",
+        "tests/conformance/standalone_link_run_smoke.v1.json"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_abi_test -- --nocapture --test-threads=1",
+        "artifact_refs": [
+          "crates/frankenlibc-abi/tests/pthread_abi_test.rs"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_standalone_link_run_smoke.sh",
+        "artifact_refs": [
+          "scripts/check_standalone_link_run_smoke.sh"
+        ]
+      }
+    },
+    {
+      "fixture_id": "pthread.cond.timedwait.timeout.strict",
+      "fixture_kind": "timed_wait_timeout",
+      "thread_count": 1,
+      "operation": "pthread_cond_timedwait_absolute_timeout",
+      "cancellation_state": "deferred-disabled",
+      "sync_primitive": "condvar",
+      "fork_behavior": "not_applicable",
+      "tls_destructor_sequence": "not_applicable",
+      "timeout_ms": 250,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc_fixture",
+      "covered_symbols": [
+        "pthread_cond_timedwait"
+      ],
+      "expected": {
+        "status": "timeout",
+        "errno": "ETIMEDOUT",
+        "order": "lock_before_wait_timeout_before_unlock",
+        "failure_signature": "timeout_classification",
+        "user_diagnostic": "Timed waits must classify ETIMEDOUT deterministically instead of hanging or reporting a generic mismatch."
+      },
+      "artifact_refs": [
+        "tests/conformance/pthread_condvar_integration_scenarios.v1.json",
+        "crates/frankenlibc-harness/tests/pthread_cond_conformance_test.rs"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_cond_core_test -- --nocapture --test-threads=1",
+        "artifact_refs": [
+          "crates/frankenlibc-abi/tests/pthread_cond_core_test.rs"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_cond_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/pthread_cond_conformance_test.rs"
+        ]
+      }
+    },
+    {
+      "fixture_id": "pthread.tls.dtor.iteration.hardened",
+      "fixture_kind": "tls_destructor_iteration",
+      "thread_count": 2,
+      "operation": "pthread_key_destructor_setspecific_second_pass",
+      "cancellation_state": "thread-exit",
+      "sync_primitive": "thread-specific-data",
+      "fork_behavior": "not_applicable",
+      "tls_destructor_sequence": "key_create_setspecific_destructor_iteration",
+      "timeout_ms": 3000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc_fixture",
+      "covered_symbols": [
+        "pthread_key_create",
+        "pthread_setspecific",
+        "__call_tls_dtors"
+      ],
+      "expected": {
+        "status": "pass",
+        "errno": "none",
+        "order": "setspecific_before_thread_exit_destructor_iteration",
+        "failure_signature": "none",
+        "user_diagnostic": "TLS destructor iteration evidence is separate from loader TLS relocation evidence."
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-abi/tests/pthread_tsd_test.rs",
+        "tests/conformance/standalone_link_run_smoke.v1.json"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_tsd_test -- --nocapture --test-threads=1",
+        "artifact_refs": [
+          "crates/frankenlibc-abi/tests/pthread_tsd_test.rs"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_tls_keys_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"
+        ]
+      }
+    },
+    {
+      "fixture_id": "pthread.deadlock.timeout.hardened",
+      "fixture_kind": "negative_deadlock_timeout",
+      "thread_count": 2,
+      "operation": "mutex_owner_wait_cycle_timeout",
+      "cancellation_state": "not_cancelled",
+      "sync_primitive": "mutex",
+      "fork_behavior": "not_applicable",
+      "tls_destructor_sequence": "not_applicable",
+      "timeout_ms": 500,
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "oracle_kind": "deterministic_timeout",
+      "covered_symbols": [
+        "pthread_mutex_lock"
+      ],
+      "expected": {
+        "status": "timeout",
+        "errno": "ETIMEDOUT",
+        "order": "owner_lock_before_waiter_timeout",
+        "failure_signature": "timeout_classification",
+        "user_diagnostic": "Negative deadlock fixtures must terminate through timeout classification."
+      },
+      "artifact_refs": [
+        "tests/conformance/pthread_thread_stress_scenarios.v1.json",
+        "tests/conformance/hard_parts_e2e_catalog.v1.json"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_mutex_core_test -- --nocapture --test-threads=1",
+        "artifact_refs": [
+          "crates/frankenlibc-abi/tests/pthread_mutex_core_test.rs"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_bd1f35_thread_stress.sh",
+        "artifact_refs": [
+          "scripts/check_bd1f35_thread_stress.sh"
+        ]
+      }
+    },
+    {
+      "fixture_id": "pthread.cancel.disabled.strict",
+      "fixture_kind": "cancellation_disabled_noop",
+      "thread_count": 1,
+      "operation": "pthread_testcancel_disabled_noop",
+      "cancellation_state": "disabled",
+      "sync_primitive": "none",
+      "fork_behavior": "not_applicable",
+      "tls_destructor_sequence": "not_applicable",
+      "timeout_ms": 1000,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "semantic_overlay",
+      "covered_symbols": [
+        "pthread_testcancel"
+      ],
+      "expected": {
+        "status": "pass",
+        "errno": "none",
+        "order": "disabled_state_before_testcancel_no_exit",
+        "failure_signature": "none",
+        "user_diagnostic": "Disabled cancellation no-op evidence cannot be used to claim blocking cancellation delivery."
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-abi/src/pthread_abi.rs",
+        "tests/conformance/user_visible_diagnostics.v1.json"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_pthread -- --nocapture --test-threads=1",
+        "artifact_refs": [
+          "crates/frankenlibc-abi/tests/conformance_diff_pthread.rs"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_thread_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs"
+        ]
+      }
+    }
+  ]
+}
