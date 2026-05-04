@@ -44,18 +44,25 @@ fn render_divs(divs: &[Divergence]) -> String {
 }
 
 const VALID_CASES: &[(usize, usize)] = &[
-    (8, 64), (16, 64), (32, 256), (64, 1024),
-    (128, 4096), (256, 1), (512, 65536),
+    (8, 64),
+    (16, 64),
+    (32, 256),
+    (64, 1024),
+    (128, 4096),
+    (256, 1),
+    (512, 65536),
     (4096, 8192),
 ];
 
 const INVALID_POSIX_CASES: &[(usize, usize)] = &[
-    (3, 64),    // not power of 2
-    (5, 64),    // not power of 2
-    (6, 64),    // alignment 6: not pow2 AND not multiple of sizeof(void*)
-    (12, 64),   // not power of 2
+    (3, 64),  // not power of 2
+    (5, 64),  // not power of 2
+    (6, 64),  // alignment 6: not pow2 AND not multiple of sizeof(void*)
+    (12, 64), // not power of 2
     // posix_memalign requires alignment >= sizeof(void*) (=8 on x86_64)
-    (1, 64), (2, 64), (4, 64),
+    (1, 64),
+    (2, 64),
+    (4, 64),
 ];
 
 #[test]
@@ -75,7 +82,7 @@ fn diff_posix_memalign_success_cases() {
                 glibc: format!("{lc_r}"),
             });
         }
-        if fl_r == 0 && (fl_p as usize) % align != 0 {
+        if fl_r == 0 && !(fl_p as usize).is_multiple_of(*align) {
             divs.push(Divergence {
                 case: case.clone(),
                 field: "fl_alignment",
@@ -83,7 +90,7 @@ fn diff_posix_memalign_success_cases() {
                 glibc: "(host aligned)".to_string(),
             });
         }
-        if lc_r == 0 && (lc_p as usize) % align != 0 {
+        if lc_r == 0 && !(lc_p as usize).is_multiple_of(*align) {
             divs.push(Divergence {
                 case,
                 field: "lc_alignment",
@@ -98,7 +105,11 @@ fn diff_posix_memalign_success_cases() {
             unsafe { libc::free(lc_p) };
         }
     }
-    assert!(divs.is_empty(), "posix_memalign divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "posix_memalign divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -137,7 +148,7 @@ fn diff_aligned_alloc_success_cases() {
     let mut divs = Vec::new();
     for (align, size) in VALID_CASES {
         // C11 aligned_alloc requires size be a multiple of alignment.
-        let size_aligned = ((*size + align - 1) / align) * align;
+        let size_aligned = (*size).div_ceil(*align) * *align;
         let fl_p = unsafe { fl::aligned_alloc(*align, size_aligned) };
         let lc_p = unsafe { aligned_alloc(*align, size_aligned) };
         let case = format!("(align={align}, size={size_aligned})");
@@ -149,7 +160,7 @@ fn diff_aligned_alloc_success_cases() {
                 glibc: format!("{}", lc_p.is_null()),
             });
         }
-        if !fl_p.is_null() && (fl_p as usize) % align != 0 {
+        if !fl_p.is_null() && !(fl_p as usize).is_multiple_of(*align) {
             divs.push(Divergence {
                 case,
                 field: "alignment",
