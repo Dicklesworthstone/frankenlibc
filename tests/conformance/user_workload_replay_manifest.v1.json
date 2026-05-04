@@ -1,0 +1,479 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "user-workload-replay-manifest",
+  "bead": "bd-b92jd.3.1",
+  "generated_utc": "2026-05-04T16:30:00Z",
+  "purpose": "Define deterministic baseline, strict, and hardened replay rows for safe user workloads before runtime trace capture is enabled.",
+  "inputs": {
+    "user_workload_acceptance_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "real_program_smoke_suite": "tests/conformance/real_program_smoke_suite.v1.json",
+    "e2e_manifest": "tests/conformance/e2e_scenario_manifest.v1.json",
+    "integration_c_fixture": "tests/integration/link_test.c"
+  },
+  "freshness_policy": {
+    "source_commit": "current",
+    "reject_stale_artifacts": true,
+    "stale_failure_signature": "workload_replay_stale_source_commit"
+  },
+  "runtime_mode_policy": {
+    "required_modes": [
+      "baseline",
+      "strict",
+      "hardened"
+    ],
+    "baseline_env_forbidden": [
+      "LD_PRELOAD",
+      "FRANKENLIBC_MODE"
+    ],
+    "strict_env_required": {
+      "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+      "FRANKENLIBC_MODE": "strict"
+    },
+    "hardened_env_required": {
+      "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+      "FRANKENLIBC_MODE": "hardened"
+    }
+  },
+  "timeout_policy": {
+    "default_timeout_ms": 5000,
+    "max_timeout_ms": 15000,
+    "timeout_failure_signature": "workload_replay_timeout_policy_invalid"
+  },
+  "workload_contract": {
+    "required_categories": [
+      "coreutils",
+      "shell_pipeline",
+      "dynamic_runtime",
+      "c_fixture",
+      "optional_tool"
+    ],
+    "command_kinds": [
+      "argv",
+      "pipeline",
+      "dynamic_runtime",
+      "c_fixture"
+    ],
+    "optional_skip_prefix": "optional_tool_missing",
+    "fail_closed_signatures": [
+      "workload_replay_invalid_command_argv",
+      "workload_replay_invalid_env_overlay",
+      "workload_replay_timeout_policy_invalid",
+      "workload_replay_optional_skip_missing",
+      "workload_replay_stale_source_commit",
+      "workload_replay_artifact_ref_missing",
+      "workload_replay_log_contract_missing"
+    ]
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "workload_id",
+    "category",
+    "runtime_mode",
+    "command_kind",
+    "command_argv",
+    "env_overlay",
+    "timeout_ms",
+    "expected_exit",
+    "expected_stdout_kind",
+    "optional",
+    "skip_reason",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "workloads": [
+    {
+      "workload_id": "coreutils_echo_stdout",
+      "category": "coreutils",
+      "description": "Small coreutils stdout write path with deterministic bytes.",
+      "command": {
+        "kind": "argv",
+        "argv": [
+          "/bin/echo",
+          "frankenlibc-replay"
+        ]
+      },
+      "timeout_ms": 3000,
+      "mode_expectations": {
+        "baseline": {
+          "env_overlay": {},
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "exact",
+              "value": "frankenlibc-replay\n"
+            },
+            "stderr": {
+              "kind": "empty"
+            }
+          }
+        },
+        "strict": {
+          "env_overlay": {
+            "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+            "FRANKENLIBC_MODE": "strict"
+          },
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "exact",
+              "value": "frankenlibc-replay\n"
+            },
+            "stderr": {
+              "kind": "empty_or_diagnostic"
+            }
+          }
+        },
+        "hardened": {
+          "env_overlay": {
+            "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+            "FRANKENLIBC_MODE": "hardened"
+          },
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "exact",
+              "value": "frankenlibc-replay\n"
+            },
+            "stderr": {
+              "kind": "empty_or_diagnostic"
+            }
+          }
+        }
+      },
+      "optional": false,
+      "artifact_refs": [
+        "tests/conformance/user_workload_replay_manifest.v1.json",
+        "scripts/check_user_workload_replay_manifest.sh",
+        "crates/frankenlibc-harness/tests/user_workload_replay_manifest_test.rs"
+      ],
+      "source_commit_state": "current"
+    },
+    {
+      "workload_id": "shell_pipeline_count_lines",
+      "category": "shell_pipeline",
+      "description": "Structured two-stage shell-style pipeline without invoking an ambient shell parser.",
+      "command": {
+        "kind": "pipeline",
+        "stages": [
+          {
+            "argv": [
+              "/usr/bin/printf",
+              "alpha\nbeta\n"
+            ]
+          },
+          {
+            "argv": [
+              "/usr/bin/wc",
+              "-l"
+            ]
+          }
+        ]
+      },
+      "timeout_ms": 5000,
+      "mode_expectations": {
+        "baseline": {
+          "env_overlay": {},
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "contains",
+              "value": "2"
+            },
+            "stderr": {
+              "kind": "empty"
+            }
+          }
+        },
+        "strict": {
+          "env_overlay": {
+            "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+            "FRANKENLIBC_MODE": "strict"
+          },
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "contains",
+              "value": "2"
+            },
+            "stderr": {
+              "kind": "empty_or_diagnostic"
+            }
+          }
+        },
+        "hardened": {
+          "env_overlay": {
+            "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+            "FRANKENLIBC_MODE": "hardened"
+          },
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "contains",
+              "value": "2"
+            },
+            "stderr": {
+              "kind": "empty_or_diagnostic"
+            }
+          }
+        }
+      },
+      "optional": false,
+      "artifact_refs": [
+        "tests/conformance/user_workload_replay_manifest.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "scripts/check_e2e_suite.sh"
+      ],
+      "source_commit_state": "current"
+    },
+    {
+      "workload_id": "dynamic_runtime_python_math",
+      "category": "dynamic_runtime",
+      "description": "Language-runtime startup, dynamic loading, stdio, and libm smoke row.",
+      "command": {
+        "kind": "dynamic_runtime",
+        "argv": [
+          "python3",
+          "-c",
+          "import math; print(int(math.sqrt(81)))"
+        ]
+      },
+      "timeout_ms": 7000,
+      "mode_expectations": {
+        "baseline": {
+          "env_overlay": {},
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "exact",
+              "value": "9\n"
+            },
+            "stderr": {
+              "kind": "empty"
+            }
+          }
+        },
+        "strict": {
+          "env_overlay": {
+            "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+            "FRANKENLIBC_MODE": "strict"
+          },
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "exact",
+              "value": "9\n"
+            },
+            "stderr": {
+              "kind": "empty_or_diagnostic"
+            }
+          }
+        },
+        "hardened": {
+          "env_overlay": {
+            "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+            "FRANKENLIBC_MODE": "hardened"
+          },
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "exact",
+              "value": "9\n"
+            },
+            "stderr": {
+              "kind": "empty_or_diagnostic"
+            }
+          }
+        }
+      },
+      "optional": false,
+      "artifact_refs": [
+        "tests/conformance/user_workload_replay_manifest.v1.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/real_program_smoke_suite.v1.json"
+      ],
+      "source_commit_state": "current"
+    },
+    {
+      "workload_id": "c_fixture_link_test",
+      "category": "c_fixture",
+      "description": "Pinned C integration fixture source and deterministic future replay binary path.",
+      "command": {
+        "kind": "c_fixture",
+        "source": "tests/integration/link_test.c",
+        "build_argv": [
+          "cc",
+          "tests/integration/link_test.c",
+          "-o",
+          "target/conformance/user_workload_link_test"
+        ],
+        "argv": [
+          "target/conformance/user_workload_link_test"
+        ]
+      },
+      "timeout_ms": 7000,
+      "mode_expectations": {
+        "baseline": {
+          "env_overlay": {},
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "nonempty"
+            },
+            "stderr": {
+              "kind": "empty"
+            }
+          }
+        },
+        "strict": {
+          "env_overlay": {
+            "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+            "FRANKENLIBC_MODE": "strict"
+          },
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "nonempty"
+            },
+            "stderr": {
+              "kind": "empty_or_diagnostic"
+            }
+          }
+        },
+        "hardened": {
+          "env_overlay": {
+            "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+            "FRANKENLIBC_MODE": "hardened"
+          },
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "nonempty"
+            },
+            "stderr": {
+              "kind": "empty_or_diagnostic"
+            }
+          }
+        }
+      },
+      "optional": false,
+      "artifact_refs": [
+        "tests/conformance/user_workload_replay_manifest.v1.json",
+        "tests/integration/link_test.c",
+        "crates/frankenlibc-harness/tests/c_fixture_suite_test.rs"
+      ],
+      "source_commit_state": "current"
+    },
+    {
+      "workload_id": "optional_sqlite_version_probe",
+      "category": "optional_tool",
+      "description": "Optional tool probe that must skip deterministically when sqlite3 is unavailable.",
+      "command": {
+        "kind": "argv",
+        "argv": [
+          "sqlite3",
+          "--version"
+        ]
+      },
+      "timeout_ms": 3000,
+      "mode_expectations": {
+        "baseline": {
+          "env_overlay": {},
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "nonempty"
+            },
+            "stderr": {
+              "kind": "empty_or_diagnostic"
+            }
+          }
+        },
+        "strict": {
+          "env_overlay": {
+            "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+            "FRANKENLIBC_MODE": "strict"
+          },
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "nonempty"
+            },
+            "stderr": {
+              "kind": "empty_or_diagnostic"
+            }
+          }
+        },
+        "hardened": {
+          "env_overlay": {
+            "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
+            "FRANKENLIBC_MODE": "hardened"
+          },
+          "expected": {
+            "exit_code": 0,
+            "stdout": {
+              "kind": "nonempty"
+            },
+            "stderr": {
+              "kind": "empty_or_diagnostic"
+            }
+          }
+        }
+      },
+      "optional": true,
+      "skip_policy": {
+        "tool": "sqlite3",
+        "when_missing": "optional_tool_missing",
+        "deterministic_skip_reason": "optional_tool_missing:sqlite3"
+      },
+      "artifact_refs": [
+        "tests/conformance/user_workload_replay_manifest.v1.json",
+        "target/conformance/user_workload_replay_manifest.log.jsonl"
+      ],
+      "source_commit_state": "current"
+    }
+  ],
+  "negative_tests": [
+    {
+      "id": "invalid_command_argv",
+      "mutation": "workloads[0].command.argv=[]",
+      "expected_failure_signature": "workload_replay_invalid_command_argv"
+    },
+    {
+      "id": "invalid_env_overlay",
+      "mutation": "workloads[0].mode_expectations.baseline.env_overlay.LD_PRELOAD=/bad/lib.so",
+      "expected_failure_signature": "workload_replay_invalid_env_overlay"
+    },
+    {
+      "id": "invalid_timeout_policy",
+      "mutation": "workloads[0].timeout_ms=999999",
+      "expected_failure_signature": "workload_replay_timeout_policy_invalid"
+    },
+    {
+      "id": "missing_optional_skip_policy",
+      "mutation": "delete workloads[4].skip_policy",
+      "expected_failure_signature": "workload_replay_optional_skip_missing"
+    },
+    {
+      "id": "stale_source_commit",
+      "mutation": "freshness_policy.source_commit=deadbeef",
+      "expected_failure_signature": "workload_replay_stale_source_commit"
+    }
+  ],
+  "summary": {
+    "workload_count": 5,
+    "mode_count": 3,
+    "matrix_row_count": 15,
+    "optional_workload_count": 1,
+    "required_category_coverage": {
+      "c_fixture": 1,
+      "coreutils": 1,
+      "dynamic_runtime": 1,
+      "optional_tool": 1,
+      "shell_pipeline": 1
+    },
+    "negative_test_count": 5
+  }
+}
