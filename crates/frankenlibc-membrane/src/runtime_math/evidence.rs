@@ -362,6 +362,83 @@ pub struct LossEvidenceV1 {
     pub competing_expected_loss_milli: u32,
 }
 
+/// Basic parse errors for v1 decision payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecisionPayloadError {
+    BadMagic,
+    UnsupportedVersion(u8),
+    UnsupportedEventKind(u8),
+    UnsupportedLossBlockVersion(u8),
+}
+
+/// Decoded v1 decision payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecodedDecisionPayloadV1 {
+    pub mode: u8,
+    pub addr_hint: usize,
+    pub requested_bytes: usize,
+    pub is_write: bool,
+    pub bloom_negative: bool,
+    pub contention_hint: u16,
+    pub policy_id: u32,
+    pub risk_upper_bound_ppm: u32,
+    pub estimated_cost_ns: u64,
+    pub adverse: bool,
+    pub healing_action: HealingAction,
+    pub loss_evidence: Option<LossEvidenceV1>,
+}
+
+/// Decode a v1 decision payload emitted inside an `EvidenceSymbolRecord`.
+pub fn decode_decision_payload_v1(
+    payload: &[u8; EVIDENCE_SYMBOL_SIZE_T],
+) -> Result<DecodedDecisionPayloadV1, DecisionPayloadError> {
+    if payload[0..4] != PAYLOAD_MAGIC_DECISION_V1 {
+        return Err(DecisionPayloadError::BadMagic);
+    }
+    if payload[4] != PAYLOAD_VERSION_V1 {
+        return Err(DecisionPayloadError::UnsupportedVersion(payload[4]));
+    }
+    if payload[5] != EVENT_KIND_DECISION {
+        return Err(DecisionPayloadError::UnsupportedEventKind(payload[5]));
+    }
+    if payload[42] != 0 && payload[43] != LOSS_BLOCK_VERSION_V1 {
+        return Err(DecisionPayloadError::UnsupportedLossBlockVersion(
+            payload[43],
+        ));
+    }
+
+    let loss_evidence = if payload[42] == 0 {
+        None
+    } else {
+        Some(LossEvidenceV1 {
+            posterior_adverse_ppm: read_u32(payload, LOSS_BLOCK_OFFSET).min(1_000_000),
+            selected_action: payload[LOSS_BLOCK_OFFSET + 4],
+            competing_action: payload[LOSS_BLOCK_OFFSET + 5],
+            selected_expected_loss_milli: read_u32(payload, LOSS_BLOCK_OFFSET + 8),
+            competing_expected_loss_milli: read_u32(payload, LOSS_BLOCK_OFFSET + 12),
+        })
+    };
+
+    Ok(DecodedDecisionPayloadV1 {
+        mode: payload[25],
+        addr_hint: usize::try_from(read_u64(payload, 8)).unwrap_or(usize::MAX),
+        requested_bytes: usize::try_from(read_u64(payload, 16)).unwrap_or(usize::MAX),
+        is_write: (payload[24] & (1 << 0)) != 0,
+        bloom_negative: (payload[24] & (1 << 1)) != 0,
+        contention_hint: read_u16(payload, 26),
+        policy_id: read_u32(payload, 28),
+        risk_upper_bound_ppm: read_u32(payload, 32),
+        estimated_cost_ns: u64::from(read_u32(payload, 36)),
+        adverse: payload[40] != 0,
+        healing_action: decode_healing_action(
+            payload[41],
+            read_u64(payload, 44),
+            read_u64(payload, 52),
+        ),
+        loss_evidence,
+    })
+}
+
 /// Coarse decision-class taxonomy used by the galaxy-brain card ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -481,6 +558,172 @@ impl DecisionCardFilter {
             return false;
         }
         true
+    }
+}
+
+/// Expected replay outcome for a sampled runtime decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeEvidenceReplayExpectation {
+    pub replay_id: String,
+    pub evidence_seqno: u64,
+    pub expected_decision: MembraneAction,
+    pub expected_profile: Option<ValidationProfile>,
+    pub expected_policy_id: Option<u32>,
+    pub expected_runtime_mode: Option<SafetyLevel>,
+    pub replacement_level: String,
+    pub artifact_refs: Vec<String>,
+}
+
+/// Runtime replay outcome status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeEvidenceReplayStatus {
+    Passed,
+    MissingDecisionCard,
+    MissingEvidenceRecord,
+    InvalidEvidenceRecord,
+    InvalidDecisionPayload,
+    DecisionMismatch,
+    MetadataMismatch,
+}
+
+/// Per-expectation replay row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeEvidenceReplayRow {
+    pub trace_id: String,
+    pub replay_id: String,
+    pub evidence_seqno: u64,
+    pub api_family: String,
+    pub symbol: String,
+    pub runtime_mode: String,
+    pub replacement_level: String,
+    pub decision_path: String,
+    pub healing_action: String,
+    pub expected_decision: String,
+    pub actual_decision: Option<String>,
+    pub expected_profile: Option<String>,
+    pub actual_profile: Option<String>,
+    pub expected_policy_id: Option<u32>,
+    pub actual_policy_id: Option<u32>,
+    pub evidence_snapshot: Option<RuntimeEvidenceSnapshot>,
+    pub status: RuntimeEvidenceReplayStatus,
+    pub failure_signature: Option<String>,
+    pub artifact_refs: Vec<String>,
+}
+
+/// Redacted ring-buffer snapshot attached to replay output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeEvidenceSnapshot {
+    pub epoch_id: u64,
+    pub seqno: u64,
+    pub decision_id: u64,
+    pub payload_hash: u64,
+    pub chain_hash: u64,
+    pub addr_hint_redacted: bool,
+    pub requested_bytes: usize,
+    pub risk_upper_bound_ppm: u32,
+    pub estimated_cost_ns: u64,
+}
+
+/// Replay report for deterministic runtime-evidence gates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeEvidenceReplayReport {
+    pub bead_id: String,
+    pub rows: Vec<RuntimeEvidenceReplayRow>,
+    pub cards_out_of_order: bool,
+    pub records_out_of_order: bool,
+}
+
+impl RuntimeEvidenceReplayReport {
+    #[must_use]
+    pub fn passed(&self) -> bool {
+        !self.cards_out_of_order
+            && !self.records_out_of_order
+            && self
+                .rows
+                .iter()
+                .all(|row| row.status == RuntimeEvidenceReplayStatus::Passed)
+    }
+
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        let mut out = String::new();
+        let passed = self.passed();
+        let failure_count = self
+            .rows
+            .iter()
+            .filter(|row| row.status != RuntimeEvidenceReplayStatus::Passed)
+            .count()
+            + usize::from(self.cards_out_of_order)
+            + usize::from(self.records_out_of_order);
+        let _ = write!(
+            &mut out,
+            "{{\"schema\":\"runtime_evidence_replay.v1\",\"bead_id\":\"{}\",\"passed\":{},\"count\":{},\"failure_count\":{},\"cards_out_of_order\":{},\"records_out_of_order\":{},\"rows\":[",
+            json_escape(&self.bead_id),
+            passed,
+            self.rows.len(),
+            failure_count,
+            self.cards_out_of_order,
+            self.records_out_of_order
+        );
+
+        for (idx, row) in self.rows.iter().enumerate() {
+            if idx > 0 {
+                out.push(',');
+            }
+            let _ = write!(
+                &mut out,
+                "{{\"trace_id\":\"{}\",\"bead_id\":\"{}\",\"replay_id\":\"{}\",\"evidence_seqno\":{},\"api_family\":\"{}\",\"symbol\":\"{}\",\"runtime_mode\":\"{}\",\"replacement_level\":\"{}\",\"decision_path\":\"{}\",\"healing_action\":\"{}\",\"expected_decision\":\"{}\",\"actual_decision\":{},\"expected_profile\":{},\"actual_profile\":{},\"expected_policy_id\":{},\"actual_policy_id\":{},",
+                json_escape(&row.trace_id),
+                json_escape(&self.bead_id),
+                json_escape(&row.replay_id),
+                row.evidence_seqno,
+                json_escape(&row.api_family),
+                json_escape(&row.symbol),
+                json_escape(&row.runtime_mode),
+                json_escape(&row.replacement_level),
+                json_escape(&row.decision_path),
+                json_escape(&row.healing_action),
+                json_escape(&row.expected_decision),
+                json_string_or_null(row.actual_decision.as_deref()),
+                json_string_or_null(row.expected_profile.as_deref()),
+                json_string_or_null(row.actual_profile.as_deref()),
+                json_u32_or_null(row.expected_policy_id),
+                json_u32_or_null(row.actual_policy_id)
+            );
+            match &row.evidence_snapshot {
+                Some(snapshot) => {
+                    let _ = write!(
+                        &mut out,
+                        "\"evidence_snapshot\":{{\"epoch_id\":{},\"seqno\":{},\"decision_id\":{},\"payload_hash\":{},\"chain_hash\":{},\"addr_hint_redacted\":{},\"requested_bytes\":{},\"risk_upper_bound_ppm\":{},\"estimated_cost_ns\":{}}},",
+                        snapshot.epoch_id,
+                        snapshot.seqno,
+                        snapshot.decision_id,
+                        snapshot.payload_hash,
+                        snapshot.chain_hash,
+                        snapshot.addr_hint_redacted,
+                        snapshot.requested_bytes,
+                        snapshot.risk_upper_bound_ppm,
+                        snapshot.estimated_cost_ns
+                    );
+                }
+                None => out.push_str("\"evidence_snapshot\":null,"),
+            }
+            let _ = write!(
+                &mut out,
+                "\"status\":\"{}\",\"failure_signature\":{},\"artifact_refs\":[",
+                replay_status_name(row.status),
+                json_string_or_null(row.failure_signature.as_deref())
+            );
+            for (ref_idx, artifact) in row.artifact_refs.iter().enumerate() {
+                if ref_idx > 0 {
+                    out.push(',');
+                }
+                let _ = write!(&mut out, "\"{}\"", json_escape(artifact));
+            }
+            out.push_str("]}");
+        }
+        out.push_str("]}");
+        out
     }
 }
 
@@ -1509,6 +1752,258 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
         out.push_str("]}");
         out
     }
+
+    /// Replay current ring/card snapshots against expected decisions.
+    #[must_use]
+    pub fn replay_runtime_evidence_v1(
+        &self,
+        bead_id: &str,
+        expectations: &[RuntimeEvidenceReplayExpectation],
+    ) -> RuntimeEvidenceReplayReport {
+        let cards = self.decision_cards_snapshot_sorted();
+        let records = self.snapshot_sorted();
+        replay_runtime_evidence_v1(bead_id, &cards, &records, expectations)
+    }
+}
+
+/// Replay decision cards and evidence records against expected decisions.
+#[must_use]
+pub fn replay_runtime_evidence_v1(
+    bead_id: &str,
+    cards: &[DecisionCardV1],
+    records: &[EvidenceSymbolRecord],
+    expectations: &[RuntimeEvidenceReplayExpectation],
+) -> RuntimeEvidenceReplayReport {
+    let cards_out_of_order = cards
+        .windows(2)
+        .any(|w| w[1].decision_id < w[0].decision_id);
+    let records_out_of_order = records.windows(2).any(|w| w[1].seqno() < w[0].seqno());
+    let rows = expectations
+        .iter()
+        .map(|expected| replay_one_expectation(expected, cards, records))
+        .collect();
+    RuntimeEvidenceReplayReport {
+        bead_id: bead_id.to_string(),
+        rows,
+        cards_out_of_order,
+        records_out_of_order,
+    }
+}
+
+fn replay_one_expectation(
+    expected: &RuntimeEvidenceReplayExpectation,
+    cards: &[DecisionCardV1],
+    records: &[EvidenceSymbolRecord],
+) -> RuntimeEvidenceReplayRow {
+    let card = cards
+        .iter()
+        .find(|card| card.evidence_seqno == expected.evidence_seqno);
+    let record = records
+        .iter()
+        .find(|record| record.seqno() == expected.evidence_seqno);
+
+    let trace_id = card.map_or_else(
+        || {
+            format!(
+                "runtime_evidence_replay::missing::{}",
+                expected.evidence_seqno
+            )
+        },
+        |card| {
+            DecisionId::from_raw(card.decision_id)
+                .scoped_trace_id("runtime_math::decision_card")
+                .as_str()
+                .to_string()
+        },
+    );
+    let fallback_family = card.map(|card| card.context.family);
+    let mut api_family = fallback_family
+        .map_or("unknown", runtime_family_name)
+        .to_string();
+    let mut symbol = fallback_family
+        .map_or("runtime_math::unknown", runtime_decision_symbol)
+        .to_string();
+    let mut runtime_mode = expected
+        .expected_runtime_mode
+        .map_or("unknown", runtime_mode_name)
+        .to_string();
+    let mut decision_path = "missing".to_string();
+    let mut healing_action = "None".to_string();
+    let mut actual_decision = card.map(|card| action_name(card.decision.action).to_string());
+    let mut actual_profile = card.map(|card| profile_name(card.decision.profile).to_string());
+    let mut actual_policy_id = card.map(|card| card.decision.policy_id);
+    let mut evidence_snapshot = None;
+
+    let Some(card) = card else {
+        return RuntimeEvidenceReplayRow {
+            trace_id,
+            replay_id: expected.replay_id.clone(),
+            evidence_seqno: expected.evidence_seqno,
+            api_family,
+            symbol,
+            runtime_mode,
+            replacement_level: expected.replacement_level.clone(),
+            decision_path,
+            healing_action,
+            expected_decision: action_name(expected.expected_decision).to_string(),
+            actual_decision,
+            expected_profile: expected
+                .expected_profile
+                .map(profile_name)
+                .map(str::to_string),
+            actual_profile,
+            expected_policy_id: expected.expected_policy_id,
+            actual_policy_id,
+            evidence_snapshot,
+            status: RuntimeEvidenceReplayStatus::MissingDecisionCard,
+            failure_signature: Some(format!(
+                "missing_decision_card:evidence_seqno={}",
+                expected.evidence_seqno
+            )),
+            artifact_refs: expected.artifact_refs.clone(),
+        };
+    };
+
+    let Some(record) = record else {
+        return RuntimeEvidenceReplayRow {
+            trace_id,
+            replay_id: expected.replay_id.clone(),
+            evidence_seqno: expected.evidence_seqno,
+            api_family,
+            symbol,
+            runtime_mode,
+            replacement_level: expected.replacement_level.clone(),
+            decision_path,
+            healing_action,
+            expected_decision: action_name(expected.expected_decision).to_string(),
+            actual_decision,
+            expected_profile: expected
+                .expected_profile
+                .map(profile_name)
+                .map(str::to_string),
+            actual_profile,
+            expected_policy_id: expected.expected_policy_id,
+            actual_policy_id,
+            evidence_snapshot,
+            status: RuntimeEvidenceReplayStatus::MissingEvidenceRecord,
+            failure_signature: Some(format!(
+                "stale_ring_snapshot:evidence_seqno={}",
+                expected.evidence_seqno
+            )),
+            artifact_refs: expected.artifact_refs.clone(),
+        };
+    };
+
+    let mut status = RuntimeEvidenceReplayStatus::Passed;
+    let mut failure_signature = None;
+
+    if let Err(err) = record.validate_basic() {
+        status = RuntimeEvidenceReplayStatus::InvalidEvidenceRecord;
+        failure_signature = Some(format!("invalid_evidence_record:{err:?}"));
+    }
+
+    let decoded = if status == RuntimeEvidenceReplayStatus::Passed {
+        match decode_decision_payload_v1(record.payload()) {
+            Ok(decoded) => Some(decoded),
+            Err(err) => {
+                status = RuntimeEvidenceReplayStatus::InvalidDecisionPayload;
+                failure_signature = Some(format!("invalid_decision_payload:{err:?}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some(decoded) = decoded {
+        if let Some(family) = api_family_from_code(record.family()) {
+            api_family = runtime_family_name(family).to_string();
+            symbol = runtime_decision_symbol(family).to_string();
+        }
+        runtime_mode = runtime_mode_code_name(decoded.mode).to_string();
+        let record_action = action_from_record_and_payload(record, decoded);
+        decision_path = runtime_decision_path(record_action).to_string();
+        healing_action = healing_action_name(decoded.healing_action).to_string();
+        actual_decision = Some(action_name(record_action).to_string());
+        actual_profile = Some(profile_code_name(record.profile()).to_string());
+        actual_policy_id = Some(decoded.policy_id);
+        evidence_snapshot = Some(RuntimeEvidenceSnapshot {
+            epoch_id: record.epoch_id(),
+            seqno: record.seqno(),
+            decision_id: card.decision_id,
+            payload_hash: record.payload_hash(),
+            chain_hash: record.chain_hash(),
+            addr_hint_redacted: decoded.addr_hint != 0,
+            requested_bytes: decoded.requested_bytes,
+            risk_upper_bound_ppm: decoded.risk_upper_bound_ppm,
+            estimated_cost_ns: decoded.estimated_cost_ns,
+        });
+
+        if status == RuntimeEvidenceReplayStatus::Passed
+            && (record_action != card.decision.action
+                || record.profile() != profile_code(card.decision.profile)
+                || record.family() != card.context.family as u8
+                || decoded.policy_id != card.decision.policy_id
+                || decoded.mode != decision_mode_code(card.reasoning_flags))
+        {
+            status = RuntimeEvidenceReplayStatus::MetadataMismatch;
+            failure_signature = Some(format!(
+                "metadata_mismatch:evidence_seqno={}",
+                expected.evidence_seqno
+            ));
+        }
+
+        if status == RuntimeEvidenceReplayStatus::Passed
+            && (record_action != expected.expected_decision
+                || expected
+                    .expected_profile
+                    .is_some_and(|profile| record.profile() != profile_code(profile))
+                || expected
+                    .expected_policy_id
+                    .is_some_and(|policy_id| decoded.policy_id != policy_id)
+                || expected
+                    .expected_runtime_mode
+                    .is_some_and(|mode| decoded.mode != mode_code(mode)))
+        {
+            status = if record_action != expected.expected_decision {
+                RuntimeEvidenceReplayStatus::DecisionMismatch
+            } else {
+                RuntimeEvidenceReplayStatus::MetadataMismatch
+            };
+            failure_signature = Some(format!(
+                "{}:evidence_seqno={}:expected={}:actual={}",
+                replay_status_name(status),
+                expected.evidence_seqno,
+                action_name(expected.expected_decision),
+                action_name(record_action)
+            ));
+        }
+    }
+
+    RuntimeEvidenceReplayRow {
+        trace_id,
+        replay_id: expected.replay_id.clone(),
+        evidence_seqno: expected.evidence_seqno,
+        api_family,
+        symbol,
+        runtime_mode,
+        replacement_level: expected.replacement_level.clone(),
+        decision_path,
+        healing_action,
+        expected_decision: action_name(expected.expected_decision).to_string(),
+        actual_decision,
+        expected_profile: expected
+            .expected_profile
+            .map(profile_name)
+            .map(str::to_string),
+        actual_profile,
+        expected_policy_id: expected.expected_policy_id,
+        actual_policy_id,
+        evidence_snapshot,
+        status,
+        failure_signature,
+        artifact_refs: expected.artifact_refs.clone(),
+    }
 }
 
 fn stream_index(mode: SafetyLevel, family: ApiFamily) -> usize {
@@ -1687,6 +2182,114 @@ fn runtime_decision_path(action: MembraneAction) -> &'static str {
         MembraneAction::Repair(_) => "mode->runtime_math_kernel->repair",
         MembraneAction::Deny => "mode->runtime_math_kernel->deny",
     }
+}
+
+fn action_from_record_and_payload(
+    record: &EvidenceSymbolRecord,
+    payload: DecodedDecisionPayloadV1,
+) -> MembraneAction {
+    match record.action() {
+        0 => MembraneAction::Allow,
+        1 => MembraneAction::FullValidate,
+        2 => MembraneAction::Repair(payload.healing_action),
+        3 => MembraneAction::Deny,
+        _ => MembraneAction::Allow,
+    }
+}
+
+fn action_name(action: MembraneAction) -> &'static str {
+    match action {
+        MembraneAction::Allow => "Allow",
+        MembraneAction::FullValidate => "FullValidate",
+        MembraneAction::Repair(_) => "Repair",
+        MembraneAction::Deny => "Deny",
+    }
+}
+
+fn healing_action_name(action: HealingAction) -> &'static str {
+    match action {
+        HealingAction::ClampSize { .. } => "ClampSize",
+        HealingAction::TruncateWithNull { .. } => "TruncateWithNull",
+        HealingAction::IgnoreDoubleFree => "IgnoreDoubleFree",
+        HealingAction::IgnoreForeignFree => "IgnoreForeignFree",
+        HealingAction::ReallocAsMalloc { .. } => "ReallocAsMalloc",
+        HealingAction::ReturnSafeDefault => "ReturnSafeDefault",
+        HealingAction::UpgradeToSafeVariant => "UpgradeToSafeVariant",
+        HealingAction::None => "None",
+    }
+}
+
+fn profile_name(profile: ValidationProfile) -> &'static str {
+    match profile {
+        ValidationProfile::Fast => "Fast",
+        ValidationProfile::Full => "Full",
+    }
+}
+
+fn profile_code_name(code: u8) -> &'static str {
+    match code {
+        0 => "Fast",
+        1 => "Full",
+        _ => "Unknown",
+    }
+}
+
+fn runtime_mode_name(mode: SafetyLevel) -> &'static str {
+    match mode {
+        SafetyLevel::Strict => "strict",
+        SafetyLevel::Hardened => "hardened",
+        SafetyLevel::Off => "off",
+    }
+}
+
+fn runtime_mode_code_name(code: u8) -> &'static str {
+    match code {
+        0 => "strict",
+        1 => "hardened",
+        2 => "off",
+        _ => "unknown",
+    }
+}
+
+fn replay_status_name(status: RuntimeEvidenceReplayStatus) -> &'static str {
+    match status {
+        RuntimeEvidenceReplayStatus::Passed => "passed",
+        RuntimeEvidenceReplayStatus::MissingDecisionCard => "missing_decision_card",
+        RuntimeEvidenceReplayStatus::MissingEvidenceRecord => "missing_evidence_record",
+        RuntimeEvidenceReplayStatus::InvalidEvidenceRecord => "invalid_evidence_record",
+        RuntimeEvidenceReplayStatus::InvalidDecisionPayload => "invalid_decision_payload",
+        RuntimeEvidenceReplayStatus::DecisionMismatch => "decision_mismatch",
+        RuntimeEvidenceReplayStatus::MetadataMismatch => "metadata_mismatch",
+    }
+}
+
+fn json_string_or_null(value: Option<&str>) -> String {
+    value.map_or_else(
+        || "null".to_string(),
+        |value| format!("\"{}\"", json_escape(value)),
+    )
+}
+
+fn json_u32_or_null(value: Option<u32>) -> String {
+    value.map_or_else(|| "null".to_string(), |value| value.to_string())
+}
+
+fn json_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                let _ = write!(&mut out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Overwrite-on-full decision-card ring buffer.
@@ -2034,6 +2637,28 @@ mod tests {
         let total = elapsed.as_nanos();
         let avg = total / u128::from(operations);
         u64::try_from(avg).unwrap_or(u64::MAX)
+    }
+
+    fn replay_expectation(
+        replay_id: &str,
+        evidence_seqno: u64,
+        expected_decision: MembraneAction,
+        expected_profile: ValidationProfile,
+        expected_policy_id: u32,
+        expected_runtime_mode: SafetyLevel,
+    ) -> RuntimeEvidenceReplayExpectation {
+        RuntimeEvidenceReplayExpectation {
+            replay_id: replay_id.to_string(),
+            evidence_seqno,
+            expected_decision,
+            expected_profile: Some(expected_profile),
+            expected_policy_id: Some(expected_policy_id),
+            expected_runtime_mode: Some(expected_runtime_mode),
+            replacement_level: "L0".to_string(),
+            artifact_refs: vec![
+                "crates/frankenlibc-membrane/src/runtime_math/evidence.rs".to_string(),
+            ],
+        }
     }
 
     #[test]
@@ -2538,6 +3163,290 @@ mod tests {
             assert!(card["decision_id"].as_u64().is_some_and(|id| id > 0));
             assert!(card["policy_id"].as_u64().is_some_and(|id| id > 0));
         }
+    }
+
+    #[test]
+    fn decision_payload_decoder_roundtrips_loss_and_rejects_bad_versions() {
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0xABCD,
+            requested_bytes: 128,
+            is_write: true,
+            contention_hint: 7,
+            bloom_negative: true,
+        };
+        let decision = RuntimeDecision {
+            profile: ValidationProfile::Full,
+            action: MembraneAction::Repair(HealingAction::ClampSize {
+                requested: 128,
+                clamped: 64,
+            }),
+            policy_id: 77,
+            risk_upper_bound_ppm: 700_000,
+            evidence_seqno: 0,
+        };
+        let loss = LossEvidenceV1 {
+            posterior_adverse_ppm: 2_000_000,
+            selected_action: 2,
+            competing_action: 3,
+            selected_expected_loss_milli: 20,
+            competing_expected_loss_milli: 90,
+        };
+
+        let payload =
+            encode_decision_payload_v1(SafetyLevel::Hardened, ctx, decision, 55, true, Some(loss));
+        let decoded = decode_decision_payload_v1(&payload).expect("decode decision payload");
+        assert_eq!(decoded.mode, 1);
+        assert_eq!(decoded.addr_hint, ctx.addr_hint);
+        assert_eq!(decoded.requested_bytes, ctx.requested_bytes);
+        assert!(decoded.is_write);
+        assert!(decoded.bloom_negative);
+        assert_eq!(decoded.policy_id, decision.policy_id);
+        assert_eq!(
+            decoded.healing_action,
+            HealingAction::ClampSize {
+                requested: 128,
+                clamped: 64
+            }
+        );
+        assert_eq!(
+            decoded.loss_evidence.unwrap().posterior_adverse_ppm,
+            1_000_000
+        );
+
+        let mut bad_magic = payload;
+        bad_magic[0] = b'X';
+        assert_eq!(
+            decode_decision_payload_v1(&bad_magic),
+            Err(DecisionPayloadError::BadMagic)
+        );
+
+        let mut bad_loss_version = payload;
+        bad_loss_version[43] = 99;
+        assert_eq!(
+            decode_decision_payload_v1(&bad_loss_version),
+            Err(DecisionPayloadError::UnsupportedLossBlockVersion(99))
+        );
+    }
+
+    #[test]
+    fn runtime_evidence_replay_gate_passes_and_redacts_pointer_hints() {
+        let log: SystematicEvidenceLog<16> = SystematicEvidenceLog::new(0xBADA_5510);
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0xDEAD_BEEF,
+            requested_bytes: 96,
+            is_write: true,
+            contention_hint: 4,
+            bloom_negative: false,
+        };
+        let allow = RuntimeDecision {
+            profile: ValidationProfile::Fast,
+            action: MembraneAction::Allow,
+            policy_id: 101,
+            risk_upper_bound_ppm: 10,
+            evidence_seqno: 0,
+        };
+        let repair = RuntimeDecision {
+            profile: ValidationProfile::Full,
+            action: MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            policy_id: 102,
+            risk_upper_bound_ppm: 900_000,
+            evidence_seqno: 0,
+        };
+        let deny = RuntimeDecision {
+            profile: ValidationProfile::Full,
+            action: MembraneAction::Deny,
+            policy_id: 103,
+            risk_upper_bound_ppm: 1_000_000,
+            evidence_seqno: 0,
+        };
+
+        let seq_allow =
+            log.record_decision(SafetyLevel::Strict, ctx, allow, 8, false, None, 0, None);
+        let seq_repair =
+            log.record_decision(SafetyLevel::Hardened, ctx, repair, 13, true, None, 0, None);
+        let seq_deny =
+            log.record_decision(SafetyLevel::Hardened, ctx, deny, 21, true, None, 0, None);
+
+        let expectations = vec![
+            replay_expectation(
+                "allow-path",
+                seq_allow,
+                MembraneAction::Allow,
+                ValidationProfile::Fast,
+                101,
+                SafetyLevel::Strict,
+            ),
+            replay_expectation(
+                "repair-path",
+                seq_repair,
+                MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+                ValidationProfile::Full,
+                102,
+                SafetyLevel::Hardened,
+            ),
+            replay_expectation(
+                "deny-path",
+                seq_deny,
+                MembraneAction::Deny,
+                ValidationProfile::Full,
+                103,
+                SafetyLevel::Hardened,
+            ),
+        ];
+
+        let report = log.replay_runtime_evidence_v1("bd-bp8fl.9.4", &expectations);
+        assert!(report.passed(), "{report:?}");
+        assert_eq!(report.rows.len(), 3);
+        assert!(
+            report
+                .rows
+                .iter()
+                .all(|row| row.status == RuntimeEvidenceReplayStatus::Passed)
+        );
+
+        let json = report.to_json();
+        let parsed: Value = serde_json::from_str(&json).expect("replay report JSON");
+        assert_eq!(
+            parsed["schema"].as_str(),
+            Some("runtime_evidence_replay.v1")
+        );
+        assert_eq!(parsed["bead_id"].as_str(), Some("bd-bp8fl.9.4"));
+        assert_eq!(parsed["passed"].as_bool(), Some(true));
+        assert!(!json.contains("3735928559"));
+        assert!(!json.contains("DEAD_BEEF"));
+        assert_eq!(
+            parsed["rows"][0]["evidence_snapshot"]["addr_hint_redacted"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn runtime_evidence_replay_gate_reports_missing_stale_and_mismatch_cases() {
+        let log: SystematicEvidenceLog<8> = SystematicEvidenceLog::new(0xF00D);
+        let ctx = RuntimeContext::pointer_validation(0x1234, false);
+        let allow = RuntimeDecision {
+            profile: ValidationProfile::Fast,
+            action: MembraneAction::Allow,
+            policy_id: 201,
+            risk_upper_bound_ppm: 10,
+            evidence_seqno: 0,
+        };
+        let seq = log.record_decision(SafetyLevel::Strict, ctx, allow, 5, false, None, 0, None);
+        let cards = log.decision_cards_snapshot_sorted();
+        let records = log.snapshot_sorted();
+
+        let stale = replay_runtime_evidence_v1(
+            "bd-bp8fl.9.4",
+            &cards,
+            &[],
+            &[replay_expectation(
+                "stale-ring",
+                seq,
+                MembraneAction::Allow,
+                ValidationProfile::Fast,
+                201,
+                SafetyLevel::Strict,
+            )],
+        );
+        assert_eq!(
+            stale.rows[0].status,
+            RuntimeEvidenceReplayStatus::MissingEvidenceRecord
+        );
+        assert_eq!(
+            stale.rows[0].failure_signature.as_deref(),
+            Some("stale_ring_snapshot:evidence_seqno=1")
+        );
+
+        let missing = replay_runtime_evidence_v1(
+            "bd-bp8fl.9.4",
+            &cards,
+            &records,
+            &[replay_expectation(
+                "missing-card",
+                seq + 99,
+                MembraneAction::Allow,
+                ValidationProfile::Fast,
+                201,
+                SafetyLevel::Strict,
+            )],
+        );
+        assert_eq!(
+            missing.rows[0].status,
+            RuntimeEvidenceReplayStatus::MissingDecisionCard
+        );
+
+        let mismatch = replay_runtime_evidence_v1(
+            "bd-bp8fl.9.4",
+            &cards,
+            &records,
+            &[replay_expectation(
+                "decision-mismatch",
+                seq,
+                MembraneAction::Deny,
+                ValidationProfile::Fast,
+                201,
+                SafetyLevel::Strict,
+            )],
+        );
+        assert_eq!(
+            mismatch.rows[0].status,
+            RuntimeEvidenceReplayStatus::DecisionMismatch
+        );
+        assert!(
+            mismatch.rows[0]
+                .failure_signature
+                .as_deref()
+                .is_some_and(|sig| sig.starts_with("decision_mismatch:evidence_seqno=1"))
+        );
+    }
+
+    #[test]
+    fn runtime_evidence_replay_gate_flags_out_of_order_snapshots() {
+        let log: SystematicEvidenceLog<8> = SystematicEvidenceLog::new(0xCAFE);
+        let ctx = RuntimeContext::pointer_validation(0x2222, false);
+        let decision = RuntimeDecision {
+            profile: ValidationProfile::Fast,
+            action: MembraneAction::Allow,
+            policy_id: 301,
+            risk_upper_bound_ppm: 11,
+            evidence_seqno: 0,
+        };
+        let seq1 = log.record_decision(SafetyLevel::Strict, ctx, decision, 1, false, None, 0, None);
+        let seq2 = log.record_decision(SafetyLevel::Strict, ctx, decision, 1, false, None, 0, None);
+        let mut cards = log.decision_cards_snapshot_sorted();
+        let mut records = log.snapshot_sorted();
+        cards.reverse();
+        records.reverse();
+
+        let report = replay_runtime_evidence_v1(
+            "bd-bp8fl.9.4",
+            &cards,
+            &records,
+            &[
+                replay_expectation(
+                    "first",
+                    seq1,
+                    MembraneAction::Allow,
+                    ValidationProfile::Fast,
+                    301,
+                    SafetyLevel::Strict,
+                ),
+                replay_expectation(
+                    "second",
+                    seq2,
+                    MembraneAction::Allow,
+                    ValidationProfile::Fast,
+                    301,
+                    SafetyLevel::Strict,
+                ),
+            ],
+        );
+        assert!(report.cards_out_of_order);
+        assert!(report.records_out_of_order);
+        assert!(!report.passed());
+        assert_eq!(report.rows.len(), 2);
     }
 
     #[test]
