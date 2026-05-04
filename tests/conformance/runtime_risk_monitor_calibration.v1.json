@@ -1,0 +1,233 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "runtime-risk-monitor-calibration-gate",
+  "bead": "bd-bp8fl.9.5",
+  "generated_utc": "2026-05-04T07:25:00Z",
+  "source_commit": "0ea0631e4ad3c68462fba5e1088a9c6d727260e8",
+  "inputs": {
+    "eprocess_module": "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs",
+    "changepoint_module": "crates/frankenlibc-membrane/src/runtime_math/changepoint.rs",
+    "cvar_module": "crates/frankenlibc-membrane/src/runtime_math/cvar.rs",
+    "conformal_module": "crates/frankenlibc-membrane/src/runtime_math/conformal.rs",
+    "risk_module": "crates/frankenlibc-membrane/src/runtime_math/risk.rs",
+    "runtime_evidence_replay_gate": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+    "changepoint_policy": "tests/conformance/changepoint_drift_policy.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "monitor_id",
+    "fixture_set",
+    "threshold",
+    "expected_alarm",
+    "actual_alarm",
+    "risk_value",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_done_until_runtime_risk_monitor_calibration_current",
+    "required_monitors": ["eprocess", "changepoint", "cvar", "conformal", "risk"],
+    "required_modes": ["strict", "hardened"],
+    "required_fixture_sets": [
+      "allocator_adverse_burst",
+      "loader_regime_shift",
+      "resolver_tail_latency",
+      "stdio_clean_baseline",
+      "string_memory_sparse_adverse"
+    ],
+    "allowed_false_positive_count": 0,
+    "allowed_false_negative_count": 0,
+    "required_negative_cases": [
+      "stale_fixture_outcomes",
+      "threshold_edge_case_mismatch",
+      "disabled_monitor",
+      "false_positive_budget_exceeded",
+      "false_negative_budget_exceeded"
+    ],
+    "fail_closed_signatures": [
+      "runtime_calibration_stale_fixture_outcomes",
+      "runtime_calibration_threshold_edge_case_mismatch",
+      "runtime_calibration_disabled_monitor",
+      "runtime_calibration_false_positive_budget_exceeded",
+      "runtime_calibration_false_negative_budget_exceeded"
+    ]
+  },
+  "calibration_records": [
+    {
+      "calibration_id": "cal-eprocess-allocator-adverse-burst",
+      "monitor_id": "eprocess",
+      "monitor_type": "anytime_e_value",
+      "fixture_set": "allocator_adverse_burst",
+      "api_family": "allocator",
+      "runtime_mode": "strict",
+      "threshold": {
+        "metric": "e_value",
+        "comparator": ">=",
+        "value": 10000.0
+      },
+      "risk_value": 18420.0,
+      "expected_alarm": true,
+      "actual_alarm": true,
+      "false_positive_count": 0,
+      "false_negative_count": 0,
+      "sample_count": 128,
+      "fixture_outcome_state": "current",
+      "monitor_state": "enabled",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs",
+        "tests/conformance/runtime_evidence_replay_gate.v1.json"
+      ],
+      "source_commit_state": "current",
+      "failure_signature": "none"
+    },
+    {
+      "calibration_id": "cal-changepoint-loader-regime-shift",
+      "monitor_id": "changepoint",
+      "monitor_type": "bayesian_online_changepoint",
+      "fixture_set": "loader_regime_shift",
+      "api_family": "loader",
+      "runtime_mode": "hardened",
+      "threshold": {
+        "metric": "posterior_short_mass",
+        "comparator": ">=",
+        "value": 0.6
+      },
+      "risk_value": 0.72,
+      "expected_alarm": true,
+      "actual_alarm": true,
+      "false_positive_count": 0,
+      "false_negative_count": 0,
+      "sample_count": 96,
+      "fixture_outcome_state": "current",
+      "monitor_state": "enabled",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/changepoint.rs",
+        "tests/conformance/changepoint_drift_policy.json"
+      ],
+      "source_commit_state": "current",
+      "failure_signature": "none"
+    },
+    {
+      "calibration_id": "cal-cvar-resolver-tail-latency",
+      "monitor_id": "cvar",
+      "monitor_type": "dro_cvar_tail",
+      "fixture_set": "resolver_tail_latency",
+      "api_family": "resolver",
+      "runtime_mode": "hardened",
+      "threshold": {
+        "metric": "ratio_permille",
+        "comparator": ">=",
+        "value": 2200.0
+      },
+      "risk_value": 2310.0,
+      "expected_alarm": true,
+      "actual_alarm": true,
+      "false_positive_count": 0,
+      "false_negative_count": 0,
+      "sample_count": 160,
+      "fixture_outcome_state": "current",
+      "monitor_state": "enabled",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/cvar.rs",
+        "tests/conformance/fpg_runtime_monitor_evidence_gate.v1.json"
+      ],
+      "source_commit_state": "current",
+      "failure_signature": "none"
+    },
+    {
+      "calibration_id": "cal-conformal-stdio-clean-baseline",
+      "monitor_id": "conformal",
+      "monitor_type": "split_conformal_coverage",
+      "fixture_set": "stdio_clean_baseline",
+      "api_family": "stdio",
+      "runtime_mode": "strict",
+      "threshold": {
+        "metric": "coverage_failure_floor",
+        "comparator": "<",
+        "value": 0.85
+      },
+      "risk_value": 0.98,
+      "expected_alarm": false,
+      "actual_alarm": false,
+      "false_positive_count": 0,
+      "false_negative_count": 0,
+      "sample_count": 256,
+      "fixture_outcome_state": "current",
+      "monitor_state": "enabled",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/conformal.rs",
+        "tests/conformance/fpg_evidence_foundation_gate.v1.json"
+      ],
+      "source_commit_state": "current",
+      "failure_signature": "none"
+    },
+    {
+      "calibration_id": "cal-risk-string-memory-sparse-adverse",
+      "monitor_id": "risk",
+      "monitor_type": "conformal_upper_bound",
+      "fixture_set": "string_memory_sparse_adverse",
+      "api_family": "string_memory",
+      "runtime_mode": "strict",
+      "threshold": {
+        "metric": "upper_bound_ppm",
+        "comparator": ">=",
+        "value": 50000.0
+      },
+      "risk_value": 21400.0,
+      "expected_alarm": false,
+      "actual_alarm": false,
+      "false_positive_count": 0,
+      "false_negative_count": 0,
+      "sample_count": 512,
+      "fixture_outcome_state": "current",
+      "monitor_state": "enabled",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/risk.rs",
+        "tests/conformance/runtime_evidence_replay_gate.v1.json"
+      ],
+      "source_commit_state": "current",
+      "failure_signature": "none"
+    }
+  ],
+  "negative_calibration_cases": [
+    {
+      "case_id": "stale-fixture-outcomes-block-calibration",
+      "mutation": "stale_fixture_outcomes",
+      "target_calibration_id": "cal-eprocess-allocator-adverse-burst",
+      "expected_failure_signature": "runtime_calibration_stale_fixture_outcomes"
+    },
+    {
+      "case_id": "threshold-edge-case-mismatch-blocks-calibration",
+      "mutation": "threshold_edge_case_mismatch",
+      "target_calibration_id": "cal-changepoint-loader-regime-shift",
+      "expected_failure_signature": "runtime_calibration_threshold_edge_case_mismatch"
+    },
+    {
+      "case_id": "disabled-monitor-blocks-calibration",
+      "mutation": "disabled_monitor",
+      "target_calibration_id": "cal-cvar-resolver-tail-latency",
+      "expected_failure_signature": "runtime_calibration_disabled_monitor"
+    },
+    {
+      "case_id": "false-positive-budget-blocks-calibration",
+      "mutation": "false_positive_budget_exceeded",
+      "target_calibration_id": "cal-conformal-stdio-clean-baseline",
+      "expected_failure_signature": "runtime_calibration_false_positive_budget_exceeded"
+    },
+    {
+      "case_id": "false-negative-budget-blocks-calibration",
+      "mutation": "false_negative_budget_exceeded",
+      "target_calibration_id": "cal-risk-string-memory-sparse-adverse",
+      "expected_failure_signature": "runtime_calibration_false_negative_budget_exceeded"
+    }
+  ],
+  "summary": {
+    "calibration_record_count": 5,
+    "monitor_count": 5,
+    "fixture_set_count": 5,
+    "negative_case_count": 5,
+    "required_log_field_count": 11
+  }
+}
