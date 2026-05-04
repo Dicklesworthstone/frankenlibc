@@ -13,11 +13,17 @@ use std::ffi::c_int;
 use frankenlibc_abi::dirent_abi as fl;
 
 fn make_dirent(name: &[u8]) -> Box<libc::dirent> {
-    let mut d: libc::dirent = unsafe { std::mem::zeroed() };
+    let mut d = libc::dirent {
+        d_ino: 0,
+        d_off: 0,
+        d_reclen: 0,
+        d_type: 0,
+        d_name: [0; 256],
+    };
     let max = d.d_name.len() - 1;
     let n = name.len().min(max);
-    for i in 0..n {
-        d.d_name[i] = name[i] as i8;
+    for (dst, &src) in d.d_name.iter_mut().zip(name.iter()).take(n) {
+        *dst = src as i8;
     }
     d.d_name[n] = 0;
     Box::new(d)
@@ -43,12 +49,20 @@ fn versionsort(a_name: &[u8], b_name: &[u8]) -> c_int {
     unsafe { fl::versionsort(&mut ap, &mut bp) }
 }
 
-fn sign(v: c_int) -> i32 { v.signum() }
+fn sign(v: c_int) -> i32 {
+    v.signum()
+}
 
 #[test]
 fn metamorphic_alphasort_reflexive() {
     // cmp(x, x) == 0 for any x.
-    for s in [b"".as_slice(), b"a", b"abc", b"file1", b"long_filename_test"] {
+    for s in [
+        b"".as_slice(),
+        b"a",
+        b"abc",
+        b"file1",
+        b"long_filename_test",
+    ] {
         assert_eq!(alphasort(s, s), 0, "alphasort({s:?}, {s:?}) != 0");
     }
 }
@@ -82,7 +96,10 @@ fn metamorphic_alphasort_transitivity_three_keys() {
     for &(a, b, c) in triples {
         assert!(alphasort(a, b) < 0, "{a:?} should sort before {b:?}");
         assert!(alphasort(b, c) < 0, "{b:?} should sort before {c:?}");
-        assert!(alphasort(a, c) < 0, "{a:?} should sort before {c:?} (transitive)");
+        assert!(
+            alphasort(a, c) < 0,
+            "{a:?} should sort before {c:?} (transitive)"
+        );
     }
 }
 
