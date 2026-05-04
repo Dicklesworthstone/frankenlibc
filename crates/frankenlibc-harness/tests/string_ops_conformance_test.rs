@@ -3,6 +3,7 @@
 //! Validates POSIX string APIs: strcpy, strncpy, strcat, strcmp, strchr, strrchr, strstr, etc.
 //! Run: cargo test -p frankenlibc-harness --test string_ops_conformance_test
 
+use frankenlibc_fixture_exec::execute_fixture_case;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -244,6 +245,31 @@ fn string_ops_covers_search_functions() {
     }
 }
 
+#[test]
+fn string_ops_covers_hotpath_first_wave_symbols() {
+    let fixture = load_fixture("string_ops");
+
+    for function in [
+        "__memcmpeq",
+        "__mempcpy",
+        "__rawmemchr",
+        "__stpcpy",
+        "__stpcpy_small",
+        "__stpncpy",
+        "__strcasecmp",
+        "__strcasecmp_l",
+        "__strcasestr",
+        "__strcoll_l",
+        "__strcpy_small",
+        "__strcspn_c1",
+    ] {
+        assert!(
+            fixture.cases.iter().any(|case| case.function == function),
+            "Missing first-wave hot-path fixture coverage for {function}"
+        );
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Error code validation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -365,7 +391,46 @@ fn string_ops_function_distribution() {
 }
 
 #[test]
-fn string_ops_fixture_cases_match_execute_fixture_case() {
+fn string_ops_fixture_cases_match_direct_execute_fixture_case() {
+    let fixture = load_fixture("string_ops");
+
+    for case in &fixture.cases {
+        let expected_output = case
+            .expected_output
+            .as_deref()
+            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result =
+                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
+                    panic!(
+                        "string_ops case {} ({mode}) failed to execute directly: {err}",
+                        case.name
+                    )
+                });
+            assert_eq!(
+                result.impl_output, expected_output,
+                "fixture expected_output mismatch for {} ({mode})",
+                case.name
+            );
+            assert!(
+                result.host_parity || result.host_output == "UB",
+                "defined host behavior diverged for {} ({mode}): host={}, impl={}",
+                case.name,
+                result.host_output,
+                result.impl_output
+            );
+        }
+    }
+}
+
+#[test]
+fn string_ops_fixture_cases_match_isolated_harness_subprocess() {
     let fixture = load_fixture("string_ops");
 
     for case in &fixture.cases {

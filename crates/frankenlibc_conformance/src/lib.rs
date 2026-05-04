@@ -55,6 +55,19 @@ unsafe extern "C" {
     fn wcsspn(s: *const libc::wchar_t, accept: *const libc::wchar_t) -> usize;
     fn wcscspn(s: *const libc::wchar_t, reject: *const libc::wchar_t) -> usize;
     fn wcspbrk(s: *const libc::wchar_t, accept: *const libc::wchar_t) -> *mut libc::wchar_t;
+    // GNU/internal string helpers used as host oracles for fixture waves.
+    #[link_name = "mempcpy"]
+    fn host_mempcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void;
+    #[link_name = "rawmemchr"]
+    fn host_rawmemchr(s: *const c_void, c: c_int) -> *mut c_void;
+    #[link_name = "stpcpy"]
+    fn host_stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char;
+    #[link_name = "stpncpy"]
+    fn host_stpncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char;
+    #[link_name = "strcasecmp"]
+    fn host_strcasecmp(s1: *const c_char, s2: *const c_char) -> c_int;
+    #[link_name = "strcasestr"]
+    fn host_strcasestr(haystack: *const c_char, needle: *const c_char) -> *mut c_char;
     // arpa/inet.h
     fn inet_addr(cp: *const c_char) -> u32;
     fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
@@ -428,6 +441,18 @@ pub fn execute_fixture_case(
         "memcmp" => execute_memcmp_case(inputs, mode),
         "memchr" => execute_memchr_case(inputs, mode),
         "memrchr" => execute_memrchr_case(inputs, mode),
+        "__memcmpeq" => execute_memcmpeq_case(inputs, mode),
+        "mempcpy" | "__mempcpy" => execute_mempcpy_case(inputs, mode),
+        "rawmemchr" | "__rawmemchr" => execute_rawmemchr_case(inputs, mode),
+        "stpcpy" | "__stpcpy" | "__stpcpy_small" => execute_stpcpy_case(inputs, mode),
+        "stpncpy" | "__stpncpy" => execute_stpncpy_case(inputs, mode),
+        "__strcpy_small" => execute_strcpy_small_case(inputs, mode),
+        "strcasecmp" | "__strcasecmp" | "strcasecmp_l" | "__strcasecmp_l" => {
+            execute_strcasecmp_case(inputs, mode)
+        }
+        "strcasestr" | "__strcasestr" => execute_strcasestr_case(inputs, mode),
+        "__strcoll_l" => execute_strcoll_l_case(inputs, mode),
+        "__strcspn_c1" => execute_strcspn_c1_case(inputs, mode),
         "strcmp" => execute_strcmp_case(inputs, mode),
         "strcpy" => execute_strcpy_case(inputs, mode),
         "strncpy" => execute_strncpy_case(inputs, mode),
@@ -6656,6 +6681,554 @@ fn execute_memrchr_case(
         impl_output,
         host_parity,
         note,
+    })
+}
+
+fn format_return_dst_output(return_offset: usize, dst: &[u8], repair: Option<&str>) -> String {
+    match repair {
+        Some(action) => format!("return={return_offset},dst={dst:?},repair={action}"),
+        None => format!("return={return_offset},dst={dst:?}"),
+    }
+}
+
+fn c_string_len(bytes: &[u8]) -> Option<usize> {
+    bytes.iter().position(|&byte| byte == 0)
+}
+
+fn execute_memcmpeq_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let s1 = parse_u8_vec_any(inputs, &["s1", "lhs", "a"])?;
+    let s2 = parse_u8_vec_any(inputs, &["s2", "rhs", "b"])?;
+    let n = parse_usize(inputs, "n")?;
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    let defined = n <= s1.len() && n <= s2.len();
+
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let impl_sign = match frankenlibc_core::string::mem::memcmp(&s1, &s2, n) {
+        core::cmp::Ordering::Less => -1,
+        core::cmp::Ordering::Equal => 0,
+        core::cmp::Ordering::Greater => 1,
+    };
+    let impl_output = impl_sign.to_string();
+    let host_output = if defined {
+        unsafe { libc::memcmp(s1.as_ptr().cast(), s2.as_ptr().cast(), n) }
+            .signum()
+            .to_string()
+    } else {
+        String::from("UB")
+    };
+    let host_parity = defined && host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: if hardened && !defined {
+            Some(String::from(
+                "hardened mode intentionally clamps undefined host behavior",
+            ))
+        } else {
+            None
+        },
+    })
+}
+
+fn run_host_mempcpy(src: &[u8], dst_len: usize, n: usize) -> (Vec<u8>, usize) {
+    let mut dst = vec![0_u8; dst_len];
+    let ret = unsafe { host_mempcpy(dst.as_mut_ptr().cast(), src.as_ptr().cast(), n) };
+    let offset = (ret as usize).wrapping_sub(dst.as_ptr() as usize);
+    (dst, offset)
+}
+
+fn execute_mempcpy_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let src = parse_u8_vec_any(inputs, &["src", "s"])?;
+    let dst_len = parse_usize(inputs, "dst_len")?;
+    let n = parse_usize(inputs, "n")?;
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    let defined = n <= src.len() && n <= dst_len;
+
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let mut impl_dst = vec![0_u8; dst_len];
+    let return_offset = frankenlibc_core::string::mem::mempcpy(&mut impl_dst, &src, n);
+    let repair = (hardened && !defined).then_some("ClampSize");
+    let impl_output = format_return_dst_output(return_offset, &impl_dst, repair);
+    let host_output = if defined {
+        let (host_dst, host_offset) = run_host_mempcpy(&src, dst_len, n);
+        format_return_dst_output(host_offset, &host_dst, None)
+    } else {
+        String::from("UB")
+    };
+    let host_parity = defined && host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: if hardened && !defined {
+            Some(String::from(
+                "hardened mode clamps mempcpy length to allocation bounds",
+            ))
+        } else {
+            None
+        },
+    })
+}
+
+fn execute_rawmemchr_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let s = parse_u8_vec_any(inputs, &["s", "haystack"])?;
+    let c = parse_usize(inputs, "c").or_else(|_| parse_usize(inputs, "needle"))?;
+    if c > u8::MAX as usize {
+        return Err(format!("rawmemchr needle out of range: {c}"));
+    }
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    let impl_val = s.iter().position(|&byte| byte == c as u8);
+    let defined = impl_val.is_some();
+
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let impl_output = format!("{impl_val:?}");
+    let host_output = if defined {
+        let ptr = unsafe { host_rawmemchr(s.as_ptr().cast(), c as c_int) };
+        if ptr.is_null() {
+            String::from("None")
+        } else {
+            format!("Some({})", ptr as usize - s.as_ptr() as usize)
+        }
+    } else {
+        String::from("UB")
+    };
+    let host_parity = defined && host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: if hardened && !defined {
+            Some(String::from(
+                "hardened mode bounds rawmemchr to fixture input bytes",
+            ))
+        } else {
+            None
+        },
+    })
+}
+
+fn run_host_stpcpy(src: &[u8], dst_len: usize) -> (Vec<u8>, usize) {
+    let mut dst = vec![0_u8; dst_len];
+    let ret = unsafe { host_stpcpy(dst.as_mut_ptr().cast(), src.as_ptr().cast()) };
+    let offset = (ret as usize).wrapping_sub(dst.as_ptr() as usize);
+    (dst, offset)
+}
+
+fn execute_stpcpy_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let src = parse_u8_vec(inputs, "src")?;
+    let dst_len = parse_usize(inputs, "dst_len")?;
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    let src_len = c_string_len(&src).unwrap_or(src.len());
+    let defined = src.contains(&0) && dst_len > src_len;
+
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let mut impl_dst = vec![0_u8; dst_len];
+    let return_offset = if defined {
+        frankenlibc_core::string::str::stpcpy(&mut impl_dst, &src)
+    } else {
+        let copy_len = src_len.min(dst_len.saturating_sub(1));
+        if copy_len > 0 {
+            impl_dst[..copy_len].copy_from_slice(&src[..copy_len]);
+        }
+        if dst_len > 0 {
+            impl_dst[copy_len] = 0;
+        }
+        copy_len
+    };
+    let repair = (hardened && !defined).then_some("TruncateWithNull");
+    let impl_output = format_return_dst_output(return_offset, &impl_dst, repair);
+    let host_output = if defined {
+        let (host_dst, host_offset) = run_host_stpcpy(&src, dst_len);
+        format_return_dst_output(host_offset, &host_dst, None)
+    } else {
+        String::from("UB")
+    };
+    let host_parity = defined && host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: if hardened && !defined {
+            Some(String::from(
+                "hardened mode truncates stpcpy to destination bounds",
+            ))
+        } else {
+            None
+        },
+    })
+}
+
+fn run_host_stpncpy(src: &[u8], dst_len: usize, n: usize) -> (Vec<u8>, usize) {
+    let mut dst = vec![0_u8; dst_len];
+    let ret = unsafe { host_stpncpy(dst.as_mut_ptr().cast(), src.as_ptr().cast(), n) };
+    let offset = (ret as usize).wrapping_sub(dst.as_ptr() as usize);
+    (dst, offset)
+}
+
+fn execute_stpncpy_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let src = parse_u8_vec(inputs, "src")?;
+    let dst_len = parse_usize(inputs, "dst_len")?;
+    let n = parse_usize(inputs, "n")?;
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    let has_nul_before_n = src.iter().take(n).any(|&byte| byte == 0);
+    let defined = n <= dst_len && (src.len() >= n || has_nul_before_n);
+
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let mut impl_dst = vec![0_u8; dst_len];
+    let return_offset = frankenlibc_core::string::str::stpncpy(&mut impl_dst, &src, n);
+    let repair = (hardened && !defined).then_some("ClampSize");
+    let impl_output = format_return_dst_output(return_offset, &impl_dst, repair);
+    let host_output = if defined {
+        let (host_dst, host_offset) = run_host_stpncpy(&src, dst_len, n);
+        format_return_dst_output(host_offset, &host_dst, None)
+    } else {
+        String::from("UB")
+    };
+    let host_parity = defined && host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: if hardened && !defined {
+            Some(String::from(
+                "hardened mode clamps stpncpy length to destination bounds",
+            ))
+        } else {
+            None
+        },
+    })
+}
+
+fn execute_strcpy_small_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let src = parse_u8_vec(inputs, "src")?;
+    let dst_len = parse_usize(inputs, "dst_len")?;
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    let src_len = c_string_len(&src).unwrap_or(src.len());
+    let defined = src.contains(&0) && dst_len > src_len;
+
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let mut impl_dst = vec![0_u8; dst_len];
+    if defined {
+        frankenlibc_core::string::str::strcpy(&mut impl_dst, &src);
+    } else {
+        let copy_len = src_len.min(dst_len.saturating_sub(1));
+        if copy_len > 0 {
+            impl_dst[..copy_len].copy_from_slice(&src[..copy_len]);
+        }
+        if dst_len > 0 {
+            impl_dst[copy_len] = 0;
+        }
+    }
+    let repair = (hardened && !defined).then_some("TruncateWithNull");
+    let impl_output = format_return_dst_output(0, &impl_dst, repair);
+    let host_output = if defined {
+        format_return_dst_output(0, &run_host_strcpy(&src, dst_len), None)
+    } else {
+        String::from("UB")
+    };
+    let host_parity = defined && host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: if hardened && !defined {
+            Some(String::from(
+                "hardened mode truncates __strcpy_small to destination bounds",
+            ))
+        } else {
+            None
+        },
+    })
+}
+
+fn execute_strcasecmp_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let s1 = parse_u8_vec_any(inputs, &["s1", "lhs", "a"])?;
+    let s2 = parse_u8_vec_any(inputs, &["s2", "rhs", "b"])?;
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    let defined = s1.contains(&0) && s2.contains(&0);
+
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let impl_output = frankenlibc_core::string::str::strcasecmp(&s1, &s2)
+        .signum()
+        .to_string();
+    let host_output = if defined {
+        unsafe { host_strcasecmp(s1.as_ptr().cast(), s2.as_ptr().cast()) }
+            .signum()
+            .to_string()
+    } else {
+        String::from("UB")
+    };
+    let host_parity = defined && host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: if hardened && !defined {
+            Some(String::from(
+                "hardened mode bounds strcasecmp to fixture input bytes",
+            ))
+        } else {
+            None
+        },
+    })
+}
+
+fn execute_strcasestr_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let haystack = parse_u8_vec_any(inputs, &["haystack", "s"])?;
+    let needle = parse_u8_vec(inputs, "needle")?;
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    let defined = haystack.contains(&0) && needle.contains(&0);
+
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let impl_val = frankenlibc_core::string::str::strcasestr(&haystack, &needle);
+    let impl_output = format!("{impl_val:?}");
+    let host_output = if defined {
+        let ptr = unsafe { host_strcasestr(haystack.as_ptr().cast(), needle.as_ptr().cast()) };
+        if ptr.is_null() {
+            String::from("None")
+        } else {
+            format!("Some({})", ptr as usize - haystack.as_ptr() as usize)
+        }
+    } else {
+        String::from("UB")
+    };
+    let host_parity = defined && host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: if hardened && !defined {
+            Some(String::from(
+                "hardened mode bounds strcasestr to fixture input bytes",
+            ))
+        } else {
+            None
+        },
+    })
+}
+
+fn execute_strcoll_l_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let s1 = parse_u8_vec_any(inputs, &["s1", "lhs", "a"])?;
+    let s2 = parse_u8_vec_any(inputs, &["s2", "rhs", "b"])?;
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    let defined = s1.contains(&0) && s2.contains(&0);
+
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let impl_output = frankenlibc_core::string::str::strcoll(&s1, &s2)
+        .signum()
+        .to_string();
+    let host_output = if defined {
+        unsafe { libc::strcoll(s1.as_ptr().cast(), s2.as_ptr().cast()) }
+            .signum()
+            .to_string()
+    } else {
+        String::from("UB")
+    };
+    let host_parity = defined && host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: if hardened && !defined {
+            Some(String::from(
+                "hardened mode uses C-locale string collation contract",
+            ))
+        } else {
+            None
+        },
+    })
+}
+
+fn execute_strcspn_c1_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let s = parse_u8_vec_any(inputs, &["s", "haystack"])?;
+    let reject = parse_usize(inputs, "reject").or_else(|_| parse_usize(inputs, "c"))?;
+    if reject > u8::MAX as usize {
+        return Err(format!("__strcspn_c1 reject byte out of range: {reject}"));
+    }
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    let defined = s.contains(&0);
+
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let reject_buf = [reject as u8, 0_u8];
+    let impl_output = frankenlibc_core::string::str::strcspn(&s, &reject_buf).to_string();
+    let host_output = if defined {
+        unsafe { libc::strcspn(s.as_ptr().cast(), reject_buf.as_ptr().cast()) }.to_string()
+    } else {
+        String::from("UB")
+    };
+    let host_parity = defined && host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: if hardened && !defined {
+            Some(String::from(
+                "hardened mode bounds __strcspn_c1 to fixture input bytes",
+            ))
+        } else {
+            None
+        },
     })
 }
 
@@ -15766,6 +16339,78 @@ mod tests {
                 "{context} note mismatch: expected fragment={note_fragment:?} actual={note:?}"
             );
         }
+    }
+
+    #[test]
+    fn string_hotpath_first_wave_boundary_cases_execute() {
+        assert_differential_contract(
+            "string_hotpath_fixture_wave",
+            "__memcmpeq zero-length comparison is defined and equal",
+            "tests/conformance/fixtures/string_ops.json",
+            "__memcmpeq",
+            "strict",
+            serde_json::json!({ "s1": [1, 2], "s2": [9, 8], "n": 0 }),
+            "0",
+            Some("0"),
+            true,
+            None,
+        );
+        assert_differential_contract(
+            "string_hotpath_fixture_wave",
+            "__rawmemchr can find the first byte at offset zero",
+            "tests/conformance/fixtures/string_ops.json",
+            "__rawmemchr",
+            "strict",
+            serde_json::json!({ "s": [0, 65, 66], "c": 0 }),
+            "Some(0)",
+            Some("Some(0)"),
+            true,
+            None,
+        );
+    }
+
+    #[test]
+    fn string_hotpath_first_wave_return_pointer_cases_execute() {
+        assert_differential_contract(
+            "string_hotpath_fixture_wave",
+            "__mempcpy records destination bytes and return offset",
+            "tests/conformance/fixtures/string_ops.json",
+            "__mempcpy",
+            "strict",
+            serde_json::json!({ "src": [1, 2, 0, 255], "dst_len": 6, "n": 4 }),
+            "return=4,dst=[1, 2, 0, 255, 0, 0]",
+            Some("return=4,dst=[1, 2, 0, 255, 0, 0]"),
+            true,
+            None,
+        );
+        assert_differential_contract(
+            "string_hotpath_fixture_wave",
+            "__stpncpy records NUL-padding and return offset",
+            "tests/conformance/fixtures/string_ops.json",
+            "__stpncpy",
+            "strict",
+            serde_json::json!({ "src": [97, 0], "dst_len": 6, "n": 5 }),
+            "return=1,dst=[97, 0, 0, 0, 0, 0]",
+            Some("return=1,dst=[97, 0, 0, 0, 0, 0]"),
+            true,
+            None,
+        );
+    }
+
+    #[test]
+    fn string_hotpath_first_wave_invalid_input_clamps_in_hardened_mode() {
+        assert_differential_contract(
+            "string_hotpath_fixture_wave",
+            "__mempcpy oversized request is explicit hardened repair evidence",
+            "tests/conformance/fixtures/string_ops.json",
+            "__mempcpy",
+            "hardened",
+            serde_json::json!({ "src": [1, 2, 3, 4], "dst_len": 2, "n": 4 }),
+            "return=2,dst=[1, 2],repair=ClampSize",
+            Some("UB"),
+            false,
+            Some("clamps"),
+        );
     }
 
     fn seeded_invalid_utf8_pair(seed: u64) -> [u8; 2] {

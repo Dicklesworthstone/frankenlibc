@@ -59,26 +59,26 @@
     },
     {
       "campaign_id": "fcq-string-memory-hotpaths",
-      "current_coverage_pct": 17.12,
+      "current_coverage_pct": 25.34,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/ld_preload_smoke.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 25.34,
+      "expected_coverage_after_first_wave_pct": 33.56,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "__memcmpeq",
-        "__mempcpy",
-        "__rawmemchr",
-        "__stpcpy",
-        "__stpcpy_small",
-        "__stpncpy",
-        "__strcasecmp",
-        "__strcasecmp_l",
-        "__strcasestr",
-        "__strcoll_l",
-        "__strcpy_small",
-        "__strcspn_c1"
+        "__strcspn_c2",
+        "__strcspn_c3",
+        "__strdup",
+        "__strerror_r",
+        "__strfmon_l",
+        "__strftime_l",
+        "__strncasecmp_l",
+        "__strndup",
+        "__strpbrk_c2",
+        "__strpbrk_c3",
+        "__strsep_1c",
+        "__strsep_2c"
       ],
       "module": "string_abi",
       "next_step": "Grow boundary, overlap, empty, invalid pointer, locale, and perf guard fixtures for uncovered string families.",
@@ -91,20 +91,20 @@
         "semantic_divergence"
       ],
       "scores": {
-        "coverage_gap_score": 121,
+        "coverage_gap_score": 109,
         "feature_gap_risk_score": 3,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 2,
         "parity_risk_score": 5,
-        "priority_score": 2521,
+        "priority_score": 2509,
         "semantic_risk_score": 0,
         "workload_risk_score": 5
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "mem*, str*, collation-adjacent string helpers, and GNU string extensions",
-      "target_covered": 25,
+      "target_covered": 37,
       "target_total": 146,
-      "target_uncovered": 121,
+      "target_uncovered": 109,
       "title": "string and memory hot-path fixture wave",
       "workload_domains": [
         "performance_sensitive",
@@ -1302,7 +1302,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3728,
+    "all_uncovered_target_symbols": 3716,
     "campaign_count": 18,
     "covered_modules": [
       "dlfcn_abi",
@@ -1341,7 +1341,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3346,
+    "selected_target_uncovered_symbols": 3334,
     "total_first_wave_fixture_count": 196
   }
 }

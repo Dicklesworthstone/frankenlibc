@@ -1,0 +1,77 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-bp8fl.4.4",
+  "family_id": "string_ops",
+  "campaign_id": "fcq-string-memory-hotpaths",
+  "module": "string_abi",
+  "fixture_path": "tests/conformance/fixtures/string_ops.json",
+  "test_path": "crates/frankenlibc-harness/tests/string_ops_conformance_test.rs",
+  "script_path": "scripts/check_string_hotpath_fixture_wave.sh",
+  "why_low_risk_high_count": {
+    "prioritizer_rank": 2,
+    "target_total_before": 146,
+    "target_covered_before": 25,
+    "target_uncovered_before": 121,
+    "implementation_complexity_score": 2,
+    "hard_parts_risk_tags": [],
+    "rationale": "String/memory hot-path aliases are high-count exported coverage gaps with existing ABI/core support and deterministic byte/string oracles; this is scaling proof for fixture machinery, not hard-parts replacement work."
+  },
+  "coverage_delta": {
+    "target_covered_after": 37,
+    "target_uncovered_after": 109,
+    "added_symbol_count": 12
+  },
+  "covered_symbols": [
+    "__memcmpeq",
+    "__mempcpy",
+    "__rawmemchr",
+    "__stpcpy",
+    "__stpcpy_small",
+    "__stpncpy",
+    "__strcasecmp",
+    "__strcasecmp_l",
+    "__strcasestr",
+    "__strcoll_l",
+    "__strcpy_small",
+    "__strcspn_c1"
+  ],
+  "remaining_uncovered_policy": {
+    "source": "tests/conformance/symbol_fixture_coverage.v1.json families[string_abi].target_uncovered_symbols",
+    "hard_parts_scope_intact": "Remaining string tail still excludes resolver/NSS/loader/stdio/pthread hard-parts campaigns; this fixture wave only proves low-risk high-count scaling."
+  },
+  "oracle_kind": "glibc_fixture_oracle",
+  "runner_evidence": {
+    "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
+    "isolated_runner": "harness conformance-matrix-case",
+    "required_direct_tokens": [
+      "frankenlibc_fixture_exec::execute_fixture_case",
+      "execute_fixture_case(&case.function",
+      "failed to execute directly"
+    ],
+    "required_isolated_tokens": [
+      "execute_case_via_harness",
+      "conformance-matrix-case",
+      "failed to wait on harness subprocess"
+    ]
+  },
+  "coverage_artifacts": {
+    "symbol_fixture_coverage": "tests/conformance/symbol_fixture_coverage.v1.json",
+    "per_symbol_fixture_tests": "tests/conformance/per_symbol_fixture_tests.v1.json",
+    "fixture_coverage_prioritizer": "tests/conformance/fixture_coverage_prioritizer.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "family_id",
+    "symbol",
+    "fixture_id",
+    "runner_kind",
+    "runtime_mode",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ]
+}
