@@ -1,0 +1,576 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-b92jd.1.1",
+  "title": "Replace-mode host-dependency probe plan",
+  "purpose": "Inventory the deterministic probes required to distinguish L0/L1 LD_PRELOAD interpose evidence from L2/L3 standalone replacement evidence.",
+  "inputs": {
+    "support_matrix": "support_matrix.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "replacement_profile": "tests/conformance/replacement_profile.json",
+    "host_dependency_inventory": "tests/conformance/host_libc_dependency_inventory.v1.json",
+    "standalone_readiness_matrix": "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+    "l1_startup_tls_matrix": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map"
+  },
+  "generated_outputs": {
+    "report_path": "target/conformance/standalone_host_dependency_probe_plan.report.json",
+    "log_path": "target/conformance/standalone_host_dependency_probe_plan.log.jsonl",
+    "checker": "scripts/check_standalone_host_dependency_probe_plan.sh"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "probe_id",
+    "probe_type",
+    "replacement_level",
+    "evidence_boundary",
+    "tool",
+    "command",
+    "expected",
+    "actual_decision",
+    "source_commit",
+    "target_dir",
+    "artifact_refs",
+    "failure_signature"
+  ],
+  "required_probe_types": [
+    "l0_interpose_reference",
+    "replace_artifact_presence",
+    "dynamic_dependency_readelf",
+    "ldd_host_glibc_scan",
+    "undefined_symbol_nm",
+    "version_script_export_nodes",
+    "support_matrix_status_join",
+    "replacement_profile_allowlist_join",
+    "crt_startup_contract",
+    "tls_init_destructor_contract",
+    "atexit_on_exit_contract",
+    "errno_tls_isolation_contract",
+    "artifact_freshness",
+    "negative_claim_control"
+  ],
+  "tool_requirements": [
+    {
+      "tool": "readelf",
+      "probe_types": [
+        "dynamic_dependency_readelf",
+        "version_script_export_nodes"
+      ],
+      "missing_tool_behavior": "probe_blocked"
+    },
+    {
+      "tool": "ldd",
+      "probe_types": [
+        "ldd_host_glibc_scan"
+      ],
+      "missing_tool_behavior": "probe_blocked"
+    },
+    {
+      "tool": "nm",
+      "probe_types": [
+        "undefined_symbol_nm"
+      ],
+      "missing_tool_behavior": "probe_blocked"
+    }
+  ],
+  "artifact_freshness_policy": {
+    "source_commit_policy": "checker_records_current_git_head",
+    "replace_artifact": "target/release/libfrankenlibc_replace.so",
+    "preload_artifact": "target/release/libfrankenlibc_abi.so",
+    "staleness_rule": "replacement artifacts must have mtime greater than or equal to HEAD commit time before any L2/L3 pass row is accepted",
+    "missing_artifact_decision": "claim_blocked",
+    "stale_artifact_decision": "claim_blocked"
+  },
+  "negative_claim_tests": [
+    {
+      "id": "missing_replace_artifact",
+      "mutation": "remove or omit target/release/libfrankenlibc_replace.so",
+      "expected_result": "claim_blocked",
+      "failure_signature": "replace_artifact_missing"
+    },
+    {
+      "id": "stale_source_commit",
+      "mutation": "emit rows from a source_commit different from current HEAD",
+      "expected_result": "claim_blocked",
+      "failure_signature": "source_commit_stale"
+    },
+    {
+      "id": "residual_host_glibc_dependency",
+      "mutation": "readelf or ldd observes libc.so.6 for an L2/L3 replacement artifact",
+      "expected_result": "claim_blocked",
+      "failure_signature": "host_glibc_dependency_present"
+    },
+    {
+      "id": "missing_startup_tls_rows",
+      "mutation": "drop CRT, TLS, atexit, or errno obligation rows",
+      "expected_result": "claim_blocked",
+      "failure_signature": "startup_tls_obligation_missing"
+    },
+    {
+      "id": "conflicting_claim_row",
+      "mutation": "set an L2/L3 probe actual_decision to evidence_allowed without positive artifact evidence",
+      "expected_result": "claim_blocked",
+      "failure_signature": "replace_claim_conflict"
+    }
+  ],
+  "probe_rows": [
+    {
+      "probe_id": "l0_interpose_host_dependency_reference",
+      "probe_type": "l0_interpose_reference",
+      "title": "Treat existing host dependency inventory as L0/L1 interpose evidence only",
+      "replacement_level": "L0,L1",
+      "evidence_boundary": "interpose",
+      "tool": "source_inventory",
+      "command_argv": [
+        "bash",
+        "scripts/check_host_libc_dependency_inventory.sh"
+      ],
+      "input_artifacts": [
+        "tests/conformance/host_libc_dependency_inventory.v1.json",
+        "tests/conformance/replacement_profile.json",
+        "tests/conformance/replacement_levels.json"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_abi.so"
+      ],
+      "expected": "Host glibc dependencies may be inventoried for LD_PRELOAD interpose evidence but cannot satisfy L2/L3 replacement claims.",
+      "current_status": "source_inventory",
+      "expected_decision": "evidence_allowed",
+      "actual_decision": "evidence_allowed",
+      "failure_signature": "none",
+      "blocks_promotion_to": [],
+      "artifact_refs": [
+        "tests/conformance/host_libc_dependency_inventory.v1.json",
+        "scripts/check_host_libc_dependency_inventory.sh"
+      ]
+    },
+    {
+      "probe_id": "replace_artifact_presence",
+      "probe_type": "replace_artifact_presence",
+      "title": "Require a dedicated replacement artifact before L2/L3 evidence can pass",
+      "replacement_level": "L2,L3",
+      "evidence_boundary": "replace_artifact",
+      "tool": "path_exists",
+      "command_argv": [
+        "test",
+        "-f",
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "input_artifacts": [
+        "tests/conformance/replacement_levels.json"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "expected": "A current libfrankenlibc_replace.so artifact exists before direct-link replacement probes are accepted.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "replace_artifact_missing",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "tests/conformance/replacement_levels.json"
+      ]
+    },
+    {
+      "probe_id": "readelf_dynamic_dependencies",
+      "probe_type": "dynamic_dependency_readelf",
+      "title": "Audit DT_NEEDED entries on replacement artifact",
+      "replacement_level": "L2,L3",
+      "evidence_boundary": "elf_dynamic",
+      "tool": "readelf",
+      "command_argv": [
+        "readelf",
+        "-d",
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "input_artifacts": [
+        "tests/conformance/replacement_levels.json"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "expected": "No DT_NEEDED entry references libc.so.6 for L3, and any L2 host dependency is explicitly scoped to a declared non-replaced subsystem.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "replace_artifact_missing",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ]
+    },
+    {
+      "probe_id": "ldd_host_glibc_scan",
+      "probe_type": "ldd_host_glibc_scan",
+      "title": "Run ldd against replacement artifact to catch loader-visible host libc edges",
+      "replacement_level": "L2,L3",
+      "evidence_boundary": "loader_runtime",
+      "tool": "ldd",
+      "command_argv": [
+        "ldd",
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "input_artifacts": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "expected": "ldd output contains no unapproved libc.so.6, libpthread, libdl, or ld-linux dependency for the claimed replacement level.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "replace_artifact_missing",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ]
+    },
+    {
+      "probe_id": "nm_undefined_host_symbols",
+      "probe_type": "undefined_symbol_nm",
+      "title": "Inspect undefined dynamic symbols for host-glibc escape hatches",
+      "replacement_level": "L2,L3",
+      "evidence_boundary": "symbol_table",
+      "tool": "nm",
+      "command_argv": [
+        "nm",
+        "-D",
+        "--undefined-only",
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "input_artifacts": [
+        "tests/conformance/replacement_profile.json",
+        "support_matrix.json"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "expected": "Undefined host libc symbols are absent for L3 and are explicitly allowlisted for any L2 subset boundary.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "replace_artifact_missing",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "tests/conformance/replacement_profile.json",
+        "support_matrix.json"
+      ]
+    },
+    {
+      "probe_id": "version_script_export_nodes",
+      "probe_type": "version_script_export_nodes",
+      "title": "Join replacement export claims to GNU version-script nodes",
+      "replacement_level": "L1,L2,L3",
+      "evidence_boundary": "abi_versioning",
+      "tool": "readelf",
+      "command_argv": [
+        "readelf",
+        "--version-info",
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "input_artifacts": [
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "support_matrix.json"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "expected": "Every claimed replacement export has the expected GLIBC version node and no missing default symbol version.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "versioned_symbol_audit_missing",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "support_matrix.json"
+      ]
+    },
+    {
+      "probe_id": "support_matrix_status_join",
+      "probe_type": "support_matrix_status_join",
+      "title": "Reject replacement promotion when claimed subset rows still rely on host call-through status",
+      "replacement_level": "L2,L3",
+      "evidence_boundary": "support_matrix",
+      "tool": "json_join",
+      "command_argv": [
+        "jq",
+        ".symbols[] | select(.status == \"GlibcCallThrough\" or .status == \"WrapsHostLibc\")",
+        "support_matrix.json"
+      ],
+      "input_artifacts": [
+        "support_matrix.json",
+        "tests/conformance/replacement_levels.json"
+      ],
+      "target_artifacts": [],
+      "expected": "Declared L2/L3 replacement subset rows are Implemented or RawSyscall, never GlibcCallThrough or WrapsHostLibc.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "support_matrix_replace_subset_unproven",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/replacement_levels.json"
+      ]
+    },
+    {
+      "probe_id": "replacement_profile_allowlist_join",
+      "probe_type": "replacement_profile_allowlist_join",
+      "title": "Run replacement guard with zero host call-through tolerance",
+      "replacement_level": "L2,L3",
+      "evidence_boundary": "source_callthrough",
+      "tool": "replacement_guard",
+      "command_argv": [
+        "bash",
+        "scripts/check_replacement_guard.sh",
+        "replacement"
+      ],
+      "input_artifacts": [
+        "tests/conformance/replacement_profile.json",
+        "scripts/check_replacement_guard.sh"
+      ],
+      "target_artifacts": [],
+      "expected": "Replacement mode has zero unapproved libc:: or host_pthread_* source escape hatches.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "replacement_zero_callthrough_unproven",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "tests/conformance/replacement_profile.json",
+        "scripts/check_replacement_guard.sh"
+      ]
+    },
+    {
+      "probe_id": "crt_startup_contract",
+      "probe_type": "crt_startup_contract",
+      "title": "Require owned CRT startup handoff evidence",
+      "replacement_level": "L2,L3",
+      "evidence_boundary": "crt_startup",
+      "tool": "proof_matrix_join",
+      "command_argv": [
+        "jq",
+        ".proof_rows[] | select(.surface == \"loader_startup\" or .surface == \"crt_objects\")",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "input_artifacts": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "expected": "Direct-link startup proves owned CRT objects, __libc_start_main behavior, init/fini ordering, and no host CRT requirement.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "crt_startup_evidence_missing",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"
+      ]
+    },
+    {
+      "probe_id": "tls_init_destructor_contract",
+      "probe_type": "tls_init_destructor_contract",
+      "title": "Require standalone process and pthread TLS initialization/destructor evidence",
+      "replacement_level": "L2,L3",
+      "evidence_boundary": "tls",
+      "tool": "proof_matrix_join",
+      "command_argv": [
+        "jq",
+        ".proof_rows[] | select(.surface == \"tls\" or .surface == \"destructors\")",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "input_artifacts": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "tests/conformance/pthread_cancellation_robust_tls_fixture_pack.v1.json"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "expected": "Standalone replacement initializes process TLS and replays pthread TLS destructor ordering without host CRT help.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "tls_evidence_missing",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "tests/conformance/pthread_cancellation_robust_tls_fixture_pack.v1.json"
+      ]
+    },
+    {
+      "probe_id": "atexit_on_exit_contract",
+      "probe_type": "atexit_on_exit_contract",
+      "title": "Require destructor and process-exit callback ordering evidence",
+      "replacement_level": "L2,L3",
+      "evidence_boundary": "process_exit",
+      "tool": "proof_matrix_join",
+      "command_argv": [
+        "jq",
+        ".proof_rows[] | select(.surface == \"destructors\" or .surface == \"init_fini\")",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "input_artifacts": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "tests/integration/fixture_startup.c"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "expected": "fini_array, rtld_fini, atexit, on_exit, and C++ destructors run in a documented direct-link order.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "atexit_on_exit_evidence_missing",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "tests/integration/fixture_startup.c"
+      ]
+    },
+    {
+      "probe_id": "errno_tls_isolation_contract",
+      "probe_type": "errno_tls_isolation_contract",
+      "title": "Require errno and secure-mode ownership evidence",
+      "replacement_level": "L2,L3",
+      "evidence_boundary": "errno_tls",
+      "tool": "proof_matrix_join",
+      "command_argv": [
+        "jq",
+        ".proof_rows[] | select(.surface == \"secure_execution_mode\" or .surface == \"tls\")",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "input_artifacts": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "expected": "errno storage, per-thread isolation, AT_SECURE environment behavior, and diagnostics are owned by the replacement artifact.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "errno_tls_evidence_missing",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"
+      ]
+    },
+    {
+      "probe_id": "replace_artifact_freshness",
+      "probe_type": "artifact_freshness",
+      "title": "Reject stale replacement artifact evidence",
+      "replacement_level": "L2,L3",
+      "evidence_boundary": "freshness",
+      "tool": "stat",
+      "command_argv": [
+        "stat",
+        "-c",
+        "%Y",
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "input_artifacts": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "expected": "Replacement artifact mtime is current relative to HEAD and emitted rows carry the current source_commit.",
+      "current_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "replace_artifact_missing",
+      "blocks_promotion_to": [
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ]
+    },
+    {
+      "probe_id": "negative_claim_control",
+      "probe_type": "negative_claim_control",
+      "title": "Keep L1/L2/L3 prose and release tags blocked until positive rows exist",
+      "replacement_level": "L1,L2,L3",
+      "evidence_boundary": "claim_control",
+      "tool": "replacement_levels_gate",
+      "command_argv": [
+        "bash",
+        "scripts/check_replacement_levels.sh"
+      ],
+      "input_artifacts": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "target_artifacts": [],
+      "expected": "current_level and release_tag_policy.current_release_level remain L0, while blocked replacement obligations prevent unsupported promotion.",
+      "current_status": "enforced",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "replacement_claim_control_active",
+      "blocks_promotion_to": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "artifact_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "scripts/check_replacement_levels.sh"
+      ]
+    }
+  ],
+  "summary": {
+    "probe_count": 14,
+    "required_probe_type_count": 14,
+    "claim_blocked_count": 13,
+    "l2_l3_blocker_count": 13,
+    "negative_claim_test_count": 5,
+    "tool_count": 10
+  }
+}
