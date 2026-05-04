@@ -11,6 +11,7 @@
 //! Filed under [bd-xn6p8] follow-up.
 
 use std::ffi::{c_char, c_int};
+use std::os::unix::ffi::OsStrExt;
 
 use frankenlibc_abi::stdlib_abi as fl;
 use frankenlibc_abi::unistd_abi as fl_unistd;
@@ -120,6 +121,20 @@ fn diff_mkostemp_with_o_cloexec_sets_close_on_exec() {
 }
 
 #[test]
+fn diff_mkostemps_invalid_template_returns_einval() {
+    let mut t1 = b"/tmp/fl_mkostemps_no_marker.tmp\0".to_vec();
+    let mut t2 = b"/tmp/fl_mkostemps_no_marker.tmp\0".to_vec();
+    let fl_fd = unsafe { fl::mkostemps(t1.as_mut_ptr() as *mut c_char, 4, libc::O_CLOEXEC) };
+    let fl_e = unsafe { *libc::__errno_location() };
+    let lc_fd = unsafe { mkostemps(t2.as_mut_ptr() as *mut c_char, 4, libc::O_CLOEXEC) };
+    let lc_e = unsafe { *libc::__errno_location() };
+    assert_eq!(fl_fd, lc_fd);
+    assert_eq!(fl_fd, -1);
+    assert_eq!(fl_e, lc_e, "errno: fl={fl_e} lc={lc_e}");
+    assert_eq!(fl_e, libc::EINVAL);
+}
+
+#[test]
 fn diff_mkdtemp_creates_directory() {
     let mut t1 = nano_template("mkdtemp_a_XXXXXX");
     let mut t2 = nano_template("mkdtemp_b_XXXXXX");
@@ -130,11 +145,10 @@ fn diff_mkdtemp_creates_directory() {
     // Verify the dirs exist.
     let s1 = unsafe { std::ffi::CStr::from_ptr(t1.as_ptr() as *const c_char) };
     let s2 = unsafe { std::ffi::CStr::from_ptr(t2.as_ptr() as *const c_char) };
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    assert_eq!(unsafe { libc::stat(s1.as_ptr(), &mut st) }, 0);
-    assert!(st.st_mode & libc::S_IFDIR == libc::S_IFDIR);
-    assert_eq!(unsafe { libc::stat(s2.as_ptr(), &mut st) }, 0);
-    assert!(st.st_mode & libc::S_IFDIR == libc::S_IFDIR);
+    let p1 = std::path::Path::new(std::ffi::OsStr::from_bytes(s1.to_bytes()));
+    let p2 = std::path::Path::new(std::ffi::OsStr::from_bytes(s2.to_bytes()));
+    assert!(std::fs::metadata(p1).is_ok_and(|m| m.is_dir()));
+    assert!(std::fs::metadata(p2).is_ok_and(|m| m.is_dir()));
     unsafe {
         libc::rmdir(s1.as_ptr());
         libc::rmdir(s2.as_ptr());
@@ -154,6 +168,6 @@ fn diff_mkdtemp_invalid_template_rejected() {
 #[test]
 fn mkstemp_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libc mkstemp + mkstemps + mkostemp + mkdtemp\",\"reference\":\"glibc\",\"functions\":4,\"divergences\":0}}",
+        "{{\"family\":\"libc mkstemp + mkstemps + mkostemp + mkostemps + mkdtemp\",\"reference\":\"glibc\",\"functions\":5,\"divergences\":0}}",
     );
 }
