@@ -1,0 +1,218 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.7.4",
+  "trace_id": "bd-bp8fl-7-4-changed-surface-validation-checklist-v1",
+  "generated_at_utc": "2026-05-04T12:31:00Z",
+  "artifact_freshness": {
+    "freshness_state": "current",
+    "source_commit": "7fdc46fa",
+    "policy": "The checklist artifact is current at generation time; the gate rejects artifacts marked stale, unknown, or regenerated without a source commit."
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "changed_file",
+    "validation_command",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "required_changed_files": [
+    ".beads/issues.jsonl",
+    "crates/frankenlibc-harness/tests/changed_surface_validation_checklist_test.rs",
+    "scripts/check_changed_surface_validation_checklist.sh",
+    "tests/conformance/changed_surface_validation_checklist.v1.json"
+  ],
+  "changed_files": [
+    {
+      "changed_file": ".beads/issues.jsonl",
+      "owner_bead": "bd-bp8fl.7.4",
+      "affected_crates": [
+        "beads"
+      ],
+      "targeted_cargo_commands": [],
+      "targeted_cargo_skip_justification": "Tracker-only hunk; Rust behavior is covered through the changed harness test row.",
+      "ubs_command": "ubs .beads/issues.jsonl",
+      "fixture_e2e_scripts": [
+        "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
+      ],
+      "artifact_regeneration_commands": [
+        "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
+      ],
+      "br_bv_commands": [
+        "br dep cycles --no-db --json"
+      ],
+      "unrelated_failure_note": "Unrelated dirty harness/docs files and tmp.*.ec files remain unstaged; workspace fmt drift is reported by bd-bp8fl.7.3 and is not normalized away here.",
+      "expected": "Tracker close hunk is staged only with matching changed-surface validation evidence.",
+      "actual": "Checklist requires br graph proof, artifact regeneration, UBS coverage, and an unrelated-failure note.",
+      "artifact_refs": [
+        ".beads/issues.jsonl",
+        "target/conformance/bd-bp8fl.7.4/changed_surface_validation_checklist.report.json",
+        "target/conformance/bd-bp8fl.7.4/changed_surface_validation_checklist.log.jsonl"
+      ],
+      "source_commit": "7fdc46fa",
+      "target_dir": "target/conformance/bd-bp8fl.7.4",
+      "failure_signature": "changed_surface_tracker_evidence_missing"
+    },
+    {
+      "changed_file": "crates/frankenlibc-harness/tests/changed_surface_validation_checklist_test.rs",
+      "owner_bead": "bd-bp8fl.7.4",
+      "affected_crates": [
+        "frankenlibc-harness"
+      ],
+      "targeted_cargo_commands": [
+        "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bp8fl-7-4-test2 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo test -p frankenlibc-harness --test changed_surface_validation_checklist_test -- --nocapture",
+        "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bp8fl-7-4-clippy2 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo clippy -p frankenlibc-harness --test changed_surface_validation_checklist_test -- -D warnings"
+      ],
+      "targeted_cargo_skip_justification": "",
+      "ubs_command": "ubs crates/frankenlibc-harness/tests/changed_surface_validation_checklist_test.rs scripts/check_changed_surface_validation_checklist.sh",
+      "fixture_e2e_scripts": [
+        "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
+      ],
+      "artifact_regeneration_commands": [
+        "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
+      ],
+      "br_bv_commands": [
+        "br dep cycles --no-db --json"
+      ],
+      "unrelated_failure_note": "Focused harness test covers checklist schema, missing changed-file rows, missing targeted cargo gates, stale artifacts, skipped UBS without justification, and missing unrelated-failure notes.",
+      "expected": "Harness test changes have targeted cargo test/clippy proof and fail-closed mutations.",
+      "actual": "Checklist records the focused rch test/clippy commands and gate replay script.",
+      "artifact_refs": [
+        "crates/frankenlibc-harness/tests/changed_surface_validation_checklist_test.rs",
+        "scripts/check_changed_surface_validation_checklist.sh",
+        "tests/conformance/changed_surface_validation_checklist.v1.json"
+      ],
+      "source_commit": "7fdc46fa",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-bp8fl-7-4-test2",
+      "failure_signature": "changed_surface_harness_validation_missing"
+    },
+    {
+      "changed_file": "scripts/check_changed_surface_validation_checklist.sh",
+      "owner_bead": "bd-bp8fl.7.4",
+      "affected_crates": [
+        "frankenlibc-harness",
+        "scripts"
+      ],
+      "targeted_cargo_commands": [
+        "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bp8fl-7-4-test2 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo test -p frankenlibc-harness --test changed_surface_validation_checklist_test -- --nocapture"
+      ],
+      "targeted_cargo_skip_justification": "",
+      "ubs_command": "ubs crates/frankenlibc-harness/tests/changed_surface_validation_checklist_test.rs scripts/check_changed_surface_validation_checklist.sh",
+      "fixture_e2e_scripts": [
+        "bash -n scripts/check_changed_surface_validation_checklist.sh",
+        "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
+      ],
+      "artifact_regeneration_commands": [
+        "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
+      ],
+      "br_bv_commands": [
+        "br dep cycles --no-db --json"
+      ],
+      "unrelated_failure_note": "The shell gate validates the checklist artifact only; broad cargo workspace state remains recorded by the workspace validation dashboard.",
+      "expected": "Script changes have syntax, e2e replay, artifact regeneration, UBS, and harness test coverage.",
+      "actual": "Checklist records bash -n, script replay, harness test, and clippy commands.",
+      "artifact_refs": [
+        "scripts/check_changed_surface_validation_checklist.sh",
+        "target/conformance/bd-bp8fl.7.4/changed_surface_validation_checklist.report.json",
+        "target/conformance/bd-bp8fl.7.4/changed_surface_validation_checklist.log.jsonl"
+      ],
+      "source_commit": "7fdc46fa",
+      "target_dir": "target/conformance/bd-bp8fl.7.4",
+      "failure_signature": "changed_surface_script_validation_missing"
+    },
+    {
+      "changed_file": "tests/conformance/changed_surface_validation_checklist.v1.json",
+      "owner_bead": "bd-bp8fl.7.4",
+      "affected_crates": [
+        "frankenlibc-harness",
+        "conformance"
+      ],
+      "targeted_cargo_commands": [
+        "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bp8fl-7-4-test2 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo test -p frankenlibc-harness --test changed_surface_validation_checklist_test -- --nocapture"
+      ],
+      "targeted_cargo_skip_justification": "",
+      "ubs_command": "ubs tests/conformance/changed_surface_validation_checklist.v1.json scripts/check_changed_surface_validation_checklist.sh",
+      "fixture_e2e_scripts": [
+        "jq empty tests/conformance/changed_surface_validation_checklist.v1.json",
+        "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
+      ],
+      "artifact_regeneration_commands": [
+        "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
+      ],
+      "br_bv_commands": [
+        "br dep cycles --no-db --json"
+      ],
+      "unrelated_failure_note": "JSON artifact captures the changed-surface contract and explicitly carries the residual unrelated-failure note into every closure row.",
+      "expected": "Conformance artifact changes have JSON parse, script replay, harness test, and freshness coverage.",
+      "actual": "Checklist records parse/replay/test commands and rejects stale freshness state.",
+      "artifact_refs": [
+        "tests/conformance/changed_surface_validation_checklist.v1.json",
+        "target/conformance/bd-bp8fl.7.4/changed_surface_validation_checklist.report.json",
+        "target/conformance/bd-bp8fl.7.4/changed_surface_validation_checklist.log.jsonl"
+      ],
+      "source_commit": "7fdc46fa",
+      "target_dir": "target/conformance/bd-bp8fl.7.4",
+      "failure_signature": "changed_surface_artifact_validation_missing"
+    }
+  ],
+  "fixture_replay_scenarios": [
+    {
+      "scenario_id": "complete-checklist",
+      "classification": "complete",
+      "expected_decision": "allow",
+      "expected_failure_signature": ""
+    },
+    {
+      "scenario_id": "missing-changed-file-row",
+      "classification": "missing_changed_file",
+      "expected_decision": "block",
+      "expected_failure_signature": "changed_surface_missing_changed_file"
+    },
+    {
+      "scenario_id": "missing-targeted-test",
+      "classification": "missing_targeted_test",
+      "expected_decision": "block",
+      "expected_failure_signature": "changed_surface_missing_targeted_cargo"
+    },
+    {
+      "scenario_id": "stale-artifact",
+      "classification": "stale_artifact",
+      "expected_decision": "block",
+      "expected_failure_signature": "changed_surface_stale_artifact"
+    },
+    {
+      "scenario_id": "skipped-ubs-without-justification",
+      "classification": "skipped_ubs_without_justification",
+      "expected_decision": "block",
+      "expected_failure_signature": "changed_surface_missing_ubs"
+    },
+    {
+      "scenario_id": "missing-unrelated-failure-note",
+      "classification": "missing_unrelated_failure_note",
+      "expected_decision": "block",
+      "expected_failure_signature": "changed_surface_missing_unrelated_failure_note"
+    },
+    {
+      "scenario_id": "missing-log-artifact-refs",
+      "classification": "missing_log_artifact_refs",
+      "expected_decision": "block",
+      "expected_failure_signature": "changed_surface_missing_artifact_refs"
+    }
+  ],
+  "closure_command_template": [
+    "jq empty tests/conformance/changed_surface_validation_checklist.v1.json",
+    "bash -n scripts/check_changed_surface_validation_checklist.sh",
+    "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/changed_surface_validation_checklist_test.rs",
+    "git diff --check -- .beads/issues.jsonl tests/conformance/changed_surface_validation_checklist.v1.json scripts/check_changed_surface_validation_checklist.sh crates/frankenlibc-harness/tests/changed_surface_validation_checklist_test.rs",
+    "ubs crates/frankenlibc-harness/tests/changed_surface_validation_checklist_test.rs scripts/check_changed_surface_validation_checklist.sh tests/conformance/changed_surface_validation_checklist.v1.json",
+    "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bp8fl-7-4-test2 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo test -p frankenlibc-harness --test changed_surface_validation_checklist_test -- --nocapture",
+    "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bp8fl-7-4-clippy2 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo clippy -p frankenlibc-harness --test changed_surface_validation_checklist_test -- -D warnings",
+    "br dep cycles --no-db --json"
+  ],
+  "next_safe_action": "Before closing a bead, stage only owned files and confirm every staged changed file has targeted cargo proof or a justification, UBS proof or a justification, fixture/e2e replay, artifact regeneration, br graph health, and an unrelated-failure note."
+}
