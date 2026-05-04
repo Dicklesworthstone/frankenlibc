@@ -30,6 +30,7 @@ pub mod proof_binder_proofs;
 pub mod proof_chain_e2e;
 pub mod report;
 pub mod runner;
+pub mod runtime_evidence_verifier;
 pub mod runtime_math_cpomdp_feasibility_proofs;
 pub mod runtime_math_determinism_proofs;
 pub mod runtime_math_divergence_bounds;

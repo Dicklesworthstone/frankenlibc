@@ -1899,10 +1899,11 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
 
             let _ = write!(
                 &mut out,
-                "{{\"schema\":\"{}\",\"schema_version\":\"{}\",\"timestamp\":\"{}\",\"trace_id\":\"{}\",\"bead_id\":\"{}\",\"scenario_id\":\"{}\",\"level\":\"{}\",\"event\":\"runtime_evidence\",\"controller_id\":\"runtime_math_kernel.v1\",\"decision_id\":{},\"policy_id\":{},\"evidence_seqno\":{},\"mode\":\"{}\",\"runtime_mode\":\"{}\",\"validation_profile\":\"{}\",\"decision_path\":\"{}\",\"decision_action\":\"{}\",\"healing_action\":{},\"denied\":{},\"latency_ns\":{},\"api_family\":\"{}\",\"symbol\":\"{}\",\"source_commit\":\"{}\",\"bounded_policy\":{{\"hot_path_io_enabled_by_default\":{},\"journal_enabled_by_default\":{},\"ring_capacity\":{},\"overflow_policy\":\"{}\"}},\"context\":{{\"addr_hint_redacted\":true,\"requested_bytes\":{},\"is_write\":{},\"contention_hint\":{},\"bloom_negative\":{}}},\"artifact_refs\":[",
+                "{{\"schema\":\"{}\",\"schema_version\":\"{}\",\"timestamp\":\"{}\",\"timestamp_mono_ns\":{},\"trace_id\":\"{}\",\"bead_id\":\"{}\",\"scenario_id\":\"{}\",\"level\":\"{}\",\"event\":\"runtime_evidence\",\"controller_id\":\"runtime_math_kernel.v1\",\"decision_id\":{},\"policy_id\":{},\"evidence_seqno\":{},\"mode\":\"{}\",\"runtime_mode\":\"{}\",\"validation_profile\":\"{}\",\"decision_path\":\"{}\",\"decision_action\":\"{}\",\"healing_action\":{},\"denied\":{},\"latency_ns\":{},\"api_family\":\"{}\",\"symbol\":\"{}\",\"source_commit\":\"{}\",\"bounded_policy\":{{\"hot_path_io_enabled_by_default\":{},\"journal_enabled_by_default\":{},\"ring_capacity\":{},\"overflow_policy\":\"{}\"}},\"context\":{{\"addr_hint_redacted\":true,\"requested_bytes\":{},\"is_write\":{},\"contention_hint\":{},\"bloom_negative\":{}}},\"artifact_refs\":[",
                 RUNTIME_EVIDENCE_JSONL_SCHEMA_V1,
                 MEMBRANE_SCHEMA_VERSION,
                 json_escape(&timestamp),
+                card.timestamp_mono_ns,
                 trace_id.as_str(),
                 json_escape(bead_id),
                 json_escape(scenario_id),
