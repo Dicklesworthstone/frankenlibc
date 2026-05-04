@@ -20,6 +20,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use parking_lot::Mutex;
+use serde_json::Value;
 
 use crate::config::SafetyLevel;
 use crate::heal::HealingAction;
@@ -27,6 +28,7 @@ use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId};
 use crate::runtime_math::{
     ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, ValidationProfile,
 };
+use crate::util::now_utc_iso_like;
 
 /// v1 symbol payload size (`T`).
 pub const EVIDENCE_SYMBOL_SIZE_T: usize = 128;
@@ -506,6 +508,101 @@ impl DecisionCardV1 {
             loss_evidence: None,
         }
     }
+}
+
+/// Stable JSONL schema name for runtime membrane-decision evidence rows.
+pub const RUNTIME_EVIDENCE_JSONL_SCHEMA_V1: &str = "runtime_evidence.decision.v1";
+
+/// Required top-level fields for [`RUNTIME_EVIDENCE_JSONL_SCHEMA_V1`].
+pub const RUNTIME_EVIDENCE_REQUIRED_FIELDS_V1: &[&str] = &[
+    "schema",
+    "schema_version",
+    "timestamp",
+    "trace_id",
+    "bead_id",
+    "event",
+    "mode",
+    "runtime_mode",
+    "validation_profile",
+    "decision_path",
+    "healing_action",
+    "denied",
+    "latency_ns",
+    "api_family",
+    "symbol",
+    "context",
+    "source_commit",
+    "artifact_refs",
+];
+
+pub const RUNTIME_EVIDENCE_DEFAULT_ARTIFACT_REFS: &[&str] =
+    &["crates/frankenlibc-membrane/src/runtime_math/evidence.rs"];
+
+/// Runtime evidence logging policy exposed for gates and replay tooling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeEvidenceLogPolicy {
+    pub hot_path_io_enabled_by_default: bool,
+    pub journal_enabled_by_default: bool,
+    pub bounded_ring_capacity: usize,
+    pub overflow_policy: &'static str,
+}
+
+impl RuntimeEvidenceLogPolicy {
+    #[must_use]
+    pub const fn bounded_ring(capacity: usize) -> Self {
+        Self {
+            hot_path_io_enabled_by_default: false,
+            journal_enabled_by_default: false,
+            bounded_ring_capacity: capacity,
+            overflow_policy: "overwrite_oldest_ring_slot",
+        }
+    }
+}
+
+/// Fail-closed validation errors for runtime evidence JSONL rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeEvidenceRowValidationError {
+    NotObject,
+    MissingRequiredField(&'static str),
+    WrongType(&'static str),
+    EmptyString(&'static str),
+    EmptyArtifactRefs,
+    UnexpectedValue(&'static str),
+}
+
+/// Validate one parsed runtime-evidence JSONL row against the v1 required-field contract.
+pub fn validate_runtime_evidence_row_v1(
+    row: &Value,
+) -> Result<(), RuntimeEvidenceRowValidationError> {
+    let obj = row
+        .as_object()
+        .ok_or(RuntimeEvidenceRowValidationError::NotObject)?;
+    for field in RUNTIME_EVIDENCE_REQUIRED_FIELDS_V1 {
+        if !obj.contains_key(*field) {
+            return Err(RuntimeEvidenceRowValidationError::MissingRequiredField(
+                field,
+            ));
+        }
+    }
+
+    expect_exact_string(row, "schema", RUNTIME_EVIDENCE_JSONL_SCHEMA_V1)?;
+    expect_exact_string(row, "event", "runtime_evidence")?;
+    expect_one_of(row, "mode", &["strict", "hardened"])?;
+    expect_one_of(row, "runtime_mode", &["strict", "hardened"])?;
+    expect_one_of(row, "validation_profile", &["Fast", "Full"])?;
+    expect_non_empty_string(row, "timestamp")?;
+    expect_non_empty_string(row, "trace_id")?;
+    expect_non_empty_string(row, "bead_id")?;
+    expect_non_empty_string(row, "decision_path")?;
+    expect_non_empty_string(row, "api_family")?;
+    expect_non_empty_string(row, "symbol")?;
+    expect_non_empty_string(row, "source_commit")?;
+    expect_bool(row, "denied")?;
+    expect_u64(row, "latency_ns")?;
+    expect_context(row)?;
+    expect_healing_action(row)?;
+    expect_artifact_refs(row)?;
+    Ok(())
 }
 
 /// Query filter for decision cards.
@@ -1753,6 +1850,98 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
         out
     }
 
+    /// Bounded logging policy for runtime evidence exports.
+    ///
+    /// Decision cards are always kept in the fixed-size in-memory ring; crash-safe
+    /// journaling is opt-in via `enable_decision_card_journal()`, so hot-path file
+    /// I/O stays disabled by default.
+    #[must_use]
+    pub const fn runtime_evidence_logging_policy(&self) -> RuntimeEvidenceLogPolicy {
+        RuntimeEvidenceLogPolicy::bounded_ring(CAP)
+    }
+
+    /// Export decision cards as v1 runtime evidence JSONL rows.
+    ///
+    /// This is a snapshot/export operation over the bounded ring, not a new
+    /// unbounded hot-path sink. If callers pass no artifact refs, the exporter
+    /// emits the evidence module path so every row remains traceable.
+    #[must_use]
+    pub fn export_runtime_evidence_jsonl(
+        &self,
+        bead_id: &str,
+        scenario_id: &str,
+        source_commit: &str,
+        artifact_refs: &[&str],
+    ) -> String {
+        let cards = self.decision_cards.snapshot_sorted();
+        let refs = if artifact_refs.is_empty() {
+            RUNTIME_EVIDENCE_DEFAULT_ARTIFACT_REFS
+        } else {
+            artifact_refs
+        };
+        let policy = self.runtime_evidence_logging_policy();
+        let timestamp = now_utc_iso_like();
+        let mut out = String::with_capacity(cards.len().saturating_mul(640).saturating_add(128));
+
+        for card in cards {
+            let decision_id = DecisionId::from_raw(card.decision_id);
+            let policy_id = PolicyId::from_raw(card.decision.policy_id);
+            let trace_id = decision_id.scoped_trace_id("runtime_math::runtime_evidence");
+            let runtime_mode = card_runtime_mode_name(&card);
+            let validation_profile = profile_name(card.decision.profile);
+            let decision_path = runtime_decision_path(card.decision.action);
+            let action = action_name(card.decision.action);
+            let healing_action = healing_action_json_for_decision(card.decision.action);
+            let denied = matches!(card.decision.action, MembraneAction::Deny);
+            let level = runtime_evidence_level(card.decision.action);
+            let api_family = runtime_family_name(card.context.family);
+            let symbol = runtime_decision_symbol(card.context.family);
+
+            let _ = write!(
+                &mut out,
+                "{{\"schema\":\"{}\",\"schema_version\":\"{}\",\"timestamp\":\"{}\",\"trace_id\":\"{}\",\"bead_id\":\"{}\",\"scenario_id\":\"{}\",\"level\":\"{}\",\"event\":\"runtime_evidence\",\"controller_id\":\"runtime_math_kernel.v1\",\"decision_id\":{},\"policy_id\":{},\"evidence_seqno\":{},\"mode\":\"{}\",\"runtime_mode\":\"{}\",\"validation_profile\":\"{}\",\"decision_path\":\"{}\",\"decision_action\":\"{}\",\"healing_action\":{},\"denied\":{},\"latency_ns\":{},\"api_family\":\"{}\",\"symbol\":\"{}\",\"source_commit\":\"{}\",\"bounded_policy\":{{\"hot_path_io_enabled_by_default\":{},\"journal_enabled_by_default\":{},\"ring_capacity\":{},\"overflow_policy\":\"{}\"}},\"context\":{{\"addr_hint_redacted\":true,\"requested_bytes\":{},\"is_write\":{},\"contention_hint\":{},\"bloom_negative\":{}}},\"artifact_refs\":[",
+                RUNTIME_EVIDENCE_JSONL_SCHEMA_V1,
+                MEMBRANE_SCHEMA_VERSION,
+                json_escape(&timestamp),
+                trace_id.as_str(),
+                json_escape(bead_id),
+                json_escape(scenario_id),
+                level,
+                decision_id.as_u64(),
+                policy_id.as_u32(),
+                card.decision.evidence_seqno,
+                runtime_mode,
+                runtime_mode,
+                validation_profile,
+                decision_path,
+                action,
+                healing_action,
+                denied,
+                card.estimated_cost_ns,
+                api_family,
+                symbol,
+                json_escape(source_commit),
+                policy.hot_path_io_enabled_by_default,
+                policy.journal_enabled_by_default,
+                policy.bounded_ring_capacity,
+                policy.overflow_policy,
+                card.context.requested_bytes,
+                card.context.is_write,
+                card.context.contention_hint,
+                card.context.bloom_negative,
+            );
+            for (idx, artifact) in refs.iter().enumerate() {
+                if idx > 0 {
+                    out.push(',');
+                }
+                let _ = write!(&mut out, "\"{}\"", json_escape(artifact));
+            }
+            out.push_str("]}\n");
+        }
+
+        out
+    }
+
     /// Replay current ring/card snapshots against expected decisions.
     #[must_use]
     pub fn replay_runtime_evidence_v1(
@@ -2251,6 +2440,28 @@ fn runtime_mode_code_name(code: u8) -> &'static str {
     }
 }
 
+fn card_runtime_mode_name(card: &DecisionCardV1) -> &'static str {
+    runtime_mode_code_name(decision_mode_code(card.reasoning_flags))
+}
+
+fn runtime_evidence_level(action: MembraneAction) -> &'static str {
+    match action {
+        MembraneAction::Allow => "trace",
+        MembraneAction::FullValidate => "info",
+        MembraneAction::Repair(_) => "warn",
+        MembraneAction::Deny => "error",
+    }
+}
+
+fn healing_action_json_for_decision(action: MembraneAction) -> String {
+    match action {
+        MembraneAction::Repair(healing) => json_string_or_null(Some(healing_action_name(healing))),
+        MembraneAction::Allow | MembraneAction::FullValidate | MembraneAction::Deny => {
+            "null".to_string()
+        }
+    }
+}
+
 fn replay_status_name(status: RuntimeEvidenceReplayStatus) -> &'static str {
     match status {
         RuntimeEvidenceReplayStatus::Passed => "passed",
@@ -2290,6 +2501,127 @@ fn json_escape(value: &str) -> String {
         }
     }
     out
+}
+
+fn required_field<'a>(
+    row: &'a Value,
+    field: &'static str,
+) -> Result<&'a Value, RuntimeEvidenceRowValidationError> {
+    row.get(field)
+        .ok_or(RuntimeEvidenceRowValidationError::MissingRequiredField(
+            field,
+        ))
+}
+
+fn expect_non_empty_string<'a>(
+    row: &'a Value,
+    field: &'static str,
+) -> Result<&'a str, RuntimeEvidenceRowValidationError> {
+    let value = required_field(row, field)?
+        .as_str()
+        .ok_or(RuntimeEvidenceRowValidationError::WrongType(field))?;
+    if value.is_empty() {
+        return Err(RuntimeEvidenceRowValidationError::EmptyString(field));
+    }
+    Ok(value)
+}
+
+fn expect_exact_string(
+    row: &Value,
+    field: &'static str,
+    expected: &'static str,
+) -> Result<(), RuntimeEvidenceRowValidationError> {
+    let value = expect_non_empty_string(row, field)?;
+    if value != expected {
+        return Err(RuntimeEvidenceRowValidationError::UnexpectedValue(field));
+    }
+    Ok(())
+}
+
+fn expect_one_of(
+    row: &Value,
+    field: &'static str,
+    allowed: &[&'static str],
+) -> Result<(), RuntimeEvidenceRowValidationError> {
+    let value = expect_non_empty_string(row, field)?;
+    if !allowed.contains(&value) {
+        return Err(RuntimeEvidenceRowValidationError::UnexpectedValue(field));
+    }
+    Ok(())
+}
+
+fn expect_bool(row: &Value, field: &'static str) -> Result<(), RuntimeEvidenceRowValidationError> {
+    required_field(row, field)?
+        .as_bool()
+        .ok_or(RuntimeEvidenceRowValidationError::WrongType(field))
+        .map(|_| ())
+}
+
+fn expect_u64(row: &Value, field: &'static str) -> Result<(), RuntimeEvidenceRowValidationError> {
+    required_field(row, field)?
+        .as_u64()
+        .ok_or(RuntimeEvidenceRowValidationError::WrongType(field))
+        .map(|_| ())
+}
+
+fn expect_context(row: &Value) -> Result<(), RuntimeEvidenceRowValidationError> {
+    let context = required_field(row, "context")?
+        .as_object()
+        .ok_or(RuntimeEvidenceRowValidationError::WrongType("context"))?;
+    for field in [
+        "addr_hint_redacted",
+        "requested_bytes",
+        "is_write",
+        "contention_hint",
+        "bloom_negative",
+    ] {
+        if !context.contains_key(field) {
+            return Err(RuntimeEvidenceRowValidationError::MissingRequiredField(
+                "context",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn expect_healing_action(row: &Value) -> Result<(), RuntimeEvidenceRowValidationError> {
+    let value = required_field(row, "healing_action")?;
+    if value.is_null() {
+        return Ok(());
+    }
+    let action = value
+        .as_str()
+        .ok_or(RuntimeEvidenceRowValidationError::WrongType(
+            "healing_action",
+        ))?;
+    if action.is_empty() {
+        return Err(RuntimeEvidenceRowValidationError::EmptyString(
+            "healing_action",
+        ));
+    }
+    Ok(())
+}
+
+fn expect_artifact_refs(row: &Value) -> Result<(), RuntimeEvidenceRowValidationError> {
+    let refs = required_field(row, "artifact_refs")?.as_array().ok_or(
+        RuntimeEvidenceRowValidationError::WrongType("artifact_refs"),
+    )?;
+    if refs.is_empty() {
+        return Err(RuntimeEvidenceRowValidationError::EmptyArtifactRefs);
+    }
+    for artifact in refs {
+        let value = artifact
+            .as_str()
+            .ok_or(RuntimeEvidenceRowValidationError::WrongType(
+                "artifact_refs",
+            ))?;
+        if value.is_empty() {
+            return Err(RuntimeEvidenceRowValidationError::EmptyString(
+                "artifact_refs",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Overwrite-on-full decision-card ring buffer.
@@ -3163,6 +3495,158 @@ mod tests {
             assert!(card["decision_id"].as_u64().is_some_and(|id| id > 0));
             assert!(card["policy_id"].as_u64().is_some_and(|id| id > 0));
         }
+    }
+
+    #[test]
+    fn runtime_evidence_logging_policy_is_hot_path_off_and_bounded() {
+        let log: SystematicEvidenceLog<32> = SystematicEvidenceLog::new(0xA11C_EE55);
+        let policy = log.runtime_evidence_logging_policy();
+
+        assert!(!policy.hot_path_io_enabled_by_default);
+        assert!(!policy.journal_enabled_by_default);
+        assert_eq!(policy.bounded_ring_capacity, 32);
+        assert_eq!(policy.overflow_policy, "overwrite_oldest_ring_slot");
+    }
+
+    #[test]
+    fn runtime_evidence_jsonl_export_covers_required_schema_fields() {
+        let log: SystematicEvidenceLog<8> = SystematicEvidenceLog::new(0xE71D_EACE);
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0xDEAD_BEEF,
+            requested_bytes: 96,
+            is_write: true,
+            contention_hint: 4,
+            bloom_negative: false,
+        };
+        let allow = RuntimeDecision {
+            profile: ValidationProfile::Fast,
+            action: MembraneAction::Allow,
+            policy_id: 11,
+            risk_upper_bound_ppm: 10,
+            evidence_seqno: 0,
+        };
+        let repair = RuntimeDecision {
+            profile: ValidationProfile::Full,
+            action: MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            policy_id: 12,
+            risk_upper_bound_ppm: 900_000,
+            evidence_seqno: 0,
+        };
+        let deny = RuntimeDecision {
+            profile: ValidationProfile::Full,
+            action: MembraneAction::Deny,
+            policy_id: 13,
+            risk_upper_bound_ppm: 1_000_000,
+            evidence_seqno: 0,
+        };
+
+        let _ = log.record_decision(SafetyLevel::Strict, ctx, allow, 8, false, None, 0, None);
+        let _ = log.record_decision(SafetyLevel::Hardened, ctx, repair, 13, true, None, 0, None);
+        let _ = log.record_decision(SafetyLevel::Hardened, ctx, deny, 21, true, None, 0, None);
+
+        let jsonl = log.export_runtime_evidence_jsonl(
+            "bd-b92jd.4.1",
+            "schema-smoke",
+            "0123456789abcdef0123456789abcdef01234567",
+            &["tests/conformance/log_schema.json"],
+        );
+        let rows = jsonl.lines().collect::<Vec<_>>();
+        assert_eq!(rows.len(), 3);
+
+        let mut saw_repair = false;
+        let mut saw_deny = false;
+        for line in rows {
+            let parsed: Value = serde_json::from_str(line).expect("runtime evidence row JSON");
+            validate_runtime_evidence_row_v1(&parsed).expect("row must satisfy v1 schema");
+            assert_eq!(
+                parsed["schema"].as_str(),
+                Some(RUNTIME_EVIDENCE_JSONL_SCHEMA_V1)
+            );
+            assert_eq!(parsed["bead_id"].as_str(), Some("bd-b92jd.4.1"));
+            assert_eq!(
+                parsed["source_commit"].as_str(),
+                Some("0123456789abcdef0123456789abcdef01234567")
+            );
+            assert_eq!(
+                parsed["artifact_refs"][0].as_str(),
+                Some("tests/conformance/log_schema.json")
+            );
+            assert_eq!(
+                parsed["bounded_policy"]["hot_path_io_enabled_by_default"].as_bool(),
+                Some(false)
+            );
+            assert_eq!(parsed["bounded_policy"]["ring_capacity"].as_u64(), Some(8));
+            assert_eq!(
+                parsed["context"]["addr_hint_redacted"].as_bool(),
+                Some(true)
+            );
+            assert!(parsed["context"].get("addr_hint").is_none());
+
+            saw_repair |= parsed["healing_action"].as_str() == Some("ReturnSafeDefault");
+            saw_deny |= parsed["denied"].as_bool() == Some(true);
+        }
+
+        assert!(saw_repair, "repair row must name the healing action");
+        assert!(saw_deny, "deny row must set denied=true");
+    }
+
+    #[test]
+    fn runtime_evidence_row_validator_fails_closed_on_missing_required_fields() {
+        let log: SystematicEvidenceLog<4> = SystematicEvidenceLog::new(0xFA11_C105);
+        let ctx = RuntimeContext::pointer_validation(0x3000, false);
+        let decision = RuntimeDecision {
+            profile: ValidationProfile::Fast,
+            action: MembraneAction::Allow,
+            policy_id: 5,
+            risk_upper_bound_ppm: 50,
+            evidence_seqno: 0,
+        };
+        let _ = log.record_decision(SafetyLevel::Strict, ctx, decision, 3, false, None, 0, None);
+        let first_line = log
+            .export_runtime_evidence_jsonl(
+                "bd-b92jd.4.1",
+                "validator",
+                "0123456789abcdef0123456789abcdef01234567",
+                &[],
+            )
+            .lines()
+            .next()
+            .expect("runtime evidence JSONL row")
+            .to_string();
+        let row: Value = serde_json::from_str(&first_line).expect("runtime evidence row JSON");
+        validate_runtime_evidence_row_v1(&row).expect("baseline row is valid");
+
+        let mut missing_source = row.clone();
+        missing_source
+            .as_object_mut()
+            .expect("row object")
+            .remove("source_commit");
+        assert_eq!(
+            validate_runtime_evidence_row_v1(&missing_source),
+            Err(RuntimeEvidenceRowValidationError::MissingRequiredField(
+                "source_commit"
+            ))
+        );
+
+        let mut missing_healing_action = row.clone();
+        missing_healing_action
+            .as_object_mut()
+            .expect("row object")
+            .remove("healing_action");
+        assert_eq!(
+            validate_runtime_evidence_row_v1(&missing_healing_action),
+            Err(RuntimeEvidenceRowValidationError::MissingRequiredField(
+                "healing_action"
+            ))
+        );
+
+        let mut empty_artifacts = row;
+        empty_artifacts["artifact_refs"] = Value::Array(Vec::new());
+        assert_eq!(
+            validate_runtime_evidence_row_v1(&empty_artifacts),
+            Err(RuntimeEvidenceRowValidationError::EmptyArtifactRefs)
+        );
     }
 
     #[test]
