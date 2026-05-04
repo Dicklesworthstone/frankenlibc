@@ -157,6 +157,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- standalone readiness proof matrix gate ---"
+    scripts/check_standalone_readiness_matrix.sh
+    echo "PASS"
+    echo ""
+
     echo "--- user compatibility report gate ---"
     scripts/generate_user_compatibility_report.sh
     echo "PASS"

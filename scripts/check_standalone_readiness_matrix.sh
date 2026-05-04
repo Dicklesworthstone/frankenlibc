@@ -34,21 +34,32 @@ checks = {}
 REQUIRED_LOG_FIELDS = [
     "trace_id",
     "bead_id",
+    "proof_row_id",
     "scenario_id",
     "runtime_mode",
     "replacement_level",
-    "api_family",
-    "symbol",
-    "oracle_kind",
-    "expected",
-    "actual",
-    "errno",
-    "decision_path",
-    "healing_action",
-    "latency_ns",
     "artifact_refs",
+    "required_evidence",
+    "present_evidence",
+    "missing_evidence",
+    "expected_decision",
+    "actual_decision",
     "source_commit",
     "target_dir",
+    "failure_signature",
+]
+REQUIRED_PROOF_ROW_FIELDS = [
+    "proof_row_id",
+    "surface",
+    "scenario_id",
+    "runtime_mode",
+    "replacement_level",
+    "artifact_refs",
+    "required_evidence",
+    "present_evidence",
+    "missing_evidence",
+    "expected_decision",
+    "actual_decision",
     "failure_signature",
 ]
 REQUIRED_OBLIGATION_FIELDS = [
@@ -74,6 +85,16 @@ def load_json(path):
     except Exception as exc:
         errors.append(f"{path}: {exc}")
         return None
+
+def repo_relative_path(ref, context):
+    if not isinstance(ref, str) or not ref:
+        errors.append(f"{context}: artifact ref must be a non-empty string")
+        return None
+    rel = Path(ref)
+    if rel.is_absolute() or ".." in rel.parts:
+        errors.append(f"{context}: artifact ref must stay repo-relative: {ref}")
+        return None
+    return root / rel
 
 matrix = load_json(matrix_path)
 levels = load_json(levels_path)
@@ -122,6 +143,57 @@ for entry in readiness_levels:
         errors.append("replacement_levels L3 status must remain roadmap for this matrix")
 checks["readiness_levels"] = "pass" if readiness_ok else "fail"
 
+required_proof_surfaces = set(matrix.get("required_proof_surfaces", []))
+proof_rows = matrix.get("proof_rows", [])
+proof_row_ids = [row.get("proof_row_id") for row in proof_rows]
+proof_surfaces = Counter()
+proof_rows_ok = bool(proof_rows) and len(proof_row_ids) == len(set(proof_row_ids))
+claim_blocked_proof_rows = 0
+missing_evidence_proof_rows = 0
+
+for row in proof_rows:
+    proof_row_id = row.get("proof_row_id", "<missing proof row id>")
+    for field in REQUIRED_PROOF_ROW_FIELDS:
+        if field not in row:
+            proof_rows_ok = False
+            errors.append(f"{proof_row_id}: missing proof row field {field}")
+
+    surface = row.get("surface")
+    if surface not in required_proof_surfaces:
+        proof_rows_ok = False
+        errors.append(f"{proof_row_id}: unknown proof surface {surface}")
+    else:
+        proof_surfaces[surface] += 1
+
+    if row.get("replacement_level") not in REQUIRED_LEVELS:
+        proof_rows_ok = False
+        errors.append(f"{proof_row_id}: replacement_level must be L2 or L3")
+
+    if row.get("expected_decision") != "claim_blocked" or row.get("actual_decision") != "claim_blocked":
+        proof_rows_ok = False
+        errors.append(f"{proof_row_id}: current standalone proof rows must remain claim_blocked")
+    else:
+        claim_blocked_proof_rows += 1
+
+    for evidence_field in ["required_evidence", "present_evidence", "missing_evidence"]:
+        if not row.get(evidence_field):
+            proof_rows_ok = False
+            errors.append(f"{proof_row_id}: {evidence_field} must not be empty")
+    if row.get("missing_evidence"):
+        missing_evidence_proof_rows += 1
+
+    for ref in row.get("artifact_refs", []):
+        artifact_path = repo_relative_path(ref, proof_row_id)
+        if artifact_path is None or not artifact_path.exists():
+            proof_rows_ok = False
+            errors.append(f"{proof_row_id}: artifact ref does not exist: {ref}")
+
+missing_proof_surfaces = sorted(required_proof_surfaces - set(proof_surfaces))
+if missing_proof_surfaces:
+    proof_rows_ok = False
+    errors.append("missing proof surfaces: " + ", ".join(missing_proof_surfaces))
+checks["proof_rows"] = "pass" if proof_rows_ok else "fail"
+
 required_dimensions = set(matrix.get("required_dimensions", []))
 obligations = matrix.get("obligations", [])
 obligation_ids = [obligation.get("id") for obligation in obligations]
@@ -161,13 +233,15 @@ for obligation in obligations:
         errors.append(f"{oid}: current_state must be blocked")
 
     for ref in obligation.get("evidence_artifacts", []):
-        if not (root / ref).exists():
+        artifact_path = repo_relative_path(ref, oid)
+        if artifact_path is None or not artifact_path.exists():
             obligations_ok = False
             errors.append(f"{oid}: evidence artifact does not exist: {ref}")
 
     for command in obligation.get("check_commands", []):
         script = command.split()[0]
-        if not (root / script).exists():
+        script_path = repo_relative_path(script, oid)
+        if script_path is None or not script_path.exists():
             obligations_ok = False
             errors.append(f"{oid}: check command script does not exist: {script}")
 
@@ -219,9 +293,12 @@ if not claim_policy_ok:
 summary = matrix.get("summary", {})
 summary_ok = (
     summary.get("readiness_level_count") == len(readiness_levels)
+    and summary.get("proof_row_count") == len(proof_rows)
     and summary.get("obligation_count") == len(obligations)
     and summary.get("negative_claim_test_count") == negative_count
     and summary.get("blocked_obligation_count") == blocked_count
+    and summary.get("claim_blocked_proof_row_count") == claim_blocked_proof_rows
+    and summary.get("missing_evidence_proof_row_count") == missing_evidence_proof_rows
     and summary.get("by_level") == dict(by_level)
     and summary.get("dimension_coverage") == dict(dimension_coverage)
 )
@@ -252,9 +329,14 @@ report = {
     "status": status,
     "checks": checks,
     "readiness_level_count": len(readiness_levels),
+    "proof_row_count": len(proof_rows),
     "obligation_count": len(obligations),
     "negative_claim_test_count": negative_count,
     "blocked_obligation_count": blocked_count,
+    "claim_blocked_proof_row_count": claim_blocked_proof_rows,
+    "missing_evidence_proof_row_count": missing_evidence_proof_rows,
+    "proof_surface_coverage": dict(proof_surfaces),
+    "missing_proof_surfaces": missing_proof_surfaces,
     "by_level": dict(by_level),
     "dimension_coverage": dict(dimension_coverage),
     "missing_dimensions": missing_dimensions,
@@ -264,29 +346,31 @@ report = {
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-event = {
-    "trace_id": "bd-bp8fl.6.6-standalone-readiness",
-    "bead_id": "bd-bp8fl.6.6",
-    "scenario_id": "standalone-readiness-proof-matrix-gate",
-    "runtime_mode": "strict+hardened_required",
-    "replacement_level": "L2,L3",
-    "api_family": "standalone_replacement_readiness",
-    "symbol": "*",
-    "oracle_kind": "standalone_claim_gate",
-    "expected": "L2/L3 claims blocked until every proof obligation has current evidence",
-    "actual": status,
-    "errno": None,
-    "decision_path": list(checks.keys()),
-    "healing_action": "none",
-    "latency_ns": 0,
-    "artifact_refs": artifact_refs,
-    "source_commit": source_commit,
-    "target_dir": str(root / "target/conformance"),
-    "failure_signature": "; ".join(errors),
-    "obligation_count": len(obligations),
-    "blocked_obligation_count": blocked_count,
-}
-log_path.write_text(json.dumps(event, sort_keys=True) + "\n", encoding="utf-8")
+events = []
+for row in proof_rows:
+    events.append(
+        {
+            "trace_id": f"bd-bp8fl.6.6::{row.get('proof_row_id')}",
+            "bead_id": "bd-bp8fl.6.6",
+            "proof_row_id": row.get("proof_row_id"),
+            "scenario_id": row.get("scenario_id"),
+            "runtime_mode": row.get("runtime_mode"),
+            "replacement_level": row.get("replacement_level"),
+            "artifact_refs": row.get("artifact_refs", []),
+            "required_evidence": row.get("required_evidence", []),
+            "present_evidence": row.get("present_evidence", []),
+            "missing_evidence": row.get("missing_evidence", []),
+            "expected_decision": row.get("expected_decision"),
+            "actual_decision": row.get("actual_decision"),
+            "source_commit": source_commit,
+            "target_dir": str(root / "target/conformance"),
+            "failure_signature": row.get("failure_signature"),
+        }
+    )
+log_path.write_text(
+    "".join(json.dumps(event, sort_keys=True) + "\n" for event in events),
+    encoding="utf-8",
+)
 
 print(json.dumps(report, indent=2, sort_keys=True))
 sys.exit(0 if status == "pass" else 1)

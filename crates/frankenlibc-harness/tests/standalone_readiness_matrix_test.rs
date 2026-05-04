@@ -4,7 +4,7 @@
 //! proof obligations are current.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 const REQUIRED_DIMENSIONS: &[&str] = &[
@@ -22,22 +22,36 @@ const REQUIRED_DIMENSIONS: &[&str] = &[
 const REQUIRED_LOG_FIELDS: &[&str] = &[
     "trace_id",
     "bead_id",
+    "proof_row_id",
     "scenario_id",
     "runtime_mode",
     "replacement_level",
-    "api_family",
-    "symbol",
-    "oracle_kind",
-    "expected",
-    "actual",
-    "errno",
-    "decision_path",
-    "healing_action",
-    "latency_ns",
     "artifact_refs",
+    "required_evidence",
+    "present_evidence",
+    "missing_evidence",
+    "expected_decision",
+    "actual_decision",
     "source_commit",
     "target_dir",
     "failure_signature",
+];
+
+const REQUIRED_PROOF_SURFACES: &[&str] = &[
+    "loader_startup",
+    "crt_objects",
+    "tls",
+    "init_fini",
+    "destructors",
+    "secure_execution_mode",
+    "symbol_version_nodes",
+    "relocation_dlfcn_behavior",
+    "syscall_coverage",
+    "arch_specific_obligations",
+    "host_glibc_free_execution",
+    "diagnostics",
+    "real_program_standalone_smoke",
+    "cross_environment_evidence",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -57,6 +71,25 @@ fn load_json(path: &Path) -> serde_json::Value {
 
 fn load_matrix() -> serde_json::Value {
     load_json(&workspace_root().join("tests/conformance/standalone_readiness_proof_matrix.v1.json"))
+}
+
+fn assert_repo_relative_existing_path(root: &Path, rel: &str, context: &str) {
+    let path = Path::new(rel);
+    assert!(!rel.is_empty(), "{context}: artifact ref must not be empty");
+    assert!(
+        !path.is_absolute(),
+        "{context}: artifact ref must stay repo-relative: {rel}"
+    );
+    assert!(
+        !path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_))),
+        "{context}: artifact ref must not escape the repo root: {rel}"
+    );
+    assert!(
+        (root.join(path)).exists(),
+        "{context}: missing artifact {rel}"
+    );
 }
 
 #[test]
@@ -172,15 +205,12 @@ fn obligations_cover_dimensions_and_block_overclaims() {
 
         for artifact in obligation["evidence_artifacts"].as_array().unwrap() {
             let rel = artifact.as_str().unwrap();
-            assert!((root.join(rel)).exists(), "{id}: missing artifact {rel}");
+            assert_repo_relative_existing_path(&root, rel, id);
         }
         for command in obligation["check_commands"].as_array().unwrap() {
             let command = command.as_str().unwrap();
             let script = command.split_whitespace().next().unwrap();
-            assert!(
-                (root.join(script)).exists(),
-                "{id}: missing script {script}"
-            );
+            assert_repo_relative_existing_path(&root, script, id);
         }
         assert!(
             !obligation["unit_tests_required"]
@@ -228,6 +258,70 @@ fn obligations_cover_dimensions_and_block_overclaims() {
 }
 
 #[test]
+fn proof_rows_cover_standalone_surfaces_and_fail_closed() {
+    let root = workspace_root();
+    let matrix = load_matrix();
+    let required_surfaces: HashSet<_> = REQUIRED_PROOF_SURFACES.iter().copied().collect();
+    let declared_surfaces: HashSet<_> = matrix["required_proof_surfaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert_eq!(declared_surfaces, required_surfaces);
+
+    let mut covered_surfaces = HashSet::new();
+    let proof_rows = matrix["proof_rows"].as_array().unwrap();
+    for row in proof_rows {
+        let proof_row_id = row["proof_row_id"].as_str().unwrap();
+        let surface = row["surface"].as_str().unwrap();
+        covered_surfaces.insert(surface);
+        assert!(
+            required_surfaces.contains(surface),
+            "{proof_row_id}: unexpected proof surface {surface}"
+        );
+        assert!(
+            ["L2", "L3"].contains(&row["replacement_level"].as_str().unwrap()),
+            "{proof_row_id}: proof row must target L2 or L3"
+        );
+        assert_eq!(
+            row["expected_decision"].as_str(),
+            Some("claim_blocked"),
+            "{proof_row_id}: expected decision must fail closed"
+        );
+        assert_eq!(
+            row["actual_decision"].as_str(),
+            Some("claim_blocked"),
+            "{proof_row_id}: actual decision must fail closed"
+        );
+        for evidence_field in ["required_evidence", "present_evidence", "missing_evidence"] {
+            assert!(
+                !row[evidence_field].as_array().unwrap().is_empty(),
+                "{proof_row_id}: {evidence_field} must not be empty"
+            );
+        }
+        for artifact in row["artifact_refs"].as_array().unwrap() {
+            let rel = artifact.as_str().unwrap();
+            assert_repo_relative_existing_path(&root, rel, proof_row_id);
+        }
+    }
+
+    assert_eq!(covered_surfaces, required_surfaces);
+    assert_eq!(
+        matrix["summary"]["proof_row_count"].as_u64(),
+        Some(proof_rows.len() as u64)
+    );
+    assert_eq!(
+        matrix["summary"]["claim_blocked_proof_row_count"].as_u64(),
+        Some(proof_rows.len() as u64)
+    );
+    assert_eq!(
+        matrix["summary"]["missing_evidence_proof_row_count"].as_u64(),
+        Some(proof_rows.len() as u64)
+    );
+}
+
+#[test]
 fn gate_script_passes_and_emits_structured_report_and_log() {
     let root = workspace_root();
     let script = root.join("scripts/check_standalone_readiness_matrix.sh");
@@ -270,6 +364,7 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         "required_log_fields",
         "current_level_guard",
         "readiness_levels",
+        "proof_rows",
         "obligations",
         "dimension_coverage",
         "claim_policy",

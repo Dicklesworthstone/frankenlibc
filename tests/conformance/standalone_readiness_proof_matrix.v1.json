@@ -25,19 +25,16 @@
   "required_log_fields": [
     "trace_id",
     "bead_id",
+    "proof_row_id",
     "scenario_id",
     "runtime_mode",
     "replacement_level",
-    "api_family",
-    "symbol",
-    "oracle_kind",
-    "expected",
-    "actual",
-    "errno",
-    "decision_path",
-    "healing_action",
-    "latency_ns",
     "artifact_refs",
+    "required_evidence",
+    "present_evidence",
+    "missing_evidence",
+    "expected_decision",
+    "actual_decision",
     "source_commit",
     "target_dir",
     "failure_signature"
@@ -50,6 +47,365 @@
     "missing_evidence_result": "claim_blocked",
     "interpose_value_is_not_standalone_readiness": true
   },
+  "required_proof_surfaces": [
+    "loader_startup",
+    "crt_objects",
+    "tls",
+    "init_fini",
+    "destructors",
+    "secure_execution_mode",
+    "symbol_version_nodes",
+    "relocation_dlfcn_behavior",
+    "syscall_coverage",
+    "arch_specific_obligations",
+    "host_glibc_free_execution",
+    "diagnostics",
+    "real_program_standalone_smoke",
+    "cross_environment_evidence"
+  ],
+  "proof_row_policy": {
+    "expected_decision_for_missing_evidence": "claim_blocked",
+    "current_rows_must_remain_blocked": true,
+    "missing_evidence_must_be_explicit": true,
+    "present_interpose_evidence_cannot_satisfy_standalone_rows": true
+  },
+  "proof_rows": [
+    {
+      "proof_row_id": "loader_startup",
+      "surface": "loader_startup",
+      "scenario_id": "standalone-loader-startup-direct-link",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L2",
+      "artifact_refs": [
+        "tests/conformance/standalone_link_run_smoke.v1.json",
+        "tests/conformance/real_program_smoke_suite.v1.json"
+      ],
+      "required_evidence": [
+        "current libfrankenlibc_replace.so direct-link startup run",
+        "__libc_start_main handoff without LD_PRELOAD semantics"
+      ],
+      "present_evidence": [
+        "standalone smoke manifest",
+        "L0/L1 interpose smoke rows"
+      ],
+      "missing_evidence": [
+        "current standalone replacement artifact",
+        "direct-link startup pass row"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_loader_startup_evidence_missing"
+    },
+    {
+      "proof_row_id": "crt_objects",
+      "surface": "crt_objects",
+      "scenario_id": "standalone-crt-object-set",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L2",
+      "artifact_refs": [
+        "tests/conformance/host_libc_dependency_inventory.v1.json",
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"
+      ],
+      "required_evidence": [
+        "crt1/crti/crtn or equivalent owned startup object contract",
+        "direct-link object inventory"
+      ],
+      "present_evidence": [
+        "host dependency inventory contract",
+        "L1 startup proof matrix"
+      ],
+      "missing_evidence": [
+        "owned CRT object artifact",
+        "host-glibc-free direct-link CRT proof"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_crt_objects_missing"
+    },
+    {
+      "proof_row_id": "tls",
+      "surface": "tls",
+      "scenario_id": "standalone-process-thread-tls",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L2",
+      "artifact_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+        "tests/conformance/pthread_cancellation_robust_tls_fixture_pack.v1.json"
+      ],
+      "required_evidence": [
+        "process TLS initialization without host CRT",
+        "pthread TLS destructor ordering in standalone artifact"
+      ],
+      "present_evidence": [
+        "pthread TLS fixture evidence",
+        "L1 blocked TLS proof rows"
+      ],
+      "missing_evidence": [
+        "standalone process TLS initialization proof",
+        "standalone TLS destructor replay"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_tls_evidence_missing"
+    },
+    {
+      "proof_row_id": "init_fini",
+      "surface": "init_fini",
+      "scenario_id": "standalone-init-fini-arrays",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L2",
+      "artifact_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+        "tests/integration/fixture_startup.c"
+      ],
+      "required_evidence": [
+        "preinit/init/fini array ordering under direct-link replacement"
+      ],
+      "present_evidence": [
+        "L1 init/fini planned proof row"
+      ],
+      "missing_evidence": [
+        "current standalone init/fini array replay"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_init_fini_evidence_missing"
+    },
+    {
+      "proof_row_id": "destructors",
+      "surface": "destructors",
+      "scenario_id": "standalone-destructor-order",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L2",
+      "artifact_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"
+      ],
+      "required_evidence": [
+        "fini_array, rtld_fini, atexit, on_exit, and TLS destructor order"
+      ],
+      "present_evidence": [
+        "L1 destructor proof obligations"
+      ],
+      "missing_evidence": [
+        "standalone destructor ordering artifact"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_destructor_order_missing"
+    },
+    {
+      "proof_row_id": "secure_execution_mode",
+      "surface": "secure_execution_mode",
+      "scenario_id": "standalone-secure-exec-auxv",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L2",
+      "artifact_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+        "tests/conformance/host_libc_dependency_inventory.v1.json"
+      ],
+      "required_evidence": [
+        "AT_SECURE and environment scrubbing semantics owned by replacement artifact"
+      ],
+      "present_evidence": [
+        "secure-mode L1 proof obligation"
+      ],
+      "missing_evidence": [
+        "standalone secure-execution mode replay"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_secure_mode_evidence_missing"
+    },
+    {
+      "proof_row_id": "symbol_version_nodes",
+      "surface": "symbol_version_nodes",
+      "scenario_id": "standalone-versioned-symbol-exports",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L2",
+      "artifact_refs": [
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "support_matrix.json"
+      ],
+      "required_evidence": [
+        "all claimed subset symbols exported with expected GLIBC version nodes"
+      ],
+      "present_evidence": [
+        "version script",
+        "support matrix"
+      ],
+      "missing_evidence": [
+        "current standalone artifact symbol/version audit"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_versioned_symbol_audit_missing"
+    },
+    {
+      "proof_row_id": "relocation_dlfcn_behavior",
+      "surface": "relocation_dlfcn_behavior",
+      "scenario_id": "standalone-relocation-dlfcn",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L3",
+      "artifact_refs": [
+        "tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json",
+        "crates/frankenlibc-abi/version_scripts/libc.map"
+      ],
+      "required_evidence": [
+        "relocation, TLS relocation, dlopen, dlsym, dlvsym, dlclose, and dlinfo behavior without host fallback"
+      ],
+      "present_evidence": [
+        "loader/dlfcn audit fixture pack"
+      ],
+      "missing_evidence": [
+        "standalone rtld and dlfcn replacement proof"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_relocation_dlfcn_missing"
+    },
+    {
+      "proof_row_id": "syscall_coverage",
+      "surface": "syscall_coverage",
+      "scenario_id": "standalone-syscall-subset",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L3",
+      "artifact_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "required_evidence": [
+        "declared replacement syscall surface has RawSyscall or native implementations with fixtures"
+      ],
+      "present_evidence": [
+        "replacement level blockers",
+        "semantic overlay"
+      ],
+      "missing_evidence": [
+        "standalone syscall coverage matrix"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_syscall_coverage_missing"
+    },
+    {
+      "proof_row_id": "arch_specific_obligations",
+      "surface": "arch_specific_obligations",
+      "scenario_id": "standalone-cross-architecture",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L3",
+      "artifact_refs": [
+        "tests/conformance/user_environment_coverage_matrix.v1.json",
+        "tests/conformance/replacement_levels.json"
+      ],
+      "required_evidence": [
+        "x86_64 and aarch64 replacement startup, syscall, TLS, and ABI-layout rows"
+      ],
+      "present_evidence": [
+        "cross-environment matrix with aarch64 blocked row"
+      ],
+      "missing_evidence": [
+        "aarch64 standalone runner evidence",
+        "architecture-specific replacement ABI proof"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_architecture_evidence_missing"
+    },
+    {
+      "proof_row_id": "host_glibc_free_execution",
+      "surface": "host_glibc_free_execution",
+      "scenario_id": "standalone-zero-host-glibc",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L3",
+      "artifact_refs": [
+        "tests/conformance/host_libc_dependency_inventory.v1.json",
+        "tests/conformance/replacement_levels.json"
+      ],
+      "required_evidence": [
+        "readelf/ldd/nm audit proves no host glibc dependency for replacement artifact"
+      ],
+      "present_evidence": [
+        "host dependency inventory schema"
+      ],
+      "missing_evidence": [
+        "current libfrankenlibc_replace.so dynamic dependency audit"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_host_glibc_free_audit_missing"
+    },
+    {
+      "proof_row_id": "diagnostics",
+      "surface": "diagnostics",
+      "scenario_id": "standalone-failure-diagnostics",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L2",
+      "artifact_refs": [
+        "tests/conformance/user_visible_diagnostics.v1.json",
+        "tests/conformance/user_workload_vertical_slice.v1.json"
+      ],
+      "required_evidence": [
+        "failure bundle with replacement level, missing evidence, artifact refs, and next safe action"
+      ],
+      "present_evidence": [
+        "user-visible diagnostics",
+        "vertical slice failure signature"
+      ],
+      "missing_evidence": [
+        "standalone-specific diagnostics replay"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_diagnostics_replay_missing"
+    },
+    {
+      "proof_row_id": "real_program_standalone_smoke",
+      "surface": "real_program_standalone_smoke",
+      "scenario_id": "standalone-real-program-smoke",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L2",
+      "artifact_refs": [
+        "tests/conformance/standalone_link_run_smoke.v1.json",
+        "tests/conformance/real_program_smoke_suite.v1.json"
+      ],
+      "required_evidence": [
+        "direct-link C smoke and representative real-program standalone smoke pass"
+      ],
+      "present_evidence": [
+        "standalone smoke manifest",
+        "real-program smoke standalone future rows"
+      ],
+      "missing_evidence": [
+        "current standalone artifact pass rows"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_real_program_smoke_missing"
+    },
+    {
+      "proof_row_id": "cross_environment_evidence",
+      "surface": "cross_environment_evidence",
+      "scenario_id": "standalone-cross-environment-matrix",
+      "runtime_mode": "strict+hardened",
+      "replacement_level": "L3",
+      "artifact_refs": [
+        "tests/conformance/user_environment_coverage_matrix.v1.json",
+        "tests/conformance/user_compatibility_report.v1.json"
+      ],
+      "required_evidence": [
+        "standalone rows across architectures, resolver states, locales, filesystem permissions, thread counts, and build profiles"
+      ],
+      "present_evidence": [
+        "cross-environment matrix with blocked/unsupported standalone row"
+      ],
+      "missing_evidence": [
+        "current cross-environment standalone pass evidence"
+      ],
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "failure_signature": "standalone_cross_environment_evidence_missing"
+    }
+  ],
   "readiness_levels": [
     {
       "level": "L2",
@@ -492,9 +848,12 @@
   ],
   "summary": {
     "readiness_level_count": 2,
+    "proof_row_count": 14,
     "obligation_count": 12,
     "negative_claim_test_count": 12,
     "blocked_obligation_count": 12,
+    "claim_blocked_proof_row_count": 14,
+    "missing_evidence_proof_row_count": 14,
     "by_level": {
       "L2": 6,
       "L3": 6
