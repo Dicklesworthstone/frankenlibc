@@ -147,6 +147,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- support semantic overlay schema gate ---"
+    scripts/check_support_semantic_overlay_schema.sh
+    echo "PASS"
+    echo ""
+
     echo "--- README/FEATURE_PARITY semantic claim gate ---"
     scripts/check_docs_semantic_claims.sh
     echo "PASS"

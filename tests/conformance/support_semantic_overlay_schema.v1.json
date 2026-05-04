@@ -1,0 +1,183 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.1.5",
+  "generated_at_utc": "2026-05-04T05:10:00Z",
+  "purpose": "Machine-checkable schema contract for support_semantic_overlay.v1.json. It preserves the overlay as evidence while deriving explicit claim fields for downstream gates.",
+  "inputs": {
+    "support_semantic_overlay": "tests/conformance/support_semantic_overlay.v1.json",
+    "support_matrix": "support_matrix.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json"
+  },
+  "top_level_required_fields": [
+    "schema_version",
+    "generated_at_utc",
+    "semantic_contract_classes",
+    "support_matrix_snapshot",
+    "coverage_policy",
+    "audited_summary",
+    "audited_entries"
+  ],
+  "overlay_row_required_fields": [
+    "id",
+    "surface",
+    "symbols",
+    "support_matrix_status",
+    "semantic_class",
+    "source_path",
+    "source_line",
+    "evidence",
+    "required_followup"
+  ],
+  "normalized_claim_fields": [
+    "symbol",
+    "version_node",
+    "api_family",
+    "contract_status",
+    "semantic_status",
+    "oracle_kind",
+    "runtime_mode",
+    "replacement_level",
+    "source_refs",
+    "artifact_refs",
+    "freshness_metadata",
+    "known_limitations"
+  ],
+  "allowed_semantic_classes": [
+    "full_semantics",
+    "compat_noop",
+    "deterministic_fallback",
+    "limited_bootstrap",
+    "unsupported_platform_contract",
+    "proof_gap"
+  ],
+  "extra_support_statuses": [
+    "not_symbol_level",
+    "mixed_or_not_listed_by_exact_name"
+  ],
+  "allowed_oracle_kinds": [
+    "host_glibc_fixture",
+    "posix_linux_contract",
+    "documented_frankenlibc_contract",
+    "intentional_safe_divergence",
+    "unsupported_platform_contract"
+  ],
+  "semantic_oracle_defaults": {
+    "full_semantics": "host_glibc_fixture",
+    "compat_noop": "documented_frankenlibc_contract",
+    "deterministic_fallback": "documented_frankenlibc_contract",
+    "limited_bootstrap": "documented_frankenlibc_contract",
+    "unsupported_platform_contract": "unsupported_platform_contract",
+    "proof_gap": "intentional_safe_divergence"
+  },
+  "runtime_modes": [
+    "strict",
+    "hardened"
+  ],
+  "default_replacement_level": "L0",
+  "blocked_semantic_replacement_levels": [
+    "L0"
+  ],
+  "api_family_rules": [
+    {
+      "id": "elf_loader",
+      "path_contains": "frankenlibc-core/src/elf/"
+    },
+    {
+      "id": "pthread",
+      "path_contains": "pthread_abi.rs"
+    },
+    {
+      "id": "unistd",
+      "path_contains": "unistd_abi.rs"
+    },
+    {
+      "id": "glibc_internal",
+      "path_contains": "glibc_internal_abi.rs"
+    },
+    {
+      "id": "setjmp",
+      "path_contains": "setjmp_abi.rs"
+    }
+  ],
+  "source_ref_policy": {
+    "path_must_exist": true,
+    "line_must_be_positive": true,
+    "line_must_be_within_file": true
+  },
+  "freshness_rules": {
+    "support_matrix_snapshot_must_match_current_counts": true,
+    "audited_summary_must_match_rows": true,
+    "source_commit_required_in_report": true
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "row_id",
+    "symbol",
+    "rule_id",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "replay_cases": [
+    {
+      "id": "clean_current_overlay",
+      "kind": "clean",
+      "command": "scripts/check_support_semantic_overlay_schema.sh",
+      "expected_status": "pass"
+    },
+    {
+      "id": "missing_required_field",
+      "kind": "missing_required_field",
+      "command": "FLC_SUPPORT_SEMANTIC_OVERLAY=<fixture-missing-field> scripts/check_support_semantic_overlay_schema.sh",
+      "expected_status": "fail",
+      "failure_signature": "missing_required_field"
+    },
+    {
+      "id": "unknown_semantic_status",
+      "kind": "unknown_status",
+      "command": "FLC_SUPPORT_SEMANTIC_OVERLAY=<fixture-unknown-status> scripts/check_support_semantic_overlay_schema.sh",
+      "expected_status": "fail",
+      "failure_signature": "unknown_status"
+    },
+    {
+      "id": "duplicate_symbol_version_node",
+      "kind": "duplicate_symbol",
+      "command": "FLC_SUPPORT_SEMANTIC_OVERLAY=<fixture-duplicate-symbol> scripts/check_support_semantic_overlay_schema.sh",
+      "expected_status": "fail",
+      "failure_signature": "duplicate_symbol_version_node"
+    },
+    {
+      "id": "stale_source_ref",
+      "kind": "stale_source_ref",
+      "command": "FLC_SUPPORT_SEMANTIC_OVERLAY=<fixture-stale-source> scripts/check_support_semantic_overlay_schema.sh",
+      "expected_status": "fail",
+      "failure_signature": "stale_source_ref"
+    },
+    {
+      "id": "incompatible_replacement_level",
+      "kind": "incompatible_replacement_level",
+      "command": "FLC_SUPPORT_SEMANTIC_SCHEMA=<fixture-incompatible-level> scripts/check_support_semantic_overlay_schema.sh",
+      "expected_status": "fail",
+      "failure_signature": "incompatible_replacement_level"
+    },
+    {
+      "id": "malformed_overlay_json",
+      "kind": "malformed_json",
+      "command": "FLC_SUPPORT_SEMANTIC_OVERLAY=<fixture-malformed-json> scripts/check_support_semantic_overlay_schema.sh",
+      "expected_status": "fail",
+      "failure_signature": "malformed_json"
+    }
+  ],
+  "expected_current_summary": {
+    "audited_entry_count": 10,
+    "normalized_claim_row_count": 38,
+    "symbol_reference_count": 37,
+    "exact_symbol_reference_count": 33,
+    "wildcard_symbol_reference_count": 4,
+    "duplicate_symbol_version_count": 0,
+    "stale_source_ref_count": 0
+  }
+}
