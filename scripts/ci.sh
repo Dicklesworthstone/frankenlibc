@@ -152,6 +152,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- artifact precedence/freshness gate ---"
+    scripts/check_artifact_precedence.sh
+    echo "PASS"
+    echo ""
+
     echo "--- README/FEATURE_PARITY semantic claim gate ---"
     scripts/check_docs_semantic_claims.sh
     echo "PASS"

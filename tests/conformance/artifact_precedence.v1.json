@@ -1,0 +1,369 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.7.7",
+  "generated_at_utc": "2026-05-04T05:20:00Z",
+  "purpose": "Source-of-truth precedence table for user-facing support, semantic parity, replacement-level, compatibility, release, and documentation claims.",
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "artifact_id",
+    "artifact_type",
+    "producer_bead",
+    "consumer_claim",
+    "freshness_state",
+    "precedence_decision",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "artifacts": [
+    {
+      "id": "artifact_precedence",
+      "artifact_type": "precedence_manifest",
+      "path": "tests/conformance/artifact_precedence.v1.json",
+      "producer_bead": "bd-bp8fl.7.7",
+      "consumer_surfaces": [
+        "scripts/ci.sh",
+        "README.md",
+        "FEATURE_PARITY.md",
+        "release_notes"
+      ],
+      "authority_rank": 5,
+      "freshness_rule": "schema_version_current",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_artifact_precedence.sh",
+      "conflict_resolution": "blocks prose-only claim advancement",
+      "required_json_fields": [
+        "schema_version",
+        "artifacts",
+        "claims"
+      ],
+      "depends_on_artifacts": []
+    },
+    {
+      "id": "oracle_precedence",
+      "artifact_type": "oracle_policy",
+      "path": "tests/conformance/oracle_precedence_divergence.v1.json",
+      "producer_bead": "bd-bp8fl.1.6",
+      "consumer_surfaces": [
+        "fixture_packs",
+        "compatibility_report",
+        "README.md"
+      ],
+      "authority_rank": 10,
+      "freshness_rule": "schema_version_current",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_oracle_precedence_divergence.sh",
+      "conflict_resolution": "higher-priority oracle evidence wins",
+      "required_json_fields": [
+        "schema_version",
+        "oracle_kinds",
+        "divergence_classifications",
+        "summary"
+      ],
+      "depends_on_artifacts": []
+    },
+    {
+      "id": "replacement_levels",
+      "artifact_type": "replacement_level_policy",
+      "path": "tests/conformance/replacement_levels.json",
+      "producer_bead": "bd-gtf.4",
+      "consumer_surfaces": [
+        "README.md",
+        "FEATURE_PARITY.md",
+        "release_notes",
+        "compatibility_report"
+      ],
+      "authority_rank": 20,
+      "freshness_rule": "current_release_level_matches_current_level",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_replacement_levels.sh",
+      "conflict_resolution": "release claim cannot exceed current_level",
+      "required_json_fields": [
+        "schema_version",
+        "current_level",
+        "release_tag_policy",
+        "levels"
+      ],
+      "depends_on_artifacts": []
+    },
+    {
+      "id": "semantic_contract_symbol_join",
+      "artifact_type": "semantic_support_join",
+      "path": "tests/conformance/semantic_contract_symbol_join.v1.json",
+      "producer_bead": "bd-bp8fl.1.2",
+      "consumer_surfaces": [
+        "README.md",
+        "FEATURE_PARITY.md",
+        "compatibility_report",
+        "release_notes"
+      ],
+      "authority_rank": 30,
+      "freshness_rule": "semantic_blockers_preserved",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_semantic_contract_symbol_join.sh",
+      "conflict_resolution": "semantic blockers override support taxonomy counts",
+      "required_json_fields": [
+        "schema_version",
+        "summary",
+        "entries"
+      ],
+      "depends_on_artifacts": []
+    },
+    {
+      "id": "support_semantic_overlay",
+      "artifact_type": "semantic_overlay",
+      "path": "tests/conformance/support_semantic_overlay.v1.json",
+      "producer_bead": "bd-bp8fl.1.1",
+      "consumer_surfaces": [
+        "README.md",
+        "FEATURE_PARITY.md",
+        "semantic_contract_symbol_join"
+      ],
+      "authority_rank": 40,
+      "freshness_rule": "audited_summary_matches_entries",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_support_semantic_overlay_schema.sh",
+      "conflict_resolution": "representative overlay blocks full-replacement claims until exhaustive",
+      "required_json_fields": [
+        "schema_version",
+        "audited_summary",
+        "audited_entries"
+      ],
+      "depends_on_artifacts": []
+    },
+    {
+      "id": "support_matrix",
+      "artifact_type": "support_taxonomy",
+      "path": "support_matrix.json",
+      "producer_bead": "support-matrix-maintenance",
+      "consumer_surfaces": [
+        "README.md",
+        "FEATURE_PARITY.md",
+        "compatibility_report"
+      ],
+      "authority_rank": 50,
+      "freshness_rule": "status_counts_match_symbols",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_support_matrix_maintenance.sh",
+      "conflict_resolution": "taxonomy status is not semantic parity by itself",
+      "required_json_fields": [
+        "generated_at_utc",
+        "symbols",
+        "counts"
+      ],
+      "depends_on_artifacts": []
+    },
+    {
+      "id": "docs_semantic_claims",
+      "artifact_type": "docs_claim_contract",
+      "path": "tests/conformance/docs_semantic_claims.v1.json",
+      "producer_bead": "bd-bp8fl.1.4",
+      "consumer_surfaces": [
+        "README.md",
+        "FEATURE_PARITY.md"
+      ],
+      "authority_rank": 70,
+      "freshness_rule": "required_claim_fields_present",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_docs_semantic_claims.sh",
+      "conflict_resolution": "docs cannot promote support taxonomy above semantic evidence",
+      "required_json_fields": [
+        "schema_version",
+        "required_claim_fields",
+        "doc_surfaces"
+      ],
+      "depends_on_artifacts": [
+        "oracle_precedence",
+        "replacement_levels",
+        "semantic_contract_symbol_join",
+        "support_semantic_overlay"
+      ]
+    },
+    {
+      "id": "support_semantic_overlay_schema",
+      "artifact_type": "overlay_schema_contract",
+      "path": "tests/conformance/support_semantic_overlay_schema.v1.json",
+      "producer_bead": "bd-bp8fl.1.5",
+      "consumer_surfaces": [
+        "scripts/ci.sh",
+        "semantic_contract_symbol_join",
+        "docs_semantic_claims"
+      ],
+      "authority_rank": 75,
+      "freshness_rule": "expected_current_summary_matches_gate",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_support_semantic_overlay_schema.sh",
+      "conflict_resolution": "schema gate fails malformed overlay evidence",
+      "required_json_fields": [
+        "schema_version",
+        "normalized_claim_fields",
+        "expected_current_summary"
+      ],
+      "depends_on_artifacts": [
+        "replacement_levels",
+        "support_semantic_overlay",
+        "support_matrix"
+      ]
+    },
+    {
+      "id": "claim_reconciliation",
+      "artifact_type": "claim_reconciliation_report",
+      "path": "tests/conformance/claim_reconciliation_report.v1.json",
+      "producer_bead": "bd-w2c3.10.1",
+      "consumer_surfaces": [
+        "release_notes",
+        "replacement_levels",
+        "compatibility_report"
+      ],
+      "authority_rank": 90,
+      "freshness_rule": "status_pass_zero_findings",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_claim_reconciliation.sh",
+      "conflict_resolution": "claim findings block release-level promotion",
+      "required_json_fields": [
+        "schema_version",
+        "status",
+        "summary"
+      ],
+      "depends_on_artifacts": [
+        "replacement_levels",
+        "semantic_contract_symbol_join"
+      ]
+    },
+    {
+      "id": "ld_preload_smoke",
+      "artifact_type": "smoke_summary",
+      "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "producer_bead": "bd-3rw.5.1",
+      "consumer_surfaces": [
+        "replacement_levels",
+        "compatibility_report",
+        "README.md"
+      ],
+      "authority_rank": 100,
+      "freshness_rule": "overall_failed_false",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_ld_preload_smoke_summary.sh",
+      "conflict_resolution": "failed smoke evidence blocks workload-ready claims",
+      "required_json_fields": [
+        "schema_version",
+        "summary"
+      ],
+      "depends_on_artifacts": [
+        "oracle_precedence",
+        "replacement_levels"
+      ]
+    },
+    {
+      "id": "perf_regression_prevention",
+      "artifact_type": "performance_budget",
+      "path": "tests/conformance/perf_regression_prevention.v1.json",
+      "producer_bead": "bd-1qfc",
+      "consumer_surfaces": [
+        "replacement_levels",
+        "release_notes",
+        "compatibility_report"
+      ],
+      "authority_rank": 110,
+      "freshness_rule": "zero_perf_issues",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_perf_budget.sh",
+      "conflict_resolution": "perf issues block performance-sensitive release claims",
+      "required_json_fields": [
+        "schema_version",
+        "summary"
+      ],
+      "depends_on_artifacts": [
+        "replacement_levels"
+      ]
+    },
+    {
+      "id": "reality_report",
+      "artifact_type": "reality_snapshot",
+      "path": "tests/conformance/reality_report.v1.json",
+      "producer_bead": "reality-check",
+      "consumer_surfaces": [
+        "README.md",
+        "FEATURE_PARITY.md"
+      ],
+      "authority_rank": 120,
+      "freshness_rule": "schema_version_current",
+      "source_commit_required": false,
+      "regeneration_command": "scripts/check_reality_report.sh",
+      "conflict_resolution": "reality snapshot cannot override higher-priority semantic blockers",
+      "required_json_fields": [
+        "schema_version",
+        "generated_at_utc"
+      ],
+      "depends_on_artifacts": [
+        "support_matrix",
+        "replacement_levels"
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "id": "docs_support_claims",
+      "consumer_claim": "README/FEATURE_PARITY support claims",
+      "consumer_surfaces": [
+        "README.md",
+        "FEATURE_PARITY.md"
+      ],
+      "authoritative_artifact_ids": [
+        "docs_semantic_claims",
+        "semantic_contract_symbol_join",
+        "support_semantic_overlay_schema",
+        "support_matrix"
+      ],
+      "prose_only_forbidden": true,
+      "blocked_if_missing": true
+    },
+    {
+      "id": "semantic_replacement_claims",
+      "consumer_claim": "replacement readiness and semantic parity",
+      "consumer_surfaces": [
+        "README.md",
+        "FEATURE_PARITY.md",
+        "release_notes"
+      ],
+      "authoritative_artifact_ids": [
+        "oracle_precedence",
+        "replacement_levels",
+        "semantic_contract_symbol_join",
+        "claim_reconciliation"
+      ],
+      "prose_only_forbidden": true,
+      "blocked_if_missing": true
+    },
+    {
+      "id": "workload_compatibility_claims",
+      "consumer_claim": "workload compatibility report inputs",
+      "consumer_surfaces": [
+        "compatibility_report",
+        "README.md"
+      ],
+      "authoritative_artifact_ids": [
+        "oracle_precedence",
+        "replacement_levels",
+        "semantic_contract_symbol_join",
+        "ld_preload_smoke",
+        "perf_regression_prevention"
+      ],
+      "prose_only_forbidden": true,
+      "blocked_if_missing": true
+    }
+  ],
+  "expected_current_summary": {
+    "artifact_count": 12,
+    "claim_count": 3,
+    "missing_artifact_count": 0,
+    "stale_artifact_count": 0,
+    "conflicting_claim_count": 0,
+    "prose_only_claim_count": 0,
+    "out_of_order_artifact_count": 0
+  }
+}
