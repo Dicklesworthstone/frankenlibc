@@ -362,6 +362,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- math/fenv/soft-fp exceptional-path fixture pack gate ---"
+    scripts/check_math_fenv_softfp_fixture_pack.sh
+    echo "PASS"
+    echo ""
+
     echo "--- unified stub/TODO debt census gate ---"
     scripts/check_stub_todo_debt_census.sh
     echo "PASS"
