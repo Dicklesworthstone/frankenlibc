@@ -1,0 +1,24 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "b64-ntop-golden-snapshot",
+  "bead": "bd-j9h3e",
+  "generated_utc": "2026-05-04T22:50:00Z",
+  "source_commit": "a8e0d01b9b2cdfb53e1a2eaef39ed7cf7af5a30c",
+  "subject": {
+    "module": "crates/frankenlibc-core/src/resolv/b64.rs",
+    "function": "ntop"
+  },
+  "alphabet_sha256": "7543b37fa53fde2c84f07fd39f368555966aa1c0eb2f2fd26b294d79966e290e",
+  "pad_byte": "=",
+  "sweep_sha256": "9b64a2372b10bb2f4ea9ad325a23d7ba86707f1d80321d0140de6e9e63ecfc59",
+  "sweep_description": "SHA-256 of the concatenation, in input order from b=0 to b=255, of ntop([b]) followed by a single NUL terminator. Any drift in ALPHABET, PAD emission, or 6-bit extraction lands here.",
+  "rfc4648_vectors": [
+    {"input_hex": "", "encoded": ""},
+    {"input_hex": "66", "encoded": "Zg=="},
+    {"input_hex": "666f", "encoded": "Zm8="},
+    {"input_hex": "666f6f", "encoded": "Zm9v"},
+    {"input_hex": "666f6f62", "encoded": "Zm9vYg=="},
+    {"input_hex": "666f6f6261", "encoded": "Zm9vYmE="},
+    {"input_hex": "666f6f626172", "encoded": "Zm9vYmFy"}
+  ]
+}
