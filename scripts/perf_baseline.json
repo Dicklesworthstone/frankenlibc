@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "version": 2,
+  "generated_at_utc": "2026-05-04T18:01:30Z",
+  "targets_ns_op": {
+    "strict": {
+      "decide": 20,
+      "observe_fast": 20,
+      "decide_observe": 20,
+      "stage_null_check": 1,
+      "stage_tls_cache_hit": 5,
+      "stage_bloom_hit": 10,
+      "stage_arena_lookup": 30,
+      "stage_fingerprint_verify": 20,
+      "stage_canary_verify": 10,
+      "stage_bounds_check": 5,
+      "validate_null": 20,
+      "validate_foreign": 20,
+      "validate_known": 20
+    },
+    "hardened": {
+      "decide": 200,
+      "observe_fast": 200,
+      "decide_observe": 200,
+      "stage_null_check": 1,
+      "stage_tls_cache_hit": 5,
+      "stage_bloom_hit": 10,
+      "stage_arena_lookup": 30,
+      "stage_fingerprint_verify": 20,
+      "stage_canary_verify": 10,
+      "stage_bounds_check": 5,
+      "validate_null": 200,
+      "validate_foreign": 200,
+      "validate_known": 200
+    }
+  },
+  "baseline_p50_ns_op": {
+    "runtime_math": {
+      "strict": {
+        "decide": 187.404,
+        "observe_fast": 2.017,
+        "decide_observe": 205.5
+      },
+      "hardened": {
+        "decide": 168.302,
+        "observe_fast": 1.949,
+        "decide_observe": 153.193
+      }
+    },
+    "membrane": {
+      "strict": {
+        "stage_null_check": 0.515,
+        "stage_tls_cache_hit": 7.885,
+        "stage_bloom_hit": 9.174,
+        "stage_arena_lookup": 10.258,
+        "stage_fingerprint_verify": 13.930,
+        "stage_canary_verify": 0.507,
+        "stage_bounds_check": 0.611,
+        "validate_null": 4274.183,
+        "validate_foreign": 4396.357,
+        "validate_known": 4331.049
+      },
+      "hardened": {
+        "stage_null_check": 0.392,
+        "stage_tls_cache_hit": 5.370,
+        "stage_bloom_hit": 9.985,
+        "stage_arena_lookup": 17.491,
+        "stage_fingerprint_verify": 14.382,
+        "stage_canary_verify": 0.482,
+        "stage_bounds_check": 0.589,
+        "validate_null": 3406.037,
+        "validate_foreign": 3570.812,
+        "validate_known": 3499.877
+      }
+    },
+    "string": {
+      "strict": {
+        "memcpy_16": 3.843,
+        "memcpy_64": 3.447,
+        "memcpy_256": 3.831,
+        "memcpy_1024": 11.400,
+        "memcpy_4096": 37.262,
+        "memcpy_65536": 1069.142,
+        "strlen_16": 7.226,
+        "strlen_256": 73.257
+      },
+      "hardened": {
+        "memcpy_16": 3.834,
+        "memcpy_64": 3.571,
+        "memcpy_256": 4.077,
+        "memcpy_1024": 11.217,
+        "memcpy_4096": 37.333,
+        "memcpy_65536": 1071.216,
+        "strlen_16": 7.523,
+        "strlen_256": 72.933
+      }
+    },
+    "malloc": {
+      "strict": {
+        "alloc_free_cycle": 37.627,
+        "alloc_burst": 23781.500
+      },
+      "hardened": {
+        "alloc_free_cycle": 37.350,
+        "alloc_burst": 24760.258
+      }
+    }
+  },
+  "baseline_sources": {
+    "runtime_math": {
+      "strict": "rch exec -- env FRANKENLIBC_MODE=strict cargo bench -p frankenlibc-bench --bench runtime_math_bench -- --noplot",
+      "hardened": "rch exec -- env FRANKENLIBC_MODE=hardened cargo bench -p frankenlibc-bench --bench runtime_math_bench -- --noplot"
+    },
+    "membrane": {
+      "strict": "FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+      "hardened": "FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot"
+    },
+    "string": {
+      "strict": "FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-strict-filtered RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench string_bench -- --noplot 'memcpy|strlen'",
+      "hardened": "FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench string_bench -- --noplot 'memcpy|strlen'"
+    },
+    "malloc": {
+      "strict": "FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-malloc-strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench malloc_bench -- --noplot 'alloc_free_cycle|alloc_burst'",
+      "hardened": "FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-malloc-hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench malloc_bench -- --noplot 'alloc_free_cycle|alloc_burst'"
+    }
+  },
+  "machine_fingerprint": {
+    "runtime_math": {
+      "strict": "AMD EPYC Processor (with IBPB)",
+      "hardened": "AMD EPYC Processor (with IBPB)"
+    },
+    "membrane": {
+      "strict": "AMD EPYC Processor (with IBPB)",
+      "hardened": "AMD EPYC Processor (with IBPB)"
+    },
+    "string": {
+      "strict": "AMD EPYC Processor (with IBPB)",
+      "hardened": "AMD EPYC Processor (with IBPB)"
+    },
+    "malloc": {
+      "strict": "AMD EPYC Processor (with IBPB)",
+      "hardened": "AMD EPYC Processor (with IBPB)"
+    }
+  }
+}

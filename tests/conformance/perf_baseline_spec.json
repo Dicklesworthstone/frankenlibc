@@ -138,8 +138,8 @@
       "machine_fingerprint": "CPU model, core count, kernel version for reproducibility audit.",
       "criterion_raw_ref": "Path to Criterion raw JSON for offline re-analysis."
     },
-    "current_suites_in_baseline": ["runtime_math", "membrane"],
-    "planned_suites": ["string", "malloc"]
+    "current_suites_in_baseline": ["runtime_math", "membrane", "string", "malloc"],
+    "planned_suites": []
   },
   "profile_artifacts": {
     "description": "Deterministic per-run profiling artifact contract emitted by scripts/profile_pipeline.sh.",

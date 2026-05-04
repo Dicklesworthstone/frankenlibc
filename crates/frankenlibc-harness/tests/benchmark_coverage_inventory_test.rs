@@ -206,8 +206,28 @@ fn family_rows_name_benchmarks_baselines_workloads_and_next_actions() -> TestRes
         .get("string")
         .ok_or_else(|| "missing string family".to_string())?;
     require(
-        !json_array(string, "missing_baseline_slots")?.is_empty(),
-        "string should identify missing strict/hardened baseline slots",
+        json_array(string, "missing_baseline_slots")?.is_empty(),
+        "string strict/hardened baseline slots should be filled",
+    )?;
+    require(
+        json_array(string, "baseline_coverage")?
+            .iter()
+            .all(|row| row["status"].as_str() == Some("complete")),
+        "string baseline coverage should be complete",
+    )?;
+
+    let malloc = families
+        .get("malloc")
+        .ok_or_else(|| "missing malloc family".to_string())?;
+    require(
+        json_array(malloc, "missing_baseline_slots")?.is_empty(),
+        "malloc strict/hardened baseline slots should be filled",
+    )?;
+    require(
+        json_array(malloc, "baseline_coverage")?
+            .iter()
+            .all(|row| row["status"].as_str() == Some("complete")),
+        "malloc baseline coverage should be complete",
     )?;
 
     let pthread = families

@@ -23,6 +23,63 @@ const FC_OP_ALLOC: usize = 2;
 const FC_OP_FREE: usize = 3;
 const SAMPLE_STRIDE: u64 = 64;
 
+#[derive(Default)]
+struct BaselineBenchStats {
+    samples_ns_per_op: Vec<f64>,
+    total_iters: u64,
+    total_ns: u128,
+}
+
+impl BaselineBenchStats {
+    fn record(&mut self, iters: u64, dur: Duration) {
+        if iters == 0 {
+            return;
+        }
+        let ns = dur.as_nanos();
+        self.total_iters = self.total_iters.saturating_add(iters);
+        self.total_ns = self.total_ns.saturating_add(ns);
+        self.samples_ns_per_op.push(ns as f64 / iters as f64);
+    }
+
+    fn report(&self, mode_label: &str, bench_label: &str) {
+        let mut samples = self.samples_ns_per_op.clone();
+        if samples.is_empty() {
+            return;
+        }
+        samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let p50 = percentile_sorted(&samples, 0.50);
+        let p95 = percentile_sorted(&samples, 0.95);
+        let p99 = percentile_sorted(&samples, 0.99);
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let throughput_ops_s = if self.total_ns == 0 {
+            0.0
+        } else {
+            self.total_iters as f64 / (self.total_ns as f64 / 1e9)
+        };
+
+        println!(
+            "MALLOC_BENCH mode={} bench={} samples={} p50_ns_op={:.3} p95_ns_op={:.3} p99_ns_op={:.3} mean_ns_op={:.3} throughput_ops_s={:.3}",
+            mode_label,
+            bench_label,
+            samples.len(),
+            p50,
+            p95,
+            p99,
+            mean,
+            throughput_ops_s
+        );
+    }
+}
+
+fn mode_label() -> &'static str {
+    match std::env::var("FRANKENLIBC_MODE").ok().as_deref() {
+        Some("hardened") => "hardened",
+        Some("strict") => "strict",
+        _ => "raw",
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 struct AllocStats {
     total_allocated: u64,
@@ -289,30 +346,48 @@ thread_local! {
 
 fn bench_alloc_free_cycle(c: &mut Criterion) {
     let sizes: &[usize] = &[16, 64, 256, 1024, 4096, 32768];
+    let mode = mode_label();
+    let stats = std::cell::RefCell::new(BaselineBenchStats::default());
     let mut group = c.benchmark_group("alloc_free_cycle");
 
     for &size in sizes {
         group.bench_with_input(BenchmarkId::new("system", size), &size, |b, &sz| {
-            b.iter(|| {
-                let v = vec![0u8; sz];
-                black_box(v);
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let v = vec![0u8; sz];
+                    black_box(v);
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                stats.borrow_mut().record(iters, dur);
+                dur
             });
         });
     }
     group.finish();
+    stats.borrow().report(mode, "alloc_free_cycle");
 }
 
 fn bench_alloc_burst(c: &mut Criterion) {
+    let mode = mode_label();
+    let stats = std::cell::RefCell::new(BaselineBenchStats::default());
     let mut group = c.benchmark_group("alloc_burst");
 
     group.bench_function("1000x64B", |b| {
-        b.iter(|| {
-            let allocs: Vec<Vec<u8>> = (0..1000).map(|_| vec![0u8; 64]).collect();
-            black_box(allocs);
+        b.iter_custom(|iters| {
+            let start = Instant::now();
+            for _ in 0..iters {
+                let allocs: Vec<Vec<u8>> = (0..1000).map(|_| vec![0u8; 64]).collect();
+                black_box(allocs);
+            }
+            let dur = start.elapsed().max(Duration::from_nanos(1));
+            stats.borrow_mut().record(iters, dur);
+            dur
         });
     });
 
     group.finish();
+    stats.borrow().report(mode, "alloc_burst");
 }
 
 fn bench_bounded_index_overhead(c: &mut Criterion) {

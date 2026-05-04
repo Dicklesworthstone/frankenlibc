@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.1",
-  "generated_at_utc": "2026-05-02T16:06:45Z",
-  "source_commit": "ea72b12c",
+  "generated_at_utc": "2026-05-04T18:07:14Z",
+  "source_commit": "a75a334f",
   "purpose": "Inventory current benchmark coverage for ported hot paths and membrane gates before optimization work advances.",
   "inputs": {
     "support_matrix": "support_matrix.json",
@@ -17,12 +17,12 @@
     ]
   },
   "input_digests": {
-    "perf_baseline": "de30f6581a07d7fae442fd4da0b0f544a19469ea125856de36731557f36c3d84",
-    "perf_baseline_spec": "ed52f31fa086ff64d03ff2125a687f9e854e0d8470353d964f3756dd08333ee7",
+    "perf_baseline": "22cb5fcf7f762e268df2fb478b49ecbd8aa12502a19b4aaee23178fb37dbde3c",
+    "perf_baseline_spec": "e12a3ed8c5ab3b9164c8489351fc3950e9e8d9147639c9a3846ffd87840046af",
     "support_matrix": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d",
     "user_workload_acceptance_matrix": "e1522428db6fb6f63c2a51cab24ec930cdcd52e8efdbe128794600d5e0336910",
     "workload_matrix": "bd7a6bb698667ce9dc9a502ff18e1c99527e26742c990ebe1c7718afebe7ec0e",
-    "bench_targets": "9fa48e5cab3c0b993c6c0c340b9e3125c972e43bef98110d9b2d07b405d6a91a"
+    "bench_targets": "99b8055d91911440590ad26494df7062d5a9958f402e3f064927e7b5f6a8f018"
   },
   "required_log_fields": [
     "trace_id",
@@ -66,22 +66,22 @@
   "summary": {
     "family_count": 7,
     "required_family_count": 6,
-    "actual_bench_target_count": 12,
+    "actual_bench_target_count": 13,
     "mapped_bench_target_count": 9,
-    "unmapped_bench_target_count": 3,
+    "unmapped_bench_target_count": 4,
     "hot_symbol_count_in_scope": 384,
     "inventory_row_count": 794,
-    "covered_inventory_row_count": 26,
-    "missing_inventory_row_count": 768,
+    "covered_inventory_row_count": 44,
+    "missing_inventory_row_count": 750,
     "missing_owner_row_count": 0,
-    "inventory_row_coverage_pct": 3.27,
+    "inventory_row_coverage_pct": 5.54,
     "fully_baselined_families": [
+      "string",
+      "malloc",
       "membrane",
       "runtime_math"
     ],
     "missing_required_baseline_families": [
-      "string",
-      "malloc",
       "stdio",
       "pthread",
       "syscall"
@@ -139,50 +139,16 @@
       "baseline_coverage": [
         {
           "suite_id": "string",
-          "status": "incomplete",
+          "status": "complete",
           "total_slots": 16,
-          "present_slots": 0,
-          "missing_slots": [
-            "strict/memcpy_16",
-            "strict/memcpy_64",
-            "strict/memcpy_256",
-            "strict/memcpy_1024",
-            "strict/memcpy_4096",
-            "strict/memcpy_65536",
-            "strict/strlen_16",
-            "strict/strlen_256",
-            "hardened/memcpy_16",
-            "hardened/memcpy_64",
-            "hardened/memcpy_256",
-            "hardened/memcpy_1024",
-            "hardened/memcpy_4096",
-            "hardened/memcpy_65536",
-            "hardened/strlen_16",
-            "hardened/strlen_256"
-          ],
-          "coverage_pct": 0.0
+          "present_slots": 16,
+          "missing_slots": [],
+          "coverage_pct": 100.0
         }
       ],
-      "full_strict_hardened_baseline": false,
+      "full_strict_hardened_baseline": true,
       "missing_spec_suites": [],
-      "missing_baseline_slots": [
-        "string:strict/memcpy_16",
-        "string:strict/memcpy_64",
-        "string:strict/memcpy_256",
-        "string:strict/memcpy_1024",
-        "string:strict/memcpy_4096",
-        "string:strict/memcpy_65536",
-        "string:strict/strlen_16",
-        "string:strict/strlen_256",
-        "string:hardened/memcpy_16",
-        "string:hardened/memcpy_64",
-        "string:hardened/memcpy_256",
-        "string:hardened/memcpy_1024",
-        "string:hardened/memcpy_4096",
-        "string:hardened/memcpy_65536",
-        "string:hardened/strlen_16",
-        "string:hardened/strlen_256"
-      ],
+      "missing_baseline_slots": [],
       "workload_artifacts": [
         {
           "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
@@ -195,8 +161,8 @@
           "row_count": 10
         }
       ],
-      "coverage_state": "gap",
-      "next_action": "Collect p50 baselines for 16 strict/hardened string slots."
+      "coverage_state": "complete",
+      "next_action": "Keep current bench and baseline slots wired into regression gates."
     },
     {
       "family": "malloc",
@@ -225,34 +191,24 @@
           "exists": true,
           "path": "crates/frankenlibc-bench/benches/malloc_bench.rs",
           "benchmark_function_count": 5,
-          "mode_aware": false
+          "mode_aware": true
         }
       ],
       "has_bench_file": true,
-      "has_mode_aware_bench": false,
+      "has_mode_aware_bench": true,
       "baseline_coverage": [
         {
           "suite_id": "malloc",
-          "status": "incomplete",
+          "status": "complete",
           "total_slots": 4,
-          "present_slots": 0,
-          "missing_slots": [
-            "strict/alloc_free_cycle",
-            "strict/alloc_burst",
-            "hardened/alloc_free_cycle",
-            "hardened/alloc_burst"
-          ],
-          "coverage_pct": 0.0
+          "present_slots": 4,
+          "missing_slots": [],
+          "coverage_pct": 100.0
         }
       ],
-      "full_strict_hardened_baseline": false,
+      "full_strict_hardened_baseline": true,
       "missing_spec_suites": [],
-      "missing_baseline_slots": [
-        "malloc:strict/alloc_free_cycle",
-        "malloc:strict/alloc_burst",
-        "malloc:hardened/alloc_free_cycle",
-        "malloc:hardened/alloc_burst"
-      ],
+      "missing_baseline_slots": [],
       "workload_artifacts": [
         {
           "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
@@ -265,8 +221,8 @@
           "row_count": 10
         }
       ],
-      "coverage_state": "gap",
-      "next_action": "Collect p50 baselines for 4 strict/hardened malloc slots."
+      "coverage_state": "complete",
+      "next_action": "Keep current bench and baseline slots wired into regression gates."
     },
     {
       "family": "stdio",
@@ -627,7 +583,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -696,11 +652,11 @@
         "benchmark_id": "malloc/alloc_free_cycle",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": "malloc",
         "spec_benchmark": "alloc_free_cycle"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "hardened",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -740,12 +696,12 @@
         "suite_id": "malloc",
         "benchmark_name": "alloc_free_cycle",
         "runtime_mode": "hardened",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 37.35
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "malloc/alloc_free_cycle",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -754,7 +710,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:malloc:calloc:hardened"
+      "failure_signature": null
     },
     {
       "row_id": "malloc:hardened:cfree",
@@ -765,7 +721,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -834,11 +790,11 @@
         "benchmark_id": "malloc/alloc_free_cycle",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": "malloc",
         "spec_benchmark": "alloc_free_cycle"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "hardened",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -878,12 +834,12 @@
         "suite_id": "malloc",
         "benchmark_name": "alloc_free_cycle",
         "runtime_mode": "hardened",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 37.35
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "malloc/alloc_free_cycle",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -892,7 +848,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:malloc:free:hardened"
+      "failure_signature": null
     },
     {
       "row_id": "malloc:hardened:malloc",
@@ -903,11 +859,11 @@
         "benchmark_id": "malloc/alloc_free_cycle",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": "malloc",
         "spec_benchmark": "alloc_free_cycle"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "hardened",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -947,12 +903,12 @@
         "suite_id": "malloc",
         "benchmark_name": "alloc_free_cycle",
         "runtime_mode": "hardened",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 37.35
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "malloc/alloc_free_cycle",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -961,7 +917,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:malloc:malloc:hardened"
+      "failure_signature": null
     },
     {
       "row_id": "malloc:hardened:malloc_usable_size",
@@ -972,7 +928,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -1041,7 +997,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -1110,7 +1066,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -1179,7 +1135,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -1248,11 +1204,11 @@
         "benchmark_id": "malloc/alloc_burst",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": "malloc",
         "spec_benchmark": "alloc_burst"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "hardened",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -1292,12 +1248,12 @@
         "suite_id": "malloc",
         "benchmark_name": "alloc_burst",
         "runtime_mode": "hardened",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 24760.258
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "malloc/alloc_burst",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -1306,7 +1262,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:malloc:realloc:hardened"
+      "failure_signature": null
     },
     {
       "row_id": "malloc:hardened:valloc",
@@ -1317,7 +1273,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -1386,7 +1342,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -1455,11 +1411,11 @@
         "benchmark_id": "malloc/alloc_free_cycle",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": "malloc",
         "spec_benchmark": "alloc_free_cycle"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "strict",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -1499,12 +1455,12 @@
         "suite_id": "malloc",
         "benchmark_name": "alloc_free_cycle",
         "runtime_mode": "strict",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 37.627
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "malloc/alloc_free_cycle",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -1513,7 +1469,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:malloc:calloc:strict"
+      "failure_signature": null
     },
     {
       "row_id": "malloc:strict:cfree",
@@ -1524,7 +1480,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -1593,11 +1549,11 @@
         "benchmark_id": "malloc/alloc_free_cycle",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": "malloc",
         "spec_benchmark": "alloc_free_cycle"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "strict",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -1637,12 +1593,12 @@
         "suite_id": "malloc",
         "benchmark_name": "alloc_free_cycle",
         "runtime_mode": "strict",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 37.627
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "malloc/alloc_free_cycle",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -1651,7 +1607,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:malloc:free:strict"
+      "failure_signature": null
     },
     {
       "row_id": "malloc:strict:malloc",
@@ -1662,11 +1618,11 @@
         "benchmark_id": "malloc/alloc_free_cycle",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": "malloc",
         "spec_benchmark": "alloc_free_cycle"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "strict",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -1706,12 +1662,12 @@
         "suite_id": "malloc",
         "benchmark_name": "alloc_free_cycle",
         "runtime_mode": "strict",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 37.627
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "malloc/alloc_free_cycle",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -1720,7 +1676,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:malloc:malloc:strict"
+      "failure_signature": null
     },
     {
       "row_id": "malloc:strict:malloc_usable_size",
@@ -1731,7 +1687,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -1800,7 +1756,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -1869,7 +1825,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -1938,7 +1894,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -2007,11 +1963,11 @@
         "benchmark_id": "malloc/alloc_burst",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": "malloc",
         "spec_benchmark": "alloc_burst"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "strict",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -2051,12 +2007,12 @@
         "suite_id": "malloc",
         "benchmark_name": "alloc_burst",
         "runtime_mode": "strict",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 23781.5
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "malloc/alloc_burst",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -2065,7 +2021,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:malloc:realloc:strict"
+      "failure_signature": null
     },
     {
       "row_id": "malloc:strict:valloc",
@@ -2076,7 +2032,7 @@
         "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
         "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
         "bench_exists": true,
-        "mode_aware": false,
+        "mode_aware": true,
         "spec_suite": null,
         "spec_benchmark": null
       },
@@ -10019,7 +9975,7 @@
         "spec_suite": "string",
         "spec_benchmark": "memcpy_16"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "hardened",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -10054,12 +10010,12 @@
         "suite_id": "string",
         "benchmark_name": "memcpy_16",
         "runtime_mode": "hardened",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 3.834
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "string/memcpy_16",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -10068,7 +10024,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:string:bcopy:hardened"
+      "failure_signature": null
     },
     {
       "row_id": "string:hardened:btowc",
@@ -10134,7 +10090,7 @@
         "spec_suite": "string",
         "spec_benchmark": "memcpy_16"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "hardened",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -10169,12 +10125,12 @@
         "suite_id": "string",
         "benchmark_name": "memcpy_16",
         "runtime_mode": "hardened",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 3.834
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "string/memcpy_16",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -10183,7 +10139,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:string:bzero:hardened"
+      "failure_signature": null
     },
     {
       "row_id": "string:hardened:consttime_bcmp",
@@ -11322,7 +11278,7 @@
         "spec_suite": "string",
         "spec_benchmark": "memcpy_16"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "hardened",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -11357,12 +11313,12 @@
         "suite_id": "string",
         "benchmark_name": "memcpy_16",
         "runtime_mode": "hardened",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 3.834
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "string/memcpy_16",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -11371,7 +11327,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:string:memcpy:hardened"
+      "failure_signature": null
     },
     {
       "row_id": "string:hardened:memmem",
@@ -11450,7 +11406,7 @@
         "spec_suite": "string",
         "spec_benchmark": "memcpy_16"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "hardened",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -11485,12 +11441,12 @@
         "suite_id": "string",
         "benchmark_name": "memcpy_16",
         "runtime_mode": "hardened",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 3.834
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "string/memcpy_16",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -11499,7 +11455,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:string:memmove:hardened"
+      "failure_signature": null
     },
     {
       "row_id": "string:hardened:mempcpy",
@@ -13152,7 +13108,7 @@
         "spec_suite": "string",
         "spec_benchmark": "strlen_16"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "hardened",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -13187,12 +13143,12 @@
         "suite_id": "string",
         "benchmark_name": "strlen_16",
         "runtime_mode": "hardened",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 7.523
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "string/strlen_16",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -13201,7 +13157,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:string:strlen:hardened"
+      "failure_signature": null
     },
     {
       "row_id": "string:hardened:strncasecmp",
@@ -16243,7 +16199,7 @@
         "spec_suite": "string",
         "spec_benchmark": "memcpy_16"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "strict",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -16278,12 +16234,12 @@
         "suite_id": "string",
         "benchmark_name": "memcpy_16",
         "runtime_mode": "strict",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 3.843
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "string/memcpy_16",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -16292,7 +16248,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:string:bcopy:strict"
+      "failure_signature": null
     },
     {
       "row_id": "string:strict:btowc",
@@ -16358,7 +16314,7 @@
         "spec_suite": "string",
         "spec_benchmark": "memcpy_16"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "strict",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -16393,12 +16349,12 @@
         "suite_id": "string",
         "benchmark_name": "memcpy_16",
         "runtime_mode": "strict",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 3.843
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "string/memcpy_16",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -16407,7 +16363,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:string:bzero:strict"
+      "failure_signature": null
     },
     {
       "row_id": "string:strict:consttime_bcmp",
@@ -17546,7 +17502,7 @@
         "spec_suite": "string",
         "spec_benchmark": "memcpy_16"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "strict",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -17581,12 +17537,12 @@
         "suite_id": "string",
         "benchmark_name": "memcpy_16",
         "runtime_mode": "strict",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 3.843
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "string/memcpy_16",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -17595,7 +17551,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:string:memcpy:strict"
+      "failure_signature": null
     },
     {
       "row_id": "string:strict:memmem",
@@ -17674,7 +17630,7 @@
         "spec_suite": "string",
         "spec_benchmark": "memcpy_16"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "strict",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -17709,12 +17665,12 @@
         "suite_id": "string",
         "benchmark_name": "memcpy_16",
         "runtime_mode": "strict",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 3.843
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "string/memcpy_16",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -17723,7 +17679,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:string:memmove:strict"
+      "failure_signature": null
     },
     {
       "row_id": "string:strict:mempcpy",
@@ -19376,7 +19332,7 @@
         "spec_suite": "string",
         "spec_benchmark": "strlen_16"
       },
-      "missing_benchmark_reason": "missing_p50_baseline",
+      "missing_benchmark_reason": "none",
       "runtime_mode": "strict",
       "replacement_level": "L1-native-rust",
       "user_workload_exposure": {
@@ -19411,12 +19367,12 @@
         "suite_id": "string",
         "benchmark_name": "strlen_16",
         "runtime_mode": "strict",
-        "present": false,
-        "p50_ns_op": null
+        "present": true,
+        "p50_ns_op": 7.226
       },
-      "owner_bead": "bd-bp8fl.8.3",
+      "owner_bead": "bd-bp8fl.8.1",
       "benchmark_id": "string/strlen_16",
-      "coverage_state": "gap",
+      "coverage_state": "covered",
       "artifact_refs": [
         "crates/frankenlibc-bench/benches",
         "scripts/perf_baseline.json",
@@ -19425,7 +19381,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_p50_baseline:string:strlen:strict"
+      "failure_signature": null
     },
     {
       "row_id": "string:strict:strncasecmp",
@@ -49453,46 +49409,6 @@
       "user_workload_count": 4
     },
     {
-      "api_family": "malloc",
-      "symbol": "free",
-      "runtime_mode": "hardened",
-      "benchmark_id": "malloc/alloc_free_cycle",
-      "missing_benchmark_reason": "missing_p50_baseline",
-      "owner_bead": "bd-bp8fl.8.3",
-      "workload_count": 10,
-      "user_workload_count": 6
-    },
-    {
-      "api_family": "malloc",
-      "symbol": "free",
-      "runtime_mode": "strict",
-      "benchmark_id": "malloc/alloc_free_cycle",
-      "missing_benchmark_reason": "missing_p50_baseline",
-      "owner_bead": "bd-bp8fl.8.3",
-      "workload_count": 10,
-      "user_workload_count": 6
-    },
-    {
-      "api_family": "malloc",
-      "symbol": "malloc",
-      "runtime_mode": "hardened",
-      "benchmark_id": "malloc/alloc_free_cycle",
-      "missing_benchmark_reason": "missing_p50_baseline",
-      "owner_bead": "bd-bp8fl.8.3",
-      "workload_count": 10,
-      "user_workload_count": 6
-    },
-    {
-      "api_family": "malloc",
-      "symbol": "malloc",
-      "runtime_mode": "strict",
-      "benchmark_id": "malloc/alloc_free_cycle",
-      "missing_benchmark_reason": "missing_p50_baseline",
-      "owner_bead": "bd-bp8fl.8.3",
-      "workload_count": 10,
-      "user_workload_count": 6
-    },
-    {
       "api_family": "pthread",
       "symbol": "pthread_mutex_lock",
       "runtime_mode": "hardened",
@@ -49514,26 +49430,6 @@
     },
     {
       "api_family": "malloc",
-      "symbol": "realloc",
-      "runtime_mode": "hardened",
-      "benchmark_id": "malloc/alloc_burst",
-      "missing_benchmark_reason": "missing_p50_baseline",
-      "owner_bead": "bd-bp8fl.8.3",
-      "workload_count": 10,
-      "user_workload_count": 6
-    },
-    {
-      "api_family": "malloc",
-      "symbol": "realloc",
-      "runtime_mode": "strict",
-      "benchmark_id": "malloc/alloc_burst",
-      "missing_benchmark_reason": "missing_p50_baseline",
-      "owner_bead": "bd-bp8fl.8.3",
-      "workload_count": 10,
-      "user_workload_count": 6
-    },
-    {
-      "api_family": "malloc",
       "symbol": "aligned_alloc",
       "runtime_mode": "hardened",
       "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
@@ -49548,26 +49444,6 @@
       "runtime_mode": "strict",
       "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
       "missing_benchmark_reason": "missing_symbol_specific_benchmark",
-      "owner_bead": "bd-bp8fl.8.3",
-      "workload_count": 10,
-      "user_workload_count": 6
-    },
-    {
-      "api_family": "malloc",
-      "symbol": "calloc",
-      "runtime_mode": "hardened",
-      "benchmark_id": "malloc/alloc_free_cycle",
-      "missing_benchmark_reason": "missing_p50_baseline",
-      "owner_bead": "bd-bp8fl.8.3",
-      "workload_count": 10,
-      "user_workload_count": 6
-    },
-    {
-      "api_family": "malloc",
-      "symbol": "calloc",
-      "runtime_mode": "strict",
-      "benchmark_id": "malloc/alloc_free_cycle",
-      "missing_benchmark_reason": "missing_p50_baseline",
       "owner_bead": "bd-bp8fl.8.3",
       "workload_count": 10,
       "user_workload_count": 6
@@ -49681,6 +49557,86 @@
       "owner_bead": "bd-bp8fl.8.3",
       "workload_count": 10,
       "user_workload_count": 6
+    },
+    {
+      "api_family": "malloc",
+      "symbol": "valloc",
+      "runtime_mode": "strict",
+      "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
+      "missing_benchmark_reason": "missing_symbol_specific_benchmark",
+      "owner_bead": "bd-bp8fl.8.3",
+      "workload_count": 10,
+      "user_workload_count": 6
+    },
+    {
+      "api_family": "string",
+      "symbol": "argz_count",
+      "runtime_mode": "hardened",
+      "benchmark_id": "string/<missing-symbol-specific-benchmark>",
+      "missing_benchmark_reason": "missing_symbol_specific_benchmark",
+      "owner_bead": "bd-bp8fl.8.3",
+      "workload_count": 10,
+      "user_workload_count": 1
+    },
+    {
+      "api_family": "string",
+      "symbol": "argz_count",
+      "runtime_mode": "strict",
+      "benchmark_id": "string/<missing-symbol-specific-benchmark>",
+      "missing_benchmark_reason": "missing_symbol_specific_benchmark",
+      "owner_bead": "bd-bp8fl.8.3",
+      "workload_count": 10,
+      "user_workload_count": 1
+    },
+    {
+      "api_family": "string",
+      "symbol": "argz_next",
+      "runtime_mode": "hardened",
+      "benchmark_id": "string/<missing-symbol-specific-benchmark>",
+      "missing_benchmark_reason": "missing_symbol_specific_benchmark",
+      "owner_bead": "bd-bp8fl.8.3",
+      "workload_count": 10,
+      "user_workload_count": 1
+    },
+    {
+      "api_family": "string",
+      "symbol": "argz_next",
+      "runtime_mode": "strict",
+      "benchmark_id": "string/<missing-symbol-specific-benchmark>",
+      "missing_benchmark_reason": "missing_symbol_specific_benchmark",
+      "owner_bead": "bd-bp8fl.8.3",
+      "workload_count": 10,
+      "user_workload_count": 1
+    },
+    {
+      "api_family": "string",
+      "symbol": "bcmp",
+      "runtime_mode": "hardened",
+      "benchmark_id": "string/<missing-symbol-specific-benchmark>",
+      "missing_benchmark_reason": "missing_symbol_specific_benchmark",
+      "owner_bead": "bd-bp8fl.8.3",
+      "workload_count": 10,
+      "user_workload_count": 1
+    },
+    {
+      "api_family": "string",
+      "symbol": "bcmp",
+      "runtime_mode": "strict",
+      "benchmark_id": "string/<missing-symbol-specific-benchmark>",
+      "missing_benchmark_reason": "missing_symbol_specific_benchmark",
+      "owner_bead": "bd-bp8fl.8.3",
+      "workload_count": 10,
+      "user_workload_count": 1
+    },
+    {
+      "api_family": "string",
+      "symbol": "consttime_bcmp",
+      "runtime_mode": "hardened",
+      "benchmark_id": "string/<missing-symbol-specific-benchmark>",
+      "missing_benchmark_reason": "missing_symbol_specific_benchmark",
+      "owner_bead": "bd-bp8fl.8.3",
+      "workload_count": 10,
+      "user_workload_count": 1
     }
   ],
   "follow_up_beads": [
@@ -49738,12 +49694,20 @@
       "mentions_strict_or_hardened": false
     },
     {
+      "bench": "glibc_baseline_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/glibc_baseline_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 7,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": false
+    },
+    {
       "bench": "malloc_bench",
       "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
       "exists": true,
       "benchmark_function_count": 5,
       "emits_structured_marker": true,
-      "mentions_strict_or_hardened": false
+      "mentions_strict_or_hardened": true
     },
     {
       "bench": "membrane_bench",
@@ -49805,6 +49769,7 @@
   "unmapped_bench_targets": [
     "alien_cs_bench",
     "elimination_bench",
+    "glibc_baseline_bench",
     "metadata_read_bench"
   ],
   "closure_evidence": {
@@ -49814,5 +49779,5 @@
     "target_report": "target/conformance/benchmark_coverage_inventory.report.json",
     "target_log": "target/conformance/benchmark_coverage_inventory.log.jsonl"
   },
-  "artifact_hash": "ed7b76dc2a54a4565d07515eba36b92e5966efe3d4750a26c281d0ce0b741480"
+  "artifact_hash": "eca9dfbcff20b956ad5b4e1d5deb2de4815eadc55b98a7e6f1ad74eb6bba9df7"
 }

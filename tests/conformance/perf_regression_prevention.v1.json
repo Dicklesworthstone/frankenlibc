@@ -1,13 +1,13 @@
 {
   "schema_version": "v1",
   "bead": "bd-1qfc",
-  "generated_at": "2026-05-04T15:03:34Z",
+  "generated_at": "2026-05-04T18:23:39Z",
   "summary": {
     "total_suites_in_spec": 4,
     "suites_with_bench_files": 4,
     "suites_enforced_in_gate": 2,
-    "suites_with_full_baselines": 2,
-    "baseline_slot_fill_pct": 56.5,
+    "suites_with_full_baselines": 4,
+    "baseline_slot_fill_pct": 100.0,
     "hotpath_symbol_coverage_pct": 59.2,
     "total_hotpath_symbols": 152,
     "extra_bench_files_beyond_spec": 9,
@@ -62,38 +62,16 @@
     {
       "suite_id": "string",
       "total_benchmarks_x_modes": 16,
-      "baselines_present": 0,
-      "baselines_missing": [
-        "strict/memcpy_16",
-        "strict/memcpy_64",
-        "strict/memcpy_256",
-        "strict/memcpy_1024",
-        "strict/memcpy_4096",
-        "strict/memcpy_65536",
-        "strict/strlen_16",
-        "strict/strlen_256",
-        "hardened/memcpy_16",
-        "hardened/memcpy_64",
-        "hardened/memcpy_256",
-        "hardened/memcpy_1024",
-        "hardened/memcpy_4096",
-        "hardened/memcpy_65536",
-        "hardened/strlen_16",
-        "hardened/strlen_256"
-      ],
-      "coverage_pct": 0.0
+      "baselines_present": 16,
+      "baselines_missing": [],
+      "coverage_pct": 100.0
     },
     {
       "suite_id": "malloc",
       "total_benchmarks_x_modes": 4,
-      "baselines_present": 0,
-      "baselines_missing": [
-        "strict/alloc_free_cycle",
-        "strict/alloc_burst",
-        "hardened/alloc_free_cycle",
-        "hardened/alloc_burst"
-      ],
-      "coverage_pct": 0.0
+      "baselines_present": 4,
+      "baselines_missing": [],
+      "coverage_pct": 100.0
     }
   ],
   "gate_wiring": {
@@ -140,7 +118,7 @@
     ]
   },
   "config_consistency": {
-    "baseline_version": 1,
+    "baseline_version": 2,
     "regression_max_pct": 15,
     "strict_target_ns": 20,
     "hardened_target_ns": 200,

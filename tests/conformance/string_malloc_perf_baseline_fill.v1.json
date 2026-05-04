@@ -1,0 +1,316 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-b92jd.2.1",
+  "gate_id": "string-malloc-perf-baseline-fill-v1",
+  "generated_at_utc": "2026-05-04T18:01:30Z",
+  "source_commit": "current",
+  "max_regression_pct": 15.0,
+  "artifacts": {
+    "baseline_file": "scripts/perf_baseline.json",
+    "baseline_spec": "tests/conformance/perf_baseline_spec.json",
+    "perf_regression_report": "tests/conformance/perf_regression_prevention.v1.json",
+    "benchmark_inventory": "tests/conformance/benchmark_coverage_inventory.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "runtime_mode",
+    "replacement_level",
+    "api_family",
+    "benchmark_id",
+    "expected",
+    "actual",
+    "errno",
+    "decision_path",
+    "healing_action",
+    "latency_ns",
+    "threshold_ns_op",
+    "regression_pct",
+    "source_commit",
+    "target_dir",
+    "artifact_refs",
+    "failure_signature"
+  ],
+  "required_modes": ["strict", "hardened"],
+  "required_benchmarks": {
+    "string": [
+      "memcpy_16",
+      "memcpy_64",
+      "memcpy_256",
+      "memcpy_1024",
+      "memcpy_4096",
+      "memcpy_65536",
+      "strlen_16",
+      "strlen_256"
+    ],
+    "malloc": ["alloc_free_cycle", "alloc_burst"]
+  },
+  "benchmark_log_samples": [
+    {
+      "prefix": "STRING_BENCH",
+      "line": "STRING_BENCH mode=strict bench=memcpy_16 samples=118 p50_ns_op=3.843 p95_ns_op=5.312 p99_ns_op=25.000 mean_ns_op=5.063 throughput_ops_s=258228044.587",
+      "expected": {
+        "mode": "strict",
+        "bench": "memcpy_16",
+        "p50_ns_op": 3.843
+      }
+    },
+    {
+      "prefix": "MALLOC_BENCH",
+      "line": "MALLOC_BENCH mode=hardened bench=alloc_burst samples=117 p50_ns_op=24760.258 p95_ns_op=29003.734 p99_ns_op=34697.062 mean_ns_op=25216.563 throughput_ops_s=40263.822",
+      "expected": {
+        "mode": "hardened",
+        "bench": "alloc_burst",
+        "p50_ns_op": 24760.258
+      }
+    }
+  ],
+  "baseline_rows": [
+    {
+      "api_family": "string",
+      "runtime_mode": "strict",
+      "benchmark_id": "memcpy_16",
+      "latency_ns": 3.843,
+      "threshold_ns_op": 4.419,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-strict-filtered",
+      "artifact_refs": [
+        "scripts/perf_baseline.json",
+        "crates/frankenlibc-bench/benches/string_bench.rs",
+        "target/conformance/bd-b92jd-2-1-string-strict-bench.log"
+      ]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "strict",
+      "benchmark_id": "memcpy_64",
+      "latency_ns": 3.447,
+      "threshold_ns_op": 3.964,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-strict-filtered",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "strict",
+      "benchmark_id": "memcpy_256",
+      "latency_ns": 3.831,
+      "threshold_ns_op": 4.406,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-strict-filtered",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "strict",
+      "benchmark_id": "memcpy_1024",
+      "latency_ns": 11.4,
+      "threshold_ns_op": 13.11,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-strict-filtered",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "strict",
+      "benchmark_id": "memcpy_4096",
+      "latency_ns": 37.262,
+      "threshold_ns_op": 42.851,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-strict-filtered",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "strict",
+      "benchmark_id": "memcpy_65536",
+      "latency_ns": 1069.142,
+      "threshold_ns_op": 1229.513,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-strict-filtered",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "strict",
+      "benchmark_id": "strlen_16",
+      "latency_ns": 7.226,
+      "threshold_ns_op": 8.31,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-strict-filtered",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "strict",
+      "benchmark_id": "strlen_256",
+      "latency_ns": 73.257,
+      "threshold_ns_op": 84.246,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-strict-filtered",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "hardened",
+      "benchmark_id": "memcpy_16",
+      "latency_ns": 3.834,
+      "threshold_ns_op": 4.409,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-hardened",
+      "artifact_refs": [
+        "scripts/perf_baseline.json",
+        "crates/frankenlibc-bench/benches/string_bench.rs",
+        "target/conformance/bd-b92jd-2-1-string-hardened-bench.log"
+      ]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "hardened",
+      "benchmark_id": "memcpy_64",
+      "latency_ns": 3.571,
+      "threshold_ns_op": 4.107,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-hardened",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "hardened",
+      "benchmark_id": "memcpy_256",
+      "latency_ns": 4.077,
+      "threshold_ns_op": 4.689,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-hardened",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "hardened",
+      "benchmark_id": "memcpy_1024",
+      "latency_ns": 11.217,
+      "threshold_ns_op": 12.9,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-hardened",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "hardened",
+      "benchmark_id": "memcpy_4096",
+      "latency_ns": 37.333,
+      "threshold_ns_op": 42.933,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-hardened",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "hardened",
+      "benchmark_id": "memcpy_65536",
+      "latency_ns": 1071.216,
+      "threshold_ns_op": 1231.898,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-hardened",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "hardened",
+      "benchmark_id": "strlen_16",
+      "latency_ns": 7.523,
+      "threshold_ns_op": 8.651,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-hardened",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "string",
+      "runtime_mode": "hardened",
+      "benchmark_id": "strlen_256",
+      "latency_ns": 72.933,
+      "threshold_ns_op": 83.873,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-string-hardened",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/string_bench.rs"]
+    },
+    {
+      "api_family": "malloc",
+      "runtime_mode": "strict",
+      "benchmark_id": "alloc_free_cycle",
+      "latency_ns": 37.627,
+      "threshold_ns_op": 43.271,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-malloc-strict",
+      "artifact_refs": [
+        "scripts/perf_baseline.json",
+        "crates/frankenlibc-bench/benches/malloc_bench.rs",
+        "target/conformance/bd-b92jd-2-1-malloc-strict-bench.log"
+      ]
+    },
+    {
+      "api_family": "malloc",
+      "runtime_mode": "strict",
+      "benchmark_id": "alloc_burst",
+      "latency_ns": 23781.5,
+      "threshold_ns_op": 27348.725,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-malloc-strict",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/malloc_bench.rs"]
+    },
+    {
+      "api_family": "malloc",
+      "runtime_mode": "hardened",
+      "benchmark_id": "alloc_free_cycle",
+      "latency_ns": 37.35,
+      "threshold_ns_op": 42.953,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-malloc-hardened",
+      "artifact_refs": [
+        "scripts/perf_baseline.json",
+        "crates/frankenlibc-bench/benches/malloc_bench.rs",
+        "target/conformance/bd-b92jd-2-1-malloc-hardened-bench.log"
+      ]
+    },
+    {
+      "api_family": "malloc",
+      "runtime_mode": "hardened",
+      "benchmark_id": "alloc_burst",
+      "latency_ns": 24760.258,
+      "threshold_ns_op": 28474.297,
+      "regression_pct": 0.0,
+      "source_commit": "current",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-malloc-hardened",
+      "artifact_refs": ["scripts/perf_baseline.json", "crates/frankenlibc-bench/benches/malloc_bench.rs"]
+    }
+  ],
+  "summary": {
+    "baseline_row_count": 20,
+    "string_row_count": 16,
+    "malloc_row_count": 4,
+    "strict_row_count": 10,
+    "hardened_row_count": 10,
+    "baseline_slot_fill_pct": 100.0,
+    "regression_pct": 0.0,
+    "perf_waiver_expanded": false
+  }
+}
