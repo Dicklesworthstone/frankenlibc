@@ -4,8 +4,10 @@
 //! adds metamorphic relations that hold regardless of input value:
 //!
 //!   M1. Output-alphabet closure: every byte of ntop output is in
-//!       `[A-Za-z0-9+/]` (no '=' since libresolv's ntop does not emit
-//!       padding) followed by a single NUL terminator.
+//!       `[A-Za-z0-9+/=]` — note that libresolv `__b64_ntop` *does* emit
+//!       `=` padding per RFC 4648 §4 when `srclen % 3 != 0`, so `=` is
+//!       part of the alphabet by design and must be permitted by the
+//!       sweep.
 //!   M2. Encoded length is exactly `4 * ceil(srclen / 3)` and is always a
 //!       multiple of 4 (for non-empty input).
 //!   M3. Concatenation monotonicity: `len(ntop(a ++ b)) >= len(ntop(a))`.
@@ -13,10 +15,15 @@
 //!       re-encoding the result reproduces the original ntop bytes.
 //!   M5. Whitespace invariance: pton accepts the canonical encoding with
 //!       arbitrary internal whitespace and yields the same plaintext.
+//!   M6. Padding-character count matches RFC 4648 §4: ntop emits exactly
+//!       `(3 - srclen % 3) % 3` `=` characters — 0, 2, or 1 — and they
+//!       only appear at the very end of the output. This pins both the
+//!       padding count *and* its position; alphabet drift that admitted
+//!       `=` mid-stream would be caught here even if M1 still passed.
 //!
 //! These relations are differential against the *function itself* across
 //! correlated inputs, so they catch divergences (length drift, alphabet
-//! drift, idempotence loss) without needing an oracle.
+//! drift, idempotence loss, padding drift) without needing an oracle.
 
 use frankenlibc_core::resolv::b64;
 
@@ -120,6 +127,40 @@ fn m4_idempotence_on_canonical_encodings() {
             re_encoded, encoded,
             "re-encoding decoded bytes must reproduce the original ntop output (idempotence): {encoded:?} -> {decoded:?} -> {re_encoded:?}"
         );
+    }
+}
+
+#[test]
+fn m6_padding_count_matches_rfc4648_formula_and_only_appears_at_tail() {
+    for n in 0..=300usize {
+        // Use a deterministic non-trivial byte pattern so the encoder
+        // exercises real bit-shuffling rather than zero-fill behavior.
+        let input: Vec<u8> = (0..n).map(|i| (i * 17 + 3) as u8).collect();
+        let encoded = ntop_to_string(&input);
+        let pad_count = encoded.bytes().filter(|b| *b == b'=').count();
+        let expected = (3 - n % 3) % 3;
+        assert_eq!(
+            pad_count, expected,
+            "padding-count drift at srclen={n}: expected {expected} `=`, got {pad_count} (encoded={encoded:?})"
+        );
+        if pad_count > 0 {
+            // Padding must be a contiguous suffix; equivalently, no `=`
+            // may appear before the first `=`.
+            let first_pad = encoded
+                .find('=')
+                .expect("pad_count > 0 implies `=` is present");
+            assert_eq!(
+                first_pad,
+                encoded.len() - pad_count,
+                "padding must be a contiguous suffix; encoded={encoded:?} first_pad={first_pad} pad_count={pad_count}"
+            );
+            for byte in encoded.bytes().take(first_pad) {
+                assert_ne!(
+                    byte, b'=',
+                    "no `=` allowed before the first padding byte (encoded={encoded:?})"
+                );
+            }
+        }
     }
 }
 
