@@ -1,0 +1,604 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "runtime-core-fixture-evidence-gate",
+  "bead": "bd-bp8fl.3.6",
+  "owner_family_group": "fpg-reverse-runtime-core",
+  "evidence_owner": "frankenlibc-core and frankenlibc-abi subsystem owners",
+  "generated_utc": "2026-05-04T14:02:27Z",
+  "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+  "inputs": {
+    "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+    "feature_parity_gap_owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "reality_bridge_import_reconciliation": "tests/conformance/reality_bridge_import_reconciliation.v1.json",
+    "symbol_fixture_coverage": "tests/conformance/symbol_fixture_coverage.v1.json",
+    "per_symbol_fixture_tests": "tests/conformance/per_symbol_fixture_tests.v1.json",
+    "semantic_contract_inventory": "tests/conformance/semantic_contract_inventory.v1.json",
+    "mode_semantics_matrix": "tests/conformance/mode_semantics_matrix.json",
+    "hardened_repair_deny_matrix": "tests/conformance/hardened_repair_deny_matrix.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "gap_id",
+    "api_family",
+    "symbol",
+    "runtime_mode",
+    "expected",
+    "actual",
+    "errno",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_done_until_all_runtime_core_gap_ids_have_strict_and_hardened_fixture_or_semantic_overlay_evidence",
+    "allow_source_status": [
+      "IN_PROGRESS",
+      "PLANNED"
+    ],
+    "block_status_without_all_gap_rows": [
+      "DONE"
+    ],
+    "block_replacement_levels_without_evidence": [
+      "L1",
+      "L2",
+      "L3"
+    ],
+    "required_runtime_modes": [
+      "strict",
+      "hardened"
+    ],
+    "rejected_evidence_kinds": [
+      "summary_only",
+      "prose_only",
+      "missing_strict_mode",
+      "missing_hardened_mode",
+      "unsupported_without_named_case",
+      "fallback_without_semantic_overlay",
+      "stale_source_commit",
+      "expected_actual_mismatch"
+    ]
+  },
+  "summary": {
+    "gap_count": 10,
+    "strict_mode_evidence_rows": 10,
+    "hardened_mode_evidence_rows": 10,
+    "named_unsupported_or_fallback_rows": 10,
+    "fixture_or_semantic_overlay_rows": 10
+  },
+  "rows": [
+    {
+      "gap_id": "fp-reverse-core-311e99aff4d6",
+      "subsystem": "allocator",
+      "api_family": "Allocator",
+      "symbol": "malloc",
+      "source_status": "IN_PROGRESS",
+      "evidence_kind": "fixture_and_semantic_overlay",
+      "fixture_files": [
+        "tests/conformance/fixtures/allocator.json"
+      ],
+      "semantic_contract_ids": [],
+      "mode_semantics_family": "Allocator",
+      "repair_deny_entry_ids": [],
+      "named_unsupported_or_fallback_cases": [
+        "strict double-free and foreign-free compatibility are explicit no-crash fallbacks",
+        "hardened double-free records IgnoreDoubleFree",
+        "hardened foreign free records IgnoreForeignFree",
+        "realloc_unknown is explicitly ReallocAsMalloc in hardened mode"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "kind": "fixture",
+          "expected": "allocator fixture covers malloc/free strict allocation lifecycle",
+          "actual": "allocator fixture covers malloc/free strict allocation lifecycle",
+          "errno": "0_OR_ENOMEM",
+          "artifact_refs": [
+            "tests/conformance/fixtures/allocator.json",
+            "tests/conformance/symbol_fixture_coverage.v1.json",
+            "tests/conformance/per_symbol_fixture_tests.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        },
+        "hardened": {
+          "kind": "semantic_overlay",
+          "expected": "allocator hardened repairs name IgnoreDoubleFree IgnoreForeignFree and ReallocAsMalloc",
+          "actual": "allocator hardened repairs name IgnoreDoubleFree IgnoreForeignFree and ReallocAsMalloc",
+          "errno": "0_OR_ENOMEM_OR_EINVAL",
+          "artifact_refs": [
+            "tests/conformance/mode_semantics_matrix.json",
+            "tests/conformance/hardened_repair_deny_matrix.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-a30cbdd5d2da",
+      "subsystem": "string_memory",
+      "api_family": "StringMemory",
+      "symbol": "memcpy",
+      "source_status": "IN_PROGRESS",
+      "evidence_kind": "dual_mode_fixture",
+      "fixture_files": [
+        "tests/conformance/fixtures/membrane_mode_split.json",
+        "tests/conformance/fixtures/memory_ops.json",
+        "tests/conformance/fixtures/string_memory_full.json"
+      ],
+      "semantic_contract_ids": [],
+      "mode_semantics_family": "StringMemory",
+      "repair_deny_entry_ids": [
+        "string_memcpy_overflow_repair",
+        "string_strlen_unterminated_repair"
+      ],
+      "named_unsupported_or_fallback_cases": [
+        "strict memcpy overflow remains UB-visible",
+        "hardened memcpy overflow clamps to known destination bounds",
+        "strict unterminated strlen remains UB-visible",
+        "hardened unterminated strlen is bounded to known allocation extent"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "kind": "fixture",
+          "expected": "membrane mode split records strict memcpy and strlen unsafe-edge behavior",
+          "actual": "membrane mode split records strict memcpy and strlen unsafe-edge behavior",
+          "errno": "0",
+          "artifact_refs": [
+            "tests/conformance/fixtures/membrane_mode_split.json",
+            "tests/conformance/per_symbol_fixture_tests.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        },
+        "hardened": {
+          "kind": "fixture",
+          "expected": "hardened memcpy and strlen fixture cases record clamp or bounded-scan repairs",
+          "actual": "hardened memcpy and strlen fixture cases record clamp or bounded-scan repairs",
+          "errno": "0",
+          "artifact_refs": [
+            "tests/conformance/fixtures/membrane_mode_split.json",
+            "tests/conformance/hardened_repair_deny_matrix.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-422dc81789ec",
+      "subsystem": "pthread_cancellation",
+      "api_family": "Threading",
+      "symbol": "pthread_cancel",
+      "source_status": "IN_PROGRESS",
+      "evidence_kind": "fixture_and_semantic_overlay",
+      "fixture_files": [
+        "tests/conformance/pthread_cancellation_robust_tls_fixture_pack.v1.json",
+        "tests/conformance/pthread_cancellation_robust_mutex_tls.v1.json",
+        "tests/conformance/fixtures/pthread_thread.json",
+        "tests/conformance/fixtures/pthread_tls_keys.json"
+      ],
+      "semantic_contract_ids": [
+        "sem-pthread-cancel-private",
+        "sem-pthread-priority-protocol"
+      ],
+      "mode_semantics_family": "Threading",
+      "repair_deny_entry_ids": [],
+      "named_unsupported_or_fallback_cases": [
+        "private cancellation registration helpers are compat no-ops",
+        "__pthread_unwind_next remains an aborting proof gap",
+        "robust owner-death recovery remains blocked with stable signatures",
+        "priority-ceiling protocol helpers are explicit ENOSYS unsupported contracts"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "strict deferred cancellation, TLS destructor, and robust blocked signatures are replayable",
+          "actual": "strict deferred cancellation, TLS destructor, and robust blocked signatures are replayable",
+          "errno": "0_OR_EOWNERDEAD_OR_ENOSYS",
+          "artifact_refs": [
+            "tests/conformance/pthread_cancellation_robust_tls_fixture_pack.v1.json",
+            "tests/conformance/pthread_cancellation_robust_mutex_tls.v1.json",
+            "tests/conformance/semantic_contract_inventory.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        },
+        "hardened": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "hardened cleanup, deadlock-timeout, and TLS cancellation boundaries are replayable",
+          "actual": "hardened cleanup, deadlock-timeout, and TLS cancellation boundaries are replayable",
+          "errno": "0_OR_ETIMEDOUT_OR_ENOSYS",
+          "artifact_refs": [
+            "tests/conformance/pthread_cancellation_robust_tls_fixture_pack.v1.json",
+            "tests/conformance/pthread_cancellation_robust_mutex_tls.v1.json",
+            "tests/conformance/semantic_contract_inventory.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-bbe405ff4f84",
+      "subsystem": "stdio",
+      "api_family": "Stdio",
+      "symbol": "fopen",
+      "source_status": "IN_PROGRESS",
+      "evidence_kind": "fixture_and_semantic_overlay",
+      "fixture_files": [
+        "tests/conformance/fixtures/stdio_file_ops.json",
+        "tests/conformance/stdio_libio_buffering_fixture_pack.v1.json",
+        "tests/conformance/stdio_invariants.v1.json"
+      ],
+      "semantic_contract_ids": [
+        "sem-stdio-vtable-helpers"
+      ],
+      "mode_semantics_family": "Stdio",
+      "repair_deny_entry_ids": [],
+      "named_unsupported_or_fallback_cases": [
+        "glibc libio vtable helpers return EOF or -1 with ENOSYS",
+        "stdio invalid stream paths are safe-default fallbacks",
+        "buffer overflow paths are bounded under hardened repair policy"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "kind": "fixture",
+          "expected": "stdio_file_ops covers fopen strict file lifecycle and null-input errno",
+          "actual": "stdio_file_ops covers fopen strict file lifecycle and null-input errno",
+          "errno": "0_OR_EINVAL",
+          "artifact_refs": [
+            "tests/conformance/fixtures/stdio_file_ops.json",
+            "tests/conformance/per_symbol_fixture_tests.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        },
+        "hardened": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "stdio hardened fixture and libio helper overlay keep invalid-stream fallbacks explicit",
+          "actual": "stdio hardened fixture and libio helper overlay keep invalid-stream fallbacks explicit",
+          "errno": "0_OR_EINVAL_OR_ENOSYS",
+          "artifact_refs": [
+            "tests/conformance/fixtures/stdio_file_ops.json",
+            "tests/conformance/stdio_libio_buffering_fixture_pack.v1.json",
+            "tests/conformance/semantic_contract_inventory.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-97ef5634c70b",
+      "subsystem": "locale_parsing",
+      "api_family": "Locale",
+      "symbol": "setlocale",
+      "source_status": "PLANNED",
+      "evidence_kind": "fixture_and_semantic_overlay",
+      "fixture_files": [
+        "tests/conformance/fixtures/locale_ops.json",
+        "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+      ],
+      "semantic_contract_ids": [],
+      "mode_semantics_family": "Locale",
+      "repair_deny_entry_ids": [
+        "locale_unsupported_fallback_repair"
+      ],
+      "named_unsupported_or_fallback_cases": [
+        "missing locale data blocks promotion instead of counting as parity",
+        "invalid locale names have strict rejection or hardened C-locale fallback",
+        "catalog default return is explicit for missing catalogs",
+        "transliteration remains a proof gap until exact iconv byte fixtures own it"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "locale strict fixtures cover setlocale and catalog fallback classification",
+          "actual": "locale strict fixtures cover setlocale and catalog fallback classification",
+          "errno": "0_OR_ENOENT_OR_EINVAL",
+          "artifact_refs": [
+            "tests/conformance/fixtures/locale_ops.json",
+            "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        },
+        "hardened": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "locale hardened fallback returns C-locale safe defaults where policy allows",
+          "actual": "locale hardened fallback returns C-locale safe defaults where policy allows",
+          "errno": "0_OR_EINVAL",
+          "artifact_refs": [
+            "tests/conformance/fixtures/locale_ops.json",
+            "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json",
+            "tests/conformance/hardened_repair_deny_matrix.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-bdb29f3d780e",
+      "subsystem": "signal_setjmp",
+      "api_family": "Signal",
+      "symbol": "sigaction",
+      "source_status": "PLANNED",
+      "evidence_kind": "fixture_and_semantic_overlay",
+      "fixture_files": [
+        "tests/conformance/signal_setjmp_async_cancellation_fixture_pack.v1.json",
+        "tests/conformance/fixtures/signal_ops.json",
+        "tests/conformance/fixtures/setjmp_ops.json",
+        "tests/conformance/setjmp_semantics_contract.v1.json"
+      ],
+      "semantic_contract_ids": [
+        "sem-setjmp-phase1"
+      ],
+      "mode_semantics_family": null,
+      "repair_deny_entry_ids": [
+        "signal_invalid_signal_number_deny"
+      ],
+      "named_unsupported_or_fallback_cases": [
+        "setjmp phase-1 metadata capture is explicit and full stack transfer remains a proof gap",
+        "signal negative timeout paths must fail closed instead of hanging",
+        "invalid signal numbers are denied under hardened policy"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "strict signal mask, handler longjmp, and cancellation-boundary rows are replayable",
+          "actual": "strict signal mask, handler longjmp, and cancellation-boundary rows are replayable",
+          "errno": "0_OR_EINTR_OR_ETIMEDOUT",
+          "artifact_refs": [
+            "tests/conformance/signal_setjmp_async_cancellation_fixture_pack.v1.json",
+            "tests/conformance/fixtures/signal_ops.json",
+            "tests/conformance/fixtures/setjmp_ops.json",
+            "tests/conformance/semantic_contract_inventory.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        },
+        "hardened": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "hardened nested signal, sigsetjmp mask restore, and invalid-signal deny evidence are replayable",
+          "actual": "hardened nested signal, sigsetjmp mask restore, and invalid-signal deny evidence are replayable",
+          "errno": "0_OR_EINVAL",
+          "artifact_refs": [
+            "tests/conformance/signal_setjmp_async_cancellation_fixture_pack.v1.json",
+            "tests/conformance/hardened_repair_deny_matrix.v1.json",
+            "tests/conformance/semantic_contract_inventory.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-d6c0faa879a5",
+      "subsystem": "time",
+      "api_family": "Time",
+      "symbol": "time",
+      "source_status": "PLANNED",
+      "evidence_kind": "fixture_and_semantic_overlay",
+      "fixture_files": [
+        "tests/conformance/fixtures/time_ops.json"
+      ],
+      "semantic_contract_ids": [],
+      "mode_semantics_family": "Time",
+      "repair_deny_entry_ids": [],
+      "named_unsupported_or_fallback_cases": [
+        "invalid clock strict behavior remains EINVAL",
+        "hardened invalid clock heals to CLOCK_REALTIME",
+        "hardened invalid timespec clamps to valid range",
+        "null time buffers return safe defaults"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "kind": "fixture",
+          "expected": "time_ops covers strict null-buffer and time query behavior",
+          "actual": "time_ops covers strict null-buffer and time query behavior",
+          "errno": "0_OR_EINVAL",
+          "artifact_refs": [
+            "tests/conformance/fixtures/time_ops.json",
+            "tests/conformance/per_symbol_fixture_tests.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        },
+        "hardened": {
+          "kind": "semantic_overlay",
+          "expected": "mode semantics matrix names hardened invalid-clock and invalid-timespec repairs",
+          "actual": "mode semantics matrix names hardened invalid-clock and invalid-timespec repairs",
+          "errno": "0_OR_EINVAL",
+          "artifact_refs": [
+            "tests/conformance/fixtures/time_ops.json",
+            "tests/conformance/mode_semantics_matrix.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-36e1946e7f8d",
+      "subsystem": "nss_resolver",
+      "api_family": "Resolver",
+      "symbol": "getaddrinfo",
+      "source_status": "PLANNED",
+      "evidence_kind": "fixture_and_semantic_overlay",
+      "fixture_files": [
+        "tests/conformance/fixtures/resolver.json",
+        "tests/conformance/resolver_nss_hard_parts.v1.json",
+        "tests/conformance/fixtures/pwd_ops.json",
+        "tests/conformance/fixtures/grp_ops.json"
+      ],
+      "semantic_contract_ids": [
+        "sem-nss-files-plugin",
+        "sem-nss-configure-lookup",
+        "sem-async-resolver-partial"
+      ],
+      "mode_semantics_family": "Resolver",
+      "repair_deny_entry_ids": [],
+      "named_unsupported_or_fallback_cases": [
+        "NSS private files plugin entries return deterministic SUCCESS or NOTFOUND fallbacks",
+        "NSS module-chain dispatch is collapsed to native files bootstrap",
+        "getaddrinfo_a true async work is unsupported with ENOSYS or EAI_SYSTEM paths",
+        "resolver invalid hints are explicit strict errors or hardened safe defaults"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "resolver strict fixtures cover getaddrinfo numeric/files bootstrap and NSS fallback inventory",
+          "actual": "resolver strict fixtures cover getaddrinfo numeric/files bootstrap and NSS fallback inventory",
+          "errno": "0_OR_EAI_NONAME_OR_EAI_BADFLAGS",
+          "artifact_refs": [
+            "tests/conformance/fixtures/resolver.json",
+            "tests/conformance/resolver_nss_hard_parts.v1.json",
+            "tests/conformance/semantic_contract_inventory.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        },
+        "hardened": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "resolver hardened fixtures and mode matrix name invalid-hints repair and bounded output behavior",
+          "actual": "resolver hardened fixtures and mode matrix name invalid-hints repair and bounded output behavior",
+          "errno": "0_OR_EAI_NONAME_OR_EAI_SYSTEM",
+          "artifact_refs": [
+            "tests/conformance/fixtures/resolver.json",
+            "tests/conformance/mode_semantics_matrix.json",
+            "tests/conformance/semantic_contract_inventory.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-afa6d92abe42",
+      "subsystem": "iconv_i18n",
+      "api_family": "Iconv",
+      "symbol": "iconv",
+      "source_status": "PLANNED",
+      "evidence_kind": "fixture_and_semantic_overlay",
+      "fixture_files": [
+        "tests/conformance/fixtures/iconv_phase1.json",
+        "tests/conformance/iconv_stateful_codec_fixture_pack.v1.json",
+        "tests/conformance/iconv_codec_scope_ledger.v1.json",
+        "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+      ],
+      "semantic_contract_ids": [
+        "sem-gconv-private-internals"
+      ],
+      "mode_semantics_family": null,
+      "repair_deny_entry_ids": [
+        "iconv_unsupported_encoding_deny"
+      ],
+      "named_unsupported_or_fallback_cases": [
+        "unsupported encodings are denied under hardened iconv policy",
+        "private gconv internals expose bootstrap descriptors and null caches instead of glibc module internals",
+        "transliteration remains blocked until exact iconv byte fixtures own the result",
+        "codec scope exclusions are locked in the iconv scope ledger"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "iconv phase1 strict fixtures cover supported codecs and explicit exclusions",
+          "actual": "iconv phase1 strict fixtures cover supported codecs and explicit exclusions",
+          "errno": "0_OR_EILSEQ_OR_EINVAL",
+          "artifact_refs": [
+            "tests/conformance/fixtures/iconv_phase1.json",
+            "tests/conformance/iconv_codec_scope_ledger.v1.json",
+            "tests/conformance/semantic_contract_inventory.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        },
+        "hardened": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "iconv hardened fixtures and repair matrix deny unsupported encoding and preserve stateful codec evidence",
+          "actual": "iconv hardened fixtures and repair matrix deny unsupported encoding and preserve stateful codec evidence",
+          "errno": "0_OR_EILSEQ_OR_EINVAL",
+          "artifact_refs": [
+            "tests/conformance/fixtures/iconv_phase1.json",
+            "tests/conformance/iconv_stateful_codec_fixture_pack.v1.json",
+            "tests/conformance/hardened_repair_deny_matrix.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-8f333dadeb11",
+      "subsystem": "strict_hardened_decisions",
+      "api_family": "RuntimePolicy",
+      "symbol": "runtime_policy::decide",
+      "source_status": "PLANNED",
+      "evidence_kind": "mode_decision_matrix",
+      "fixture_files": [
+        "tests/conformance/fixtures/membrane_mode_split.json",
+        "tests/conformance/mode_semantics_matrix.json",
+        "tests/conformance/hardened_repair_deny_matrix.v1.json"
+      ],
+      "semantic_contract_ids": [],
+      "mode_semantics_family": "StringMemory",
+      "repair_deny_entry_ids": [
+        "string_memcpy_overflow_repair",
+        "string_strlen_unterminated_repair",
+        "locale_unsupported_fallback_repair",
+        "iconv_unsupported_encoding_deny",
+        "signal_invalid_signal_number_deny"
+      ],
+      "named_unsupported_or_fallback_cases": [
+        "strict mode records compatibility behavior and keeps unsafe edges visible",
+        "hardened mode requires Repair or Deny entries for invalid input classes",
+        "summary-only runtime-mode claims are rejected by this gate",
+        "replacement levels L1-L3 remain blocked without per-family evidence"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "strict runtime decisions are tied to fixture evidence and mode matrix behavior",
+          "actual": "strict runtime decisions are tied to fixture evidence and mode matrix behavior",
+          "errno": "0_OR_FAMILY_ERRNO",
+          "artifact_refs": [
+            "tests/conformance/fixtures/membrane_mode_split.json",
+            "tests/conformance/mode_semantics_matrix.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        },
+        "hardened": {
+          "kind": "fixture_and_semantic_overlay",
+          "expected": "hardened runtime decisions are tied to repair-deny rows and mode split fixtures",
+          "actual": "hardened runtime decisions are tied to repair-deny rows and mode split fixtures",
+          "errno": "0_OR_FAMILY_ERRNO",
+          "artifact_refs": [
+            "tests/conformance/fixtures/membrane_mode_split.json",
+            "tests/conformance/mode_semantics_matrix.json",
+            "tests/conformance/hardened_repair_deny_matrix.v1.json"
+          ],
+          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "failure_signature": "none"
+        }
+      }
+    }
+  ],
+  "direct_runner": {
+    "runner_kind": "direct",
+    "command": "rch exec -- cargo test -p frankenlibc-harness --test runtime_core_fixture_evidence_gate_test -- --nocapture",
+    "artifact_refs": [
+      "crates/frankenlibc-harness/tests/runtime_core_fixture_evidence_gate_test.rs"
+    ]
+  },
+  "isolated_runner": {
+    "runner_kind": "isolated",
+    "command": "scripts/check_runtime_core_fixture_evidence_gate.sh",
+    "artifact_refs": [
+      "scripts/check_runtime_core_fixture_evidence_gate.sh",
+      "tests/conformance/runtime_core_fixture_evidence_gate.v1.json"
+    ]
+  }
+}
