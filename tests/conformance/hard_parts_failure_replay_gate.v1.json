@@ -1,0 +1,504 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-bp8fl.5.9",
+  "gate_id": "hard-parts-failure-replay-gate-v1",
+  "generated_at_utc": "2026-05-04T02:45:00Z",
+  "purpose": "Define replayable negative fixture standards for hard-parts campaigns without narrowing resolver, NSS, locale, iconv, loader, stdio, pthread, math/fenv, signal, setjmp, or cancellation scope.",
+  "freshness": {
+    "required_source_commit": "current",
+    "source_commit_policy": "gate must compare this marker to git rev-parse HEAD and fail stale artifacts when pinned to any other commit"
+  },
+  "supported_architectures": [
+    "x86_64",
+    "aarch64"
+  ],
+  "sources": {
+    "hard_parts_truth_table": "tests/conformance/hard_parts_truth_table.v1.json",
+    "hard_parts_e2e_catalog": "tests/conformance/hard_parts_e2e_catalog.v1.json",
+    "hard_parts_e2e_failure_matrix": "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
+    "oracle_precedence_divergence": "tests/conformance/oracle_precedence_divergence.v1.json",
+    "fixture_dual_runner_gate": "tests/conformance/fixture_dual_runner_gate.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "failure_family",
+    "scenario_id",
+    "seed",
+    "runtime_mode",
+    "replacement_level",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "status",
+    "decision_path",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "cleanup_state",
+    "failure_signature"
+  ],
+  "replay_artifact_schema": {
+    "required_fields": [
+      "scenario_id",
+      "failure_family",
+      "seed",
+      "input_artifact",
+      "environment",
+      "runtime_modes",
+      "replacement_level",
+      "oracle_kind",
+      "expected",
+      "allowed_divergence",
+      "cleanup",
+      "minimization_notes",
+      "determinism",
+      "direct_runner",
+      "isolated_runner"
+    ],
+    "runner_required_fields": [
+      "runner_kind",
+      "command",
+      "artifact_refs"
+    ],
+    "expected_required_fields": [
+      "outcome",
+      "errno",
+      "status",
+      "decision_path"
+    ]
+  },
+  "required_failure_families": [
+    "resolver_nss",
+    "locale_iconv",
+    "loader_symbol",
+    "stdio_error_state",
+    "pthread_cancellation",
+    "math_fenv",
+    "signal_setjmp"
+  ],
+  "diagnostic_signatures": [
+    {
+      "id": "stale_artifact",
+      "trigger": "manifest source_commit is pinned to a commit other than current HEAD or a source artifact bead/schema no longer matches"
+    },
+    {
+      "id": "wrong_architecture",
+      "trigger": "current architecture is not listed in supported_architectures"
+    },
+    {
+      "id": "missing_fixture",
+      "trigger": "input artifact or runner artifact path cannot be resolved from the workspace"
+    },
+    {
+      "id": "nondeterministic_output",
+      "trigger": "scenario determinism guard is absent or requires fewer than two stable replay iterations"
+    },
+    {
+      "id": "oracle_mismatch",
+      "trigger": "oracle_kind or allowed_divergence is not declared by oracle_precedence_divergence.v1.json"
+    },
+    {
+      "id": "unsupported_scenario_class",
+      "trigger": "scenario failure_family is outside the required hard-parts replay family set"
+    },
+    {
+      "id": "missing_field",
+      "trigger": "scenario, runner, or expected outcome omits a required schema field"
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "resolver_nss.malformed_dns_packet",
+      "failure_family": "resolver_nss",
+      "seed": "bd-bp8fl.5.9-resolver-0001",
+      "input_artifact": {
+        "path": "tests/conformance/fixtures/resolver.json",
+        "kind": "fixture",
+        "negative_input": "malformed_dns_packet_header"
+      },
+      "environment": {
+        "RES_OPTIONS": "attempts:1 timeout:1",
+        "nsswitch_conf": "hosts: files dns",
+        "network_state": "loopback_only"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "environment_probe",
+      "expected": {
+        "outcome": "deterministic_failure",
+        "errno": "EAI_FAIL",
+        "status": "blocked_claim",
+        "decision_path": "fixture->environment_probe->resolver_nss_failure"
+      },
+      "allowed_divergence": "flaky_environment",
+      "cleanup": {
+        "state": "temp_resolver_state_removed",
+        "required": true
+      },
+      "minimization_notes": "Preserve DNS header bytes, qtype, resolver options, and nsswitch order.",
+      "determinism": {
+        "replay_key": "resolver-nss-malformed-dns-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "same errno/status across strict and hardened replay"
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test resolver_conformance_test resolver_ops_fixture_cases_match_direct_executor -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/resolver_conformance_test.rs",
+          "tests/conformance/fixtures/resolver.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "scenario_id": "locale_iconv.invalid_shift_sequence",
+      "failure_family": "locale_iconv",
+      "seed": "bd-bp8fl.5.9-locale-iconv-0001",
+      "input_artifact": {
+        "path": "tests/conformance/fixtures/iconv_phase1.json",
+        "kind": "fixture",
+        "negative_input": "truncated_stateful_escape_sequence"
+      },
+      "environment": {
+        "LC_ALL": "C.UTF-8",
+        "GCONV_PATH": "unset",
+        "codec_state": "stateful_invalid_sequence"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "expected": {
+        "outcome": "oracle_mapped_error",
+        "errno": "EILSEQ",
+        "status": "blocked_claim",
+        "decision_path": "fixture->host_glibc->iconv_invalid_sequence"
+      },
+      "allowed_divergence": "parity_match",
+      "cleanup": {
+        "state": "locale_env_restored",
+        "required": true
+      },
+      "minimization_notes": "Keep the minimal invalid byte prefix and locale variables needed to reproduce EILSEQ.",
+      "determinism": {
+        "replay_key": "locale-iconv-invalid-shift-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "same errno and consumed-byte position over two replays"
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "scenario_id": "loader_symbol.version_node_missing",
+      "failure_family": "loader_symbol",
+      "seed": "bd-bp8fl.5.9-loader-0001",
+      "input_artifact": {
+        "path": "tests/conformance/fixtures/loader_edges.json",
+        "kind": "fixture",
+        "negative_input": "missing_versioned_symbol_node"
+      },
+      "environment": {
+        "LD_BIND_NOW": "1",
+        "LD_AUDIT": "unset",
+        "symbol_version": "GLIBC_PRIVATE"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L1",
+      "oracle_kind": "frankenlibc_contract",
+      "expected": {
+        "outcome": "unsupported_contract",
+        "errno": "ENOENT",
+        "status": "loader_claim_blocked",
+        "decision_path": "fixture->version_script->unsupported_loader_symbol"
+      },
+      "allowed_divergence": "unsupported_contract",
+      "cleanup": {
+        "state": "dlopen_handles_closed",
+        "required": true
+      },
+      "minimization_notes": "Keep only the missing symbol name, version node, loader env, and link command.",
+      "determinism": {
+        "replay_key": "loader-symbol-version-missing-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "same loader diagnostic and status over direct and isolated replay"
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test loader_edges_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/loader_edges_conformance_test.rs",
+          "tests/conformance/fixtures/loader_edges.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "scenario_id": "stdio_error_state.short_write_pipe",
+      "failure_family": "stdio_error_state",
+      "seed": "bd-bp8fl.5.9-stdio-0001",
+      "input_artifact": {
+        "path": "tests/conformance/fixtures/stdio_file_ops.json",
+        "kind": "fixture",
+        "negative_input": "closed_pipe_short_write"
+      },
+      "environment": {
+        "TMPDIR": "target/conformance/replay/tmp",
+        "stdio_buffering": "line_buffered",
+        "pipe_peer": "closed_before_flush"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "posix_text",
+      "expected": {
+        "outcome": "stdio_error_flag_set",
+        "errno": "EPIPE",
+        "status": "deterministic_failure",
+        "decision_path": "fixture->posix_text->ferror_errno"
+      },
+      "allowed_divergence": "parity_match",
+      "cleanup": {
+        "state": "pipe_fds_closed_and_tempfile_removed",
+        "required": true
+      },
+      "minimization_notes": "Preserve write size, buffering mode, errno, ferror state, and fd cleanup.",
+      "determinism": {
+        "replay_key": "stdio-short-write-pipe-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "same errno/status and ferror flag after cleanup"
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test stdio_file_ops_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/stdio_file_ops_conformance_test.rs",
+          "tests/conformance/fixtures/stdio_file_ops.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "scenario_id": "pthread_cancellation.cancel_during_cond_wait",
+      "failure_family": "pthread_cancellation",
+      "seed": "bd-bp8fl.5.9-pthread-0001",
+      "input_artifact": {
+        "path": "tests/conformance/fixtures/pthread_thread.json",
+        "kind": "fixture",
+        "negative_input": "cancel_during_condition_wait"
+      },
+      "environment": {
+        "thread_count": "2",
+        "cancelability": "deferred",
+        "scheduler": "bounded_join_timeout"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "posix_text",
+      "expected": {
+        "outcome": "cleanup_handler_runs_once",
+        "errno": "0",
+        "status": "deterministic_failure",
+        "decision_path": "fixture->posix_text->pthread_cancel_cleanup"
+      },
+      "allowed_divergence": "proof_gap",
+      "cleanup": {
+        "state": "thread_joined_mutex_unlocked_cond_destroyed",
+        "required": true
+      },
+      "minimization_notes": "Preserve cancellation point, cleanup handler counter, mutex state, and join timeout.",
+      "determinism": {
+        "replay_key": "pthread-cancel-cond-wait-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "same cleanup counter and no leaked joinable thread"
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_thread_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs",
+          "tests/conformance/fixtures/pthread_thread.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "scenario_id": "math_fenv.invalid_exception_flags",
+      "failure_family": "math_fenv",
+      "seed": "bd-bp8fl.5.9-math-0001",
+      "input_artifact": {
+        "path": "tests/conformance/fixtures/math_ops.json",
+        "kind": "fixture",
+        "negative_input": "invalid_exception_flag_combo"
+      },
+      "environment": {
+        "rounding_mode": "FE_TONEAREST",
+        "fenv_access": "on",
+        "exception_flags": "FE_INVALID|FE_DIVBYZERO"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "expected": {
+        "outcome": "fenv_exception_classified",
+        "errno": "EDOM",
+        "status": "blocked_claim",
+        "decision_path": "fixture->host_glibc->fenv_exception_flags"
+      },
+      "allowed_divergence": "proof_gap",
+      "cleanup": {
+        "state": "fenv_restored",
+        "required": true
+      },
+      "minimization_notes": "Preserve input value, rounding mode, raised flags, errno, and fenv restore proof.",
+      "determinism": {
+        "replay_key": "math-fenv-invalid-flags-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "same errno/status and restored fenv flags"
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test math_ops_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/math_ops_conformance_test.rs",
+          "tests/conformance/fixtures/math_ops.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "scenario_id": "signal_setjmp.foreign_signal_longjmp",
+      "failure_family": "signal_setjmp",
+      "seed": "bd-bp8fl.5.9-signal-0001",
+      "input_artifact": {
+        "path": "tests/conformance/fixtures/signal_ops.json",
+        "kind": "fixture",
+        "negative_input": "foreign_signal_handler_longjmp_context"
+      },
+      "environment": {
+        "signal": "SIGUSR1",
+        "handler": "sigsetjmp_guarded",
+        "alternate_stack": "disabled"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "hardened_safety_policy",
+      "expected": {
+        "outcome": "foreign_context_denied",
+        "errno": "EINVAL",
+        "status": "safety_repair",
+        "decision_path": "fixture->hardened_safety_policy->deny_foreign_context"
+      },
+      "allowed_divergence": "safety_repair",
+      "cleanup": {
+        "state": "signal_handler_restored_and_context_dropped",
+        "required": true
+      },
+      "minimization_notes": "Preserve signal number, handler install flags, jmp context ownership, and mode split.",
+      "determinism": {
+        "replay_key": "signal-setjmp-foreign-context-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "same denial signature and restored signal handler"
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test signal_ops_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/signal_ops_conformance_test.rs",
+          "crates/frankenlibc-harness/tests/setjmp_ops_conformance_test.rs",
+          "tests/conformance/fixtures/signal_ops.json",
+          "tests/conformance/fixtures/setjmp_ops.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "scenario_count": 7,
+    "required_family_count": 7,
+    "runner_kinds": [
+      "direct",
+      "isolated"
+    ],
+    "known_tracker_limitations": [
+      "bd-bp8fl.2.8 remains the tracker-repair follow-up for wiring bd-bp8fl.5.3 through bd-bp8fl.5.8 to this replay gate after exact-ID dependency writes are repaired"
+    ]
+  }
+}
