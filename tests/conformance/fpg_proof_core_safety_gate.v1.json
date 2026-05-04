@@ -60,7 +60,7 @@
       "primary_key": "strict refinement theorem",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 229
+        "line": 244
       },
       "claim_target": "SMT/proof notes + differential fixtures",
       "claimed_status": "PLANNED",
@@ -96,7 +96,7 @@
       "primary_key": "hardened safety theorem",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 230
+        "line": 245
       },
       "claim_target": "invariant checks + policy proof notes",
       "claimed_status": "IN_PROGRESS",
@@ -138,7 +138,7 @@
       "primary_key": "deterministic replay theorem",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 231
+        "line": 246
       },
       "claim_target": "reproducibility campaign logs",
       "claimed_status": "PLANNED",
@@ -174,7 +174,7 @@
       "primary_key": "barrier invariance",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 238
+        "line": 253
       },
       "claim_target": "barrier-certificate proof artifacts + runtime checks",
       "claimed_status": "PLANNED",
@@ -203,7 +203,7 @@
       "primary_key": "robust-radius guarantee",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 239
+        "line": 254
       },
       "claim_target": "Wasserstein robustness reports + constraint audits",
       "claimed_status": "PLANNED",
@@ -232,7 +232,7 @@
       "primary_key": "secure-mode noninterference",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 262
+        "line": 277
       },
       "claim_target": "relational proof notes + leak-budget test reports",
       "claimed_status": "PLANNED",
@@ -265,7 +265,7 @@
       "primary_key": "conformal decision validity",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 263
+        "line": 278
       },
       "claim_target": "coverage/risk-control reports + calibration replay logs",
       "claimed_status": "PLANNED",

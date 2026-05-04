@@ -54,7 +54,7 @@
       "primary_key": "POSIX/GNU replacement completeness",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 38
+        "line": 53
       },
       "claim_target": "Remove WrapsHostLibc + GlibcCallThrough + Stub classes from critical surfaces",
       "claimed_status": "IN_PROGRESS",
@@ -93,7 +93,7 @@
       "primary_key": "ABI symbol/version fidelity",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 39
+        "line": 54
       },
       "claim_target": "Preserve exported ABI and classify each exported symbol state",
       "claimed_status": "IN_PROGRESS",
@@ -126,7 +126,7 @@
       "primary_key": "Strict mode conformance",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 40
+        "line": 55
       },
       "claim_target": "Differential parity on supported symbol set",
       "claimed_status": "IN_PROGRESS",
@@ -159,7 +159,7 @@
       "primary_key": "Hardened mode safety",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 41
+        "line": 56
       },
       "claim_target": "Deterministic repair/deny coverage on membrane-gated paths",
       "claimed_status": "IN_PROGRESS",
@@ -192,7 +192,7 @@
       "primary_key": "Transparent Safety Membrane enforcement",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 42
+        "line": 57
       },
       "claim_target": "Pointer-sensitive APIs validated before dispatch",
       "claimed_status": "IN_PROGRESS",
@@ -219,7 +219,7 @@
       "primary_key": "Conformance harness",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 43
+        "line": 58
       },
       "claim_target": "Fixture-driven validation + drift gates",
       "claimed_status": "IN_PROGRESS",
@@ -246,7 +246,7 @@
       "primary_key": "Benchmark gates",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 44
+        "line": 59
       },
       "claim_target": "Regression-blocking + budget evidence",
       "claimed_status": "IN_PROGRESS",

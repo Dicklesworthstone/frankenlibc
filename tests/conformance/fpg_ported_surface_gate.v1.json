@@ -53,7 +53,7 @@
       "ported_surface": "allocator_core",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 285,
+        "line": 300,
         "line_contains": "Core allocator subsystem"
       },
       "claim_target": "Allocator core implementation and fixture evidence remain visible before closure.",
@@ -74,7 +74,7 @@
       "ported_surface": "stdlib_core_abi",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 286,
+        "line": 301,
         "line_contains": "Stdlib numeric conversion"
       },
       "claim_target": "Stdlib conversion, process-control, and sort fixtures remain bound to implementation evidence.",
@@ -96,7 +96,7 @@
       "ported_surface": "string_core",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 287,
+        "line": 302,
         "line_contains": "All string functions"
       },
       "claim_target": "String and memory core claims stay tied to fixtures and edge-case evidence.",
@@ -118,7 +118,7 @@
       "ported_surface": "string_memory_abi",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 296,
+        "line": 311,
         "line_contains": "String/Memory ABI fully wired"
       },
       "claim_target": "String/memory ABI wiring stays bound to ABI source and fixture coverage.",
@@ -139,7 +139,7 @@
       "ported_surface": "math_core",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 303,
+        "line": 318,
         "line_contains": "Core `<math.h>` scalar functions"
       },
       "claim_target": "Math core claims stay bound to core source and math fixtures.",
@@ -160,7 +160,7 @@
       "ported_surface": "math_fenv_abi_runtime_gate",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 304,
+        "line": 319,
         "line_contains": "ABI `<math.h>` entrypoints"
       },
       "claim_target": "Math/fenv ABI claims stay bound to ABI sources and runtime gating evidence.",
@@ -181,7 +181,7 @@
       "ported_surface": "posix_batch_families",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 309,
+        "line": 324,
         "line_contains": "Five new POSIX function families ported"
       },
       "claim_target": "POSIX batch-family claims stay bound to ABI source and fixture surfaces.",
@@ -206,7 +206,7 @@
       "ported_surface": "dlfcn_boundary",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 311,
+        "line": 326,
         "line_contains": "`<dlfcn.h>` boundary locked"
       },
       "claim_target": "dlfcn boundary claims stay bound to explicit native/fallback policy evidence.",
@@ -228,7 +228,7 @@
       "ported_surface": "posix_batch_3",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 314,
+        "line": 329,
         "line_contains": "POSIX Batch 3"
       },
       "claim_target": "POSIX Batch 3 claims stay bound to ABI sources and fixture evidence.",
@@ -257,7 +257,7 @@
       "ported_surface": "htm_fast_paths",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 315,
+        "line": 330,
         "line_contains": "HTM fast path live"
       },
       "claim_target": "HTM fast-path claims stay bound to source, gate, and optimization proof artifacts.",

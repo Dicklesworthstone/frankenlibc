@@ -57,7 +57,7 @@
       "foundation_surface": "initial_conformance_fixtures",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 278,
+        "line": 293,
         "line_contains": "Initial conformance fixtures committed"
       },
       "claim_target": "Fixture-based conformance evidence exists while full capture remains pending.",
@@ -89,7 +89,7 @@
       "foundation_surface": "benchmark_baseline_thresholds",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 279,
+        "line": 294,
         "line_contains": "Benchmark harnesses exist"
       },
       "claim_target": "Benchmark harness and regression-threshold evidence is present but not fully closed.",
@@ -122,7 +122,7 @@
       "foundation_surface": "version_script_symbol_gate",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 280,
+        "line": 295,
         "line_contains": "Version script scaffold created"
       },
       "claim_target": "ABI version script scaffold exists while full symbol/version verification remains pending.",
@@ -158,7 +158,7 @@
       "foundation_surface": "proof_obligation_binder",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 281,
+        "line": 296,
         "line_contains": "formal proof artifacts"
       },
       "claim_target": "Proof artifacts and binder rows must be present before proof-based claims advance.",
@@ -198,7 +198,7 @@
       "foundation_surface": "runtime_math_kernel_wiring",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 282,
+        "line": 297,
         "line_contains": "Runtime math kernel is live"
       },
       "claim_target": "Runtime-math kernel evidence exists while cross-family ABI wiring remains incomplete.",
@@ -236,7 +236,7 @@
       "foundation_surface": "sequential_statistical_guardrails",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 283,
+        "line": 298,
         "line_contains": "Sequential-statistical guardrails"
       },
       "claim_target": "Sequential guardrails have deterministic calibration evidence and an enforcing script.",
@@ -274,7 +274,7 @@
       "foundation_surface": "membrane_mode_split_fixture",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 284,
+        "line": 299,
         "line_contains": "membrane_mode_split.json"
       },
       "claim_target": "Initial strict/hardened membrane-mode fixture evidence is committed while full differential campaign remains pending.",
