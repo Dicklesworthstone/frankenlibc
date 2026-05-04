@@ -33,7 +33,7 @@ fn metamorphic_ffs_powers_of_two_full_range_int() {
 
 #[test]
 fn metamorphic_ffsl_powers_of_two_full_range() {
-    for k in 0..(c_long::BITS as u32) {
+    for k in 0..c_long::BITS {
         let v: c_long = 1i64 << k;
         assert_eq!(fl::ffsl(v) as u32, k + 1, "ffsl(1<<{k})");
     }
@@ -50,8 +50,27 @@ fn metamorphic_ffsll_powers_of_two_full_range() {
 #[test]
 fn metamorphic_ffs_matches_trailing_zeros_plus_one() {
     // ffs(x) == 0 if x == 0, else 1 + (trailing zeros of x).
-    for v in &[1i32, 2, 3, 4, 6, 7, 8, 12, 16, 100, 0x7fff, 0x10000, -1, c_int::MIN] {
-        let expected = if *v == 0 { 0 } else { (v.trailing_zeros() + 1) as c_int };
+    for v in &[
+        1i32,
+        2,
+        3,
+        4,
+        6,
+        7,
+        8,
+        12,
+        16,
+        100,
+        0x7fff,
+        0x10000,
+        -1,
+        c_int::MIN,
+    ] {
+        let expected = if *v == 0 {
+            0
+        } else {
+            (v.trailing_zeros() + 1) as c_int
+        };
         assert_eq!(fl::ffs(*v), expected, "ffs({v:#x})");
     }
 }
@@ -83,7 +102,7 @@ fn metamorphic_ffsll_neg_long_long_max() {
 fn metamorphic_ffs_clearing_lowest_bit_increases_position() {
     // Clearing the lowest set bit of x increases ffs(x) (or makes
     // it 0 if x had only one bit set).
-    for x in &[3i32, 5, 6, 7, 12, 0xa0u32 as i32, 0xff] {
+    for x in &[3i32, 5, 6, 7, 12, 0xa0, 0xff] {
         let lowest_bit = (*x as u32) & ((!(*x as u32)).wrapping_add(1));
         let cleared = ((*x as u32) ^ lowest_bit) as c_int;
         let f_before = fl::ffs(*x);
