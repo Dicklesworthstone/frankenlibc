@@ -1,0 +1,661 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "claim-gate-positive-negative-matrix",
+  "bead": "bd-bp8fl.7.6",
+  "generated_utc": "2026-05-04T02:42:41Z",
+  "purpose": "Verify that every release-facing claim gate has positive allow coverage and fail-closed negative coverage for stale, missing, contradictory, wrong-commit, replacement-level, runtime-mode, unsupported-workload, and prose-only claim advancement cases.",
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "claim_gate_id",
+    "scenario_id",
+    "claim_surface",
+    "expected_decision",
+    "actual_decision",
+    "evidence_refs",
+    "source_commit",
+    "target_dir",
+    "freshness_state",
+    "contradiction_state",
+    "failure_signature"
+  ],
+  "required_evidence_categories": [
+    "source_artifact",
+    "generated_artifact",
+    "user_visible_claim_type",
+    "replacement_level",
+    "runtime_mode",
+    "oracle_kind",
+    "owner_bead"
+  ],
+  "required_negative_kinds": [
+    "missing_artifact",
+    "stale_artifact",
+    "contradictory_artifact",
+    "wrong_source_commit",
+    "insufficient_replacement_level",
+    "skipped_runtime_mode",
+    "unsupported_workload",
+    "prose_only_advancement"
+  ],
+  "claim_policy": {
+    "positive_decisions": ["allow", "allow_known_limitation", "satisfied"],
+    "negative_decision": "block",
+    "negative_failure_signatures": [
+      "claim_gate_missing_artifact",
+      "claim_gate_stale_artifact",
+      "claim_gate_contradictory_artifact",
+      "claim_gate_wrong_source_commit",
+      "claim_gate_insufficient_replacement_level",
+      "claim_gate_skipped_runtime_mode",
+      "claim_gate_unsupported_workload",
+      "claim_gate_prose_only_advancement"
+    ],
+    "missing_coverage_signature": "claim_gate_missing_negative_coverage",
+    "missing_evidence_signature": "claim_gate_missing_evidence_ref"
+  },
+  "ci_integration": {
+    "ci_file": "scripts/ci.sh",
+    "gate_script": "scripts/check_claim_gate_positive_negative_matrix.sh",
+    "suite": "extended-gates",
+    "required": true
+  },
+  "claim_gates": [
+    {
+      "claim_gate_id": "feature-parity-claim-evidence",
+      "owner_bead": "bd-bp8fl.3.4",
+      "source_artifact": "tests/conformance/feature_parity_claim_evidence_gate.v1.json",
+      "generated_artifact": "tests/conformance/feature_parity_claim_evidence_gate.v1.json",
+      "gate_script": "scripts/check_feature_parity_claim_evidence.sh",
+      "harness_test": "crates/frankenlibc-harness/tests/feature_parity_claim_evidence_gate_test.rs",
+      "claim_surfaces": ["README.md", "FEATURE_PARITY.md", "support_matrix.json", "tests/conformance/replacement_levels.json"],
+      "evidence_categories": {
+        "source_artifact": ["tests/conformance/feature_parity_claim_evidence_gate.v1.json"],
+        "generated_artifact": ["tests/conformance/feature_parity_claim_evidence_gate.v1.json"],
+        "user_visible_claim_type": ["readme", "feature_parity", "support_taxonomy", "replacement_level"],
+        "replacement_level": ["L0", "L1"],
+        "runtime_mode": ["strict", "hardened"],
+        "oracle_kind": ["claim_surface_binding", "support_taxonomy", "semantic_overlay"],
+        "owner_bead": ["bd-bp8fl.3.4"]
+      },
+      "positive_tests": [
+        {
+          "scenario_id": "current-readme-l0-bound-to-evidence",
+          "source_scenario_id": "current-readme-l0-bound-to-evidence",
+          "expected_decision": "allow",
+          "runtime_modes": ["strict", "hardened"],
+          "replacement_level": "L0",
+          "evidence_refs": ["tests/conformance/replacement_levels.json", "support_matrix.json"],
+          "freshness_state": "current"
+        },
+        {
+          "scenario_id": "evidence-backed-current-claim-allowed",
+          "source_scenario_id": "evidence-backed-current-claim-allowed",
+          "expected_decision": "allow",
+          "runtime_modes": ["strict", "hardened"],
+          "replacement_level": "L0",
+          "evidence_refs": ["tests/conformance/support_matrix_maintenance_report.v1.json", "tests/conformance/reality_report.v1.json"],
+          "freshness_state": "current"
+        }
+      ],
+      "negative_tests": {
+        "missing_artifact": {
+          "scenario_id": "feature-parity-done-without-claim-gate",
+          "source_scenario_id": "feature-parity-done-without-claim-gate",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_missing_artifact",
+          "evidence_refs": ["tests/conformance/feature_parity_claim_evidence_gate.v1.json"]
+        },
+        "stale_artifact": {
+          "scenario_id": "support-matrix-stale-source-commit",
+          "source_scenario_id": "support-matrix-stale-source-commit",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_stale_artifact",
+          "freshness_state": "stale",
+          "evidence_refs": ["tests/conformance/support_matrix_maintenance_report.v1.json"]
+        },
+        "contradictory_artifact": {
+          "scenario_id": "semantic-overlay-contradicts-full-replacement",
+          "source_scenario_id": "semantic-overlay-contradicts-full-replacement",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_contradictory_artifact",
+          "contradiction_state": "contradictory",
+          "evidence_refs": ["tests/conformance/support_semantic_overlay.v1.json"]
+        },
+        "wrong_source_commit": {
+          "scenario_id": "feature-parity-wrong-source-commit",
+          "source_scenario_id": "support-matrix-stale-source-commit",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_wrong_source_commit",
+          "freshness_state": "wrong_source_commit",
+          "evidence_refs": ["tests/conformance/support_matrix_maintenance_report.v1.json"]
+        },
+        "insufficient_replacement_level": {
+          "scenario_id": "readme-l1-claim-without-replacement-promotion",
+          "source_scenario_id": "readme-l1-claim-without-replacement-promotion",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_insufficient_replacement_level",
+          "evidence_refs": ["tests/conformance/replacement_levels.json"]
+        },
+        "skipped_runtime_mode": {
+          "scenario_id": "feature-parity-current-reality-mode-omission",
+          "harness_test_anchor": "gate_script_passes_and_emits_report_and_jsonl_log",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_skipped_runtime_mode",
+          "evidence_refs": ["crates/frankenlibc-harness/tests/feature_parity_claim_evidence_gate_test.rs"]
+        },
+        "unsupported_workload": {
+          "scenario_id": "feature-parity-runtime-workload-unsupported",
+          "harness_test_anchor": "gate_fails_closed_when_claim_advances_without_required_evidence",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_unsupported_workload",
+          "evidence_refs": ["crates/frankenlibc-harness/tests/feature_parity_claim_evidence_gate_test.rs"]
+        },
+        "prose_only_advancement": {
+          "scenario_id": "feature-parity-prose-only-done-claim",
+          "source_scenario_id": "feature-parity-done-without-claim-gate",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_prose_only_advancement",
+          "evidence_refs": ["FEATURE_PARITY.md", "tests/conformance/feature_parity_claim_evidence_gate.v1.json"]
+        }
+      }
+    },
+    {
+      "claim_gate_id": "fpg-claim-control",
+      "owner_bead": "bd-bp8fl.3.5",
+      "source_artifact": "tests/conformance/fpg_claim_control_gate.v1.json",
+      "generated_artifact": "tests/conformance/fpg_claim_control_gate.v1.json",
+      "gate_script": "scripts/check_fpg_claim_control_gate.sh",
+      "harness_test": "crates/frankenlibc-harness/tests/fpg_claim_control_gate_test.rs",
+      "claim_surfaces": ["FEATURE_PARITY.md", "support_matrix.json", "tests/conformance/replacement_levels.json"],
+      "evidence_categories": {
+        "source_artifact": ["tests/conformance/fpg_claim_control_gate.v1.json"],
+        "generated_artifact": ["tests/conformance/fpg_claim_control_gate.v1.json"],
+        "user_visible_claim_type": ["macro_coverage_target", "replacement_level_promotion"],
+        "replacement_level": ["L0", "L1", "L2", "L3"],
+        "runtime_mode": ["strict", "hardened"],
+        "oracle_kind": ["feature_parity_gap_ledger", "evidence_anchor_resolution"],
+        "owner_bead": ["bd-bp8fl.3.5"]
+      },
+      "positive_tests": [
+        {
+          "scenario_id": "strict-mode-conformance-row-has-current-evidence",
+          "source_scenario_id": "fp-macro-targets-025864627e97",
+          "expected_decision": "allow",
+          "runtime_modes": ["strict"],
+          "replacement_level": "L0",
+          "evidence_refs": ["tests/conformance/conformance_matrix.v1.json", "support_matrix.json"],
+          "freshness_state": "current"
+        },
+        {
+          "scenario_id": "hardened-mode-safety-row-has-current-evidence",
+          "source_scenario_id": "fp-macro-targets-b1b8d5acbeff",
+          "expected_decision": "allow",
+          "runtime_modes": ["hardened"],
+          "replacement_level": "L0",
+          "evidence_refs": ["tests/conformance/hardened_repair_deny_matrix.v1.json", "support_matrix.json"],
+          "freshness_state": "current"
+        }
+      ],
+      "negative_tests": {
+        "missing_artifact": {
+          "scenario_id": "fpg-done-status-without-evidence",
+          "harness_test_anchor": "gate_blocks_done_status_without_evidence_in_feature_parity",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_missing_artifact",
+          "evidence_refs": ["crates/frankenlibc-harness/tests/fpg_claim_control_gate_test.rs"]
+        },
+        "stale_artifact": {
+          "scenario_id": "fpg-stale-evidence-anchor",
+          "harness_test_anchor": "gate_evidence_anchors_resolve_in_cited_artifacts",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_stale_artifact",
+          "freshness_state": "stale",
+          "evidence_refs": ["tests/conformance/fpg_claim_control_gate.v1.json"]
+        },
+        "contradictory_artifact": {
+          "scenario_id": "fpg-anchor-contradicts-claimed-status",
+          "harness_test_anchor": "gate_rows_resolve_at_cited_feature_parity_lines",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_contradictory_artifact",
+          "contradiction_state": "contradictory",
+          "evidence_refs": ["FEATURE_PARITY.md"]
+        },
+        "wrong_source_commit": {
+          "scenario_id": "fpg-wrong-source-commit",
+          "harness_test_anchor": "gate_artifact_is_well_formed",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_wrong_source_commit",
+          "freshness_state": "wrong_source_commit",
+          "evidence_refs": ["tests/conformance/fpg_claim_control_gate.v1.json"]
+        },
+        "insufficient_replacement_level": {
+          "scenario_id": "fpg-replacement-level-promotion-without-l0-floor",
+          "harness_test_anchor": "gate_blocks_replacement_level_promotion_without_l0_evidence_floor",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_insufficient_replacement_level",
+          "evidence_refs": ["tests/conformance/replacement_levels.json"]
+        },
+        "skipped_runtime_mode": {
+          "scenario_id": "fpg-skipped-hardened-mode-anchor",
+          "harness_test_anchor": "gate_rows_cover_all_eight_fpg_claim_control_gaps",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_skipped_runtime_mode",
+          "evidence_refs": ["tests/conformance/hardened_repair_deny_matrix.v1.json"]
+        },
+        "unsupported_workload": {
+          "scenario_id": "fpg-unsupported-workload-claim",
+          "harness_test_anchor": "gate_blocks_done_status_without_evidence_in_feature_parity",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_unsupported_workload",
+          "evidence_refs": ["tests/conformance/feature_parity_gap_ledger.v1.json"]
+        },
+        "prose_only_advancement": {
+          "scenario_id": "fpg-prose-only-done-claim",
+          "harness_test_anchor": "gate_blocks_done_status_without_evidence_in_feature_parity",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_prose_only_advancement",
+          "evidence_refs": ["FEATURE_PARITY.md", "tests/conformance/fpg_claim_control_gate.v1.json"]
+        }
+      }
+    },
+    {
+      "claim_gate_id": "release-readme-example-workload",
+      "owner_bead": "bd-bp8fl.10.4",
+      "source_artifact": "tests/conformance/release_readme_example_workload_gate.v1.json",
+      "generated_artifact": "tests/conformance/release_readme_example_workload_gate.v1.json",
+      "gate_script": "scripts/check_release_readme_example_workload_gate.sh",
+      "harness_test": "crates/frankenlibc-harness/tests/release_readme_example_workload_gate_test.rs",
+      "claim_surfaces": ["README.md", "tests/conformance/user_workload_acceptance_matrix.v1.json", "tests/conformance/ld_preload_smoke_summary.v1.json"],
+      "evidence_categories": {
+        "source_artifact": ["tests/conformance/release_readme_example_workload_gate.v1.json"],
+        "generated_artifact": ["tests/conformance/release_readme_example_workload_gate.v1.json"],
+        "user_visible_claim_type": ["quickstart_example", "smoke_matrix_example", "known_limitation"],
+        "replacement_level": ["L0", "L2"],
+        "runtime_mode": ["strict", "hardened"],
+        "oracle_kind": ["direct_process_replay", "workload_matrix", "smoke_summary"],
+        "owner_bead": ["bd-bp8fl.10.4"]
+      },
+      "positive_tests": [
+        {
+          "scenario_id": "readme-quickstart-ld-preload-echo",
+          "source_scenario_id": "readme-quickstart-ld-preload-echo",
+          "expected_decision": "allow",
+          "runtime_modes": ["strict"],
+          "replacement_level": "L0",
+          "evidence_refs": ["tests/conformance/user_workload_acceptance_matrix.v1.json", "tests/conformance/ld_preload_smoke_summary.v1.json"],
+          "freshness_state": "current"
+        },
+        {
+          "scenario_id": "readme-standalone-replacement-known-limitation",
+          "source_scenario_id": "readme-standalone-replacement-known-limitation",
+          "expected_decision": "allow_known_limitation",
+          "runtime_modes": ["strict", "hardened"],
+          "replacement_level": "L2",
+          "evidence_refs": ["README.md", "tests/conformance/replacement_levels.json"],
+          "freshness_state": "known_limitation"
+        }
+      ],
+      "negative_tests": {
+        "missing_artifact": {
+          "scenario_id": "missing-workload-row-blocks-readme-example",
+          "source_scenario_id": "missing-workload-row-blocks-readme-example",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_missing_artifact",
+          "evidence_refs": ["tests/conformance/release_readme_example_workload_gate.v1.json"]
+        },
+        "stale_artifact": {
+          "scenario_id": "stale-smoke-blocks-supported-example",
+          "source_scenario_id": "stale-smoke-blocks-supported-example",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_stale_artifact",
+          "freshness_state": "stale",
+          "evidence_refs": ["tests/conformance/ld_preload_smoke_summary.v1.json"]
+        },
+        "contradictory_artifact": {
+          "scenario_id": "missing-semantic-overlay-row-blocks-example",
+          "source_scenario_id": "missing-semantic-overlay-row-blocks-example",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_contradictory_artifact",
+          "contradiction_state": "contradictory",
+          "evidence_refs": ["tests/conformance/support_semantic_overlay.v1.json"]
+        },
+        "wrong_source_commit": {
+          "scenario_id": "readme-example-wrong-source-commit",
+          "harness_test_anchor": "gate_script_passes_and_emits_report_and_jsonl_log",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_wrong_source_commit",
+          "freshness_state": "wrong_source_commit",
+          "evidence_refs": ["crates/frankenlibc-harness/tests/release_readme_example_workload_gate_test.rs"]
+        },
+        "insufficient_replacement_level": {
+          "scenario_id": "unsupported-l2-support-claim-blocked",
+          "source_scenario_id": "unsupported-l2-support-claim-blocked",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_insufficient_replacement_level",
+          "evidence_refs": ["tests/conformance/replacement_levels.json"]
+        },
+        "skipped_runtime_mode": {
+          "scenario_id": "readme-example-skipped-hardened-mode",
+          "harness_test_anchor": "gate_fails_closed_for_stale_or_overlevel_supported_examples",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_skipped_runtime_mode",
+          "evidence_refs": ["tests/conformance/release_readme_example_workload_gate.v1.json"]
+        },
+        "unsupported_workload": {
+          "scenario_id": "readme-example-unsupported-workload",
+          "harness_test_anchor": "gate_fails_closed_when_workload_evidence_is_missing",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_unsupported_workload",
+          "evidence_refs": ["tests/conformance/user_workload_acceptance_matrix.v1.json"]
+        },
+        "prose_only_advancement": {
+          "scenario_id": "readme-prose-only-smoke-claim",
+          "harness_test_anchor": "gate_fails_closed_for_stale_or_overlevel_supported_examples",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_prose_only_advancement",
+          "evidence_refs": ["README.md", "tests/conformance/release_readme_example_workload_gate.v1.json"]
+        }
+      }
+    },
+    {
+      "claim_gate_id": "replacement-levels",
+      "owner_bead": "bd-2bu",
+      "source_artifact": "tests/conformance/replacement_levels.json",
+      "generated_artifact": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+      "gate_script": "scripts/check_replacement_levels.sh",
+      "harness_test": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+      "claim_surfaces": ["README.md", "tests/conformance/replacement_levels.json", "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"],
+      "evidence_categories": {
+        "source_artifact": ["tests/conformance/replacement_levels.json"],
+        "generated_artifact": ["tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"],
+        "user_visible_claim_type": ["replacement_maturity", "release_tag_policy", "l1_promotion"],
+        "replacement_level": ["L0", "L1", "L2", "L3"],
+        "runtime_mode": ["strict", "hardened"],
+        "oracle_kind": ["proof_matrix", "smoke_summary", "claim_reconciliation"],
+        "owner_bead": ["bd-2bu"]
+      },
+      "positive_tests": [
+        {
+          "scenario_id": "replacement-level-l0-current-claim",
+          "source_scenario_id": "L0",
+          "expected_decision": "satisfied",
+          "runtime_modes": ["strict", "hardened"],
+          "replacement_level": "L0",
+          "evidence_refs": ["tests/conformance/replacement_levels.json", "tests/conformance/claim_reconciliation_report.v1.json"],
+          "freshness_state": "current"
+        },
+        {
+          "scenario_id": "l1-proof-row-process-startup-satisfied",
+          "source_scenario_id": "process_startup",
+          "source_artifact_override": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+          "expected_decision": "satisfied",
+          "runtime_modes": ["strict", "hardened"],
+          "replacement_level": "L1",
+          "evidence_refs": ["tests/conformance/fixtures/startup_ops.json", "crates/frankenlibc-harness/tests/startup_ops_conformance_test.rs"],
+          "freshness_state": "current"
+        }
+      ],
+      "negative_tests": {
+        "missing_artifact": {
+          "scenario_id": "neg-l1-missing-required-row",
+          "source_scenario_id": "neg-l1-missing-required-row",
+          "source_artifact_override": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_missing_artifact",
+          "evidence_refs": ["tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"]
+        },
+        "stale_artifact": {
+          "scenario_id": "neg-l1-stale-evidence",
+          "source_scenario_id": "neg-l1-stale-evidence",
+          "source_artifact_override": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_stale_artifact",
+          "freshness_state": "stale",
+          "evidence_refs": ["tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"]
+        },
+        "contradictory_artifact": {
+          "scenario_id": "neg-l1-contradictory-evidence",
+          "source_scenario_id": "neg-l1-contradictory-evidence",
+          "source_artifact_override": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_contradictory_artifact",
+          "contradiction_state": "contradictory",
+          "evidence_refs": ["tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"]
+        },
+        "wrong_source_commit": {
+          "scenario_id": "replacement-levels-wrong-source-commit",
+          "harness_test_anchor": "l1_crt_startup_tls_proof_matrix_rejects_stale_evidence",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_wrong_source_commit",
+          "freshness_state": "wrong_source_commit",
+          "evidence_refs": ["crates/frankenlibc-harness/tests/replacement_levels_test.rs"]
+        },
+        "insufficient_replacement_level": {
+          "scenario_id": "replacement-level-current-l0-blocks-l1-promotion",
+          "harness_test_anchor": "readme_smoke_claims_do_not_outrun_replacement_level_blockers",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_insufficient_replacement_level",
+          "evidence_refs": ["README.md", "tests/conformance/replacement_levels.json"]
+        },
+        "skipped_runtime_mode": {
+          "scenario_id": "replacement-level-skipped-runtime-mode",
+          "harness_test_anchor": "l1_crt_startup_tls_proof_matrix_rejects_missing_required_row",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_skipped_runtime_mode",
+          "evidence_refs": ["tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"]
+        },
+        "unsupported_workload": {
+          "scenario_id": "replacement-level-unsupported-workload",
+          "harness_test_anchor": "readme_smoke_claims_do_not_outrun_replacement_level_blockers",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_unsupported_workload",
+          "evidence_refs": ["tests/conformance/user_workload_acceptance_matrix.v1.json"]
+        },
+        "prose_only_advancement": {
+          "scenario_id": "replacement-level-prose-only-l1-claim",
+          "harness_test_anchor": "readme_smoke_claims_do_not_outrun_replacement_level_blockers",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_prose_only_advancement",
+          "evidence_refs": ["README.md", "tests/conformance/replacement_levels.json"]
+        }
+      }
+    },
+    {
+      "claim_gate_id": "user-workload-acceptance",
+      "owner_bead": "bd-bp8fl.10.1",
+      "source_artifact": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+      "generated_artifact": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+      "gate_script": "scripts/check_user_workload_acceptance_matrix.sh",
+      "harness_test": "crates/frankenlibc-harness/tests/user_workload_acceptance_matrix_test.rs",
+      "claim_surfaces": ["tests/conformance/user_workload_acceptance_matrix.v1.json", "README.md", "tests/conformance/workload_matrix.json"],
+      "evidence_categories": {
+        "source_artifact": ["tests/conformance/user_workload_acceptance_matrix.v1.json"],
+        "generated_artifact": ["tests/conformance/user_workload_acceptance_matrix.v1.json"],
+        "user_visible_claim_type": ["workload_acceptance", "persona_claim", "diagnostic_claim"],
+        "replacement_level": ["L0", "L1", "L2", "L3"],
+        "runtime_mode": ["strict", "hardened"],
+        "oracle_kind": ["direct_process_replay", "glibc_fixture_oracle", "symbol_coverage_gate"],
+        "owner_bead": ["bd-bp8fl.10.1"]
+      },
+      "positive_tests": [
+        {
+          "scenario_id": "uwm-shell-coreutils",
+          "source_scenario_id": "uwm-shell-coreutils",
+          "expected_decision": "allow",
+          "runtime_modes": ["strict", "hardened"],
+          "replacement_level": "L0",
+          "evidence_refs": ["tests/conformance/user_workload_acceptance_matrix.v1.json", "tests/conformance/ld_preload_smoke_summary.v1.json"],
+          "freshness_state": "current"
+        },
+        {
+          "scenario_id": "uwm-language-runtime",
+          "source_scenario_id": "uwm-language-runtime",
+          "expected_decision": "allow",
+          "runtime_modes": ["strict", "hardened"],
+          "replacement_level": "L0",
+          "evidence_refs": ["tests/conformance/user_workload_acceptance_matrix.v1.json", "tests/conformance/hard_parts_e2e_catalog.v1.json"],
+          "freshness_state": "current"
+        }
+      ],
+      "negative_tests": {
+        "missing_artifact": {
+          "scenario_id": "neg-build-l2-with-callthrough",
+          "source_scenario_id": "neg-build-l2-with-callthrough",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_missing_artifact",
+          "evidence_refs": ["tests/conformance/user_workload_acceptance_matrix.v1.json"]
+        },
+        "stale_artifact": {
+          "scenario_id": "neg-perf-optimized-without-parity-proof",
+          "source_scenario_id": "neg-perf-optimized-without-parity-proof",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_stale_artifact",
+          "freshness_state": "stale",
+          "evidence_refs": ["tests/conformance/perf_regression_prevention.v1.json"]
+        },
+        "contradictory_artifact": {
+          "scenario_id": "neg-runtime-supported-without-hard-parts",
+          "source_scenario_id": "neg-runtime-supported-without-hard-parts",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_contradictory_artifact",
+          "contradiction_state": "contradictory",
+          "evidence_refs": ["tests/conformance/feature_parity_gap_groups.v1.json"]
+        },
+        "wrong_source_commit": {
+          "scenario_id": "neg-locale-claim-without-fixture",
+          "source_scenario_id": "neg-locale-claim-without-fixture",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_wrong_source_commit",
+          "freshness_state": "wrong_source_commit",
+          "evidence_refs": ["tests/conformance/semantic_contract_inventory.v1.json"]
+        },
+        "insufficient_replacement_level": {
+          "scenario_id": "neg-startup-l3-without-rtld-crt",
+          "source_scenario_id": "neg-startup-l3-without-rtld-crt",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_insufficient_replacement_level",
+          "evidence_refs": ["tests/conformance/replacement_levels.json"]
+        },
+        "skipped_runtime_mode": {
+          "scenario_id": "neg-service-without-thread-mode-pair",
+          "source_scenario_id": "neg-service-without-thread-mode-pair",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_skipped_runtime_mode",
+          "evidence_refs": ["tests/conformance/hard_parts_e2e_failure_matrix.v1.json"]
+        },
+        "unsupported_workload": {
+          "scenario_id": "neg-package-network-without-resolver-evidence",
+          "source_scenario_id": "neg-package-network-without-resolver-evidence",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_unsupported_workload",
+          "evidence_refs": ["tests/conformance/hard_parts_dependency_matrix.v1.json"]
+        },
+        "prose_only_advancement": {
+          "scenario_id": "neg-stdio-native-without-stream-fixtures",
+          "source_scenario_id": "neg-stdio-native-without-stream-fixtures",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_prose_only_advancement",
+          "evidence_refs": ["tests/conformance/semantic_contract_inventory.v1.json"]
+        }
+      }
+    },
+    {
+      "claim_gate_id": "claim-reconciliation",
+      "owner_bead": "bd-w2c3.10.1",
+      "source_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "generated_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "gate_script": "scripts/check_claim_reconciliation.sh",
+      "harness_test": "crates/frankenlibc-harness/tests/claim_reconciliation_test.rs",
+      "claim_surfaces": ["README.md", "FEATURE_PARITY.md", "support_matrix.json", "tests/conformance/replacement_levels.json", "tests/conformance/ld_preload_smoke_summary.v1.json"],
+      "evidence_categories": {
+        "source_artifact": ["tests/conformance/claim_reconciliation_report.v1.json"],
+        "generated_artifact": ["tests/conformance/claim_reconciliation_report.v1.json"],
+        "user_visible_claim_type": ["readme_claim", "feature_parity_claim", "replacement_smoke_claim"],
+        "replacement_level": ["L0", "L1"],
+        "runtime_mode": ["strict", "hardened"],
+        "oracle_kind": ["claim_reconciliation", "readme_drift_detector", "replacement_level_blocker"],
+        "owner_bead": ["bd-w2c3.10.1"]
+      },
+      "positive_tests": [
+        {
+          "scenario_id": "claim-reconciliation-current-pass",
+          "harness_test_anchor": "claim_reconciliation_gate_passes",
+          "expected_decision": "allow",
+          "runtime_modes": ["strict", "hardened"],
+          "replacement_level": "L0",
+          "evidence_refs": ["tests/conformance/claim_reconciliation_report.v1.json"],
+          "freshness_state": "current"
+        }
+      ],
+      "negative_tests": {
+        "missing_artifact": {
+          "scenario_id": "claim-reconciliation-readme-drift",
+          "harness_test_anchor": "claim_reconciliation_detects_readme_drift_and_routes_owner",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_missing_artifact",
+          "evidence_refs": ["crates/frankenlibc-harness/tests/claim_reconciliation_test.rs"]
+        },
+        "stale_artifact": {
+          "scenario_id": "claim-reconciliation-smoke-summary-drift",
+          "harness_test_anchor": "claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_stale_artifact",
+          "freshness_state": "stale",
+          "evidence_refs": ["tests/conformance/ld_preload_smoke_summary.v1.json"]
+        },
+        "contradictory_artifact": {
+          "scenario_id": "claim-reconciliation-readme-smoke-overclaim",
+          "harness_test_anchor": "claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_owner",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_contradictory_artifact",
+          "contradiction_state": "contradictory",
+          "evidence_refs": ["README.md", "tests/conformance/ld_preload_smoke_summary.v1.json"]
+        },
+        "wrong_source_commit": {
+          "scenario_id": "claim-reconciliation-report-source-drift",
+          "harness_test_anchor": "claim_reconciliation_gate_passes",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_wrong_source_commit",
+          "freshness_state": "wrong_source_commit",
+          "evidence_refs": ["tests/conformance/claim_reconciliation_report.v1.json"]
+        },
+        "insufficient_replacement_level": {
+          "scenario_id": "claim-reconciliation-replacement-level-blocker-drift",
+          "harness_test_anchor": "claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_insufficient_replacement_level",
+          "evidence_refs": ["tests/conformance/replacement_levels.json"]
+        },
+        "skipped_runtime_mode": {
+          "scenario_id": "claim-reconciliation-skipped-mode-pair",
+          "harness_test_anchor": "claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_skipped_runtime_mode",
+          "evidence_refs": ["tests/conformance/ld_preload_smoke_summary.v1.json"]
+        },
+        "unsupported_workload": {
+          "scenario_id": "claim-reconciliation-unsupported-workload-overclaim",
+          "harness_test_anchor": "claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_owner",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_unsupported_workload",
+          "evidence_refs": ["README.md"]
+        },
+        "prose_only_advancement": {
+          "scenario_id": "claim-reconciliation-prose-only-readme-claim",
+          "harness_test_anchor": "claim_reconciliation_detects_readme_drift_and_routes_owner",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_prose_only_advancement",
+          "evidence_refs": ["README.md", "tests/conformance/claim_reconciliation_report.v1.json"]
+        }
+      }
+    }
+  ],
+  "summary": {
+    "claim_gate_count": 6,
+    "positive_test_count": 11,
+    "negative_test_count": 48,
+    "required_negative_kind_count": 8,
+    "required_evidence_category_count": 7
+  }
+}

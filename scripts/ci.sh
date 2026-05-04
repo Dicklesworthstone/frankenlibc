@@ -177,6 +177,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- claim gate positive/negative matrix ---"
+    scripts/check_claim_gate_positive_negative_matrix.sh
+    echo "PASS"
+    echo ""
+
     echo "--- feature parity gap→bead coverage dashboard gate ---"
     scripts/check_feature_parity_gap_bead_coverage.sh
     echo "PASS"
