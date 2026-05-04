@@ -167,12 +167,15 @@ fi
 # --- Check decision-law keywords ---
 # The documented decision law: mode + context + risk + budget + pareto + design + barrier + consistency
 decision_law_keywords="risk pareto design barrier"
-decide_fn=$(grep -A 50 'pub fn decide' "$MOD_RS" 2>/dev/null | head -60 || true)
+decide_fn=$(
+    sed -n '/^[[:space:]]*pub fn decide/,/^[[:space:]]*fn try_hardened_nominal_pointer_decision/p' "$MOD_RS" 2>/dev/null \
+    || true
+)
 
 if [[ -n "$decide_fn" ]]; then
     missing_keywords=""
     for kw in $decision_law_keywords; do
-        if ! echo "$decide_fn" | grep -qi "$kw"; then
+        if ! grep -qi -- "$kw" <<< "$decide_fn"; then
             missing_keywords="$missing_keywords $kw"
         fi
     done

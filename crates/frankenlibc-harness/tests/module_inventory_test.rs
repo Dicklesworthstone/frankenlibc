@@ -1,4 +1,4 @@
-//! Integration test: runtime_math module inventory checker (bd-bp8fl.7.8).
+//! Integration test: runtime_math module inventory checker (bd-bp8fl.7.8, bd-de37y).
 //!
 //! The CI checker must understand the current AGENTS.md runtime_math subsection
 //! format and fail with useful drift diagnostics when docs and code diverge.
@@ -82,6 +82,11 @@ fn current_module_inventory_checker_passes() -> TestResult {
         stderr(&output)
     );
     assert!(stdout(&output).contains("OK: AGENTS.md"));
+    assert!(
+        !stdout(&output).contains("Decision-law keywords not found"),
+        "current checker should not emit decision-law false positives\nstdout:\n{}",
+        stdout(&output)
+    );
     Ok(())
 }
 
@@ -119,6 +124,96 @@ Mandatory live modules in `frankenlibc-membrane/src/runtime_math/`:
         stdout(&output),
         stderr(&output)
     );
+    Ok(())
+}
+
+#[test]
+fn checker_scans_full_decide_body_for_late_decision_law_keywords() -> TestResult {
+    let temp = unique_temp_dir("frankenlibc-module-inventory-decision-law-late")?;
+    let padding = "    let _padding = 0;\n".repeat(80);
+    let mod_rs = format!(
+        r#"
+pub mod barrier;
+pub mod design;
+pub mod pareto;
+pub mod risk;
+
+pub fn decide() {{
+    let risk = 0;
+{padding}
+    let pareto = risk;
+    let design = pareto;
+    let barrier = design;
+    let _ = barrier;
+}}
+"#
+    );
+    let (agents, mod_rs, lib_rs) = write_fixture(
+        &temp,
+        r#"
+### frankenlibc-membrane - Safety Substrate
+
+**Runtime math control plane (`runtime_math/`):**
+- `barrier.rs` - Barrier
+- `design.rs` - Design
+- `pareto.rs` - Pareto
+- `risk.rs` - Risk
+
+### frankenlibc-core - Safe Implementations
+"#,
+        &mod_rs,
+        "",
+    )?;
+    let output = run_checker(&agents, &mod_rs, &lib_rs)?;
+    assert!(
+        output.status.success(),
+        "late decision-law keyword fixture should pass\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(
+        !stdout(&output).contains("Decision-law keywords not found"),
+        "full decide() scan should not warn when late keywords are present\nstdout:\n{}",
+        stdout(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn checker_warns_when_decision_law_keyword_really_missing() -> TestResult {
+    let temp = unique_temp_dir("frankenlibc-module-inventory-decision-law-missing")?;
+    let (agents, mod_rs, lib_rs) = write_fixture(
+        &temp,
+        r#"
+### frankenlibc-membrane - Safety Substrate
+
+**Runtime math control plane (`runtime_math/`):**
+- `risk.rs` - Risk
+
+### frankenlibc-core - Safe Implementations
+"#,
+        r#"
+pub mod risk;
+
+pub fn decide() {
+    let risk = 0;
+    let _ = risk;
+}
+"#,
+        "",
+    )?;
+    let output = run_checker(&agents, &mod_rs, &lib_rs)?;
+    assert!(
+        output.status.success(),
+        "decision-law warning is advisory and should not fail inventory sync\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    assert!(out.contains("Decision-law keywords not found"));
+    assert!(out.contains("pareto"));
+    assert!(out.contains("design"));
+    assert!(out.contains("barrier"));
     Ok(())
 }
 
