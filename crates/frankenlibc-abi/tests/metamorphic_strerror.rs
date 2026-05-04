@@ -15,7 +15,7 @@
 //! Filed under [bd-xn6p8] follow-up.
 
 use std::collections::BTreeSet;
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 
 use frankenlibc_abi::string_abi as fl_string;
 
@@ -30,8 +30,13 @@ fn cstr(p: *const c_char) -> Option<String> {
 #[test]
 fn metamorphic_strerror_deterministic() {
     for &errno in &[
-        libc::EPERM, libc::EACCES, libc::ENOENT, libc::ESRCH,
-        libc::EBADF, libc::EAGAIN, libc::EFAULT,
+        libc::EPERM,
+        libc::EACCES,
+        libc::ENOENT,
+        libc::ESRCH,
+        libc::EBADF,
+        libc::EAGAIN,
+        libc::EFAULT,
     ] {
         let s1 = cstr(unsafe { fl_string::strerror(errno) });
         let s2 = cstr(unsafe { fl_string::strerror(errno) });
@@ -44,8 +49,14 @@ fn metamorphic_strerror_deterministic() {
 #[test]
 fn metamorphic_strerror_returns_nonempty_for_known_errnos() {
     for &errno in &[
-        libc::EPERM, libc::EACCES, libc::ENOENT, libc::EBADF,
-        libc::EAGAIN, libc::ENOMEM, libc::EBUSY, libc::EEXIST,
+        libc::EPERM,
+        libc::EACCES,
+        libc::ENOENT,
+        libc::EBADF,
+        libc::EAGAIN,
+        libc::ENOMEM,
+        libc::EBUSY,
+        libc::EEXIST,
     ] {
         let s = cstr(unsafe { fl_string::strerror(errno) });
         assert!(s.is_some(), "strerror({errno}) returned NULL");
@@ -58,29 +69,39 @@ fn metamorphic_strerror_returns_nonempty_for_known_errnos() {
 fn metamorphic_strerrorname_np_known_errnos_distinct() {
     let mut names = BTreeSet::new();
     for &errno in &[
-        libc::EPERM, libc::EACCES, libc::ENOENT, libc::ESRCH,
-        libc::EBADF, libc::EAGAIN, libc::ENOMEM, libc::EBUSY,
+        libc::EPERM,
+        libc::EACCES,
+        libc::ENOENT,
+        libc::ESRCH,
+        libc::EBADF,
+        libc::EAGAIN,
+        libc::ENOMEM,
+        libc::EBUSY,
     ] {
-        let p = unsafe { fl_string::strerrorname_np(errno) };
+        let p = fl_string::strerrorname_np(errno);
         let s = cstr(p);
         if let Some(s) = s {
             names.insert(s);
         }
     }
     // Should produce 8 distinct names if all are known.
-    assert!(names.len() >= 6, "expected ≥6 distinct names, got {}", names.len());
+    assert!(
+        names.len() >= 6,
+        "expected ≥6 distinct names, got {}",
+        names.len()
+    );
 }
 
 #[test]
 fn metamorphic_strerrorname_np_eperm() {
-    let p = unsafe { fl_string::strerrorname_np(libc::EPERM) };
+    let p = fl_string::strerrorname_np(libc::EPERM);
     let s = cstr(p);
     assert_eq!(s.as_deref(), Some("EPERM"));
 }
 
 #[test]
 fn metamorphic_strerrorname_np_eacces() {
-    let p = unsafe { fl_string::strerrorname_np(libc::EACCES) };
+    let p = fl_string::strerrorname_np(libc::EACCES);
     let s = cstr(p);
     assert_eq!(s.as_deref(), Some("EACCES"));
 }
@@ -99,7 +120,13 @@ fn metamorphic_strerror_unknown_errno_returns_some_string() {
 fn metamorphic_strerror_distinct_errnos_distinct_messages() {
     // 5 well-known errors — fl must give 5 distinct messages.
     let mut messages = BTreeSet::new();
-    for &errno in &[libc::EPERM, libc::ENOENT, libc::EACCES, libc::EBADF, libc::ENOMEM] {
+    for &errno in &[
+        libc::EPERM,
+        libc::ENOENT,
+        libc::EACCES,
+        libc::EBADF,
+        libc::ENOMEM,
+    ] {
         if let Some(s) = cstr(unsafe { fl_string::strerror(errno) }) {
             messages.insert(s);
         }
@@ -109,10 +136,13 @@ fn metamorphic_strerror_distinct_errnos_distinct_messages() {
 
 #[test]
 fn metamorphic_strerrordesc_np_eperm_starts_with_letter() {
-    let p = unsafe { fl_string::strerrordesc_np(libc::EPERM) };
+    let p = fl_string::strerrordesc_np(libc::EPERM);
     let s = cstr(p).unwrap_or_default();
     let first = s.chars().next().unwrap_or(' ');
-    assert!(first.is_ascii_alphabetic(), "EPERM desc starts with {first}");
+    assert!(
+        first.is_ascii_alphabetic(),
+        "EPERM desc starts with {first}"
+    );
 }
 
 #[test]
