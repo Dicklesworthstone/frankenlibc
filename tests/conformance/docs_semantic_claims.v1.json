@@ -1,0 +1,157 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.1.4",
+  "generated_at_utc": "2026-05-04T05:00:00Z",
+  "purpose": "Machine-checkable contract for README and FEATURE_PARITY claim wording. It separates support taxonomy from semantic parity and defines the evidence fields a user-facing replacement claim must carry.",
+  "inputs": {
+    "readme": "README.md",
+    "feature_parity": "FEATURE_PARITY.md",
+    "support_matrix": "support_matrix.json",
+    "support_semantic_overlay": "tests/conformance/support_semantic_overlay.v1.json",
+    "semantic_contract_inventory": "tests/conformance/semantic_contract_inventory.v1.json",
+    "semantic_contract_symbol_join": "tests/conformance/semantic_contract_symbol_join.v1.json",
+    "oracle_precedence": "tests/conformance/oracle_precedence_divergence.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json"
+  },
+  "required_claim_fields": [
+    {
+      "id": "symbol_status",
+      "description": "Support-taxonomy status from support_matrix.json only; never a full behavior-parity claim by itself."
+    },
+    {
+      "id": "semantic_parity_status",
+      "description": "Semantic replacement state from semantic_contract_symbol_join.v1.json, including blocked_* rows."
+    },
+    {
+      "id": "oracle_kind",
+      "description": "Authoritative evidence type selected by oracle precedence."
+    },
+    {
+      "id": "replacement_level",
+      "description": "L0/L1/L2/L3 claim scope from replacement_levels.json."
+    },
+    {
+      "id": "evidence_artifact",
+      "description": "Concrete report, fixture, matrix, or generated artifact backing the claim."
+    },
+    {
+      "id": "freshness_state",
+      "description": "source_commit, generated_at timestamp, or freshness predicate proving the evidence is current."
+    },
+    {
+      "id": "known_limitation",
+      "description": "Explicit blocker, required follow-up, unsupported contract, or blocked semantic class."
+    },
+    {
+      "id": "user_recommendation",
+      "description": "Actionable user-facing guidance such as L0-only, unsupported, degraded, blocked, or ready for a narrow workload."
+    }
+  ],
+  "doc_surfaces": [
+    {
+      "id": "README",
+      "path": "README.md",
+      "required_section": "### Claim Field Contract",
+      "required_phrases": [
+        "not a full standalone libc replacement",
+        "support_matrix.json",
+        "semantic_contract_symbol_join.v1.json",
+        "oracle_precedence_divergence.v1.json",
+        "replacement_levels.json"
+      ]
+    },
+    {
+      "id": "FEATURE_PARITY",
+      "path": "FEATURE_PARITY.md",
+      "required_section": "## Claim Field Contract",
+      "required_phrases": [
+        "not a full replacement profile",
+        "support_matrix.json",
+        "semantic_contract_symbol_join.v1.json",
+        "oracle_precedence_divergence.v1.json",
+        "replacement_levels.json"
+      ]
+    }
+  ],
+  "forbidden_claim_patterns": [
+    {
+      "id": "stub_zero_full_replacement",
+      "pattern": "Stub:\\s*0[^\\n]*(proves|confirms|establishes|means)[^\\n]*(full|complete|replacement|parity)",
+      "allowed_if_line_contains": [
+        "not ",
+        "block"
+      ]
+    },
+    {
+      "id": "implemented_means_semantic_parity",
+      "pattern": "Implemented[^\\n]*(means|proves|confirms|establishes)[^\\n]*(semantic|behavior)[^\\n]*parity",
+      "allowed_if_line_contains": [
+        "not ",
+        "does not"
+      ]
+    },
+    {
+      "id": "full_standalone_today",
+      "pattern": "full standalone (libc )?replacement (today|now|profile)",
+      "allowed_if_line_contains": [
+        "not ",
+        "future",
+        "planned"
+      ]
+    }
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "doc_surface",
+    "symbol_or_section",
+    "previous_claim",
+    "generated_claim",
+    "evidence_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "replay_cases": [
+    {
+      "id": "clean_current_docs",
+      "kind": "clean",
+      "command": "scripts/check_docs_semantic_claims.sh",
+      "expected_status": "pass"
+    },
+    {
+      "id": "missing_claim_field",
+      "kind": "missing_field",
+      "command": "FLC_DOCS_SEMANTIC_README=<fixture-missing-field> scripts/check_docs_semantic_claims.sh",
+      "expected_status": "fail",
+      "failure_signature": "missing_claim_field"
+    },
+    {
+      "id": "unsupported_replacement_claim",
+      "kind": "forbidden_claim",
+      "command": "FLC_DOCS_SEMANTIC_FEATURE_PARITY=<fixture-forbidden-claim> scripts/check_docs_semantic_claims.sh",
+      "expected_status": "fail",
+      "failure_signature": "forbidden_claim"
+    },
+    {
+      "id": "stale_semantic_join",
+      "kind": "stale_artifact",
+      "command": "FLC_DOCS_SEMANTIC_JOIN=<fixture-stale-join> scripts/check_docs_semantic_claims.sh",
+      "expected_status": "fail",
+      "failure_signature": "stale_semantic_join"
+    }
+  ],
+  "claim_policy": {
+    "support_taxonomy_status_is_not_semantic_parity": true,
+    "docs_must_reference_semantic_join": true,
+    "docs_must_reference_oracle_precedence": true,
+    "docs_must_reference_replacement_levels": true,
+    "docs_must_keep_current_profile_l0_interpose": true
+  },
+  "expected_current_summary": {
+    "doc_surface_count": 2,
+    "required_claim_field_count": 8,
+    "semantic_parity_blocker_count": 18,
+    "taxonomy_semantic_conflict_count": 18,
+    "forbidden_claim_count": 0
+  }
+}

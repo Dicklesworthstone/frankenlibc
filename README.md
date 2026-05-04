@@ -50,6 +50,21 @@ Current source of truth: `tests/conformance/reality_report.v1.json`.
 | Verification is first-class | harness CLI, conformance fixtures, maintenance gates, smoke scripts, perf scripts |
 | Runtime math is live code | `frankenlibc-membrane/src/runtime_math/` contains active control kernels, not just design docs |
 
+### Claim Field Contract
+
+FrankenLibC is not a full standalone libc replacement today. Any README or FEATURE_PARITY claim about support, parity, or replacement readiness must be traceable through these fields:
+
+| Field | Meaning | Source of truth |
+|---|---|---|
+| `symbol_status` | Support-taxonomy classification for a symbol; this does not prove semantic parity by itself | `support_matrix.json` |
+| `semantic_parity_status` | Full, blocked, or limited semantic status for known no-op/fallback/bootstrap/unsupported contracts | `tests/conformance/semantic_contract_symbol_join.v1.json` |
+| `oracle_kind` | Evidence precedence used to decide host-glibc parity, POSIX/Linux behavior, documented FrankenLibC contract, or allowed divergence | `tests/conformance/oracle_precedence_divergence.v1.json` |
+| `replacement_level` | Claim scope such as L0 interpose now and staged future replacement levels | `tests/conformance/replacement_levels.json` |
+| `evidence_artifact` | Concrete report, fixture, matrix, or generated artifact backing the claim | `tests/conformance/*.json`, `target/conformance/*.json`, `target/conformance/*.jsonl` |
+| `freshness_state` | `source_commit`, `generated_at_utc`, or a gate-specific freshness predicate for the evidence | Generated reports and gate logs |
+| `known_limitation` | Explicit blocker, deferred subsystem, unsupported contract, or required follow-up | `tests/conformance/support_semantic_overlay.v1.json` and semantic inventory rows |
+| `user_recommendation` | Practical guidance such as L0-only, blocked, unsupported, degraded, or ready for a narrow workload | Generated compatibility and claim-gate reports |
+
 ## Quick Example
 
 ```bash
@@ -879,6 +894,7 @@ The repo has many report artifacts. This table maps them to the questions they a
 |---|---|
 | `support_matrix.json` | Per-symbol source of truth for implementation taxonomy |
 | `tests/conformance/support_semantic_overlay.v1.json` | Semantic overlay that distinguishes full behavior from no-op, fallback, bootstrap, unsupported, and proof-gap contracts |
+| `tests/conformance/docs_semantic_claims.v1.json` | README/FEATURE_PARITY claim-field contract that prevents support taxonomy from being promoted to semantic parity by prose |
 | `tests/conformance/support_matrix_maintenance_report.v1.json` | Canonical maintenance snapshot derived from the support matrix |
 | `tests/conformance/fixtures/` | Host-libc fixture corpus used for differential verification |
 | `tests/conformance/c_fixture_spec.json` | Integration-fixture coverage contract |

@@ -30,6 +30,21 @@ Legend:
 - `Stub`: Deterministic fallback/error contract (documented and testable)
 - `DONE` / `IN_PROGRESS` / `PLANNED`: roadmap status for broader subsystem goals
 
+## Claim Field Contract
+
+This file tracks the current staged parity profile, not a full replacement profile. Any claim that a symbol, family, workload, or release is supported must keep these fields separate:
+
+| Field | Meaning | Source of truth |
+|---|---|---|
+| `symbol_status` | Support-taxonomy row for exported symbol classification; it does not prove semantic parity by itself | `support_matrix.json` |
+| `semantic_parity_status` | Semantic status for no-op/fallback/bootstrap/unsupported contracts, including `blocked_*` rows | `tests/conformance/semantic_contract_symbol_join.v1.json` |
+| `oracle_kind` | Highest-priority oracle that may justify the claim or divergence | `tests/conformance/oracle_precedence_divergence.v1.json` |
+| `replacement_level` | L0/L1/L2/L3 scope for the claim | `tests/conformance/replacement_levels.json` |
+| `evidence_artifact` | Machine-generated report, fixture, or matrix backing the claim | `tests/conformance/*.json`, `target/conformance/*.json`, `target/conformance/*.jsonl` |
+| `freshness_state` | `source_commit`, generated timestamp, or freshness predicate used by the consuming gate | Generated reports and gate logs |
+| `known_limitation` | Deferred behavior, unsupported contract, proof gap, stale evidence, or required follow-up | Semantic inventory and conformance reports |
+| `user_recommendation` | User-facing disposition such as L0-only, unsupported, blocked, degraded, or narrow-workload-ready | Generated compatibility and release-claim reports |
+
 ## Macro Coverage Targets
 
 | Area | Target | Status |
