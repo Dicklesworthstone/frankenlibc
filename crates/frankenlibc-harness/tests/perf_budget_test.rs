@@ -13,7 +13,66 @@
 //! Run: cargo test -p frankenlibc-harness --test perf_budget_test
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::process::Command;
+
+const REQUIRED_WORKLOAD_LOG_FIELDS: &[&str] = &[
+    "trace_id",
+    "bead_id",
+    "benchmark_id",
+    "workload_id",
+    "api_family",
+    "symbol",
+    "runtime_mode",
+    "replacement_level",
+    "environment_id",
+    "baseline_value",
+    "actual_value",
+    "variance",
+    "threshold",
+    "decision",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature",
+];
+
+const REQUIRED_WORKLOAD_BUDGET_FIELDS: &[&str] = &[
+    "budget_id",
+    "benchmark_id",
+    "benchmark_kind",
+    "workload_id",
+    "api_family",
+    "symbol",
+    "runtime_mode",
+    "replacement_level",
+    "environment_id",
+    "host_baseline",
+    "current_result",
+    "variance_policy",
+    "sample_count",
+    "warmup_policy",
+    "latency_threshold_ns",
+    "throughput_threshold_ops_per_sec",
+    "regression_severity",
+    "benchmark_script",
+    "artifact_refs",
+    "parity_evidence_refs",
+    "required_evidence",
+    "present_evidence",
+    "missing_evidence",
+    "blocking_decision",
+    "decision",
+    "failure_signature",
+];
+
+const REQUIRED_CLAIM_BLOCKERS: &[&str] = &[
+    "perf_claim_stale_baseline",
+    "perf_claim_missing_parity_proof",
+    "perf_claim_microbench_only",
+    "perf_claim_parity_failing",
+];
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -27,20 +86,43 @@ fn workspace_root() -> PathBuf {
 
 fn load_policy() -> serde_json::Value {
     let path = workspace_root().join("tests/conformance/perf_budget_policy.json");
-    let content = std::fs::read_to_string(&path).expect("perf_budget_policy.json should exist");
-    serde_json::from_str(&content).expect("perf_budget_policy.json should be valid JSON")
+    load_json(&path, "perf_budget_policy.json")
 }
 
 fn load_matrix() -> serde_json::Value {
     let path = workspace_root().join("support_matrix.json");
-    let content = std::fs::read_to_string(&path).expect("support_matrix.json should exist");
-    serde_json::from_str(&content).expect("support_matrix.json should be valid JSON")
+    load_json(&path, "support_matrix.json")
 }
 
 fn load_levels() -> serde_json::Value {
     let path = workspace_root().join("tests/conformance/replacement_levels.json");
-    let content = std::fs::read_to_string(&path).expect("replacement_levels.json should exist");
-    serde_json::from_str(&content).expect("replacement_levels.json should be valid JSON")
+    load_json(&path, "replacement_levels.json")
+}
+
+fn load_json(path: &Path, _label: &str) -> serde_json::Value {
+    let content = std::fs::read_to_string(path).expect("JSON fixture should be readable");
+    serde_json::from_str(&content).expect("JSON fixture should be valid JSON")
+}
+
+fn assert_repo_ref_exists(root: &Path, rel: &str, context: &str) {
+    let path = Path::new(rel);
+    assert!(!rel.is_empty(), "{context}: artifact ref must not be empty");
+    assert!(
+        !path.is_absolute(),
+        "{context}: artifact ref must stay repo-relative: {rel}"
+    );
+    assert!(
+        !path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_))),
+        "{context}: artifact ref must not escape the repo root: {rel}"
+    );
+    if !rel.starts_with("target/") {
+        assert!(
+            (root.join(path)).exists(),
+            "{context}: missing artifact {rel}"
+        );
+    }
 }
 
 #[test]
@@ -308,6 +390,146 @@ fn variance_guardrails_reasonable() {
 }
 
 #[test]
+fn workload_budget_extension_preserves_parity_first_rules() {
+    let pol = load_policy();
+    let extension = &pol["workload_budget_extension"];
+
+    assert_eq!(extension["bead"].as_str(), Some("bd-bp8fl.8.6"));
+    assert_eq!(extension["parity_first"].as_bool(), Some(true));
+    assert_eq!(extension["baseline_first"].as_bool(), Some(true));
+    assert_eq!(
+        extension["performance_claims_require_current_behavior_proof"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        extension["microbench_only_cannot_support_user_claims"].as_bool(),
+        Some(true)
+    );
+
+    let log_fields: Vec<_> = extension["required_log_fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|field| field.as_str().unwrap())
+        .collect();
+    assert_eq!(log_fields, REQUIRED_WORKLOAD_LOG_FIELDS);
+}
+
+#[test]
+fn workload_budget_rows_cover_user_workload_and_membrane_hotpath() {
+    let root = workspace_root();
+    let pol = load_policy();
+    let budgets = pol["workload_performance_budgets"].as_array().unwrap();
+    let mut kinds = HashSet::new();
+
+    assert!(!budgets.is_empty(), "workload budget rows must exist");
+    for budget in budgets {
+        let budget_id = budget["budget_id"].as_str().unwrap();
+        for field in REQUIRED_WORKLOAD_BUDGET_FIELDS {
+            assert!(
+                budget.get(*field).is_some(),
+                "{budget_id}: missing workload budget field {field}"
+            );
+        }
+        let kind = budget["benchmark_kind"].as_str().unwrap();
+        kinds.insert(kind);
+        assert!(
+            ["strict", "hardened"].contains(&budget["runtime_mode"].as_str().unwrap()),
+            "{budget_id}: runtime_mode must be strict or hardened"
+        );
+        assert!(
+            ["L0", "L1", "L2", "L3"].contains(&budget["replacement_level"].as_str().unwrap()),
+            "{budget_id}: replacement_level must be L0-L3"
+        );
+        assert!(
+            budget["sample_count"].as_u64().unwrap() >= 3,
+            "{budget_id}: sample_count must be at least 3"
+        );
+        assert_eq!(
+            budget["blocking_decision"].as_str(),
+            Some("claim_blocked"),
+            "{budget_id}: missing evidence must block claims"
+        );
+        assert_eq!(
+            budget["decision"].as_str(),
+            Some("claim_blocked"),
+            "{budget_id}: current incomplete budget rows must fail closed"
+        );
+        assert!(
+            !budget["required_evidence"].as_array().unwrap().is_empty(),
+            "{budget_id}: required_evidence must not be empty"
+        );
+        assert!(
+            !budget["present_evidence"].as_array().unwrap().is_empty(),
+            "{budget_id}: present_evidence must not be empty"
+        );
+        assert!(
+            !budget["missing_evidence"].as_array().unwrap().is_empty(),
+            "{budget_id}: missing_evidence must not be empty"
+        );
+
+        for artifact in budget["artifact_refs"].as_array().unwrap() {
+            assert_repo_ref_exists(&root, artifact.as_str().unwrap(), budget_id);
+        }
+        for artifact in budget["parity_evidence_refs"].as_array().unwrap() {
+            assert_repo_ref_exists(&root, artifact.as_str().unwrap(), budget_id);
+        }
+        for nested in ["host_baseline", "current_result"] {
+            for artifact in budget[nested]["artifact_refs"].as_array().unwrap() {
+                assert_repo_ref_exists(&root, artifact.as_str().unwrap(), budget_id);
+            }
+        }
+        assert_repo_ref_exists(
+            &root,
+            budget["benchmark_script"].as_str().unwrap(),
+            budget_id,
+        );
+    }
+
+    assert!(
+        kinds.contains("user_workload_e2e"),
+        "at least one user workload performance budget row is required"
+    );
+    assert!(
+        kinds.contains("membrane_hot_path_microbenchmark"),
+        "at least one membrane hot-path microbenchmark budget row is required"
+    );
+}
+
+#[test]
+fn performance_claim_blockers_fail_closed() {
+    let pol = load_policy();
+    let blockers = pol["performance_claim_blocking_tests"].as_array().unwrap();
+    let signatures: HashSet<_> = blockers
+        .iter()
+        .filter_map(|blocker| blocker["failure_signature"].as_str())
+        .collect();
+
+    for signature in REQUIRED_CLAIM_BLOCKERS {
+        assert!(
+            signatures.contains(signature),
+            "missing performance claim blocker {signature}"
+        );
+    }
+    for blocker in blockers {
+        let id = blocker["id"].as_str().unwrap();
+        assert_eq!(
+            blocker["expected_decision"].as_str(),
+            Some("claim_blocked"),
+            "{id}: claim blocker must fail closed"
+        );
+        assert!(
+            !blocker["condition"].as_str().unwrap().is_empty(),
+            "{id}: condition must not be empty"
+        );
+        assert!(
+            !blocker["claim_surface"].as_str().unwrap().is_empty(),
+            "{id}: claim_surface must not be empty"
+        );
+    }
+}
+
+#[test]
 fn gate_script_exists_and_executable() {
     let root = workspace_root();
     let script = root.join("scripts/check_perf_budget.sh");
@@ -320,6 +542,63 @@ fn gate_script_exists_and_executable() {
         assert!(
             perms.mode() & 0o111 != 0,
             "check_perf_budget.sh must be executable"
+        );
+    }
+}
+
+#[test]
+fn gate_script_emits_workload_budget_report_and_log() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_perf_budget.sh");
+    let output = Command::new(&script)
+        .current_dir(&root)
+        .output()
+        .expect("failed to run perf budget gate");
+    assert!(
+        output.status.success(),
+        "perf budget gate failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_path = root.join("target/conformance/perf_budget_policy.report.json");
+    let log_path = root.join("target/conformance/perf_budget_policy.log.jsonl");
+    let report = load_json(&report_path, "perf budget report");
+    assert_eq!(report["schema_version"].as_str(), Some("v1"));
+    assert_eq!(report["bead"].as_str(), Some("bd-bp8fl.8.6"));
+    assert_eq!(report["status"].as_str(), Some("pass"));
+    assert_eq!(
+        report["checks"]["workload_budget_extension"].as_str(),
+        Some("pass")
+    );
+    assert_eq!(
+        report["checks"]["workload_budget_rows"].as_str(),
+        Some("pass")
+    );
+    assert_eq!(
+        report["checks"]["performance_claim_blockers"].as_str(),
+        Some("pass")
+    );
+    assert!(
+        report["user_workload_budget_count"].as_u64().unwrap() >= 1,
+        "report must include at least one user workload budget"
+    );
+    assert!(
+        report["membrane_hotpath_budget_count"].as_u64().unwrap() >= 1,
+        "report must include at least one membrane hot-path budget"
+    );
+
+    let log_body = std::fs::read_to_string(&log_path).expect("perf budget log should be readable");
+    let first_line = log_body
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .expect("perf budget log should contain at least one row");
+    let event: serde_json::Value =
+        serde_json::from_str(first_line).expect("perf budget log row should parse");
+    for field in REQUIRED_WORKLOAD_LOG_FIELDS {
+        assert!(
+            event.get(*field).is_some(),
+            "perf budget log row missing {field}"
         );
     }
 }

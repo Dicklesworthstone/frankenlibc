@@ -40,6 +40,237 @@
     "baseline_file": "scripts/perf_baseline.json",
     "baseline_update_policy": "Manual update only. New baselines require review comment explaining improvement source."
   },
+  "workload_budget_extension": {
+    "bead": "bd-bp8fl.8.6",
+    "purpose": "Attach performance budgets to representative user workloads and membrane hot-path evidence without allowing performance claims to outrun parity or baseline proof.",
+    "parity_first": true,
+    "baseline_first": true,
+    "performance_claims_require_current_behavior_proof": true,
+    "microbench_only_cannot_support_user_claims": true,
+    "report_path": "target/conformance/perf_budget_policy.report.json",
+    "log_path": "target/conformance/perf_budget_policy.log.jsonl",
+    "required_log_fields": [
+      "trace_id",
+      "bead_id",
+      "benchmark_id",
+      "workload_id",
+      "api_family",
+      "symbol",
+      "runtime_mode",
+      "replacement_level",
+      "environment_id",
+      "baseline_value",
+      "actual_value",
+      "variance",
+      "threshold",
+      "decision",
+      "latency_ns",
+      "artifact_refs",
+      "source_commit",
+      "target_dir",
+      "failure_signature"
+    ]
+  },
+  "workload_performance_budgets": [
+    {
+      "budget_id": "user-shell-coreutils-sort-pipeline-l0-strict",
+      "benchmark_id": "bench-user-shell-coreutils-sort-pipeline",
+      "benchmark_kind": "user_workload_e2e",
+      "workload_id": "uwm-shell-coreutils",
+      "api_family": "stdio",
+      "symbol": "sort_pipeline",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "environment_id": "linux-x86_64-localhost",
+      "environment_metadata": {
+        "source": "tests/conformance/user_environment_coverage_matrix.v1.json",
+        "architecture": "x86_64",
+        "os_family": "linux",
+        "runner": "rch-compatible",
+        "target_dir_policy": "isolated CARGO_TARGET_DIR per bead"
+      },
+      "host_baseline": {
+        "capture_state": "missing_current_machine_sample",
+        "baseline_value_ns": null,
+        "throughput_ops_per_sec": null,
+        "artifact_refs": [
+          "tests/conformance/user_workload_vertical_slice.v1.json",
+          "tests/conformance/real_program_smoke_suite.v1.json"
+        ]
+      },
+      "current_result": {
+        "capture_state": "blocked_missing_interpose_artifact",
+        "actual_value_ns": null,
+        "throughput_ops_per_sec": null,
+        "artifact_refs": [
+          "tests/conformance/user_workload_vertical_slice.v1.json",
+          "target/conformance/user_workload_vertical_slice.report.json",
+          "target/conformance/user_workload_vertical_slice.log.jsonl"
+        ]
+      },
+      "variance_policy": {
+        "sample_count": 5,
+        "min_repeat_runs": 3,
+        "max_coefficient_of_variation_pct": 15,
+        "required_stable_samples": 3
+      },
+      "sample_count": 5,
+      "warmup_policy": {
+        "warmup_runs": 2,
+        "discard_first_run": true,
+        "pinning_recommended": true
+      },
+      "latency_threshold_ns": 200000000,
+      "throughput_threshold_ops_per_sec": 5,
+      "regression_severity": "blocking",
+      "benchmark_script": "scripts/check_user_workload_vertical_slice.sh",
+      "artifact_refs": [
+        "tests/conformance/user_workload_vertical_slice.v1.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/user_compatibility_report.v1.json",
+        "tests/conformance/real_program_smoke_suite.v1.json",
+        "scripts/check_user_workload_vertical_slice.sh"
+      ],
+      "parity_evidence_refs": [
+        "tests/conformance/user_workload_vertical_slice.v1.json",
+        "tests/conformance/user_compatibility_report.v1.json",
+        "tests/conformance/feature_parity_claim_evidence_gate.v1.json"
+      ],
+      "required_evidence": [
+        "current host baseline sample",
+        "strict-mode user workload timing",
+        "passing user workload behavior proof",
+        "fresh compatibility report"
+      ],
+      "present_evidence": [
+        "workload selection",
+        "smoke-suite binding",
+        "claim-block policy"
+      ],
+      "missing_evidence": [
+        "current host baseline sample",
+        "strict-mode timing sample",
+        "load-guarded repeat sample set",
+        "fresh passing interpose artifact"
+      ],
+      "blocking_decision": "claim_blocked",
+      "decision": "claim_blocked",
+      "failure_signature": "workload_perf_missing_current_baseline"
+    },
+    {
+      "budget_id": "membrane-validation-hotpath-strict",
+      "benchmark_id": "bench-membrane-validation-hotpath",
+      "benchmark_kind": "membrane_hot_path_microbenchmark",
+      "workload_id": "membrane-pointer-validation-hotpath",
+      "api_family": "membrane",
+      "symbol": "ptr_validator.validate_region",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "environment_id": "linux-x86_64-localhost",
+      "environment_metadata": {
+        "source": "tests/conformance/user_environment_coverage_matrix.v1.json",
+        "architecture": "x86_64",
+        "os_family": "linux",
+        "runner": "rch-compatible",
+        "target_dir_policy": "isolated CARGO_TARGET_DIR per bead"
+      },
+      "host_baseline": {
+        "capture_state": "pending_membrane_baseline_refresh",
+        "baseline_value_ns": null,
+        "throughput_ops_per_sec": null,
+        "artifact_refs": [
+          "tests/conformance/membrane_overhead_baseline.v1.json",
+          "tests/conformance/hot_path_profile_report.v1.json"
+        ]
+      },
+      "current_result": {
+        "capture_state": "pending_membrane_benchmark_refresh",
+        "actual_value_ns": null,
+        "throughput_ops_per_sec": null,
+        "artifact_refs": [
+          "tests/conformance/membrane_overhead_baseline.v1.json",
+          "tests/conformance/hot_path_profile_report.v1.json",
+          "target/conformance/benchmark_gate.report.json"
+        ]
+      },
+      "variance_policy": {
+        "sample_count": 10,
+        "min_repeat_runs": 3,
+        "max_coefficient_of_variation_pct": 15,
+        "required_stable_samples": 5
+      },
+      "sample_count": 10,
+      "warmup_policy": {
+        "warmup_runs": 5,
+        "discard_first_run": true,
+        "pinning_recommended": true
+      },
+      "latency_threshold_ns": 20,
+      "throughput_threshold_ops_per_sec": 50000000,
+      "regression_severity": "blocking",
+      "benchmark_script": "scripts/check_benchmark_gate.sh",
+      "artifact_refs": [
+        "tests/conformance/membrane_overhead_baseline.v1.json",
+        "tests/conformance/hot_path_profile_report.v1.json",
+        "scripts/check_benchmark_gate.sh",
+        "scripts/perf_gate.sh"
+      ],
+      "parity_evidence_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "support_matrix.json"
+      ],
+      "required_evidence": [
+        "current membrane baseline sample",
+        "strict-mode membrane timing",
+        "stable variance sample set",
+        "current support semantic overlay"
+      ],
+      "present_evidence": [
+        "budget threshold",
+        "benchmark script binding",
+        "artifact inventory"
+      ],
+      "missing_evidence": [
+        "current membrane baseline sample",
+        "strict-mode membrane timing",
+        "stable variance sample set"
+      ],
+      "blocking_decision": "claim_blocked",
+      "decision": "claim_blocked",
+      "failure_signature": "membrane_perf_missing_current_baseline"
+    }
+  ],
+  "performance_claim_blocking_tests": [
+    {
+      "id": "stale_baseline_blocks_no_regression_claim",
+      "condition": "host_baseline.source_commit is stale or capture_state is not current",
+      "claim_surface": "README release compatibility_report",
+      "expected_decision": "claim_blocked",
+      "failure_signature": "perf_claim_stale_baseline"
+    },
+    {
+      "id": "missing_parity_proof_blocks_performance_claim",
+      "condition": "parity_evidence_refs missing or behavior proof is not passing",
+      "claim_surface": "README release compatibility_report",
+      "expected_decision": "claim_blocked",
+      "failure_signature": "perf_claim_missing_parity_proof"
+    },
+    {
+      "id": "microbench_only_blocks_user_workload_claim",
+      "condition": "only membrane_hot_path_microbenchmark evidence exists for a user workload claim",
+      "claim_surface": "README release compatibility_report",
+      "expected_decision": "claim_blocked",
+      "failure_signature": "perf_claim_microbench_only"
+    },
+    {
+      "id": "parity_failing_evidence_blocks_speedup_claim",
+      "condition": "behavior proof is failing even when timing is under threshold",
+      "claim_surface": "README release compatibility_report",
+      "expected_decision": "claim_blocked",
+      "failure_signature": "perf_claim_parity_failing"
+    }
+  ],
   "waiver_policy": {
     "description": "Budget exceptions require explicit temporary waiver beads. Each waiver must specify affected symbols, justification, and expiry.",
     "required_fields": [

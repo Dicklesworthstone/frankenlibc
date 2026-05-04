@@ -18,8 +18,13 @@ POLICY="${ROOT}/tests/conformance/perf_budget_policy.json"
 MATRIX="${ROOT}/support_matrix.json"
 LEVELS="${ROOT}/tests/conformance/replacement_levels.json"
 BEADS="${ROOT}/.beads/issues.jsonl"
+OUT_DIR="${ROOT}/target/conformance"
+REPORT="${OUT_DIR}/perf_budget_policy.report.json"
+LOG="${OUT_DIR}/perf_budget_policy.log.jsonl"
 
 failures=0
+
+mkdir -p "${OUT_DIR}"
 
 echo "=== Perf Budget Gate (bd-2r0) ==="
 echo ""
@@ -333,6 +338,294 @@ else
     echo "PASS: Assessment counts match support_matrix.json"
 fi
 echo "${assess_check}" | grep -E '^(strict_hotpath|hardened_hotpath|coldpath):' || true
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 6: Workload-linked performance budgets and claim blockers
+# ---------------------------------------------------------------------------
+echo "--- Check 6: Workload-linked performance budgets ---"
+
+workload_check=$(python3 - "${ROOT}" "${POLICY}" "${REPORT}" "${LOG}" <<'PY'
+import json
+import subprocess
+import sys
+from collections import Counter
+from pathlib import Path
+
+root = Path(sys.argv[1])
+policy_path = Path(sys.argv[2])
+report_path = Path(sys.argv[3])
+log_path = Path(sys.argv[4])
+
+errors = []
+checks = {}
+
+REQUIRED_LOG_FIELDS = [
+    "trace_id",
+    "bead_id",
+    "benchmark_id",
+    "workload_id",
+    "api_family",
+    "symbol",
+    "runtime_mode",
+    "replacement_level",
+    "environment_id",
+    "baseline_value",
+    "actual_value",
+    "variance",
+    "threshold",
+    "decision",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature",
+]
+
+REQUIRED_BUDGET_FIELDS = [
+    "budget_id",
+    "benchmark_id",
+    "benchmark_kind",
+    "workload_id",
+    "api_family",
+    "symbol",
+    "runtime_mode",
+    "replacement_level",
+    "environment_id",
+    "host_baseline",
+    "current_result",
+    "variance_policy",
+    "sample_count",
+    "warmup_policy",
+    "latency_threshold_ns",
+    "throughput_threshold_ops_per_sec",
+    "regression_severity",
+    "benchmark_script",
+    "artifact_refs",
+    "parity_evidence_refs",
+    "required_evidence",
+    "present_evidence",
+    "missing_evidence",
+    "blocking_decision",
+    "decision",
+    "failure_signature",
+]
+
+REQUIRED_BLOCKER_SIGNATURES = {
+    "perf_claim_stale_baseline",
+    "perf_claim_missing_parity_proof",
+    "perf_claim_microbench_only",
+    "perf_claim_parity_failing",
+}
+
+def load_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        errors.append(f"{path}: {exc}")
+        return {}
+
+def repo_ref_exists(ref, context):
+    if not isinstance(ref, str) or not ref:
+        errors.append(f"{context}: artifact ref must be a non-empty string")
+        return False
+    rel = Path(ref)
+    if rel.is_absolute() or ".." in rel.parts:
+        errors.append(f"{context}: artifact ref must stay repo-relative: {ref}")
+        return False
+    if ref.startswith("target/"):
+        return True
+    if not (root / rel).exists():
+        errors.append(f"{context}: artifact ref does not exist: {ref}")
+        return False
+    return True
+
+policy = load_json(policy_path)
+extension = policy.get("workload_budget_extension", {})
+budgets = policy.get("workload_performance_budgets", [])
+blockers = policy.get("performance_claim_blocking_tests", [])
+
+extension_ok = (
+    extension.get("bead") == "bd-bp8fl.8.6"
+    and extension.get("parity_first") is True
+    and extension.get("baseline_first") is True
+    and extension.get("performance_claims_require_current_behavior_proof") is True
+    and extension.get("microbench_only_cannot_support_user_claims") is True
+    and extension.get("required_log_fields") == REQUIRED_LOG_FIELDS
+)
+checks["workload_budget_extension"] = "pass" if extension_ok else "fail"
+if not extension_ok:
+    errors.append("workload_budget_extension must preserve parity-first/baseline-first rules and required log fields")
+
+budget_ids = [budget.get("budget_id") for budget in budgets]
+budget_kind_counts = Counter()
+decision_counts = Counter()
+budget_rows_ok = bool(budgets) and len(budget_ids) == len(set(budget_ids))
+
+for budget in budgets:
+    budget_id = budget.get("budget_id", "<missing budget_id>")
+    for field in REQUIRED_BUDGET_FIELDS:
+        if field not in budget:
+            budget_rows_ok = False
+            errors.append(f"{budget_id}: missing budget field {field}")
+
+    kind = budget.get("benchmark_kind")
+    budget_kind_counts[kind] += 1
+    decision = budget.get("decision")
+    decision_counts[decision] += 1
+
+    if budget.get("runtime_mode") not in {"strict", "hardened"}:
+        budget_rows_ok = False
+        errors.append(f"{budget_id}: runtime_mode must be strict or hardened")
+    if budget.get("replacement_level") not in {"L0", "L1", "L2", "L3"}:
+        budget_rows_ok = False
+        errors.append(f"{budget_id}: replacement_level must be L0-L3")
+    if budget.get("sample_count", 0) < 3:
+        budget_rows_ok = False
+        errors.append(f"{budget_id}: sample_count must be at least 3")
+    if budget.get("latency_threshold_ns") is None and budget.get("throughput_threshold_ops_per_sec") is None:
+        budget_rows_ok = False
+        errors.append(f"{budget_id}: latency or throughput threshold must be present")
+    if budget.get("regression_severity") not in {"blocking", "warning"}:
+        budget_rows_ok = False
+        errors.append(f"{budget_id}: regression_severity must be blocking or warning")
+    if budget.get("blocking_decision") != "claim_blocked":
+        budget_rows_ok = False
+        errors.append(f"{budget_id}: blocking_decision must be claim_blocked")
+
+    if decision == "claim_blocked":
+        if not budget.get("missing_evidence"):
+            budget_rows_ok = False
+            errors.append(f"{budget_id}: claim_blocked rows must name missing_evidence")
+        if not budget.get("failure_signature"):
+            budget_rows_ok = False
+            errors.append(f"{budget_id}: claim_blocked rows must name failure_signature")
+    elif decision == "pass":
+        baseline = budget.get("host_baseline", {}).get("baseline_value_ns")
+        actual = budget.get("current_result", {}).get("actual_value_ns")
+        threshold = budget.get("latency_threshold_ns")
+        if baseline is None or actual is None or threshold is None or actual > threshold:
+            budget_rows_ok = False
+            errors.append(f"{budget_id}: pass rows require baseline, actual, and actual <= latency threshold")
+    else:
+        budget_rows_ok = False
+        errors.append(f"{budget_id}: decision must be pass or claim_blocked")
+
+    for ref in budget.get("artifact_refs", []):
+        if not repo_ref_exists(ref, budget_id):
+            budget_rows_ok = False
+    for ref in budget.get("parity_evidence_refs", []):
+        if not repo_ref_exists(ref, budget_id):
+            budget_rows_ok = False
+    for nested in ["host_baseline", "current_result"]:
+        for ref in budget.get(nested, {}).get("artifact_refs", []):
+            if not repo_ref_exists(ref, budget_id):
+                budget_rows_ok = False
+    if not repo_ref_exists(budget.get("benchmark_script"), budget_id):
+        budget_rows_ok = False
+
+if budget_kind_counts.get("user_workload_e2e", 0) < 1:
+    budget_rows_ok = False
+    errors.append("at least one user_workload_e2e budget row is required")
+if budget_kind_counts.get("membrane_hot_path_microbenchmark", 0) < 1:
+    budget_rows_ok = False
+    errors.append("at least one membrane_hot_path_microbenchmark budget row is required")
+checks["workload_budget_rows"] = "pass" if budget_rows_ok else "fail"
+
+blocker_signatures = {blocker.get("failure_signature") for blocker in blockers}
+blockers_ok = REQUIRED_BLOCKER_SIGNATURES.issubset(blocker_signatures)
+for blocker in blockers:
+    if blocker.get("expected_decision") != "claim_blocked":
+        blockers_ok = False
+        errors.append(f"{blocker.get('id', '<missing blocker id>')}: expected_decision must be claim_blocked")
+    for field in ["condition", "claim_surface", "failure_signature"]:
+        if not blocker.get(field):
+            blockers_ok = False
+            errors.append(f"{blocker.get('id', '<missing blocker id>')}: missing {field}")
+checks["performance_claim_blockers"] = "pass" if blockers_ok else "fail"
+
+try:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).strip()
+except Exception:
+    source_commit = "unknown"
+
+status = "pass" if not errors else "fail"
+report = {
+    "schema_version": "v1",
+    "bead": "bd-bp8fl.8.6",
+    "status": status,
+    "checks": checks,
+    "workload_budget_count": len(budgets),
+    "user_workload_budget_count": budget_kind_counts.get("user_workload_e2e", 0),
+    "membrane_hotpath_budget_count": budget_kind_counts.get("membrane_hot_path_microbenchmark", 0),
+    "claim_blocking_test_count": len(blockers),
+    "decision_counts": dict(decision_counts),
+    "artifact_refs": [
+        "tests/conformance/perf_budget_policy.json",
+        "target/conformance/perf_budget_policy.report.json",
+        "target/conformance/perf_budget_policy.log.jsonl",
+    ],
+    "errors": errors,
+    "source_commit": source_commit,
+}
+report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+events = []
+for budget in budgets:
+    events.append({
+        "trace_id": f"bd-bp8fl.8.6::{budget.get('benchmark_id')}",
+        "bead_id": "bd-bp8fl.8.6",
+        "benchmark_id": budget.get("benchmark_id"),
+        "workload_id": budget.get("workload_id"),
+        "api_family": budget.get("api_family"),
+        "symbol": budget.get("symbol"),
+        "runtime_mode": budget.get("runtime_mode"),
+        "replacement_level": budget.get("replacement_level"),
+        "environment_id": budget.get("environment_id"),
+        "baseline_value": budget.get("host_baseline", {}).get("baseline_value_ns"),
+        "actual_value": budget.get("current_result", {}).get("actual_value_ns"),
+        "variance": budget.get("variance_policy", {}).get("max_coefficient_of_variation_pct"),
+        "threshold": budget.get("latency_threshold_ns"),
+        "decision": budget.get("decision"),
+        "latency_ns": budget.get("current_result", {}).get("actual_value_ns"),
+        "artifact_refs": budget.get("artifact_refs", []),
+        "source_commit": source_commit,
+        "target_dir": str(root / "target/conformance"),
+        "failure_signature": budget.get("failure_signature"),
+    })
+log_path.write_text(
+    "".join(json.dumps(event, sort_keys=True) + "\n" for event in events),
+    encoding="utf-8",
+)
+
+print(f"WORKLOAD_ERRORS={len(errors)}")
+print(f"WORKLOAD_BUDGETS={len(budgets)}")
+print(f"USER_WORKLOAD_BUDGETS={budget_kind_counts.get('user_workload_e2e', 0)}")
+print(f"MEMBRANE_HOTPATH_BUDGETS={budget_kind_counts.get('membrane_hot_path_microbenchmark', 0)}")
+print(f"CLAIM_BLOCKING_TESTS={len(blockers)}")
+for error in errors:
+    print(f"  {error}")
+PY
+)
+
+workload_errs=$(echo "${workload_check}" | grep '^WORKLOAD_ERRORS=' | cut -d= -f2)
+
+if [[ "${workload_errs}" -gt 0 ]]; then
+    echo "FAIL: ${workload_errs} workload budget error(s):"
+    echo "${workload_check}" | grep '  '
+    failures=$((failures + 1))
+else
+    workload_ct=$(echo "${workload_check}" | grep '^WORKLOAD_BUDGETS=' | cut -d= -f2)
+    user_ct=$(echo "${workload_check}" | grep '^USER_WORKLOAD_BUDGETS=' | cut -d= -f2)
+    membrane_ct=$(echo "${workload_check}" | grep '^MEMBRANE_HOTPATH_BUDGETS=' | cut -d= -f2)
+    claim_ct=$(echo "${workload_check}" | grep '^CLAIM_BLOCKING_TESTS=' | cut -d= -f2)
+    echo "PASS: ${workload_ct} workload budget row(s), ${user_ct} user workload row(s), ${membrane_ct} membrane hot-path row(s), ${claim_ct} claim blocker(s)"
+fi
 echo ""
 
 # ---------------------------------------------------------------------------
