@@ -142,6 +142,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- semantic contract fallback/no-op drift scanner ---"
+    scripts/check_semantic_contract_drift.sh
+    echo "PASS"
+    echo ""
+
     echo "--- support matrix maintenance/classification gate ---"
     scripts/check_support_matrix_maintenance.sh
     echo "PASS"

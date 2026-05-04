@@ -258,7 +258,7 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
     );
     assert_eq!(
         report["summary"]["resolved_symbol_join_row_count"].as_u64(),
-        Some(82)
+        Some(88)
     );
     assert_eq!(
         report["summary"]["conflicting_exact_symbol_join_count"].as_u64(),

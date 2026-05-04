@@ -418,6 +418,32 @@
       ]
     },
     {
+      "id": "sem-setjmp-phase1",
+      "seed_overlay_id": null,
+      "surface": "setjmp/longjmp phase-1 metadata contract",
+      "symbols": [
+        "setjmp",
+        "_setjmp",
+        "sigsetjmp",
+        "longjmp",
+        "_longjmp",
+        "siglongjmp"
+      ],
+      "module": "frankenlibc-abi::setjmp_abi",
+      "source_path": "crates/frankenlibc-abi/src/setjmp_abi.rs",
+      "source_line": 3,
+      "line_marker": "Phase-1 contract:",
+      "support_matrix_status": "Implemented",
+      "semantic_class": "limited_bootstrap",
+      "contract_kind": "metadata_capture_restore_subset",
+      "current_behavior": "Capture entrypoints write deterministic metadata, while restore entrypoints validate metadata and terminate explicitly until true stack transfer is implemented in the unsafe backend stage.",
+      "user_risk": "Programs can link setjmp-family symbols, but full non-local stack transfer semantics are not yet replacement-complete.",
+      "required_followup": "Gate setjmp parity promotion on backend stack-transfer fixtures, signal-mask restoration cases, and process-level longjmp behavior evidence.",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/src/setjmp_abi.rs"
+      ]
+    },
+    {
       "id": "sem-cxx-abi-fail-stop",
       "seed_overlay_id": null,
       "surface": "C++ ABI fail-stop hooks exported for compatibility",
@@ -443,14 +469,14 @@
     }
   ],
   "summary": {
-    "entry_count": 17,
+    "entry_count": 18,
     "seed_overlay_entries": 10,
     "seed_overlay_covered": 10,
-    "new_entries": 7,
+    "new_entries": 8,
     "by_semantic_class": {
       "compat_noop": 5,
       "deterministic_fallback": 5,
-      "limited_bootstrap": 4,
+      "limited_bootstrap": 5,
       "unsupported_platform_contract": 2,
       "abort_only": 1
     },
@@ -458,6 +484,7 @@
       "crates/frankenlibc-abi/src/glibc_internal_abi.rs": 7,
       "crates/frankenlibc-abi/src/unistd_abi.rs": 8,
       "crates/frankenlibc-abi/src/pthread_abi.rs": 1,
+      "crates/frankenlibc-abi/src/setjmp_abi.rs": 1,
       "crates/frankenlibc-core/src/elf/mod.rs": 1
     },
     "blocked_claim": "Stub=0 in support_matrix.json is compatible with this inventory only as a symbol-presence taxonomy. It is not evidence of full semantic replacement readiness."

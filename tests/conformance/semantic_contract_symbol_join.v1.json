@@ -41,11 +41,11 @@
     "known_limitation": "This gate verifies source, support-matrix, and version-script joins for the current semantic inventory. It does not prove the underlying semantic contracts are implemented; those remain blocked until follow-up fixture and workload beads close."
   },
   "summary": {
-    "inventory_entry_count": 17,
-    "symbol_bearing_entry_count": 16,
+    "inventory_entry_count": 18,
+    "symbol_bearing_entry_count": 17,
     "symbolless_contract_count": 1,
-    "symbol_reference_count": 81,
-    "exact_symbol_reference_count": 77,
+    "symbol_reference_count": 87,
+    "exact_symbol_reference_count": 83,
     "pattern_symbol_reference_count": 4,
     "support_matrix_missing_exact_symbol_count": 6,
     "version_script_missing_exact_symbol_count": 2,
@@ -53,12 +53,12 @@
     "wildcard_source_expansion_count": 69,
     "wildcard_support_matrix_expansion_count": 0,
     "wildcard_version_script_expansion_count": 0,
-    "resolved_symbol_join_row_count": 82,
+    "resolved_symbol_join_row_count": 88,
     "conflicting_exact_symbol_join_count": 0,
-    "semantic_parity_blocker_count": 17,
-    "rows_where_taxonomy_status_is_not_parity": 17,
+    "semantic_parity_blocker_count": 18,
+    "rows_where_taxonomy_status_is_not_parity": 18,
     "by_taxonomy_status": {
-      "Implemented": 15,
+      "Implemented": 16,
       "mixed_or_not_listed_by_exact_name": 1,
       "not_symbol_level": 1
     },
@@ -66,7 +66,7 @@
       "abort_only": 1,
       "compat_noop": 5,
       "deterministic_fallback": 5,
-      "limited_bootstrap": 4,
+      "limited_bootstrap": 5,
       "unsupported_platform_contract": 2
     }
   },
@@ -423,6 +423,28 @@
         "gai_cancel",
         "gai_error",
         "gai_suspend"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-setjmp-phase1",
+      "surface": "setjmp/longjmp phase-1 metadata contract",
+      "source_path": "crates/frankenlibc-abi/src/setjmp_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "limited_bootstrap",
+      "semantic_parity_status": "blocked_limited_bootstrap",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "setjmp",
+        "_setjmp",
+        "sigsetjmp",
+        "longjmp",
+        "_longjmp",
+        "siglongjmp"
       ],
       "expected_missing_source_symbols": [],
       "expected_missing_support_matrix_symbols": [],

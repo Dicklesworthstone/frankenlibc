@@ -1,0 +1,171 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.1.3",
+  "generated_at_utc": "2026-05-04T04:45:00Z",
+  "purpose": "Deterministic CI scanner for semantic contract drift between no-op, fallback, unsupported, bootstrap, and abort-only source annotations and the semantic contract inventory.",
+  "inputs": {
+    "semantic_contract_inventory": "tests/conformance/semantic_contract_inventory.v1.json",
+    "semantic_contract_symbol_join": "tests/conformance/semantic_contract_symbol_join.v1.json",
+    "support_semantic_overlay": "tests/conformance/support_semantic_overlay.v1.json",
+    "support_matrix": "support_matrix.json",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
+    "readme": "README.md",
+    "feature_parity": "FEATURE_PARITY.md"
+  },
+  "source_scan_roots": [
+    "crates/frankenlibc-abi/src",
+    "crates/frankenlibc-core/src"
+  ],
+  "source_scan_suffixes": [
+    ".rs"
+  ],
+  "source_marker_radius_lines": 80,
+  "scanner_rules": [
+    {
+      "id": "inventory_marker_freshness",
+      "description": "Every semantic inventory row must point at a live ABI/core source marker close to its recorded source line."
+    },
+    {
+      "id": "source_contract_annotation_drift",
+      "description": "Fallback/no-op/unsupported/bootstrap contract annotations in ABI/core source must be represented by the semantic inventory or explicitly allowlisted with symbol and evidence reason."
+    },
+    {
+      "id": "support_taxonomy_claim_blocker",
+      "description": "support_matrix Stub=0 must remain blocked from being interpreted as zero semantic no-op/fallback/bootstrap contracts."
+    },
+    {
+      "id": "semantic_join_freshness",
+      "description": "The symbol-join artifact must cover every inventory row and preserve semantic-parity blockers."
+    },
+    {
+      "id": "docs_claim_surface",
+      "description": "README and FEATURE_PARITY must reference the semantic overlay and avoid unsupported full-parity claims."
+    },
+    {
+      "id": "abi_export_input_presence",
+      "description": "The ABI version script and joined symbol artifact must remain present as scanner inputs."
+    }
+  ],
+  "contract_terms": [
+    {
+      "id": "compat_noop",
+      "patterns": [
+        "no-op",
+        "noop"
+      ]
+    },
+    {
+      "id": "deterministic_fallback",
+      "patterns": [
+        "fallback",
+        "safe-default"
+      ]
+    },
+    {
+      "id": "unsupported_platform_contract",
+      "patterns": [
+        "unsupported",
+        "enosys",
+        "not implemented"
+      ]
+    },
+    {
+      "id": "limited_bootstrap",
+      "patterns": [
+        "bootstrap",
+        "phase-1"
+      ]
+    },
+    {
+      "id": "abort_only",
+      "patterns": [
+        "abort-only",
+        "fail-stop"
+      ]
+    },
+    {
+      "id": "stub",
+      "patterns": [
+        "stub"
+      ]
+    }
+  ],
+  "annotation_markers": [
+    "semantic contract",
+    "semantic overlay",
+    "support-taxonomy",
+    "full replacement",
+    "documented stub",
+    "semantic fallback",
+    "semantic no-op",
+    "semantic noop",
+    "semantic unsupported",
+    "semantic bootstrap",
+    "contract:"
+  ],
+  "intentional_false_positive_allowlist": [],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scanner_rule",
+    "symbol",
+    "file_path",
+    "expected_contract",
+    "actual_contract",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "replay_cases": [
+    {
+      "id": "clean_current_tree",
+      "kind": "clean",
+      "command": "scripts/check_semantic_contract_drift.sh",
+      "expected_status": "pass"
+    },
+    {
+      "id": "new_contract_annotation_drift",
+      "kind": "new_drift",
+      "command": "FLC_SEMANTIC_DRIFT_ARTIFACT=<fixture-with-new-source-scan-root> scripts/check_semantic_contract_drift.sh",
+      "expected_status": "fail",
+      "failure_signature": "untracked_contract_annotation"
+    },
+    {
+      "id": "stale_inventory_marker",
+      "kind": "stale_artifact",
+      "command": "FLC_SEMANTIC_DRIFT_INVENTORY=<fixture-with-stale-marker> scripts/check_semantic_contract_drift.sh",
+      "expected_status": "fail",
+      "failure_signature": "stale_inventory_marker"
+    },
+    {
+      "id": "allowlisted_false_positive",
+      "kind": "allowlisted",
+      "command": "FLC_SEMANTIC_DRIFT_ARTIFACT=<fixture-with-explicit-allowlist> scripts/check_semantic_contract_drift.sh",
+      "expected_status": "pass",
+      "required_allowlist_fields": [
+        "symbol",
+        "file_path",
+        "evidence_reason"
+      ]
+    }
+  ],
+  "claim_blocking_policy": {
+    "support_taxonomy_stub_zero_is_not_semantic_parity": true,
+    "new_untracked_contract_annotation_fails_ci": true,
+    "stale_inventory_marker_fails_ci": true,
+    "false_positive_allowlist_requires_symbol_and_evidence_reason": true,
+    "claim_surfaces_blocked_by_findings": [
+      "support_matrix_stub_zero_full_replacement_claim",
+      "README_full_libc_replacement_without_semantic_overlay",
+      "FEATURE_PARITY_full_replacement_without_semantic_overlay"
+    ]
+  },
+  "expected_current_summary": {
+    "tracked_inventory_entries": 18,
+    "semantic_parity_blocker_count": 18,
+    "untracked_contract_annotation_count": 0,
+    "allowed_false_positive_count": 0,
+    "support_matrix_stub_count": 0,
+    "docs_with_semantic_overlay_reference": 2
+  }
+}
