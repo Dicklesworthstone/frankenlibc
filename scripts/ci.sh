@@ -182,6 +182,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- resolver/NSS hard-parts fixture gate ---"
+    scripts/check_resolver_nss_hard_parts.sh
+    echo "PASS"
+    echo ""
+
     echo "--- feature parity gap ledger extractor gate ---"
     scripts/check_feature_parity_gap_ledger.sh
     echo "PASS"
