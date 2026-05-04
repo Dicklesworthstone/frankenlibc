@@ -54,6 +54,58 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "failure_signature",
 ];
 
+const REQUIRED_HANDOFF_SECTIONS: &[&str] = &[
+    "onboarding_docs",
+    "br_ready_list_show_state",
+    "bv_robot_triage_insights",
+    "dependency_and_parent_checks",
+    "stale_db_jsonl_symptoms",
+    "file_reservations",
+    "exact_work_surface",
+    "expected_artifacts",
+    "unit_tests",
+    "e2e_or_harness_scripts",
+    "structured_logs",
+    "rch_target_dir_policy",
+    "commit_push_expectations",
+    "closure_notes",
+];
+
+const REQUIRED_HANDOFF_COMMANDS: &[&str] = &[
+    "br --no-db ready --json",
+    "br --no-db list --status open --json",
+    "br --no-db list --status in_progress --json",
+    "br --no-db show <bead-id> --json",
+    "br --no-db update <bead-id> --status=in_progress --json",
+    "bv --robot-triage",
+    "bv --robot-insights",
+];
+
+const REQUIRED_HANDOFF_BRANCHES: &[&str] = &[
+    "normal_tracker_state",
+    "stale_tracker_state",
+    "no_db_fallback",
+    "already_shipped_but_open_dotted_id",
+    "unrelated_dirty_files",
+    "pre_existing_workspace_failures",
+    "blocked_bead",
+];
+
+const REQUIRED_HANDOFF_LOG_FIELDS: &[&str] = &[
+    "trace_id",
+    "bead_id",
+    "dependency_state",
+    "tracker_state",
+    "workstream",
+    "required_tests",
+    "required_e2e",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature",
+    "next_safe_action",
+];
+
 fn test_error(message: impl Into<String>) -> Box<dyn Error> {
     Box::new(io::Error::other(message.into()))
 }
@@ -131,6 +183,34 @@ fn required_log_fields() -> Vec<String> {
         .iter()
         .map(|value| (*value).to_string())
         .collect()
+}
+
+fn required_handoff_sections() -> Vec<String> {
+    REQUIRED_HANDOFF_SECTIONS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect()
+}
+
+fn required_handoff_commands() -> Vec<String> {
+    REQUIRED_HANDOFF_COMMANDS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect()
+}
+
+fn required_handoff_log_fields() -> Vec<String> {
+    REQUIRED_HANDOFF_LOG_FIELDS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect()
+}
+
+fn ensure_string(value: &serde_json::Value, context: &str) -> Result<(), Box<dyn Error>> {
+    ensure(
+        value.as_str().map(|item| !item.is_empty()).unwrap_or(false),
+        format!("{context} must be a non-empty string"),
+    )
 }
 
 #[test]
@@ -263,6 +343,196 @@ fn artifact_covers_every_workstream_with_required_sections() -> Result<(), Box<d
         "dry_run_examples must include close_blocked",
     )?;
 
+    let handoff = artifact["implementation_handoff_checklist"]
+        .as_object()
+        .ok_or_else(|| test_error("implementation_handoff_checklist must be an object"))?;
+    ensure_eq(
+        handoff.get("bead").and_then(serde_json::Value::as_str),
+        Some("bd-bp8fl.12"),
+        "handoff bead",
+    )?;
+    ensure_eq(
+        string_array(
+            &artifact["implementation_handoff_checklist"]["required_sections"],
+            "handoff.required_sections",
+        )?,
+        required_handoff_sections(),
+        "handoff required_sections",
+    )?;
+    ensure_eq(
+        string_array(
+            &artifact["implementation_handoff_checklist"]["required_br_bv_commands"],
+            "handoff.required_br_bv_commands",
+        )?,
+        required_handoff_commands(),
+        "handoff required_br_bv_commands",
+    )?;
+    ensure_eq(
+        string_array(
+            &artifact["implementation_handoff_checklist"]["required_log_fields"],
+            "handoff.required_log_fields",
+        )?,
+        required_handoff_log_fields(),
+        "handoff required_log_fields",
+    )?;
+    ensure_eq(
+        artifact["implementation_handoff_checklist"]["policy"]["one_bead_at_a_time"].as_bool(),
+        Some(true),
+        "handoff one_bead_at_a_time policy",
+    )?;
+    ensure_eq(
+        artifact["implementation_handoff_checklist"]["policy"]["rch_exec_cargo_required"].as_bool(),
+        Some(true),
+        "handoff rch_exec_cargo_required policy",
+    )?;
+    ensure_eq(
+        artifact["implementation_handoff_checklist"]["policy"]["unrelated_dirty_files_are_preserved"]
+            .as_bool(),
+        Some(true),
+        "handoff unrelated dirty file policy",
+    )?;
+
+    let branches = artifact["implementation_handoff_checklist"]["branches"]
+        .as_array()
+        .ok_or_else(|| test_error("handoff branches must be an array"))?;
+    let branch_ids: HashSet<_> = branches
+        .iter()
+        .map(|row| {
+            row["branch_id"]
+                .as_str()
+                .ok_or_else(|| test_error("handoff branch_id must be a string"))
+        })
+        .collect::<Result<_, _>>()?;
+    ensure_eq(
+        branch_ids.len(),
+        branches.len(),
+        "handoff branch ids must be unique",
+    )?;
+    for required in REQUIRED_HANDOFF_BRANCHES {
+        ensure(
+            branch_ids.contains(required),
+            format!("missing handoff branch {required}"),
+        )?;
+    }
+    for branch in branches {
+        let branch_id = branch["branch_id"]
+            .as_str()
+            .ok_or_else(|| test_error("handoff branch_id must be a string"))?;
+        for key in [
+            "dependency_state",
+            "tracker_state",
+            "workstream",
+            "next_safe_action",
+            "source_commit_policy",
+            "target_dir_policy",
+            "commit_push_expectations",
+            "closure_notes",
+            "failure_signature",
+        ] {
+            ensure_string(
+                branch
+                    .get(key)
+                    .ok_or_else(|| test_error(format!("{branch_id}: missing {key}")))?,
+                &format!("{branch_id}.{key}"),
+            )?;
+        }
+        for key in [
+            "pre_claim_checks",
+            "required_tests",
+            "required_e2e",
+            "artifact_refs",
+        ] {
+            ensure(
+                !string_array(
+                    branch
+                        .get(key)
+                        .ok_or_else(|| test_error(format!("{branch_id}: missing {key}")))?,
+                    &format!("{branch_id}.{key}"),
+                )?
+                .is_empty(),
+                format!("{branch_id}.{key} must not be empty"),
+            )?;
+        }
+        let action = branch["next_safe_action"]
+            .as_str()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        ensure(
+            !action.contains("idle") && !action.contains("ask user"),
+            format!("{branch_id}: next_safe_action must not idle"),
+        )?;
+    }
+
+    let transcripts = artifact["implementation_handoff_checklist"]["dry_run_transcripts"]
+        .as_array()
+        .ok_or_else(|| test_error("handoff dry_run_transcripts must be an array"))?;
+    ensure(
+        transcripts.len() >= 2,
+        "handoff dry_run_transcripts must include at least two examples",
+    )?;
+    let transcript_ids: HashSet<_> = transcripts
+        .iter()
+        .map(|row| {
+            row["scenario_id"]
+                .as_str()
+                .ok_or_else(|| test_error("handoff transcript scenario_id must be a string"))
+        })
+        .collect::<Result<_, _>>()?;
+    ensure(
+        transcript_ids.contains("clean_ready_handoff"),
+        "missing clean_ready_handoff transcript",
+    )?;
+    ensure(
+        transcript_ids.contains("stale_tracker_handoff"),
+        "missing stale_tracker_handoff transcript",
+    )?;
+    for transcript in transcripts {
+        let scenario = transcript["scenario_id"]
+            .as_str()
+            .ok_or_else(|| test_error("handoff transcript scenario_id must be a string"))?;
+        for key in [
+            "bead_id",
+            "dependency_state",
+            "tracker_state",
+            "workstream",
+            "source_commit",
+            "target_dir",
+            "failure_signature",
+            "next_safe_action",
+        ] {
+            ensure_string(
+                transcript
+                    .get(key)
+                    .ok_or_else(|| test_error(format!("{scenario}: missing {key}")))?,
+                &format!("{scenario}.{key}"),
+            )?;
+        }
+        for key in [
+            "commands",
+            "observations",
+            "required_tests",
+            "required_e2e",
+            "artifact_refs",
+        ] {
+            ensure(
+                !string_array(
+                    transcript
+                        .get(key)
+                        .ok_or_else(|| test_error(format!("{scenario}: missing {key}")))?,
+                    &format!("{scenario}.{key}"),
+                )?
+                .is_empty(),
+                format!("{scenario}.{key} must not be empty"),
+            )?;
+        }
+        ensure(
+            transcript["next_safe_action"]
+                .as_str()
+                .is_some_and(|action| !action.to_ascii_lowercase().contains("idle")),
+            format!("{scenario}: next_safe_action must not idle"),
+        )?;
+    }
+
     Ok(())
 }
 
@@ -321,6 +591,21 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> Result<(), Box<dy
         Some("pass"),
         "checklist_replay_is_fail_closed",
     )?;
+    ensure_eq(
+        report["checks"]["implementation_handoff_checklist_complete"].as_str(),
+        Some("pass"),
+        "implementation_handoff_checklist_complete",
+    )?;
+    ensure_eq(
+        report["checks"]["handoff_transcripts_choose_next_safe_action"].as_str(),
+        Some("pass"),
+        "handoff_transcripts_choose_next_safe_action",
+    )?;
+    ensure_eq(
+        report["summary"]["handoff_branch_count"].as_u64(),
+        Some(REQUIRED_HANDOFF_BRANCHES.len() as u64),
+        "handoff_branch_count",
+    )?;
 
     let report_path = root.join("target/conformance/workstream_done_templates.report.json");
     let log_path = root.join("target/conformance/workstream_done_templates.log.jsonl");
@@ -332,6 +617,8 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> Result<(), Box<dy
     )?;
     let log_content = std::fs::read_to_string(&log_path)?;
     let mut saw_blocked_replay = false;
+    let mut saw_handoff_branch = false;
+    let mut saw_stale_handoff = false;
     let mut row_count = 0usize;
     for line in log_content.lines() {
         row_count += 1;
@@ -347,6 +634,25 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> Result<(), Box<dy
         {
             saw_blocked_replay = true;
         }
+        if matches!(
+            row["event"].as_str(),
+            Some("implementation_handoff_branch" | "implementation_handoff_transcript")
+        ) {
+            saw_handoff_branch = true;
+            for field in REQUIRED_HANDOFF_LOG_FIELDS {
+                ensure(
+                    row.get(*field).is_some(),
+                    format!("handoff log row missing required field {field}: {row}"),
+                )?;
+            }
+            if row["tracker_state"].as_str() == Some("db_stale_or_timeout")
+                && row["next_safe_action"]
+                    .as_str()
+                    .is_some_and(|action| action.contains("JSONL") || action.contains("no-db"))
+            {
+                saw_stale_handoff = true;
+            }
+        }
     }
     ensure(
         row_count >= REQUIRED_WORKSTREAMS.len() + 3,
@@ -355,6 +661,14 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> Result<(), Box<dy
     ensure(
         saw_blocked_replay,
         "gate log must include a blocked replay scenario",
+    )?;
+    ensure(
+        saw_handoff_branch,
+        "gate log must include implementation handoff rows",
+    )?;
+    ensure(
+        saw_stale_handoff,
+        "gate log must include stale-tracker next_safe_action evidence",
     )?;
 
     Ok(())
@@ -446,6 +760,48 @@ fn gate_script_rejects_toothless_blocked_replay() -> Result<(), Box<dyn Error>> 
         report["checks"]["checklist_replay_is_fail_closed"].as_str(),
         Some("fail"),
         "bad replay check",
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn gate_script_rejects_handoff_without_next_safe_action() -> Result<(), Box<dyn Error>> {
+    let _guard = match SCRIPT_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let root = workspace_root()?;
+    let mut artifact =
+        load_json(&root.join("tests/conformance/workstream_done_templates.v1.json"))?;
+    artifact["implementation_handoff_checklist"]["branches"][0]
+        .as_object_mut()
+        .ok_or_else(|| test_error("first handoff branch must be an object"))?
+        .insert(
+            "next_safe_action".to_string(),
+            serde_json::Value::String(String::new()),
+        );
+
+    let bad_path = unique_temp_path("workstream-template-handoff-no-action.json")?;
+    std::fs::write(&bad_path, serde_json::to_vec_pretty(&artifact)?)?;
+    let output = Command::new(root.join("scripts/check_workstream_done_templates.sh"))
+        .current_dir(&root)
+        .env("FLC_WORKSTREAM_DONE_TEMPLATES", &bad_path)
+        .output()?;
+    ensure(
+        !output.status.success(),
+        "gate should fail when handoff branch lacks next_safe_action",
+    )?;
+    let report = parse_stdout_report(&output)?;
+    ensure_eq(
+        report["status"].as_str(),
+        Some("fail"),
+        "handoff missing action status",
+    )?;
+    ensure_eq(
+        report["checks"]["implementation_handoff_checklist_complete"].as_str(),
+        Some("fail"),
+        "handoff missing action check",
     )?;
 
     Ok(())
