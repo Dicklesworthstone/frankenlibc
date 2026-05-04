@@ -1,0 +1,528 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-b92jd.1.2",
+  "gate_id": "crt-tls-atexit-direct-link-run-proof-fixtures-v1",
+  "generated_at_utc": "2026-05-04T17:16:00Z",
+  "purpose": "Define direct link-run and replace-mode simulated proof fixtures for CRT startup, process/thread TLS, init/fini ordering, atexit/on_exit, errno isolation, environment ownership, and secure-mode diagnostics. These rows fail closed until a current libfrankenlibc_replace.so artifact and per-row evidence exist.",
+  "freshness": {
+    "required_source_commit": "current",
+    "source_commit_policy": "checker records current git HEAD and rejects pinned stale row commits"
+  },
+  "sources": {
+    "startup_fixture": "tests/conformance/fixtures/startup_ops.json",
+    "pthread_tls_fixture": "tests/conformance/fixtures/pthread_tls_keys.json",
+    "l1_startup_tls_matrix": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+    "standalone_readiness_matrix": "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "replacement_profile": "tests/conformance/replacement_profile.json",
+    "startup_abi_contract_test": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+    "startup_abi_test": "crates/frankenlibc-abi/tests/startup_abi_test.rs",
+    "errno_abi_test": "crates/frankenlibc-abi/tests/errno_abi_test.rs",
+    "getenv_metamorphic_test": "crates/frankenlibc-abi/tests/metamorphic_getenv.rs",
+    "secure_getenv_diff_test": "crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs",
+    "startup_integration_fixture": "tests/integration/fixture_startup.c"
+  },
+  "replacement_artifact_policy": {
+    "replace_artifact": "target/release/libfrankenlibc_replace.so",
+    "missing_artifact_result": "claim_blocked",
+    "missing_row_source_commit_result": "claim_blocked",
+    "missing_row_artifact_refs_result": "claim_blocked",
+    "current_claim_status": "claim_blocked",
+    "direct_link_evidence_cannot_be_inferred_from_ld_preload": true
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "fixture_id",
+    "scenario_kind",
+    "runtime_mode",
+    "replacement_level",
+    "execution_model",
+    "expected_decision",
+    "actual_decision",
+    "expected_order",
+    "actual_order",
+    "source_commit",
+    "target_dir",
+    "artifact_refs",
+    "failure_signature"
+  ],
+  "required_scenario_kinds": [
+    "crt_startup",
+    "tls_initialization",
+    "tls_destructor",
+    "init_fini_ordering",
+    "atexit_on_exit",
+    "errno_tls_isolation",
+    "env_ownership",
+    "secure_mode_diagnostics"
+  ],
+  "required_runtime_modes": [
+    "strict",
+    "hardened"
+  ],
+  "required_execution_models": [
+    "direct_link_run",
+    "replace_mode_simulated"
+  ],
+  "diagnostic_signatures": [
+    {
+      "id": "missing_field",
+      "trigger": "a manifest, fixture row, runtime expectation, source reference, or structured log field is absent"
+    },
+    {
+      "id": "replace_artifact_missing",
+      "trigger": "libfrankenlibc_replace.so is absent while a row claims direct-link replacement evidence"
+    },
+    {
+      "id": "missing_source_commit",
+      "trigger": "a fixture row omits source_commit"
+    },
+    {
+      "id": "stale_source_commit",
+      "trigger": "a fixture row pins source_commit to a non-current git commit"
+    },
+    {
+      "id": "missing_artifact_refs",
+      "trigger": "a fixture row omits materialized artifact_refs"
+    },
+    {
+      "id": "missing_source_artifact",
+      "trigger": "a declared source or artifact reference is absent from the repo"
+    },
+    {
+      "id": "missing_fixture_row",
+      "trigger": "a required CRT/TLS/atexit fixture scenario is not represented"
+    },
+    {
+      "id": "strict_hardened_expectation_missing",
+      "trigger": "a fixture row omits strict or hardened runtime expectations"
+    },
+    {
+      "id": "direct_link_claim_conflict",
+      "trigger": "expected_decision and actual_decision disagree, or a row passes without current replacement evidence"
+    }
+  ],
+  "negative_claim_tests": [
+    {
+      "id": "neg-missing-replace-artifact",
+      "mutation": "set any replacement fixture row actual_decision to evidence_allowed while target/release/libfrankenlibc_replace.so is missing",
+      "expected_result": "claim_blocked",
+      "failure_signature": "replace_artifact_missing"
+    },
+    {
+      "id": "neg-missing-source-commit",
+      "mutation": "remove source_commit from a fixture row",
+      "expected_result": "claim_blocked",
+      "failure_signature": "missing_source_commit"
+    },
+    {
+      "id": "neg-stale-source-commit",
+      "mutation": "pin source_commit to a commit other than current HEAD",
+      "expected_result": "claim_blocked",
+      "failure_signature": "stale_source_commit"
+    },
+    {
+      "id": "neg-missing-artifact-refs",
+      "mutation": "remove artifact_refs from a fixture row",
+      "expected_result": "claim_blocked",
+      "failure_signature": "missing_artifact_refs"
+    },
+    {
+      "id": "neg-missing-fixture-row",
+      "mutation": "remove a required scenario_kind fixture row",
+      "expected_result": "claim_blocked",
+      "failure_signature": "missing_fixture_row"
+    },
+    {
+      "id": "neg-missing-runtime-expectation",
+      "mutation": "drop hardened or strict expectation from a fixture row",
+      "expected_result": "claim_blocked",
+      "failure_signature": "strict_hardened_expectation_missing"
+    }
+  ],
+  "fixture_rows": [
+    {
+      "fixture_id": "crt.startup.direct_link.strict_hardened",
+      "scenario_kind": "crt_startup",
+      "title": "Direct-link __libc_start_main phase-0 startup handoff",
+      "replacement_level": "L2",
+      "execution_model": "replace_mode_simulated",
+      "source_commit": "current",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_order": [
+        "load_replace_artifact",
+        "enter_crt_start",
+        "scan_argv_envp_auxv",
+        "classify_secure_mode",
+        "call_init",
+        "call_main",
+        "call_fini"
+      ],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "missing_evidence": [
+        "current libfrankenlibc_replace.so",
+        "direct-link __libc_start_main replay row"
+      ],
+      "strict_expectation": {
+        "startup_policy": "strict ABI-compatible startup without repair rewrites",
+        "errno": "0",
+        "fallback_allowed": false
+      },
+      "hardened_expectation": {
+        "startup_policy": "hardened diagnostics preserve startup ordering while refusing invalid context promotion",
+        "errno": "0",
+        "fallback_allowed": false
+      },
+      "source_artifacts": [
+        "tests/conformance/fixtures/startup_ops.json",
+        "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+        "tests/integration/fixture_startup.c"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "artifact_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+        "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+        "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs"
+      ],
+      "failure_signature": "crt_startup_direct_link_evidence_missing"
+    },
+    {
+      "fixture_id": "tls.initialization.process_thread.strict_hardened",
+      "scenario_kind": "tls_initialization",
+      "title": "Process and pthread TLS are initialized before libc entrypoints need TLS storage",
+      "replacement_level": "L2",
+      "execution_model": "replace_mode_simulated",
+      "source_commit": "current",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_order": [
+        "load_replace_artifact",
+        "initialize_process_tls",
+        "initialize_errno_tls",
+        "pthread_start",
+        "initialize_thread_tls"
+      ],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "missing_evidence": [
+        "standalone process TLS initialization proof",
+        "direct-link pthread TLS startup replay"
+      ],
+      "strict_expectation": {
+        "tls_policy": "thread-local storage exists before errno or pthread TLS access",
+        "repair": "none"
+      },
+      "hardened_expectation": {
+        "tls_policy": "invalid TLS metadata is denied with structured diagnostics",
+        "repair": "return_safe_default_for_invalid_diagnostic_probe"
+      },
+      "source_artifacts": [
+        "tests/conformance/fixtures/pthread_tls_keys.json",
+        "crates/frankenlibc-core/src/pthread/tls.rs",
+        "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "artifact_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+        "tests/conformance/pthread_cancellation_robust_tls_fixture_pack.v1.json",
+        "crates/frankenlibc-core/src/pthread/tls.rs"
+      ],
+      "failure_signature": "tls_initialization_direct_link_evidence_missing"
+    },
+    {
+      "fixture_id": "tls.destructor.thread_exit.strict_hardened",
+      "scenario_kind": "tls_destructor",
+      "title": "TLS destructors run at thread exit before process teardown claims can pass",
+      "replacement_level": "L2",
+      "execution_model": "replace_mode_simulated",
+      "source_commit": "current",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_order": [
+        "pthread_key_create",
+        "setspecific",
+        "thread_exit",
+        "destructor_iteration",
+        "join_observes_completion"
+      ],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "missing_evidence": [
+        "standalone TLS destructor iteration replay",
+        "direct-link pthread exit artifact"
+      ],
+      "strict_expectation": {
+        "destructor_policy": "POSIX pthread key destructor iteration without repair",
+        "max_iterations": 4
+      },
+      "hardened_expectation": {
+        "destructor_policy": "bounded destructor iteration with fail-closed diagnostics",
+        "max_iterations": 4
+      },
+      "source_artifacts": [
+        "tests/conformance/fixtures/pthread_tls_keys.json",
+        "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "artifact_refs": [
+        "tests/conformance/pthread_cancellation_robust_tls_fixture_pack.v1.json",
+        "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"
+      ],
+      "failure_signature": "tls_destructor_direct_link_evidence_missing"
+    },
+    {
+      "fixture_id": "init_fini.array_order.strict_hardened",
+      "scenario_kind": "init_fini_ordering",
+      "title": ".preinit_array, .init_array, main, .fini_array ordering under direct link-run",
+      "replacement_level": "L2",
+      "execution_model": "direct_link_run",
+      "source_commit": "current",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_order": [
+        "preinit_array",
+        "init_array",
+        "main",
+        "fini_array",
+        "rtld_fini"
+      ],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "missing_evidence": [
+        "direct-link init/fini replay binary",
+        "current replacement artifact"
+      ],
+      "strict_expectation": {
+        "ordering_policy": "glibc-compatible init/fini sequence",
+        "repair": "none"
+      },
+      "hardened_expectation": {
+        "ordering_policy": "same order with diagnostics for missing callback evidence",
+        "repair": "none"
+      },
+      "source_artifacts": [
+        "tests/integration/fixture_startup.c",
+        "crates/frankenlibc-abi/tests/startup_abi_test.rs"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "artifact_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+        "tests/integration/fixture_startup.c"
+      ],
+      "failure_signature": "init_fini_direct_link_evidence_missing"
+    },
+    {
+      "fixture_id": "atexit.on_exit.order_status.strict_hardened",
+      "scenario_kind": "atexit_on_exit",
+      "title": "atexit/on_exit callbacks execute in deterministic order with status propagation",
+      "replacement_level": "L2",
+      "execution_model": "replace_mode_simulated",
+      "source_commit": "current",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_order": [
+        "register_atexit",
+        "register_on_exit",
+        "main_return",
+        "on_exit_status",
+        "atexit_lifo"
+      ],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "missing_evidence": [
+        "direct-link callback ordering replay",
+        "on_exit status propagation proof"
+      ],
+      "strict_expectation": {
+        "callback_policy": "callbacks run LIFO and on_exit receives exit status",
+        "repair": "none"
+      },
+      "hardened_expectation": {
+        "callback_policy": "invalid callback rows fail closed without reordering valid callbacks",
+        "repair": "deny_invalid_callback_registration"
+      },
+      "source_artifacts": [
+        "crates/frankenlibc-abi/src/startup_abi.rs",
+        "crates/frankenlibc-abi/tests/startup_abi_test.rs"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "artifact_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+        "crates/frankenlibc-abi/src/startup_abi.rs"
+      ],
+      "failure_signature": "atexit_on_exit_direct_link_evidence_missing"
+    },
+    {
+      "fixture_id": "errno.tls_isolation.strict_hardened",
+      "scenario_kind": "errno_tls_isolation",
+      "title": "errno storage is isolated across startup, pthread, and teardown paths",
+      "replacement_level": "L2",
+      "execution_model": "replace_mode_simulated",
+      "source_commit": "current",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_order": [
+        "main_set_errno",
+        "thread_a_set_errno",
+        "thread_b_set_errno",
+        "join_threads",
+        "main_errno_preserved"
+      ],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "missing_evidence": [
+        "direct-link errno TLS isolation replay",
+        "current replacement artifact"
+      ],
+      "strict_expectation": {
+        "errno_policy": "per-thread c_int storage with no cross-thread overwrite",
+        "repair": "none"
+      },
+      "hardened_expectation": {
+        "errno_policy": "thread-local errno remains isolated after denied invalid startup contexts",
+        "repair": "return_safe_default_for_invalid_diagnostic_probe"
+      },
+      "source_artifacts": [
+        "crates/frankenlibc-core/src/errno/mod.rs",
+        "crates/frankenlibc-abi/tests/errno_abi_test.rs"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "artifact_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+        "crates/frankenlibc-abi/tests/errno_abi_test.rs",
+        "crates/frankenlibc-core/src/errno/mod.rs"
+      ],
+      "failure_signature": "errno_tls_direct_link_evidence_missing"
+    },
+    {
+      "fixture_id": "env.ownership.startup.strict_hardened",
+      "scenario_kind": "env_ownership",
+      "title": "startup envp ownership and getenv/setenv/unsetenv behavior stay internally owned",
+      "replacement_level": "L2",
+      "execution_model": "replace_mode_simulated",
+      "source_commit": "current",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_order": [
+        "scan_envp",
+        "snapshot_environment",
+        "setenv_owned_copy",
+        "getenv_returns_owned_storage",
+        "unsetenv_removes_key"
+      ],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "missing_evidence": [
+        "direct-link environment ownership replay",
+        "replacement artifact envp handoff proof"
+      ],
+      "strict_expectation": {
+        "env_policy": "caller envp is scanned, then owned libc environment storage drives mutations",
+        "repair": "none"
+      },
+      "hardened_expectation": {
+        "env_policy": "unterminated or invalid envp fails closed with structured diagnostics",
+        "repair": "deny_invalid_startup_context"
+      },
+      "source_artifacts": [
+        "crates/frankenlibc-core/src/stdlib/env.rs",
+        "crates/frankenlibc-abi/tests/metamorphic_getenv.rs",
+        "tests/conformance/fixtures/startup_ops.json"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "artifact_refs": [
+        "crates/frankenlibc-core/src/stdlib/env.rs",
+        "crates/frankenlibc-abi/tests/metamorphic_getenv.rs",
+        "tests/conformance/fixtures/startup_ops.json"
+      ],
+      "failure_signature": "env_ownership_direct_link_evidence_missing"
+    },
+    {
+      "fixture_id": "secure_mode.diagnostics.strict_hardened",
+      "scenario_kind": "secure_mode_diagnostics",
+      "title": "AT_SECURE startup diagnostics and secure_getenv behavior are direct-link proven",
+      "replacement_level": "L2",
+      "execution_model": "replace_mode_simulated",
+      "source_commit": "current",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_order": [
+        "scan_auxv",
+        "observe_at_secure",
+        "apply_secure_env_policy",
+        "secure_getenv_denies_when_secure",
+        "emit_secure_mode_diagnostic"
+      ],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "expected_decision": "claim_blocked",
+      "actual_decision": "claim_blocked",
+      "missing_evidence": [
+        "standalone AT_SECURE replay",
+        "secure_getenv direct-link diagnostic artifact"
+      ],
+      "strict_expectation": {
+        "secure_policy": "AT_SECURE=0 keeps normal getenv behavior; AT_SECURE=1 denies secure_getenv values",
+        "repair": "none"
+      },
+      "hardened_expectation": {
+        "secure_policy": "secure-mode diagnostics include startup context and denied environment access",
+        "repair": "return_null_for_secure_getenv"
+      },
+      "source_artifacts": [
+        "tests/conformance/fixtures/startup_ops.json",
+        "crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs",
+        "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs"
+      ],
+      "target_artifacts": [
+        "target/release/libfrankenlibc_replace.so"
+      ],
+      "artifact_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+        "crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "failure_signature": "secure_mode_direct_link_evidence_missing"
+    }
+  ],
+  "summary": {
+    "fixture_count": 8,
+    "claim_blocked_count": 8,
+    "required_scenario_count": 8,
+    "strict_hardened_mode_count": 2,
+    "current_gate_status": "blocked",
+    "blocker_reason": "All direct link-run CRT/TLS/atexit proof fixtures remain claim_blocked until a current libfrankenlibc_replace.so artifact and per-row source_commit/artifact_refs evidence exist."
+  }
+}
