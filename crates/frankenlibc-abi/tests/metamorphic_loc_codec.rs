@@ -11,28 +11,30 @@
 //!
 //! Filed under [bd-58e87f] follow-up — metamorphic coverage extension.
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 
 use frankenlibc_abi::resolv_abi as fl;
 
 const POWERS_OF_TEN: [u64; 10] = [
-    1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000,
+    1,
+    10,
+    100,
+    1_000,
+    10_000,
+    100_000,
+    1_000_000,
+    10_000_000,
+    100_000_000,
+    1_000_000_000,
 ];
 
 /// Build a 16-byte LOC binary from explicit coords. lat/lon in
 /// milli-arcseconds (signed); alt in centimeters above -100,000m.
-fn build_binary(
-    size: u8,
-    hp: u8,
-    vp: u8,
-    lat_ms: i64,
-    lon_ms: i64,
-    alt_cm: i64,
-) -> [u8; 16] {
+fn build_binary(size: u8, hp: u8, vp: u8, lat_ms: i64, lon_ms: i64, alt_cm: i64) -> [u8; 16] {
     let ref_pos: i64 = 1i64 << 31;
     let lat_word = (ref_pos + lat_ms) as u32;
     let lon_word = (ref_pos + lon_ms) as u32;
-    let alt_word = (alt_cm + 100_000_00) as u32;
+    let alt_word = (alt_cm + 10_000_000) as u32;
     let mut b = [0u8; 16];
     b[0] = 0;
     b[1] = size;
@@ -137,12 +139,7 @@ fn metamorphic_altitude_offset_shifts_only_alt_word() {
 fn metamorphic_format_includes_all_three_precision_fields() {
     // The ntoa output must always contain four "Nm" altitude/precision
     // tokens. Glibc convention is "<alt>m <size>m <hp>m <vp>m".
-    let b = build_binary(
-        0x12, 0x16, 0x13,
-        42 * 3_600_000,
-        71 * 3_600_000,
-        24 * 100,
-    );
+    let b = build_binary(0x12, 0x16, 0x13, 42 * 3_600_000, 71 * 3_600_000, 24 * 100);
     let t = ntoa(&b);
     let m_count = t.matches('m').count();
     assert_eq!(m_count, 4, "expected 4 'm' suffixes in {t:?}");
@@ -201,11 +198,11 @@ fn metamorphic_precsize_format_matches_independent_decoder() {
     // mantissa * 10^exponent. Verify ntoa output mentions the
     // expected meter value for several precision-byte choices.
     for &(byte, expected_int_m, expected_frac_cm) in &[
-        (0x12u8, 1u64, 0u64),     // 1m
-        (0x21, 0, 20),            // 20cm
-        (0x33, 30, 0),            // 30m
-        (0x55, 5_000, 0),         // 5km
-        (0x16, 10_000, 0),        // 10km
+        (0x12u8, 1u64, 0u64), // 1m
+        (0x21, 0, 20),        // 20cm
+        (0x33, 30, 0),        // 30m
+        (0x55, 5_000, 0),     // 5km
+        (0x16, 10_000, 0),    // 10km
     ] {
         let mantissa = ((byte >> 4) & 0x0f) as u64;
         let exponent = (byte & 0x0f) as usize;
