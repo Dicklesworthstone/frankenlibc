@@ -257,9 +257,15 @@ fn parse_bsd_part(part: &str) -> Option<u32> {
     }
     let bytes = part.as_bytes();
     if bytes.len() >= 2 && bytes[0] == b'0' && (bytes[1] == b'x' || bytes[1] == b'X') {
-        // Hex.
+        // Hex. Reject sign prefixes — `u32::from_str_radix` accepts a leading
+        // `+`/`-` per its contract, but glibc inet_aton rejects `0x+1` /
+        // `0x-1` because its strtoul reads the sign before the `0x` prefix;
+        // once `0x` has been consumed the next character must be a hex digit.
         let rest = &part[2..];
         if rest.is_empty() {
+            return None;
+        }
+        if rest.bytes().any(|b| !b.is_ascii_hexdigit()) {
             return None;
         }
         u32::from_str_radix(rest, 16).ok()
@@ -735,6 +741,37 @@ mod tests {
         assert_eq!(inet_addr(b"1.2.3\tgarbage").to_ne_bytes(), [1, 2, 0, 3]);
         // Whitespace immediately after a complete component terminates parsing.
         assert_eq!(inet_addr(b"1 .2.3.4").to_ne_bytes(), [0, 0, 0, 1]);
+    }
+
+    /// Regression: `u32::from_str_radix` accepts a leading `+`/`-` sign per
+    /// its contract, but glibc inet_aton rejects sign-prefixed hex parts
+    /// because strtoul consumes any sign *before* detecting the `0x` prefix
+    /// — once `0x` is consumed the next byte must be a hex digit.
+    /// (bd-84wop)
+    #[test]
+    fn test_inet_addr_rejects_signed_hex_part() {
+        for bad in [
+            &b"0x+1.0.0.0"[..],
+            &b"0x-1.0.0.0"[..],
+            &b"0X+ABC.0.0.0"[..],
+            &b"0X-ff.0.0.0"[..],
+            &b"127.0.0.0x+1"[..],
+        ] {
+            assert_eq!(
+                inet_addr(bad),
+                INADDR_NONE,
+                "input {:?} must be rejected (sign prefix after 0x is not glibc-compatible)",
+                core::str::from_utf8(bad).unwrap_or("<non-utf8>")
+            );
+            assert!(
+                parse_ipv4_bsd(bad).is_none(),
+                "parse_ipv4_bsd must also reject {:?}",
+                core::str::from_utf8(bad).unwrap_or("<non-utf8>")
+            );
+        }
+        // Sanity: an unsigned hex part is still accepted.
+        assert_eq!(inet_addr(b"0x7f.0.0.1").to_ne_bytes(), [127, 0, 0, 1]);
+        assert_eq!(inet_addr(b"0X7F.0.0.1").to_ne_bytes(), [127, 0, 0, 1]);
     }
 
     #[test]
