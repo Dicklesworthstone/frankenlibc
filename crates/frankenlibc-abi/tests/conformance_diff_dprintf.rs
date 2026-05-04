@@ -31,8 +31,7 @@ where
     let mut out = Vec::new();
     let mut buf = [0u8; 4096];
     loop {
-        let r =
-            unsafe { libc::read(fds[0], buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        let r = unsafe { libc::read(fds[0], buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
         if r <= 0 {
             break;
         }
@@ -90,25 +89,25 @@ fn diff_dprintf_basic_specifiers() {
 
     pair!(
         "literal",
-        |fd| unsafe { frankenlibc_abi::stdio_abi::dprintf(fd, c"hello world".as_ptr()) },
-        |fd| unsafe { dprintf(fd, c"hello world".as_ptr()) }
+        |fd| frankenlibc_abi::stdio_abi::dprintf(fd, c"hello world".as_ptr()),
+        |fd| dprintf(fd, c"hello world".as_ptr())
     );
 
     pair!(
         "%d",
-        |fd| unsafe { frankenlibc_abi::stdio_abi::dprintf(fd, c"%d".as_ptr(), 42) },
-        |fd| unsafe { dprintf(fd, c"%d".as_ptr(), 42) }
+        |fd| frankenlibc_abi::stdio_abi::dprintf(fd, c"%d".as_ptr(), 42),
+        |fd| dprintf(fd, c"%d".as_ptr(), 42)
     );
 
     pair!(
         "%s",
-        |fd| unsafe { frankenlibc_abi::stdio_abi::dprintf(fd, c"%s".as_ptr(), c"hello".as_ptr()) },
-        |fd| unsafe { dprintf(fd, c"%s".as_ptr(), c"hello".as_ptr()) }
+        |fd| frankenlibc_abi::stdio_abi::dprintf(fd, c"%s".as_ptr(), c"hello".as_ptr()),
+        |fd| dprintf(fd, c"%s".as_ptr(), c"hello".as_ptr())
     );
 
     pair!(
         "mixed",
-        |fd| unsafe {
+        |fd| {
             frankenlibc_abi::stdio_abi::dprintf(
                 fd,
                 c"%s=%d %s=%d\n".as_ptr(),
@@ -118,36 +117,45 @@ fn diff_dprintf_basic_specifiers() {
                 20,
             )
         },
-        |fd| unsafe { dprintf(fd, c"%s=%d %s=%d\n".as_ptr(), c"x".as_ptr(), 10, c"y".as_ptr(), 20) }
+        |fd| dprintf(
+            fd,
+            c"%s=%d %s=%d\n".as_ptr(),
+            c"x".as_ptr(),
+            10,
+            c"y".as_ptr(),
+            20
+        )
     );
 
     pair!(
         "%08x",
-        |fd| unsafe {
-            frankenlibc_abi::stdio_abi::dprintf(fd, c"%08x".as_ptr(), 0xdeadbeefu32)
-        },
-        |fd| unsafe { dprintf(fd, c"%08x".as_ptr(), 0xdeadbeefu32) }
+        |fd| { frankenlibc_abi::stdio_abi::dprintf(fd, c"%08x".as_ptr(), 0xdeadbeefu32) },
+        |fd| dprintf(fd, c"%08x".as_ptr(), 0xdeadbeefu32)
     );
 
     pair!(
         "long output %200d",
-        |fd| unsafe { frankenlibc_abi::stdio_abi::dprintf(fd, c"%200d".as_ptr(), 1) },
-        |fd| unsafe { dprintf(fd, c"%200d".as_ptr(), 1) }
+        |fd| frankenlibc_abi::stdio_abi::dprintf(fd, c"%200d".as_ptr(), 1),
+        |fd| dprintf(fd, c"%200d".as_ptr(), 1)
     );
 
     pair!(
         "empty format",
-        |fd| unsafe { frankenlibc_abi::stdio_abi::dprintf(fd, c"".as_ptr()) },
-        |fd| unsafe { dprintf(fd, c"".as_ptr()) }
+        |fd| frankenlibc_abi::stdio_abi::dprintf(fd, c"".as_ptr()),
+        |fd| dprintf(fd, c"".as_ptr())
     );
 
     pair!(
         "%% literal",
-        |fd| unsafe { frankenlibc_abi::stdio_abi::dprintf(fd, c"50%% complete".as_ptr()) },
-        |fd| unsafe { dprintf(fd, c"50%% complete".as_ptr()) }
+        |fd| frankenlibc_abi::stdio_abi::dprintf(fd, c"50%% complete".as_ptr()),
+        |fd| dprintf(fd, c"50%% complete".as_ptr())
     );
 
-    assert!(divs.is_empty(), "dprintf divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "dprintf divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
