@@ -1,0 +1,194 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "proof-carrying-policy-audit",
+  "bead": "bd-bp8fl.9.3",
+  "generated_utc": "2026-05-04T17:00:00Z",
+  "source_commit": "33a4c631d3cee36f7d3f4db2fed6e55d6a8a822f",
+  "purpose": "Fail-closed audit binder for the runtime_math/policy_table.rs PCPT (`.pcpt` proof-carrying policy table) loader. Every contract surface — magic, schema/key/cell spec ids, header layout, required TLV catalogue, PolicyTableError variants, and negative-test inventory — must remain bound to current source code. Drift in any anchor blocks claim advancement at every replacement level until the audit is regenerated against fresh evidence.",
+  "subject": {
+    "module": "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs",
+    "design_doc": "crates/frankenlibc-membrane/src/runtime_math/proof_carrying_policy_tables.md",
+    "owner_bead": "bd-20s"
+  },
+  "inputs": {
+    "policy_table_source": "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs",
+    "design_doc": "crates/frankenlibc-membrane/src/runtime_math/proof_carrying_policy_tables.md",
+    "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "proof_obligations_binder": "tests/conformance/proof_obligations_binder.v1.json"
+  },
+  "verification_command": "rch exec -- cargo test -p frankenlibc-membrane --lib runtime_math::policy_table::tests",
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "audit_row_id",
+    "anchor_kind",
+    "subject_path",
+    "expected",
+    "actual",
+    "verifier_decision",
+    "freshness_state",
+    "policy_id",
+    "proof_hash",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "policy": {
+    "default_decision": "block_until_audit_anchors_resolve",
+    "allow_status": ["IN_PROGRESS", "PLANNED"],
+    "block_status_without_evidence": ["DONE"],
+    "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
+    "rejected_evidence_kinds": [
+      "missing_constant",
+      "constant_drift",
+      "missing_error_variant",
+      "missing_required_tlv",
+      "missing_negative_test",
+      "stale_source_commit",
+      "verifier_failure"
+    ]
+  },
+  "schema_constants": [
+    {
+      "id": "MAGIC",
+      "kind": "byte_literal",
+      "expected": "PCPTv001",
+      "source_pattern": "const MAGIC: &[u8; 8] = b\"PCPTv001\";",
+      "rationale": "MAGIC bytes anchor the wire format; any change must regenerate every consumer artifact."
+    },
+    {
+      "id": "HEADER_LEN",
+      "kind": "usize_const",
+      "expected": 119,
+      "source_pattern": "const HEADER_LEN: usize = 8 + 2 + 1 + 2 + 2 + 4 + 4 + 32 + 32 + 32; // 119",
+      "rationale": "Header layout (magic[8] + schema_version[2] + hash_alg[1] + key_spec_id[2] + cell_spec_id[2] + table_len[4] + table_bytes[4] + table_hash[32] + meta_hash[32] + reserved[32]) sums to 119; drift breaks every offline generator."
+    },
+    {
+      "id": "SCHEMA_VERSION_V1",
+      "kind": "u16_const",
+      "expected": 1,
+      "source_pattern": "const SCHEMA_VERSION_V1: u16 = 1;",
+      "rationale": "schema_version=1 is the only supported wire version; bumping it requires a new audit row."
+    },
+    {
+      "id": "KEY_SPEC_ID_V1",
+      "kind": "u16_const",
+      "expected": 1,
+      "source_pattern": "const KEY_SPEC_ID_V1: u16 = 1;",
+      "rationale": "key_spec_id=1 anchors the (api_family, mode, risk, budget, consistency) lookup key shape."
+    },
+    {
+      "id": "CELL_SPEC_ID_V1",
+      "kind": "u16_const",
+      "expected": 1,
+      "source_pattern": "const CELL_SPEC_ID_V1: u16 = 1;",
+      "rationale": "cell_spec_id=1 anchors the per-cell action/heal encoding shape."
+    },
+    {
+      "id": "RISK_BUCKETS",
+      "kind": "usize_const",
+      "expected": 16,
+      "source_pattern": "const RISK_BUCKETS: usize = 16;",
+      "rationale": "Risk bucket count is a wire-format invariant."
+    },
+    {
+      "id": "BUDGET_BUCKETS",
+      "kind": "usize_const",
+      "expected": 8,
+      "source_pattern": "const BUDGET_BUCKETS: usize = 8;",
+      "rationale": "Budget bucket count is a wire-format invariant."
+    },
+    {
+      "id": "CONSISTENCY_BUCKETS",
+      "kind": "usize_const",
+      "expected": 4,
+      "source_pattern": "const CONSISTENCY_BUCKETS: usize = 4;",
+      "rationale": "Consistency bucket count is a wire-format invariant."
+    }
+  ],
+  "required_tlvs": [
+    {
+      "tlv_type": "0x0001",
+      "name": "build_info",
+      "required_size": null,
+      "missing_error": "MissingRequiredTlv",
+      "rationale": "build_info TLV traceable to offline generator commit; required for audit reproducibility."
+    },
+    {
+      "tlv_type": "0x0002",
+      "name": "proof_digest",
+      "required_size": 32,
+      "missing_error": "MissingRequiredTlv",
+      "rationale": "proof_digest TLV must be exactly 32 bytes; ties the artifact to its offline-synthesized proof."
+    },
+    {
+      "tlv_type": "0x0003",
+      "name": "invariants",
+      "required_size": null,
+      "missing_error": "MissingRequiredTlv",
+      "rationale": "invariants TLV records the static invariants the offline solver attested to."
+    }
+  ],
+  "error_variants": [
+    "TooShort",
+    "BadMagic",
+    "UnsupportedSchema",
+    "UnsupportedHashAlg",
+    "UnsupportedKeySpec",
+    "UnsupportedCellSpec",
+    "ReservedNonZero",
+    "LengthMismatch",
+    "HashMismatch",
+    "MissingRequiredTlv",
+    "MalformedTlv",
+    "BadCellEncoding",
+    "StrictRepairNotAllowed",
+    "DenyMustNotRepair",
+    "RiskMonotonicityViolation",
+    "ModeRefinementViolation"
+  ],
+  "required_negative_tests": [
+    {
+      "test_name": "bad_magic_fails",
+      "error_variant": "BadMagic",
+      "rationale": "Mutating MAGIC bytes must produce BadMagic, not silent acceptance."
+    },
+    {
+      "test_name": "reserved_non_zero_fails",
+      "error_variant": "ReservedNonZero",
+      "rationale": "Non-zero reserved bytes must be rejected so future format extensions cannot silently ride along."
+    },
+    {
+      "test_name": "hash_mismatch_fails",
+      "error_variant": "HashMismatch",
+      "rationale": "Tampered table or meta payload must surface HashMismatch."
+    },
+    {
+      "test_name": "strict_repair_is_rejected",
+      "error_variant": "StrictRepairNotAllowed",
+      "rationale": "Strict-mode rows offering Repair actions must be rejected; otherwise hardened-only repair leaks into strict mode."
+    },
+    {
+      "test_name": "risk_monotonicity_violation_is_rejected",
+      "error_variant": "RiskMonotonicityViolation",
+      "rationale": "Risk-monotone invariant on each (mode, family) must be enforced at load time."
+    },
+    {
+      "test_name": "hash_mismatch_yields_no_lookup",
+      "error_variant": "HashMismatch",
+      "rationale": "VerifiedPolicyTable construction must refuse to expose lookups when hashes do not validate."
+    }
+  ],
+  "required_positive_tests": [
+    "verifies_minimal_blake3_artifact",
+    "lookup_from_artifact_roundtrip",
+    "lookup_default_cell_is_fast_allow",
+    "lookup_deterministic_same_inputs",
+    "lookup_all_families_all_modes_succeed",
+    "lookup_with_overridden_cell"
+  ],
+  "consuming_gates": [
+    "tests/conformance/proof_obligations_binder.v1.json",
+    "tests/conformance/proof_traceability_freshness_gate.v1.json"
+  ]
+}
