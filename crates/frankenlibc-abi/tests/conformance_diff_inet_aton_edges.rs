@@ -16,7 +16,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_int, CString};
+use std::ffi::{CString, c_int};
 
 use frankenlibc_abi::inet_abi as fl;
 
@@ -31,14 +31,28 @@ fn parse_both(s: &str) -> (Option<u32>, Option<u32>) {
     let fl_r = unsafe { fl::inet_aton(cs.as_ptr(), &mut fl_v) };
     let lc_r = unsafe { inet_aton(cs.as_ptr(), &mut lc_v) };
     (
-        if fl_r == 1 { Some(u32::from_be(fl_v)) } else { None },
-        if lc_r == 1 { Some(u32::from_be(lc_v)) } else { None },
+        if fl_r == 1 {
+            Some(u32::from_be(fl_v))
+        } else {
+            None
+        },
+        if lc_r == 1 {
+            Some(u32::from_be(lc_v))
+        } else {
+            None
+        },
     )
 }
 
 #[test]
 fn diff_inet_aton_dotted_quad_basic() {
-    for s in ["1.2.3.4", "192.168.0.1", "127.0.0.1", "0.0.0.0", "255.255.255.255"] {
+    for s in [
+        "1.2.3.4",
+        "192.168.0.1",
+        "127.0.0.1",
+        "0.0.0.0",
+        "255.255.255.255",
+    ] {
         let (fl_o, lc_o) = parse_both(s);
         assert_eq!(fl_o, lc_o, "dotted-quad {s}: fl={fl_o:?} lc={lc_o:?}");
         assert!(fl_o.is_some());
@@ -124,6 +138,33 @@ fn diff_inet_aton_excess_components_rejected() {
         let (fl_o, lc_o) = parse_both(s);
         assert_eq!(fl_o, lc_o, "excess {s}: fl={fl_o:?} lc={lc_o:?}");
         assert_eq!(fl_o, None);
+    }
+}
+
+#[test]
+fn diff_inet_aton_signed_hex_rejected() {
+    // glibc's strtoul consumes any optional sign BEFORE the `0x` prefix,
+    // so once `0x` is consumed the next byte must be a hex digit. fl
+    // delegated to Rust's u32::from_str_radix which accepts a leading
+    // '+'/'-' by contract; bd-84wop fixed parse_bsd_part to validate
+    // each post-`0x` byte with is_ascii_hexdigit before delegating.
+    // This row pins the parity in at the ABI/FFI layer.
+    for s in [
+        "0x+1.0.0.0",
+        "0x-1.0.0.0",
+        "0X+ABC.0.0.0",
+        "0X-ff.0.0.0",
+        "127.0.0.0x+1",
+    ] {
+        let (fl_o, lc_o) = parse_both(s);
+        assert_eq!(fl_o, lc_o, "signed hex {s}: fl={fl_o:?} lc={lc_o:?}");
+        assert_eq!(fl_o, None, "must reject sign-prefixed hex part: {s}");
+    }
+    // Sanity: unsigned hex parts still parse identically on both sides.
+    for s in ["0x7f.0.0.1", "0X7F.0.0.1", "0xC0.0xA8.0x00.0x01"] {
+        let (fl_o, lc_o) = parse_both(s);
+        assert_eq!(fl_o, lc_o, "unsigned hex {s}: fl={fl_o:?} lc={lc_o:?}");
+        assert!(fl_o.is_some(), "valid hex must still parse: {s}");
     }
 }
 
