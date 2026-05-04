@@ -20,11 +20,17 @@ unsafe extern "C" {
 
 /// Build a libc::dirent with the given d_name (NUL-terminated).
 fn make_dirent(name: &[u8]) -> Box<libc::dirent> {
-    let mut d: libc::dirent = unsafe { std::mem::zeroed() };
+    let mut d = libc::dirent {
+        d_ino: 0,
+        d_off: 0,
+        d_reclen: 0,
+        d_type: 0,
+        d_name: [0; 256],
+    };
     let max = d.d_name.len() - 1;
     let n = name.len().min(max);
-    for i in 0..n {
-        d.d_name[i] = name[i] as i8;
+    for (dst, &src) in d.d_name.iter_mut().zip(name.iter()).take(n) {
+        *dst = src as i8;
     }
     d.d_name[n] = 0;
     Box::new(d)
