@@ -1,16 +1,16 @@
 {
   "schema_version": "v1",
   "bead": "bd-1qfc",
-  "generated_at": "2026-04-27T03:57:36Z",
+  "generated_at": "2026-05-04T15:03:34Z",
   "summary": {
     "total_suites_in_spec": 4,
     "suites_with_bench_files": 4,
     "suites_enforced_in_gate": 2,
     "suites_with_full_baselines": 2,
-    "baseline_slot_fill_pct": 28.6,
+    "baseline_slot_fill_pct": 56.5,
     "hotpath_symbol_coverage_pct": 59.2,
     "total_hotpath_symbols": 152,
-    "extra_bench_files_beyond_spec": 8,
+    "extra_bench_files_beyond_spec": 9,
     "total_issues": 0,
     "total_warnings": 0
   },
@@ -26,7 +26,7 @@
       "suite_id": "membrane",
       "bench_file": "crates/frankenlibc-bench/benches/membrane_bench.rs",
       "exists": true,
-      "benchmark_count": 1,
+      "benchmark_count": 10,
       "enforced_in_gate": true
     },
     {
@@ -54,8 +54,8 @@
     },
     {
       "suite_id": "membrane",
-      "total_benchmarks_x_modes": 2,
-      "baselines_present": 2,
+      "total_benchmarks_x_modes": 20,
+      "baselines_present": 20,
       "baselines_missing": [],
       "coverage_pct": 100.0
     },
@@ -153,6 +153,7 @@
     "baseline_capture",
     "condvar",
     "elimination",
+    "glibc_baseline",
     "metadata_read",
     "mutex",
     "runtime_math_kernels",
