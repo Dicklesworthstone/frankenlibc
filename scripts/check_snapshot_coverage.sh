@@ -114,8 +114,7 @@ declare -A SNAP_EXEMPT=(
 # --- Extract snapshot struct ---
 TMPDIR=$(mktemp -d)
 cleanup_tmpdir() {
-    # AGENTS.md forbids rm -rf. Remove only if empty; otherwise leave for inspection.
-    rmdir "$TMPDIR" 2>/dev/null || true
+    echo "INFO: leaving temp dir for inspection: ${TMPDIR}" >&2
 }
 trap cleanup_tmpdir EXIT
 

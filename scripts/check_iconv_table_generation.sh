@@ -26,7 +26,7 @@ TMP_PACK_B="$(mktemp)"
 TMP_SUM_B="$(mktemp)"
 
 cleanup() {
-  rm -f "${TMP_PACK_A}" "${TMP_SUM_A}" "${TMP_PACK_B}" "${TMP_SUM_B}"
+  echo "INFO: leaving temp artifacts for inspection: ${TMP_PACK_A} ${TMP_SUM_A} ${TMP_PACK_B} ${TMP_SUM_B}" >&2
 }
 trap cleanup EXIT
 

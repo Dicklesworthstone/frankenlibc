@@ -130,8 +130,7 @@ snapshot_fn_range=$(grep -n 'pub fn snapshot.*RuntimeKernelSnapshot' "$MOD_RS" |
 # Write temp files for section searching (avoids massive variable piping)
 TMPDIR=$(mktemp -d)
 cleanup_tmpdir() {
-    # AGENTS.md forbids rm -rf. Remove only if empty; otherwise leave for inspection.
-    rmdir "$TMPDIR" 2>/dev/null || true
+    echo "INFO: leaving temp dir for inspection: ${TMPDIR}" >&2
 }
 trap cleanup_tmpdir EXIT
 

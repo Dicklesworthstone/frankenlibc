@@ -48,6 +48,9 @@ fn check_gate_scripts_do_not_install_destructive_cleanup() -> TestResult {
     let forbidden = [
         "rm -rf",
         "rm -fr",
+        "rm -f",
+        "rm -r",
+        "rmdir",
         "git reset --hard",
         "git clean -fd",
         "git clean -df",
@@ -84,9 +87,12 @@ fn check_gate_scripts_do_not_install_destructive_cleanup() -> TestResult {
                         line: idx + 1,
                         kind: ViolationKind::ForbiddenPattern(pattern),
                     });
+                    break;
                 }
             }
-            if code.starts_with("trap ") && code.contains(" rm ") {
+            if code.starts_with("trap ")
+                && (code.contains("rm ") || code.contains("rm\t") || code.contains("rmdir"))
+            {
                 violations.push(Violation {
                     script_index,
                     line: idx + 1,
