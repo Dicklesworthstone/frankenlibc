@@ -7,7 +7,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MANIFEST="${ROOT}/tests/conformance/real_program_smoke_suite.v1.json"
+MANIFEST="${REAL_PROGRAM_SMOKE_MANIFEST:-${ROOT}/tests/conformance/real_program_smoke_suite.v1.json}"
 OUT_ROOT="${REAL_PROGRAM_SMOKE_TARGET_DIR:-${ROOT}/target/real_program_smoke_suite}"
 RUN_ID="${REAL_PROGRAM_SMOKE_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RUN_DIR="${OUT_ROOT}/${RUN_ID}"
@@ -342,6 +342,26 @@ def validate_manifest():
     if manifest.get("bead") != "bd-bp8fl.10.2":
         errors.append("manifest must be linked to bead bd-bp8fl.10.2")
     checks["top_level_shape"] = "pass" if not errors else "fail"
+
+    freshness = manifest.get("freshness", {})
+    required_source_commit = freshness.get("required_source_commit") if isinstance(freshness, dict) else None
+    source_commit_policy = freshness.get("source_commit_policy", "") if isinstance(freshness, dict) else ""
+    source_commit_matches = required_source_commit == "current" or (
+        source_commit != "unknown" and required_source_commit == source_commit
+    )
+    freshness_ok = (
+        isinstance(freshness, dict)
+        and source_commit_matches
+        and isinstance(source_commit_policy, str)
+        and "current git HEAD" in source_commit_policy
+        and "reject" in source_commit_policy
+    )
+    checks["source_commit_freshness"] = "pass" if freshness_ok else "fail"
+    if not freshness_ok:
+        errors.append(
+            "freshness.required_source_commit must be 'current' or match current git HEAD, "
+            "and source_commit_policy must reject stale manifest source commits"
+        )
 
     if manifest.get("required_case_fields") == REQUIRED_CASE_FIELDS:
         checks["required_case_fields"] = "pass"

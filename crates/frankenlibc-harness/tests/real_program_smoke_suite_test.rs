@@ -117,6 +117,11 @@ fn load_manifest() -> serde_json::Value {
     load_json(&workspace_root().join("tests/conformance/real_program_smoke_suite.v1.json"))
 }
 
+fn write_json(path: &Path, value: &serde_json::Value) {
+    let content = serde_json::to_string_pretty(value).expect("json should serialize");
+    std::fs::write(path, format!("{content}\n")).expect("write json");
+}
+
 fn unique_temp_dir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -212,6 +217,17 @@ fn manifest_defines_case_schema_and_log_contract() {
     let manifest = load_manifest();
     assert_eq!(manifest["schema_version"].as_str(), Some("v1"));
     assert_eq!(manifest["bead"].as_str(), Some("bd-bp8fl.10.2"));
+    assert_eq!(
+        manifest["freshness"]["required_source_commit"].as_str(),
+        Some("current")
+    );
+    assert!(
+        manifest["freshness"]["source_commit_policy"]
+            .as_str()
+            .unwrap()
+            .contains("current git HEAD"),
+        "manifest must require checker-side current-HEAD freshness"
+    );
     assert_eq!(
         manifest["result_policy"]["unsupported_or_skipped_claims_support"].as_bool(),
         Some(false)
@@ -649,6 +665,47 @@ fn current_standalone_artifact_rows_block_dependency_inspector_failure() {
         );
         assert_eq!(event["actual_status"].as_str(), Some("claim_blocked"));
     }
+}
+
+#[test]
+fn validate_only_rejects_stale_manifest_source_commit() {
+    let temp = unique_temp_dir("real-program-stale-source-commit-manifest");
+    let manifest_path = temp.join("real_program_smoke_suite.stale.json");
+    let mut manifest = load_manifest();
+    manifest["freshness"]["required_source_commit"] =
+        serde_json::Value::String("0000000000000000000000000000000000000000".to_owned());
+    write_json(&manifest_path, &manifest);
+
+    let (_temp, report_path, _log_path, output) = run_gate(
+        "--validate-only",
+        "real-program-stale-source-commit",
+        &[(
+            "REAL_PROGRAM_SMOKE_MANIFEST",
+            manifest_path.display().to_string(),
+        )],
+        true,
+    );
+    assert!(
+        !output.status.success(),
+        "validate-only should reject stale manifest source commits:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&report_path);
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    assert_eq!(
+        report["checks"]["source_commit_freshness"].as_str(),
+        Some("fail")
+    );
+    let errors = report["errors"].as_array().unwrap();
+    assert!(
+        errors.iter().any(|error| error
+            .as_str()
+            .unwrap_or_default()
+            .contains("freshness.required_source_commit")),
+        "report should explain the stale source-commit policy failure"
+    );
 }
 
 #[test]

@@ -4,6 +4,10 @@
   "bead": "bd-bp8fl.10.2",
   "generated_utc": "2026-05-03T05:20:00Z",
   "purpose": "Deterministic real-program smoke rows for L0 LD_PRELOAD and L1 hardened-interpose evidence, plus fail-closed standalone direct-link real-program rows that cannot be reported as supported without current artifact and host-dependency evidence.",
+  "freshness": {
+    "required_source_commit": "current",
+    "source_commit_policy": "checker records current git HEAD and rejects pinned stale manifest source commits"
+  },
   "inputs": {
     "user_workload_acceptance_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
     "replacement_levels": "tests/conformance/replacement_levels.json",
