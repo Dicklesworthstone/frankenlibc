@@ -155,11 +155,14 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "seed",
     "runtime_mode",
     "oracle_kind",
+    "stress_kernel_id",
     "expected",
     "actual",
+    "counters",
     "errno",
     "decision_path",
     "healing_action",
+    "failure_signatures",
     "duration_ns",
     "artifact_refs",
     "source_commit",
@@ -175,6 +178,8 @@ const REJECTED_EVIDENCE_KINDS: &[&str] = &[
     "local_only_runner",
     "stale_source_commit",
     "missing_runtime_mode_coverage",
+    "missing_normal_tier_kernel",
+    "missing_counter_field",
 ];
 
 #[test]
@@ -230,6 +235,20 @@ fn execution_policy_pins_rch_only_default_runner() -> TestResult {
         string_field(policy, "iteration_tier_envvar", "execution_policy")?,
         "FRANKENLIBC_STRESS_TIER",
         "iteration_tier_envvar",
+    )?;
+    let default_tiers: Vec<&str> = array_field(policy, "default_tiers", "execution_policy")?
+        .iter()
+        .map(|v| as_str(v, "execution_policy.default_tiers[]"))
+        .collect::<Result<_, _>>()?;
+    ensure_eq(
+        default_tiers,
+        vec!["smoke", "normal"],
+        "execution_policy.default_tiers",
+    )?;
+    ensure_eq(
+        string_field(policy, "deep_tier_envvar", "execution_policy")?,
+        "FRANKENLIBC_STRESS_INCLUDE_DEEP",
+        "deep_tier_envvar",
     )?;
     ensure_eq(
         string_field(policy, "default_tier", "execution_policy")?,
@@ -311,6 +330,37 @@ fn scenarios_carry_unique_ids_seeds_and_test_names() -> TestResult {
             !oracle.is_empty(),
             format_args!("scenario {id}: oracle_kind must be non-empty"),
         )?;
+        let kernel = field(row, "normal_tier_kernel", "row")?
+            .as_object()
+            .ok_or_else(|| test_error("row.normal_tier_kernel must be an object"))?;
+        let kernel_id = kernel
+            .get("kernel_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| test_error("normal_tier_kernel.kernel_id must be a string"))?;
+        ensure_args(
+            !kernel_id.is_empty(),
+            format_args!("scenario {id}: normal_tier_kernel.kernel_id must be non-empty"),
+        )?;
+        ensure_eq_args(
+            kernel.get("minimum_tier").and_then(Value::as_str),
+            Some("normal"),
+            format_args!("scenario {id}: normal_tier_kernel.minimum_tier"),
+        )?;
+        let counter_fields = kernel
+            .get("counter_fields")
+            .and_then(Value::as_array)
+            .ok_or_else(|| test_error("normal_tier_kernel.counter_fields must be an array"))?;
+        ensure_args(
+            !counter_fields.is_empty(),
+            format_args!("scenario {id}: counter_fields must be non-empty"),
+        )?;
+        for counter in counter_fields {
+            let counter = as_str(counter, "normal_tier_kernel.counter_fields[]")?;
+            ensure_args(
+                !counter.is_empty(),
+                format_args!("scenario {id}: counter field cannot be empty"),
+            )?;
+        }
         let modes = array_field(row, "runtime_modes", "row")?;
         ensure_args(
             !modes.is_empty(),

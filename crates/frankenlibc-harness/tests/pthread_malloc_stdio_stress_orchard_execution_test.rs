@@ -18,6 +18,7 @@ const BOTH_MODE_SCENARIOS: &[&str] = &[
     "stdio-file-buffering-contention",
     "pthread-mutex-lifecycle",
     "pthread-condvar-broadcast-signal",
+    "pthread-condvar-timeout-edge",
     "pthread-rwlock-writer-priority",
     "pthread-cancellation-adjacent-state",
 ];
@@ -26,6 +27,7 @@ const HARDENED_ONLY_SCENARIOS: &[&str] = &[
     "hardened-repair-stdio-format-truncation",
 ];
 const REQUIRED_MODES: &[&str] = &["strict", "hardened"];
+const REQUIRED_TIERS: &[&str] = &["smoke", "normal"];
 const REQUIRED_LOG_FIELDS: &[&str] = &[
     "trace_id",
     "bead_id",
@@ -37,11 +39,14 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "seed",
     "runtime_mode",
     "oracle_kind",
+    "stress_kernel_id",
     "expected",
     "actual",
+    "counters",
     "errno",
     "decision_path",
     "healing_action",
+    "failure_signatures",
     "duration_ns",
     "artifact_refs",
     "source_commit",
@@ -56,6 +61,8 @@ const REQUIRED_FAILURE_SIGNATURES: &[&str] = &[
     "local_only_runner",
     "stale_source_commit",
     "missing_runtime_mode_coverage",
+    "missing_normal_tier_kernel",
+    "missing_counter_field",
 ];
 
 fn test_error(message: impl Into<String>) -> Box<dyn Error> {
@@ -212,6 +219,14 @@ fn required_mode_label(value: &str) -> TestResult<&'static str> {
         .ok_or_else(|| test_error("unknown runtime mode in evidence row"))
 }
 
+fn required_tier_label(value: &str) -> TestResult<&'static str> {
+    REQUIRED_TIERS
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == value)
+        .ok_or_else(|| test_error("unknown tier in evidence row"))
+}
+
 fn run_orchard(root: &Path) -> TestResult<std::process::Output> {
     Command::new("bash")
         .arg(runner_path(root))
@@ -299,16 +314,15 @@ fn manifest_points_to_runner_freshness_and_skip_contract() -> TestResult {
     )?;
     ensure(
         skips.iter().any(|skip| {
-            skip.get("skip_id").and_then(Value::as_str)
-                == Some("normal-and-deep-tiers-disabled-by-default")
+            skip.get("skip_id").and_then(Value::as_str) == Some("deep-tier-disabled-by-default")
         }),
-        "manifest should record the default non-smoke tier skip condition",
+        "manifest should record the default deep-tier skip condition",
     )?;
     Ok(())
 }
 
 #[test]
-fn runner_passes_and_emits_current_smoke_jsonl_evidence() -> TestResult {
+fn runner_passes_and_emits_current_smoke_and_normal_jsonl_evidence() -> TestResult {
     let root = workspace_root();
     let output = run_orchard(&root)?;
     ensure(
@@ -328,29 +342,58 @@ fn runner_passes_and_emits_current_smoke_jsonl_evidence() -> TestResult {
     )?;
     ensure_eq(
         string_field(&report, "tier", "report")?,
-        "smoke",
-        "default tier",
+        "smoke+normal",
+        "default tiers",
     )?;
+    let tiers = as_array(field(&report, "tiers", "report")?, "report.tiers")?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| test_error("report.tiers entries must be strings"))
+        })
+        .collect::<TestResult<Vec<_>>>()?;
+    ensure_eq(tiers, vec!["smoke", "normal"], "selected tiers")?;
+    let iterations = as_object(field(&report, "iterations", "report")?, "report.iterations")?;
     ensure_eq(
-        field(&report, "iterations", "report")?.as_u64(),
+        iterations.get("smoke").and_then(Value::as_u64),
         Some(256),
         "smoke iterations",
     )?;
     ensure_eq(
-        field(&report, "thread_count", "report")?.as_u64(),
+        iterations.get("normal").and_then(Value::as_u64),
+        Some(4096),
+        "normal iterations",
+    )?;
+    let thread_counts = as_object(
+        field(&report, "thread_count", "report")?,
+        "report.thread_count",
+    )?;
+    ensure_eq(
+        thread_counts.get("smoke").and_then(Value::as_u64),
         Some(4),
         "smoke thread_count",
+    )?;
+    ensure_eq(
+        thread_counts.get("normal").and_then(Value::as_u64),
+        Some(8),
+        "normal thread_count",
     )?;
     let summary = field(&report, "summary", "report")?;
     ensure_eq(
         field(summary, "scenario_count", "report.summary")?.as_u64(),
-        Some(8),
+        Some(9),
         "scenario count",
     )?;
     ensure_eq(
         field(summary, "evidence_row_count", "report.summary")?.as_u64(),
-        Some(14),
+        Some(32),
         "evidence row count",
+    )?;
+    ensure_eq(
+        field(summary, "normal_tier_kernel_count", "report.summary")?.as_u64(),
+        Some(9),
+        "normal tier kernel count",
     )?;
     ensure(
         field(&report, "source_commit", "report")?
@@ -365,11 +408,10 @@ fn runner_passes_and_emits_current_smoke_jsonl_evidence() -> TestResult {
     )?;
     ensure(
         skips.iter().any(|skip| {
-            skip.get("skip_id").and_then(Value::as_str)
-                == Some("normal-and-deep-tiers-disabled-by-default")
+            skip.get("skip_id").and_then(Value::as_str) == Some("deep-tier-disabled-by-default")
                 && skip.get("status").and_then(Value::as_str) == Some("skipped")
         }),
-        "runner should record the non-smoke tier skip condition",
+        "runner should record the deep-tier skip condition",
     )?;
 
     let artifacts = as_object(
@@ -394,6 +436,7 @@ fn runner_passes_and_emits_current_smoke_jsonl_evidence() -> TestResult {
         .map_err(|err| test_error(format!("log should be readable: {err}")))?;
     let mut row_count = 0usize;
     let mut modes_by_scenario: BTreeMap<&'static str, BTreeSet<&'static str>> = BTreeMap::new();
+    let mut tiers_by_scenario: BTreeMap<&'static str, BTreeSet<&'static str>> = BTreeMap::new();
     for line in log.lines() {
         row_count += 1;
         let entry: Value = serde_json::from_str(line)
@@ -406,18 +449,42 @@ fn runner_passes_and_emits_current_smoke_jsonl_evidence() -> TestResult {
         }
         let scenario = required_scenario_label(string_field(&entry, "scenario_id", "entry")?)?;
         let mode = required_mode_label(string_field(&entry, "runtime_mode", "entry")?)?;
+        let tier = required_tier_label(string_field(&entry, "tier", "entry")?)?;
         modes_by_scenario.entry(scenario).or_default().insert(mode);
+        tiers_by_scenario.entry(scenario).or_default().insert(tier);
         ensure(
             string_field(&entry, "bead_id", "entry")? == "bd-b92jd.5.6",
             "row bead_id should identify execution bead",
         )?;
-        ensure(
-            string_field(&entry, "tier", "entry")? == "smoke",
-            "row tier should be smoke by default",
+        let expected_iterations = if tier == "smoke" { 256 } else { 4096 };
+        let expected_threads = if tier == "smoke" { 4 } else { 8 };
+        ensure_eq(
+            field(&entry, "iterations", "entry")?.as_u64(),
+            Some(expected_iterations),
+            "row iterations should match tier",
+        )?;
+        ensure_eq(
+            field(&entry, "thread_count", "entry")?.as_u64(),
+            Some(expected_threads),
+            "row thread_count should match tier",
         )?;
         ensure(
-            field(&entry, "iterations", "entry")?.as_u64() == Some(256),
-            "row iterations should match smoke tier",
+            !string_field(&entry, "stress_kernel_id", "entry")?.is_empty(),
+            "stress_kernel_id should be non-empty",
+        )?;
+        ensure(
+            as_object(field(&entry, "counters", "entry")?, "entry.counters")?
+                .values()
+                .all(Value::is_number),
+            "counters should contain numeric values",
+        )?;
+        ensure(
+            as_array(
+                field(&entry, "failure_signatures", "entry")?,
+                "entry.failure_signatures",
+            )?
+            .is_empty(),
+            "passing rows should not carry failure signatures",
         )?;
         ensure(
             string_field(&entry, "source_commit", "entry")?
@@ -439,7 +506,7 @@ fn runner_passes_and_emits_current_smoke_jsonl_evidence() -> TestResult {
             )?;
         }
     }
-    ensure_eq(row_count, 14usize, "JSONL row count")?;
+    ensure_eq(row_count, 32usize, "JSONL row count")?;
     for scenario_id in BOTH_MODE_SCENARIOS {
         let modes = modes_by_scenario
             .get(*scenario_id)
@@ -450,6 +517,13 @@ fn runner_passes_and_emits_current_smoke_jsonl_evidence() -> TestResult {
                 "scenario missing required runtime mode",
             )?;
         }
+        let tiers = tiers_by_scenario
+            .get(*scenario_id)
+            .ok_or_else(|| test_error("missing tiers for scenario"))?;
+        ensure(
+            tiers.contains("smoke") && tiers.contains("normal"),
+            "scenario missing smoke or normal tier",
+        )?;
     }
     for scenario_id in HARDENED_ONLY_SCENARIOS {
         let modes = modes_by_scenario
@@ -459,6 +533,13 @@ fn runner_passes_and_emits_current_smoke_jsonl_evidence() -> TestResult {
             modes.iter().copied().collect::<Vec<_>>(),
             vec!["hardened"],
             "hardened-only scenario modes",
+        )?;
+        let tiers = tiers_by_scenario
+            .get(*scenario_id)
+            .ok_or_else(|| test_error("missing tiers for hardened scenario"))?;
+        ensure(
+            tiers.contains("smoke") && tiers.contains("normal"),
+            "hardened scenario missing smoke or normal tier",
         )?;
     }
     Ok(())
@@ -556,6 +637,38 @@ fn runner_fails_closed_for_missing_runtime_mode() -> TestResult {
     set_object_field(first, "runtime_modes", json!(["strict"]), "scenario")?;
     let report = run_orchard_with_manifest(&root, "missing_runtime_mode", &manifest)?;
     expect_error_signature(&report, "missing_runtime_mode_coverage")
+}
+
+#[test]
+fn runner_fails_closed_for_missing_normal_tier_kernel() -> TestResult {
+    let root = workspace_root();
+    let mut manifest = load_json(&manifest_path(&root))?;
+    let first = mutable_scenarios(&mut manifest)?
+        .first_mut()
+        .ok_or_else(|| test_error("manifest should have scenarios"))?;
+    let object = first
+        .as_object_mut()
+        .ok_or_else(|| test_error("scenario should be an object"))?;
+    object.remove("normal_tier_kernel");
+    let report = run_orchard_with_manifest(&root, "missing_normal_tier_kernel", &manifest)?;
+    expect_error_signature(&report, "missing_normal_tier_kernel")
+}
+
+#[test]
+fn runner_fails_closed_for_missing_counter_field() -> TestResult {
+    let root = workspace_root();
+    let mut manifest = load_json(&manifest_path(&root))?;
+    let first = mutable_scenarios(&mut manifest)?
+        .first_mut()
+        .ok_or_else(|| test_error("manifest should have scenarios"))?;
+    let counter_fields = first
+        .get_mut("normal_tier_kernel")
+        .and_then(|kernel| kernel.get_mut("counter_fields"))
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| test_error("counter_fields should be mutable"))?;
+    counter_fields.push(json!("counter_that_does_not_exist"));
+    let report = run_orchard_with_manifest(&root, "missing_counter_field", &manifest)?;
+    expect_error_signature(&report, "missing_counter_field")
 }
 
 #[test]
