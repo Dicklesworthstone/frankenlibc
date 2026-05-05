@@ -24,6 +24,14 @@
     "stale_if_older_than_head": true,
     "ld_preload_substitutes_allowed": false
   },
+  "inspection_timeout_policy": {
+    "env": "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS",
+    "default_secs": 60,
+    "min_secs": 1,
+    "max_secs": 300,
+    "timeout_exit_code": 124,
+    "reported_field": "tool_evidence.*.timeout_secs"
+  },
   "required_tools": ["rch", "cargo", "readelf", "nm", "ldd", "sha256"],
   "required_log_fields": [
     "trace_id",
@@ -51,7 +59,11 @@
     "artifact_state.dependency_breakdown.version_needs",
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.loader_needed",
-    "artifact_state.dependency_breakdown.blocking_reasons"
+    "artifact_state.dependency_breakdown.blocking_reasons",
+    "tool_evidence.*.exit_code",
+    "tool_evidence.*.timed_out",
+    "tool_evidence.*.timeout_secs",
+    "tool_evidence.*.path"
   ],
   "required_evidence_files": [
     "build.stdout.txt",

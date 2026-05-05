@@ -83,6 +83,22 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
+    "tool_evidence.*.exit_code",
+    "tool_evidence.*.timed_out",
+    "tool_evidence.*.timeout_secs",
+    "tool_evidence.*.path",
+]
+
+INSPECTION_TIMEOUT_ENV = "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS"
+INSPECTION_TIMEOUT_DEFAULT_SECS = 60
+INSPECTION_TIMEOUT_MIN_SECS = 1
+INSPECTION_TIMEOUT_MAX_SECS = 300
+INSPECTION_TIMEOUT_EXIT_CODE = 124
+TOOL_EVIDENCE_REQUIRED_FIELDS = [
+    "exit_code",
+    "timed_out",
+    "timeout_secs",
+    "path",
 ]
 
 errors = []
@@ -154,10 +170,10 @@ def env_bounded_int(name, default, *, minimum, maximum):
 
 
 inspection_timeout = env_bounded_int(
-    "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS",
-    60,
-    minimum=1,
-    maximum=300,
+    INSPECTION_TIMEOUT_ENV,
+    INSPECTION_TIMEOUT_DEFAULT_SECS,
+    minimum=INSPECTION_TIMEOUT_MIN_SECS,
+    maximum=INSPECTION_TIMEOUT_MAX_SECS,
 )
 
 
@@ -351,7 +367,7 @@ def run_command(command, *, env=None, cwd=root, timeout=900):
         }
     except subprocess.TimeoutExpired as exc:
         return {
-            "returncode": 124,
+            "returncode": INSPECTION_TIMEOUT_EXIT_CODE,
             "stdout": exc.stdout or "",
             "stderr": exc.stderr or "timeout",
             "timed_out": True,
@@ -398,6 +414,17 @@ def validate_manifest():
         errors.append("required_log_fields do not match script contract")
     if manifest.get("required_report_fields") != REQUIRED_REPORT_FIELDS:
         errors.append("required_report_fields do not match script contract")
+    timeout_policy = manifest.get("inspection_timeout_policy", {})
+    expected_timeout_policy = {
+        "env": INSPECTION_TIMEOUT_ENV,
+        "default_secs": INSPECTION_TIMEOUT_DEFAULT_SECS,
+        "min_secs": INSPECTION_TIMEOUT_MIN_SECS,
+        "max_secs": INSPECTION_TIMEOUT_MAX_SECS,
+        "timeout_exit_code": INSPECTION_TIMEOUT_EXIT_CODE,
+        "reported_field": "tool_evidence.*.timeout_secs",
+    }
+    if timeout_policy != expected_timeout_policy:
+        errors.append("inspection_timeout_policy does not match script contract")
 
     artifact_policy = manifest.get("artifact_policy", {})
     replace_spec = packaging.get("artifacts", {}).get("replace", {})
@@ -660,6 +687,11 @@ for row in log_rows:
     if missing:
         errors.append(f"log row missing required fields: {missing}")
 
+for filename, evidence in tool_evidence.items():
+    missing = [field for field in TOOL_EVIDENCE_REQUIRED_FIELDS if field not in evidence]
+    if missing:
+        errors.append(f"{filename}: tool_evidence missing required fields: {missing}")
+
 status = "pass" if not errors and artifact_state["failure_signature"] != "non_elf_artifact" else "fail"
 report = {
     "schema_version": "v1",
@@ -674,6 +706,14 @@ report = {
     "checks": checks,
     "artifact_state": artifact_state,
     "tool_evidence": tool_evidence,
+    "inspection_timeout_policy": {
+        "env": INSPECTION_TIMEOUT_ENV,
+        "default_secs": INSPECTION_TIMEOUT_DEFAULT_SECS,
+        "min_secs": INSPECTION_TIMEOUT_MIN_SECS,
+        "max_secs": INSPECTION_TIMEOUT_MAX_SECS,
+        "timeout_exit_code": INSPECTION_TIMEOUT_EXIT_CODE,
+        "reported_field": "tool_evidence.*.timeout_secs",
+    },
     "errors": errors,
     "required_log_fields": REQUIRED_LOG_FIELDS,
     "required_report_fields": REQUIRED_REPORT_FIELDS,

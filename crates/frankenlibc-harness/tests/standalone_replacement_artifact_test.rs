@@ -34,6 +34,10 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
+    "tool_evidence.*.exit_code",
+    "tool_evidence.*.timed_out",
+    "tool_evidence.*.timeout_secs",
+    "tool_evidence.*.path",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -471,14 +475,19 @@ exit 0
     path
 }
 
-fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
+fn run_gate_with_env(
+    mode: &str,
+    prefix: &str,
+    envs: &[(&str, &str)],
+) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
     let root = workspace_root();
     let temp = unique_temp_dir(prefix);
     let out_dir = temp.join("out");
     let cargo_target = temp.join("cargo-target");
     let report = temp.join("standalone_replacement_artifact.report.json");
     let log = temp.join("standalone_replacement_artifact.log.jsonl");
-    let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+    let mut command = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"));
+    command
         .arg(mode)
         .current_dir(&root)
         .env("STANDALONE_REPLACEMENT_OUT_DIR", &out_dir)
@@ -486,10 +495,18 @@ fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::proces
         .env("STANDALONE_REPLACEMENT_REPORT", &report)
         .env("STANDALONE_REPLACEMENT_LOG", &log)
         .env_remove("FRANKENLIBC_STANDALONE_LIB")
-        .env_remove("LD_PRELOAD")
+        .env_remove("LD_PRELOAD");
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let output = command
         .output()
         .expect("standalone replacement artifact gate should run");
     (temp, report, log, output)
+}
+
+fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
+    run_gate_with_env(mode, prefix, &[])
 }
 
 #[test]
@@ -525,6 +542,19 @@ fn manifest_matches_forge_contract() {
         .map(|value| value.as_str().unwrap())
         .collect();
     assert_eq!(report_fields, REQUIRED_REPORT_FIELDS);
+    let timeout_policy = &manifest["inspection_timeout_policy"];
+    assert_eq!(
+        timeout_policy["env"].as_str(),
+        Some("STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS")
+    );
+    assert_eq!(timeout_policy["default_secs"].as_i64(), Some(60));
+    assert_eq!(timeout_policy["min_secs"].as_i64(), Some(1));
+    assert_eq!(timeout_policy["max_secs"].as_i64(), Some(300));
+    assert_eq!(timeout_policy["timeout_exit_code"].as_i64(), Some(124));
+    assert_eq!(
+        timeout_policy["reported_field"].as_str(),
+        Some("tool_evidence.*.timeout_secs")
+    );
 
     let classifications: HashSet<_> = manifest["expected_failure_classifications"]
         .as_array()
@@ -543,6 +573,32 @@ fn manifest_matches_forge_contract() {
     ] {
         assert!(classifications.contains(signature), "missing {signature}");
     }
+}
+
+#[test]
+fn invalid_inspection_timeout_override_fails_validate_only() {
+    let (_temp, report, _log, output) = run_gate_with_env(
+        "--validate-only",
+        "standalone-artifact-invalid-timeout",
+        &[("STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS", "0")],
+    );
+    assert!(
+        !output.status.success(),
+        "invalid timeout override should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = load_json(&report);
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    let errors = report["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors.iter().any(|error| error.as_str().is_some_and(
+            |message| message.contains("STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS")
+        )),
+        "expected timeout env error, got {errors:?}"
+    );
 }
 
 #[test]
