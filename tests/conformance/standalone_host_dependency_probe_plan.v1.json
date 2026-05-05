@@ -1,6 +1,14 @@
 {
   "schema_version": "v1",
   "bead": "bd-b92jd.1.1",
+  "source_commit": "3e387eab30c0c6f269e2eaf7804f59ffd113122f",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_host_dependency_probe_evidence",
+    "host_dependency_probe_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "title": "Replace-mode host-dependency probe plan",
   "purpose": "Inventory the deterministic probes required to distinguish L0/L1 LD_PRELOAD interpose evidence from L2/L3 standalone replacement evidence.",
   "inputs": {

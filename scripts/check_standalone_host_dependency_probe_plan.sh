@@ -121,6 +121,13 @@ REQUIRED_FORGE_FAILURE_SIGNATURE_TO_NEGATIVE_TEST = {
     "standalone_artifact_stale": "stale_source_commit",
     "host_glibc_dependency": "residual_host_glibc_dependency",
 }
+EXPECTED_FRESHNESS_POLICY = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_host_dependency_probe_evidence",
+    "host_dependency_probe_evidence_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
+}
 REQUIRED_BLOCKER_CATALOG_ROW_FIELDS = {
     "owner_surface",
     "severity",
@@ -142,6 +149,14 @@ def current_commit():
         ).strip()
     except Exception:
         return "unknown"
+
+
+def is_hex_commit(value):
+    return (
+        isinstance(value, str)
+        and len(value) == 40
+        and all(ch in "0123456789abcdefABCDEF" for ch in value)
+    )
 
 
 def rel(path):
@@ -174,6 +189,7 @@ def load_json(path):
 
 
 source_commit = current_commit()
+plan_source_commit = ""
 target_dir = os.environ.get("CARGO_TARGET_DIR", str(root / "target"))
 plan = load_json(plan_path)
 if not isinstance(plan, dict):
@@ -181,6 +197,12 @@ if not isinstance(plan, dict):
 
 if plan.get("schema_version") != "v1" or plan.get("bead") != BEAD_ID:
     errors.append("plan must declare schema_version=v1 and bead=bd-b92jd.1.1")
+if not is_hex_commit(plan.get("source_commit")):
+    errors.append("plan source_commit must be a 40-hex commit")
+else:
+    plan_source_commit = plan["source_commit"]
+if plan.get("source_commit_freshness_policy") != EXPECTED_FRESHNESS_POLICY:
+    errors.append("source_commit_freshness_policy must match the standalone host dependency stale-source block contract")
 if plan.get("required_log_fields") != REQUIRED_LOG_FIELDS:
     errors.append("required_log_fields must match standalone host dependency log contract")
 
@@ -572,7 +594,18 @@ report = {
     "status": "pass" if not errors else "fail",
     "errors": errors,
     "plan": rel(plan_path),
+    "plan_source_commit": plan_source_commit,
     "source_commit": source_commit,
+    "source_commit_freshness": {
+        "status": "current" if plan_source_commit == source_commit else "stale",
+        "recorded_source_commit_field": EXPECTED_FRESHNESS_POLICY["recorded_source_commit_field"],
+        "comparison_target": EXPECTED_FRESHNESS_POLICY["comparison_target"],
+        "stale_result": EXPECTED_FRESHNESS_POLICY["stale_result"],
+        "host_dependency_probe_evidence_allowed_when_stale": EXPECTED_FRESHNESS_POLICY[
+            "host_dependency_probe_evidence_allowed_when_stale"
+        ],
+        "rejected_evidence_kind": EXPECTED_FRESHNESS_POLICY["rejected_evidence_kind"],
+    },
     "target_dir": target_dir,
     "report_path": rel(report_path),
     "log_path": rel(log_path),

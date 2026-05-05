@@ -137,6 +137,61 @@ fn json_string<'a>(value: &'a Value, field: &str) -> TestResult<&'a str> {
         .ok_or_else(|| format!("{field} must be a string"))
 }
 
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn git_head(root: &Path) -> TestResult<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .map_err(|err| format!("git rev-parse HEAD should run: {err}"))?;
+    require(
+        output.status.success(),
+        format!("git rev-parse HEAD failed with status {}", output.status),
+    )?;
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| format!("git rev-parse HEAD emitted non-UTF8: {err}"))?;
+    let head = stdout.trim().to_owned();
+    require(
+        is_hex_commit(&head),
+        format!("git HEAD must be a 40-hex commit, got {head:?}"),
+    )?;
+    Ok(head)
+}
+
+fn source_commit_freshness_policy(plan: &Value) -> TestResult<&Value> {
+    json_field(plan, "source_commit_freshness_policy")
+}
+
+fn assert_source_commit_freshness_policy(plan: &Value) -> TestResult {
+    let policy = source_commit_freshness_policy(plan)?;
+    require(
+        json_string(policy, "recorded_source_commit_field")? == "source_commit",
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    require(
+        json_string(policy, "comparison_target")? == "current git HEAD",
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    require(
+        json_string(policy, "stale_result")? == "block_standalone_host_dependency_probe_evidence",
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    require(
+        json_field(policy, "host_dependency_probe_evidence_allowed_when_stale")?.as_bool()
+            == Some(false),
+        "source_commit_freshness_policy.host_dependency_probe_evidence_allowed_when_stale",
+    )?;
+    require(
+        json_string(policy, "rejected_evidence_kind")? == "stale_source_commit",
+        "source_commit_freshness_policy.rejected_evidence_kind",
+    )
+}
+
 fn json_item_string<'a>(value: &'a Value, field: &str) -> TestResult<&'a str> {
     value
         .as_str()
@@ -289,6 +344,12 @@ fn plan_has_required_shape_and_probe_coverage() -> TestResult {
         "schema_version",
     )?;
     require(json_string(&plan, "bead")? == "bd-b92jd.1.1", "bead")?;
+    let source_commit = json_string(&plan, "source_commit")?;
+    require(
+        is_hex_commit(source_commit),
+        format!("source_commit must be a 40-hex commit, got {source_commit:?}"),
+    )?;
+    assert_source_commit_freshness_policy(&plan)?;
     require(
         json_field(&plan, "inputs")?.is_object(),
         "inputs must be object",
@@ -521,6 +582,38 @@ fn probe_rows_have_materialized_refs_and_fail_closed_boundaries() -> TestResult 
 }
 
 #[test]
+fn stale_source_commit_policy_blocks_host_dependency_probe_evidence() -> TestResult {
+    let root = workspace_root()?;
+    let plan = load_json(&plan_path(&root))?;
+    let source_commit = json_string(&plan, "source_commit")?;
+    require(
+        is_hex_commit(source_commit),
+        format!("source_commit must be a 40-hex commit, got {source_commit:?}"),
+    )?;
+    assert_source_commit_freshness_policy(&plan)?;
+
+    let current_head = git_head(&root)?;
+    if source_commit != current_head {
+        let policy = source_commit_freshness_policy(&plan)?;
+        require(
+            json_string(policy, "stale_result")?
+                == "block_standalone_host_dependency_probe_evidence",
+            "stale standalone host dependency source_commit must block probe evidence",
+        )?;
+        require(
+            json_field(policy, "host_dependency_probe_evidence_allowed_when_stale")?.as_bool()
+                == Some(false),
+            "stale standalone host dependency source_commit must not allow probe evidence",
+        )?;
+        require(
+            json_string(policy, "rejected_evidence_kind")? == "stale_source_commit",
+            "stale standalone host dependency source_commit must use stale_source_commit",
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
 fn checker_emits_report_and_required_jsonl_rows() -> TestResult {
     let (report, log_path) = run_checker("standalone-host-probe-plan-pass")?;
     require(
@@ -552,6 +645,29 @@ fn checker_emits_report_and_required_jsonl_rows() -> TestResult {
         json_string(&report, "source_commit")?.len() == 40,
         "report source_commit must be current git SHA",
     )?;
+    require(
+        json_string(&report, "plan_source_commit")?.len() == 40,
+        "report plan_source_commit must be the manifest SHA",
+    )?;
+    let freshness = json_field(&report, "source_commit_freshness")?;
+    require(
+        json_string(freshness, "stale_result")?
+            == "block_standalone_host_dependency_probe_evidence",
+        "report freshness policy must block stale probe evidence",
+    )?;
+    require(
+        json_field(
+            freshness,
+            "host_dependency_probe_evidence_allowed_when_stale",
+        )?
+        .as_bool()
+            == Some(false),
+        "report freshness policy must not allow stale probe evidence",
+    )?;
+    require(
+        json_string(freshness, "rejected_evidence_kind")? == "stale_source_commit",
+        "report freshness policy must identify stale_source_commit",
+    )?;
 
     let rows = parse_jsonl(&log_path)?;
     require(rows.len() == 14, "expected one JSONL row per probe")?;
@@ -575,6 +691,41 @@ fn checker_rejects_missing_probe_type_row() -> TestResult {
         &mutated,
         "standalone-host-probe-plan-missing-type",
         "missing probe type rows",
+    )
+}
+
+#[test]
+fn checker_rejects_missing_source_commit_freshness_policy() -> TestResult {
+    let mutated = write_mutated_plan("standalone-host-probe-plan-missing-freshness", |plan| {
+        plan.as_object_mut()
+            .ok_or_else(|| "plan must be object".to_string())?
+            .remove("source_commit_freshness_policy");
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "standalone-host-probe-plan-missing-freshness",
+        "source_commit_freshness_policy must match",
+    )
+}
+
+#[test]
+fn checker_rejects_source_commit_policy_that_allows_stale_evidence() -> TestResult {
+    let mutated = write_mutated_plan("standalone-host-probe-plan-stale-allowed", |plan| {
+        let policy = plan
+            .get_mut("source_commit_freshness_policy")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing source_commit_freshness_policy".to_string())?;
+        policy.insert(
+            "host_dependency_probe_evidence_allowed_when_stale".to_string(),
+            Value::Bool(true),
+        );
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "standalone-host-probe-plan-stale-allowed",
+        "source_commit_freshness_policy must match",
     )
 }
 
