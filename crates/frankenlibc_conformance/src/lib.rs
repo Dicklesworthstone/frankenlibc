@@ -1,7 +1,7 @@
 //! Conformance and parity tooling for frankenlibc.
 
 use std::cell::RefCell;
-use std::ffi::{CString, c_char, c_double, c_int, c_long, c_longlong, c_uint, c_void};
+use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_longlong, c_uint, c_void};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -610,6 +610,9 @@ pub fn execute_fixture_case(
         "inet_addr" => execute_inet_addr_case(inputs, mode),
         "inet_pton" => execute_inet_pton_case(inputs, mode),
         "inet_ntop" => execute_inet_ntop_case(inputs, mode),
+        // mntent
+        "getmntent_r" => execute_mntent_getmntent_r_case(inputs, mode),
+        "hasmntopt" => execute_mntent_hasmntopt_case(inputs, mode),
         // strtok
         "strtok" => execute_strtok_case(inputs, mode),
         "strtok_r" => execute_strtok_r_case(inputs, mode),
@@ -1905,6 +1908,199 @@ fn non_host_execution(impl_output: String) -> DifferentialExecution {
         impl_output,
         host_parity: true,
         note: None,
+    }
+}
+
+fn execute_mntent_getmntent_r_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let line = parse_u8_vec_or_string(inputs, "line")?;
+    if line.contains(&0) {
+        return Err(String::from(
+            "getmntent_r fixture line must not contain NUL",
+        ));
+    }
+
+    let impl_output = impl_mntent_parse_output(&line);
+    let host_output = host_mntent_parse_output(&line)?;
+    let host_parity = host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: (!host_parity).then(|| String::from("getmntent_r parsed field mismatch")),
+    })
+}
+
+fn execute_mntent_hasmntopt_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let opts = parse_u8_vec_or_string(inputs, "opts")?;
+    let needle = parse_u8_vec_or_string_any(inputs, &["opt", "needle"])?;
+    if opts.contains(&0) || needle.contains(&0) {
+        return Err(String::from(
+            "hasmntopt fixture opts/needle must not contain NUL",
+        ));
+    }
+
+    let impl_output = mntent_offset_output(frankenlibc_core::mntent::has_mnt_opt(&opts, &needle));
+    let host_output = host_mntent_hasmntopt_output(&opts, &needle)?;
+    let host_parity = host_output == impl_output;
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: (!host_parity).then(|| String::from("hasmntopt token-boundary mismatch")),
+    })
+}
+
+fn impl_mntent_parse_output(line: &[u8]) -> String {
+    match frankenlibc_core::mntent::parse_mntent_line(line) {
+        Some(fields) => format_mntent_fields_output(
+            fields.fsname,
+            fields.dir,
+            fields.mtype,
+            fields.opts,
+            fields.freq,
+            fields.passno,
+        ),
+        None => String::from("NONE"),
+    }
+}
+
+fn host_mntent_parse_output(line: &[u8]) -> Result<String, String> {
+    let mut data = line.to_vec();
+    if data.is_empty() {
+        data.push(b'\n');
+    }
+    let mode = CString::new("r").map_err(|err| format!("invalid fmemopen mode: {err}"))?;
+    let stream = unsafe {
+        // SAFETY: `data` is a live mutable buffer for the lifetime of the FILE and `mode`
+        // is a NUL-terminated C string.
+        libc::fmemopen(
+            data.as_mut_ptr().cast::<c_void>(),
+            data.len(),
+            mode.as_ptr(),
+        )
+    };
+    if stream.is_null() {
+        return Err(String::from("host fmemopen failed"));
+    }
+
+    let mut mnt = libc::mntent {
+        mnt_fsname: std::ptr::null_mut(),
+        mnt_dir: std::ptr::null_mut(),
+        mnt_type: std::ptr::null_mut(),
+        mnt_opts: std::ptr::null_mut(),
+        mnt_freq: 0,
+        mnt_passno: 0,
+    };
+    let mut buffer = vec![0 as c_char; 1024];
+    let buflen = c_int::try_from(buffer.len())
+        .map_err(|_| String::from("getmntent_r scratch buffer too large for c_int"))?;
+    let ptr = unsafe {
+        // SAFETY: `stream` is a valid FILE from fmemopen, `mnt` points to writable storage,
+        // and `buffer` is a writable scratch buffer of `buflen` bytes.
+        libc::getmntent_r(stream, &mut mnt, buffer.as_mut_ptr(), buflen)
+    };
+
+    let output = if ptr.is_null() {
+        String::from("NONE")
+    } else {
+        host_mntent_record_output(&mnt)
+    };
+
+    let close_rc = unsafe {
+        // SAFETY: `stream` was returned by fmemopen and has not been closed yet.
+        libc::fclose(stream)
+    };
+    if close_rc != 0 {
+        return Err(format!("host fclose failed with rc={close_rc}"));
+    }
+
+    Ok(output)
+}
+
+fn host_mntent_hasmntopt_output(opts: &[u8], needle: &[u8]) -> Result<String, String> {
+    let opts_c =
+        CString::new(opts).map_err(|_| String::from("hasmntopt opts contains interior NUL"))?;
+    let needle_c =
+        CString::new(needle).map_err(|_| String::from("hasmntopt needle contains interior NUL"))?;
+    let ent = libc::mntent {
+        mnt_fsname: std::ptr::null_mut(),
+        mnt_dir: std::ptr::null_mut(),
+        mnt_type: std::ptr::null_mut(),
+        mnt_opts: opts_c.as_ptr().cast_mut(),
+        mnt_freq: 0,
+        mnt_passno: 0,
+    };
+    let ptr = unsafe {
+        // SAFETY: `ent` contains a valid NUL-terminated `mnt_opts` pointer and `needle_c`
+        // is a valid NUL-terminated option name for the duration of the call.
+        libc::hasmntopt(&ent, needle_c.as_ptr())
+    };
+
+    if ptr.is_null() {
+        return Ok(String::from("NULL"));
+    }
+
+    let offset = unsafe {
+        // SAFETY: hasmntopt returns either NULL or a pointer into `mnt_opts`.
+        ptr.cast_const().offset_from(opts_c.as_ptr())
+    };
+    if offset < 0 || usize::try_from(offset).is_err() {
+        return Err(String::from("host hasmntopt returned pointer outside opts"));
+    }
+
+    Ok(mntent_offset_output(Some(offset as usize)))
+}
+
+fn host_mntent_record_output(mnt: &libc::mntent) -> String {
+    let fsname = host_cstr_bytes(mnt.mnt_fsname);
+    let dir = host_cstr_bytes(mnt.mnt_dir);
+    let mtype = host_cstr_bytes(mnt.mnt_type);
+    let opts = host_cstr_bytes(mnt.mnt_opts);
+    format_mntent_fields_output(&fsname, &dir, &mtype, &opts, mnt.mnt_freq, mnt.mnt_passno)
+}
+
+fn host_cstr_bytes(ptr: *const c_char) -> Vec<u8> {
+    if ptr.is_null() {
+        return b"NULL".to_vec();
+    }
+    unsafe {
+        // SAFETY: libc returned field pointers as NUL-terminated strings in getmntent_r's
+        // caller-owned scratch buffer.
+        CStr::from_ptr(ptr).to_bytes().to_vec()
+    }
+}
+
+fn format_mntent_fields_output(
+    fsname: &[u8],
+    dir: &[u8],
+    mtype: &[u8],
+    opts: &[u8],
+    freq: i32,
+    passno: i32,
+) -> String {
+    format!(
+        "fsname={};dir={};type={};opts={};freq={freq};passno={passno}",
+        fixture_text_output(fsname),
+        fixture_text_output(dir),
+        fixture_text_output(mtype),
+        fixture_text_output(opts),
+    )
+}
+
+fn mntent_offset_output(offset: Option<usize>) -> String {
+    match offset {
+        Some(index) => format!("OFFSET_{index}"),
+        None => String::from("NULL"),
     }
 }
 

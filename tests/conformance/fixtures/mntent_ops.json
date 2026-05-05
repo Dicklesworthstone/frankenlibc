@@ -1,0 +1,78 @@
+{
+  "version": "v1",
+  "family": "mntent",
+  "captured_at": "2026-05-05T16:30:00Z",
+  "description": "Fixture-backed GNU mntent parser and option search cases for getmntent_r and hasmntopt.",
+  "spec_reference": "glibc <mntent.h> getmntent_r and hasmntopt contracts",
+  "cases": [
+    {
+      "name": "getmntent_r_basic_mount_line",
+      "function": "getmntent_r",
+      "spec_section": "glibc <mntent.h> getmntent_r parses six-field mount entries",
+      "inputs": {
+        "line": "/dev/sda1 / ext4 rw,relatime 0 1\n"
+      },
+      "expected_output": "fsname=/dev/sda1;dir=/;type=ext4;opts=rw,relatime;freq=0;passno=1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getmntent_r_defaults_missing_freq_passno",
+      "function": "getmntent_r",
+      "spec_section": "glibc <mntent.h> getmntent_r defaults missing freq/passno to zero",
+      "inputs": {
+        "line": "tmpfs /tmp tmpfs rw,nosuid\n"
+      },
+      "expected_output": "fsname=tmpfs;dir=/tmp;type=tmpfs;opts=rw,nosuid;freq=0;passno=0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getmntent_r_skips_comment_line",
+      "function": "getmntent_r",
+      "spec_section": "glibc <mntent.h> getmntent_r skips comment-only records",
+      "inputs": {
+        "line": "# comment only\n"
+      },
+      "expected_output": "NONE",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "hasmntopt_finds_whole_token",
+      "function": "hasmntopt",
+      "spec_section": "glibc <mntent.h> hasmntopt returns a pointer to a whole matching option token",
+      "inputs": {
+        "opts": "rw,noexec,nosuid",
+        "opt": "noexec"
+      },
+      "expected_output": "OFFSET_3",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "hasmntopt_rejects_substring",
+      "function": "hasmntopt",
+      "spec_section": "glibc <mntent.h> hasmntopt requires comma-token boundaries",
+      "inputs": {
+        "opts": "rw,noexec,nosuid",
+        "opt": "exec"
+      },
+      "expected_output": "NULL",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "hasmntopt_finds_key_value_token",
+      "function": "hasmntopt",
+      "spec_section": "glibc <mntent.h> hasmntopt locates key=value option tokens",
+      "inputs": {
+        "opts": "rw,size=64k,noatime",
+        "opt": "size=64k"
+      },
+      "expected_output": "OFFSET_3",
+      "expected_errno": 0,
+      "mode": "both"
+    }
+  ]
+}
