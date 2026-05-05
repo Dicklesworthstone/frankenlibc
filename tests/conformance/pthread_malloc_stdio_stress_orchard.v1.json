@@ -5,6 +5,13 @@
   "owner_bead": "bd-b92jd.5",
   "generated_utc": "2026-05-05T01:30:00Z",
   "source_commit": "5af58013880b7e186fbb45a52688e1837270fccb",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_stress_orchard_evidence",
+    "stress_orchard_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "purpose": "Hermetic stress orchard for pthread/malloc/stdio interleavings. Each scenario is a deterministic, bounded-iteration replay with a fixed PCG32 seed; the manifest is the source of truth for which scenarios exist, what oracles they assert, which iteration tiers they ship, and where their structured-log evidence lands. The execution runner validates the manifest, emits current smoke + normal-tier JSONL evidence for each declared runtime mode, records per-scenario counters and failure signatures, and refuses to advertise stress coverage in support_matrix/release surfaces unless every cited scenario row is currently sealed.",
   "execution_runner": "scripts/run_pthread_malloc_stdio_stress_orchard.sh",
   "freshness": {

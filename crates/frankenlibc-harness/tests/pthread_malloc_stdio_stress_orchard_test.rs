@@ -24,6 +24,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -144,6 +145,89 @@ fn manifest_path() -> PathBuf {
     workspace_root().join("tests/conformance/pthread_malloc_stdio_stress_orchard.v1.json")
 }
 
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn git_head(root: &Path) -> Result<String, Box<dyn Error>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure_args(
+        output.status.success(),
+        format_args!("git rev-parse HEAD failed with status {}", output.status),
+    )?;
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git rev-parse HEAD emitted non-UTF8: {err}")))?;
+    let head = stdout.trim().to_owned();
+    ensure_args(
+        is_hex_commit(&head),
+        format_args!("git HEAD must be a 40-hex commit, got {head:?}"),
+    )?;
+    Ok(head)
+}
+
+fn stress_orchard_source_commit_freshness_policy(
+    manifest: &Value,
+) -> Result<&Value, Box<dyn Error>> {
+    field(manifest, "source_commit_freshness_policy", "manifest")
+}
+
+fn assert_stress_orchard_source_commit_freshness_policy(manifest: &Value) -> TestResult {
+    let policy = stress_orchard_source_commit_freshness_policy(manifest)?;
+    ensure_eq(
+        string_field(
+            policy,
+            "recorded_source_commit_field",
+            "source_commit_freshness_policy",
+        )?,
+        "source_commit",
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        string_field(
+            policy,
+            "comparison_target",
+            "source_commit_freshness_policy",
+        )?,
+        "current git HEAD",
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    ensure_eq(
+        string_field(policy, "stale_result", "source_commit_freshness_policy")?,
+        "block_stress_orchard_evidence",
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    let allowed_when_stale = field(
+        policy,
+        "stress_orchard_evidence_allowed_when_stale",
+        "source_commit_freshness_policy",
+    )?
+    .as_bool()
+    .ok_or_else(|| {
+        test_error("source_commit_freshness_policy.stress_orchard_evidence_allowed_when_stale must be a boolean")
+    })?;
+    ensure_eq(
+        allowed_when_stale,
+        false,
+        "source_commit_freshness_policy.stress_orchard_evidence_allowed_when_stale",
+    )?;
+    ensure_eq(
+        string_field(
+            policy,
+            "rejected_evidence_kind",
+            "source_commit_freshness_policy",
+        )?,
+        "stale_source_commit",
+        "source_commit_freshness_policy.rejected_evidence_kind",
+    )?;
+    Ok(())
+}
+
 const REQUIRED_LOG_FIELDS: &[&str] = &[
     "trace_id",
     "bead_id",
@@ -197,6 +281,11 @@ fn manifest_is_well_formed() -> TestResult {
         "bead",
     )?;
     ensure(!source_commit.is_empty(), "source_commit must be set")?;
+    ensure_args(
+        is_hex_commit(source_commit),
+        format_args!("source_commit must be a 40-hex commit, got {source_commit:?}"),
+    )?;
+    assert_stress_orchard_source_commit_freshness_policy(&manifest)?;
 
     let log_fields: Vec<&str> = array_field(&manifest, "required_log_fields", "manifest")?
         .iter()
@@ -207,6 +296,46 @@ fn manifest_is_well_formed() -> TestResult {
         REQUIRED_LOG_FIELDS.to_vec(),
         "required_log_fields",
     )?;
+    Ok(())
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_stress_orchard_evidence() -> TestResult {
+    let manifest = load_json(&manifest_path())?;
+    let source_commit = string_field(&manifest, "source_commit", "manifest")?;
+    ensure_args(
+        is_hex_commit(source_commit),
+        format_args!("source_commit must be a 40-hex commit, got {source_commit:?}"),
+    )?;
+    let current_head = git_head(&workspace_root())?;
+    assert_stress_orchard_source_commit_freshness_policy(&manifest)?;
+    if source_commit != current_head {
+        let policy = stress_orchard_source_commit_freshness_policy(&manifest)?;
+        ensure_eq(
+            string_field(policy, "stale_result", "source_commit_freshness_policy")?,
+            "block_stress_orchard_evidence",
+            "stale source commits must block stress orchard evidence",
+        )?;
+        ensure_eq(
+            field(
+                policy,
+                "stress_orchard_evidence_allowed_when_stale",
+                "source_commit_freshness_policy",
+            )?
+            .as_bool(),
+            Some(false),
+            "stale source commits must not allow stress orchard evidence",
+        )?;
+        ensure_eq(
+            string_field(
+                policy,
+                "rejected_evidence_kind",
+                "source_commit_freshness_policy",
+            )?,
+            "stale_source_commit",
+            "stale source commits must use the stale_source_commit rejection kind",
+        )?;
+    }
     Ok(())
 }
 
