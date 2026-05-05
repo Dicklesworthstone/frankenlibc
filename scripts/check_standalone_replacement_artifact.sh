@@ -121,6 +121,15 @@ EXPECTED_HASH_EVIDENCE_POLICY = {
     "evidence_file": "artifact.sha256",
 }
 
+EXPECTED_SYMBOL_SAMPLES = [
+    "__libc_start_main",
+    "malloc",
+    "free",
+    "printf",
+    "pthread_create",
+    "getaddrinfo",
+]
+
 EXPECTED_FAILURE_CLASSIFICATIONS = {
     "standalone_artifact_missing": "claim_blocked",
     "standalone_artifact_stale": "claim_blocked",
@@ -493,6 +502,8 @@ def validate_manifest():
         errors.append("required_tools do not match script contract")
     if manifest.get("hash_evidence_policy") != EXPECTED_HASH_EVIDENCE_POLICY:
         errors.append("hash_evidence_policy does not match script contract")
+    if manifest.get("symbol_samples") != EXPECTED_SYMBOL_SAMPLES:
+        errors.append("symbol_samples do not match script contract")
     classifications = manifest.get("expected_failure_classifications", [])
     classification_map = {}
     if isinstance(classifications, list):

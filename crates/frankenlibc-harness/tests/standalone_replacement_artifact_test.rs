@@ -668,6 +668,23 @@ fn manifest_matches_forge_contract() {
             .and_then(serde_json::Value::as_str),
         Some("artifact.sha256")
     );
+    let symbol_samples: Vec<_> = manifest["symbol_samples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        symbol_samples,
+        [
+            "__libc_start_main",
+            "malloc",
+            "free",
+            "printf",
+            "pthread_create",
+            "getaddrinfo",
+        ]
+    );
 
     let fields: Vec<_> = manifest["required_log_fields"]
         .as_array()
@@ -838,6 +855,41 @@ fn validate_only_rejects_hash_evidence_policy_contract_drift() {
             error.as_str() == Some("hash_evidence_policy does not match script contract")
         }),
         "expected hash_evidence_policy contract error: {errors:?}"
+    );
+}
+
+#[test]
+fn validate_only_rejects_symbol_samples_contract_drift() {
+    let manifest_path = write_manifest_variant(
+        "standalone-artifact-symbol-samples-drift-manifest",
+        |manifest| {
+            manifest["symbol_samples"] =
+                serde_json::json!(["__libc_start_main", "malloc", "free", "printf"]);
+        },
+    );
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) = run_gate_with_env(
+        "--validate-only",
+        "standalone-artifact-symbol-samples-drift",
+        &envs,
+    );
+    assert!(
+        !output.status.success(),
+        "symbol_samples drift should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.as_str() == Some("symbol_samples do not match script contract")),
+        "expected symbol_samples contract error: {errors:?}"
     );
 }
 
