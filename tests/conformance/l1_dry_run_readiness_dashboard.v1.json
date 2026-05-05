@@ -601,6 +601,46 @@
       "rationale": "Stale standalone real-program evidence must remain claim_blocked."
     },
     {
+      "row_id": "dlfcn-l1-burndown-source-commit-field",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "L1 dashboard consumers must see that dlfcn burndown freshness is bound to the burndown artifact source_commit."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-source-commit-comparison-target",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "L1 dashboard consumers must see that dlfcn burndown freshness compares against the current source checkout."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-source-commit-stale-result",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_l1_burndown_classification",
+      "rationale": "A stale dlfcn L1 burndown source commit must block burndown classification evidence."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-source-commit-no-classification",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "source_commit_freshness_policy.classification_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Stale dlfcn L1 burndown classification evidence cannot support L1 readiness rows."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-source-commit-rejection-kind",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_source_commit",
+      "rationale": "Dashboard consumers must see stale dlfcn burndown source drift as stale_source_commit evidence."
+    },
+    {
       "row_id": "dlfcn-sentinel-l1-blocker-count-bound",
       "row_kind": "dlfcn",
       "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
