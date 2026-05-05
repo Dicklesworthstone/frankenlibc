@@ -705,6 +705,22 @@
       "rationale": "ld_preload smoke overall must not be failed."
     },
     {
+      "row_id": "l1-dashboard-source-commit-field",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "Dashboard consumers must see which field carries the dashboard source commit freshness token."
+    },
+    {
+      "row_id": "l1-dashboard-source-commit-current-head-check",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+      "field": "source_commit_freshness_policy.current_head_check",
+      "expected_value": "git rev-parse HEAD",
+      "rationale": "Dashboard consumers must see the exact git command used to compare the dashboard source commit against the current checkout."
+    },
+    {
       "row_id": "l1-dashboard-source-commit-fresh-result",
       "row_kind": "gate_meta",
       "evidence_artifact": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",

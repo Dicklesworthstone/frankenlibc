@@ -1181,6 +1181,20 @@ fn source_commit_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
         (
+            "l1-dashboard-source-commit-field",
+            (
+                "source_commit_freshness_policy.recorded_source_commit_field",
+                json!("source_commit"),
+            ),
+        ),
+        (
+            "l1-dashboard-source-commit-current-head-check",
+            (
+                "source_commit_freshness_policy.current_head_check",
+                json!("git rev-parse HEAD"),
+            ),
+        ),
+        (
             "l1-dashboard-source-commit-fresh-result",
             (
                 "source_commit_freshness_policy.fresh_result",
@@ -1213,7 +1227,7 @@ fn source_commit_freshness_rows_are_explicit() -> TestResult {
     .collect();
     for row in as_array(&dashboard["rows"], "rows")? {
         let row_id = as_str(&row["row_id"], "row.row_id")?;
-        if row_id != "l1-dashboard-source-commit-fresh-result"
+        if !row_id.starts_with("l1-dashboard-source-commit-")
             && !row_id.starts_with("l1-dashboard-stale-source-commit-")
         {
             continue;
