@@ -428,6 +428,77 @@ fn l1_dry_run_dashboard_wrong_source_commit_blocks_release_doc_claim() -> TestRe
 }
 
 #[test]
+fn l1_proof_matrix_wrong_source_commit_blocks_release_claim() -> TestResult {
+    let root = workspace_root()?;
+    let matrix = unique_output_path("wrong-source-l1-matrix")?;
+    let dashboard = unique_output_path("current-l1-dashboard")?;
+    let claims = unique_output_path("wrong-source-l1-matrix-claims")?;
+    let report = unique_output_path("wrong-source-l1-matrix-report")?;
+    let log = unique_output_path("wrong-source-l1-matrix-log")?;
+
+    let mut matrix_json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"),
+    )?)?;
+    matrix_json["source_commit"] = serde_json::json!(STALE_TEST_COMMIT);
+    write_file(
+        &matrix,
+        &(serde_json::to_string_pretty(&matrix_json)? + "\n"),
+    )?;
+    write_file(
+        &dashboard,
+        &l1_dashboard_fixture("2026-05-05T07:00:00Z", CURRENT_TEST_COMMIT, true),
+    )?;
+    write_file(
+        &claims,
+        &format!(
+            r#"{{
+  "schema_version": "v1",
+  "claims": [
+    {{
+      "id": "wrong-source-l1-matrix-claim",
+      "tag": "v9.9.9-L1",
+      "claimed_level": "L1",
+      "artifact_refs": [{}]
+    }}
+  ]
+}}
+"#,
+            release_claim_refs(&[rel_path(&matrix)?, rel_path(&dashboard)?])?
+        ),
+    )?;
+
+    let output = run_gate_with_env(
+        &[
+            "--claims".to_owned(),
+            path_arg(&claims),
+            "--report".to_owned(),
+            path_arg(&report),
+            "--log".to_owned(),
+            path_arg(&log),
+        ],
+        &[
+            ("FRANKENLIBC_L1_PROOF_MATRIX", path_arg(&matrix)),
+            ("FRANKENLIBC_L1_DRY_RUN_DASHBOARD", path_arg(&dashboard)),
+            ("SOURCE_COMMIT", CURRENT_TEST_COMMIT.to_owned()),
+        ],
+    )?;
+
+    assert!(
+        !output.status.success(),
+        "wrong L1 proof matrix source_commit must block replacement claims"
+    );
+    let report_json = read_report(&report)?;
+    assert!(
+        report_json["claims"][0]["failure_signature"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("release_claim_l1_matrix_source_commit_stale"),
+        "wrong L1 proof matrix source_commit failure not found: {report_json}"
+    );
+    Ok(())
+}
+
+#[test]
 fn l1_dry_run_dashboard_missing_required_row_kind_blocks_release_doc_claim() -> TestResult {
     let dashboard = unique_output_path("missing-perf-l1-dashboard")?;
     let claims = unique_output_path("missing-perf-l1-dashboard-claims")?;

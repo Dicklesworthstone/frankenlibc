@@ -232,6 +232,38 @@ def l1_dashboard_source_commit_errors(dashboard):
     return []
 
 
+def l1_matrix_source_commit_errors(matrix):
+    matrix_commit = matrix.get("source_commit")
+    if not full_git_commit(matrix_commit):
+        return ["release_claim_l1_matrix_source_commit_invalid"]
+    if commit == "unknown":
+        return ["release_claim_l1_matrix_source_commit_unknown"]
+    if matrix_commit != commit:
+        errors = ["release_claim_l1_matrix_source_commit_stale"]
+        freshness_policy = matrix.get("source_commit_freshness_policy", {})
+        if not isinstance(freshness_policy, dict):
+            errors.append("release_claim_l1_matrix_source_commit_policy_invalid")
+        else:
+            if freshness_policy.get("recorded_source_commit_field") != "source_commit":
+                errors.append("release_claim_l1_matrix_source_commit_policy_invalid")
+            if freshness_policy.get("comparison_target") != "current git HEAD":
+                errors.append("release_claim_l1_matrix_source_commit_policy_invalid")
+            if (
+                freshness_policy.get("stale_result")
+                != "block_l1_crt_startup_tls_proof_matrix_evidence"
+            ):
+                errors.append("release_claim_l1_matrix_source_commit_policy_invalid")
+            if (
+                freshness_policy.get("startup_tls_matrix_evidence_allowed_when_stale")
+                is not False
+            ):
+                errors.append("release_claim_l1_matrix_source_commit_policy_invalid")
+            if freshness_policy.get("rejected_evidence_kind") != "stale_source_commit":
+                errors.append("release_claim_l1_matrix_source_commit_policy_invalid")
+        return errors
+    return []
+
+
 def select_field(data, field_path):
     cursor = data
     for segment in str(field_path).split("."):
@@ -365,6 +397,7 @@ def l1_evidence_errors(claim, current_level, current_release_level):
     policy = matrix.get("claim_policy", {})
     summary = matrix.get("summary", {})
     max_age_days = int(policy.get("max_evidence_age_days", default_max_evidence_age_days))
+    errors.extend(l1_matrix_source_commit_errors(matrix))
     errors.extend(stale_evidence_errors(matrix, "l1", max_age_days))
     if policy.get("current_claim_status") == "blocked":
         errors.append("release_claim_l1_policy_blocked")

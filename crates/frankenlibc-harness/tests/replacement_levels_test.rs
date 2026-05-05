@@ -91,6 +91,41 @@ const L1_CRT_REQUIRED_ROWS: &[&str] = &[
     "failure_diagnostics",
 ];
 
+fn is_full_git_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn git_head(root: &Path) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .map_err(|err| format!("git rev-parse HEAD should run: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git rev-parse HEAD failed with status {}",
+            output.status
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| format!("git rev-parse HEAD emitted non-UTF8: {err}"))?;
+    let head = stdout.trim().to_owned();
+    if !is_full_git_commit(&head) {
+        return Err(format!("git HEAD must be a 40-hex commit, got {head:?}"));
+    }
+    Ok(head)
+}
+
+fn l1_crt_startup_tls_source_commit_policy(
+    matrix: &serde_json::Value,
+) -> Option<&serde_json::Value> {
+    matrix
+        .as_object()
+        .and_then(|object| object.get("source_commit_freshness_policy"))
+}
+
 fn json_string_array(value: &serde_json::Value, field: &str) -> Result<Vec<String>, Vec<String>> {
     value[field]
         .as_array()
@@ -144,6 +179,44 @@ fn validate_l1_crt_startup_tls_matrix(matrix: &serde_json::Value) -> Result<(), 
     }
     if matrix["claim_policy"]["replacement_level"].as_str() != Some("L1") {
         errors.push("claim_policy.replacement_level must be L1".to_string());
+    }
+    match matrix["source_commit"].as_str() {
+        Some(source_commit) if is_full_git_commit(source_commit) => {}
+        Some(source_commit) => errors.push(format!(
+            "source_commit must be a 40-hex git commit, got {source_commit:?}"
+        )),
+        None => errors.push("source_commit must be present".to_string()),
+    }
+
+    match l1_crt_startup_tls_source_commit_policy(matrix).and_then(|policy| policy.as_object()) {
+        Some(policy) => {
+            for (field, expected) in [
+                ("recorded_source_commit_field", "source_commit"),
+                ("comparison_target", "current git HEAD"),
+                (
+                    "stale_result",
+                    "block_l1_crt_startup_tls_proof_matrix_evidence",
+                ),
+                ("rejected_evidence_kind", "stale_source_commit"),
+            ] {
+                if policy.get(field).and_then(|value| value.as_str()) != Some(expected) {
+                    errors.push(format!(
+                        "source_commit_freshness_policy.{field} must be {expected}"
+                    ));
+                }
+            }
+            if policy
+                .get("startup_tls_matrix_evidence_allowed_when_stale")
+                .and_then(|value| value.as_bool())
+                != Some(false)
+            {
+                errors.push(
+                    "source_commit_freshness_policy.startup_tls_matrix_evidence_allowed_when_stale must be false"
+                        .to_string(),
+                );
+            }
+        }
+        None => errors.push("source_commit_freshness_policy must be an object".to_string()),
     }
 
     let log_fields = json_string_array(matrix, "required_log_fields").unwrap_or_else(|errs| {
@@ -878,6 +951,72 @@ fn l1_crt_startup_tls_proof_matrix_rejects_contradictory_evidence() {
             .any(|error| error.contains("contradicts promotion_decision")),
         "contradictory-evidence error not found: {errors:?}"
     );
+}
+
+#[test]
+fn l1_crt_startup_tls_proof_matrix_rejects_missing_source_commit_policy() {
+    let mut matrix = load_l1_crt_startup_tls_matrix();
+    matrix
+        .as_object_mut()
+        .unwrap()
+        .remove("source_commit_freshness_policy");
+
+    let errors = validate_l1_crt_startup_tls_matrix(&matrix)
+        .expect_err("matrix without source_commit_freshness_policy must fail validation");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("source_commit_freshness_policy must be an object")),
+        "missing source-commit policy error not found: {errors:?}"
+    );
+}
+
+#[test]
+fn l1_crt_startup_tls_proof_matrix_rejects_policy_that_allows_stale_evidence() {
+    let mut matrix = load_l1_crt_startup_tls_matrix();
+    matrix["source_commit_freshness_policy"]["startup_tls_matrix_evidence_allowed_when_stale"] =
+        serde_json::json!(true);
+
+    let errors = validate_l1_crt_startup_tls_matrix(&matrix)
+        .expect_err("matrix policy that allows stale source commits must fail validation");
+    assert!(
+        errors.iter().any(|error| error.contains(
+            "source_commit_freshness_policy.startup_tls_matrix_evidence_allowed_when_stale must be false"
+        )),
+        "stale-policy allowance error not found: {errors:?}"
+    );
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_l1_crt_startup_tls_matrix_evidence() {
+    let matrix = load_l1_crt_startup_tls_matrix();
+    let source_commit = matrix["source_commit"]
+        .as_str()
+        .expect("source_commit must be present");
+    assert!(
+        is_full_git_commit(source_commit),
+        "source_commit must be a 40-hex commit, got {source_commit:?}"
+    );
+    let current_head = git_head(&workspace_root()).expect("git HEAD should be readable");
+    let policy = l1_crt_startup_tls_source_commit_policy(&matrix)
+        .expect("source_commit_freshness_policy must be present");
+    if source_commit != current_head {
+        assert_eq!(
+            policy["stale_result"].as_str(),
+            Some("block_l1_crt_startup_tls_proof_matrix_evidence"),
+            "stale source commits must block L1 CRT/startup/TLS matrix evidence",
+        );
+        assert_eq!(
+            policy["startup_tls_matrix_evidence_allowed_when_stale"].as_bool(),
+            Some(false),
+            "stale source commits must not allow L1 CRT/startup/TLS matrix evidence",
+        );
+        assert_eq!(
+            policy["rejected_evidence_kind"].as_str(),
+            Some("stale_source_commit"),
+            "stale source commits must use the stale_source_commit rejection kind",
+        );
+    }
 }
 
 #[test]

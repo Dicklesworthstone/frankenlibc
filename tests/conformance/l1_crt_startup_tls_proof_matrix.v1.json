@@ -1,6 +1,14 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.6.3",
+  "source_commit": "c4989dfb6aaaaec7e452962ca95d7b3c0818e3e1",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_l1_crt_startup_tls_proof_matrix_evidence",
+    "startup_tls_matrix_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "generated_at_utc": "2026-05-03T01:45:00Z",
   "purpose": "Define the L1 CRT/startup/TLS/init/fini/destructor proof matrix so hardened-interpose claims cannot advance from symbol counts or broad smoke evidence alone.",
   "inputs": {
