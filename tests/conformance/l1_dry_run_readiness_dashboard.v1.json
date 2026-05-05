@@ -545,6 +545,46 @@
       "rationale": "The dashboard must expose all eight currently blocked direct-link proof fixtures."
     },
     {
+      "row_id": "real-program-smoke-source-commit-field",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "L1 dashboard consumers must see that real-program smoke freshness is bound to the smoke suite source_commit."
+    },
+    {
+      "row_id": "real-program-smoke-source-commit-comparison-target",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "L1 dashboard consumers must see that real-program smoke freshness compares against the current source checkout."
+    },
+    {
+      "row_id": "real-program-smoke-source-commit-stale-result",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_real_program_smoke_evidence",
+      "rationale": "A stale real-program smoke suite source commit must block real-program smoke evidence."
+    },
+    {
+      "row_id": "real-program-smoke-source-commit-no-evidence",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "source_commit_freshness_policy.real_program_smoke_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Stale real-program smoke evidence cannot support L1 readiness rows."
+    },
+    {
+      "row_id": "real-program-smoke-source-commit-rejection-kind",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_source_commit",
+      "rationale": "Dashboard consumers must see stale real-program smoke source drift as stale_source_commit evidence."
+    },
+    {
       "row_id": "real-program-smoke-suite-standalone-count",
       "row_kind": "real_program",
       "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
