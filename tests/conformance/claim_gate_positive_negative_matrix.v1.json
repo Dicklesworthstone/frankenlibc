@@ -713,7 +713,7 @@
         },
         "wrong_source_commit": {
           "scenario_id": "release-doc-dashboard-source-drift",
-          "harness_test_anchor": "stale_l1_dry_run_dashboard_fixture_blocks_release_doc_claim",
+          "harness_test_anchor": "l1_dry_run_dashboard_wrong_source_commit_blocks_release_doc_claim",
           "expected_decision": "block",
           "failure_signature": "claim_gate_wrong_source_commit",
           "freshness_state": "wrong_source_commit",

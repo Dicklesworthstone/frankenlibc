@@ -3,6 +3,8 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+const CURRENT_TEST_COMMIT: &str = "1111111111111111111111111111111111111111";
+const STALE_TEST_COMMIT: &str = "0000000000000000000000000000000000000000";
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -75,7 +77,7 @@ fn release_claim_refs(extra_refs: &[String]) -> TestResult<String> {
         .join(", "))
 }
 
-fn l1_dashboard_fixture(generated_utc: &str, include_perf: bool) -> String {
+fn l1_dashboard_fixture(generated_utc: &str, source_commit: &str, include_perf: bool) -> String {
     let perf_rows = if include_perf {
         r#",
     {
@@ -92,6 +94,15 @@ fn l1_dashboard_fixture(generated_utc: &str, include_perf: bool) -> String {
         r#"{{
   "schema_version": "v1",
   "generated_utc": "{generated_utc}",
+  "source_commit": "{source_commit}",
+  "source_commit_freshness_policy": {{
+    "recorded_source_commit_field": "source_commit",
+    "current_head_check": "git rev-parse HEAD",
+    "fresh_result": "eligible_for_row_evaluation_only",
+    "stale_result": "report_blockers_no_auto_promotion",
+    "promotion_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  }},
   "policy": {{"max_evidence_age_days": 180}},
   "rows": [
     {{
@@ -302,7 +313,7 @@ fn stale_l1_dry_run_dashboard_fixture_blocks_release_doc_claim() -> TestResult {
     let log = unique_output_path("stale-l1-dashboard-log")?;
     write_file(
         &dashboard,
-        &l1_dashboard_fixture("2000-01-01T00:00:00Z", true),
+        &l1_dashboard_fixture("2000-01-01T00:00:00Z", CURRENT_TEST_COMMIT, true),
     )?;
     write_file(
         &claims,
@@ -334,7 +345,10 @@ fn stale_l1_dry_run_dashboard_fixture_blocks_release_doc_claim() -> TestResult {
             "--log".to_owned(),
             path_arg(&log),
         ],
-        &[("FRANKENLIBC_L1_DRY_RUN_DASHBOARD", path_arg(&dashboard))],
+        &[
+            ("FRANKENLIBC_L1_DRY_RUN_DASHBOARD", path_arg(&dashboard)),
+            ("SOURCE_COMMIT", CURRENT_TEST_COMMIT.to_owned()),
+        ],
     )?;
 
     assert!(
@@ -353,6 +367,67 @@ fn stale_l1_dry_run_dashboard_fixture_blocks_release_doc_claim() -> TestResult {
 }
 
 #[test]
+fn l1_dry_run_dashboard_wrong_source_commit_blocks_release_doc_claim() -> TestResult {
+    let dashboard = unique_output_path("wrong-source-l1-dashboard")?;
+    let claims = unique_output_path("wrong-source-l1-dashboard-claims")?;
+    let report = unique_output_path("wrong-source-l1-dashboard-report")?;
+    let log = unique_output_path("wrong-source-l1-dashboard-log")?;
+    write_file(
+        &dashboard,
+        &l1_dashboard_fixture("2026-05-05T07:00:00Z", STALE_TEST_COMMIT, true),
+    )?;
+    write_file(
+        &claims,
+        &format!(
+            r#"{{
+  "schema_version": "v1",
+  "claims": [
+    {{
+      "id": "wrong-source-dashboard-doc-claim",
+      "tag": "v9.9.9-L1",
+      "claimed_level": "L1",
+      "claim_surface": "RELEASE.md",
+      "claim_text": "FrankenLibC is ready as a standalone replacement for glibc today.",
+      "artifact_refs": [{}]
+    }}
+  ]
+}}
+"#,
+            release_claim_refs(&[rel_path(&dashboard)?])?
+        ),
+    )?;
+
+    let output = run_gate_with_env(
+        &[
+            "--claims".to_owned(),
+            path_arg(&claims),
+            "--report".to_owned(),
+            path_arg(&report),
+            "--log".to_owned(),
+            path_arg(&log),
+        ],
+        &[
+            ("FRANKENLIBC_L1_DRY_RUN_DASHBOARD", path_arg(&dashboard)),
+            ("SOURCE_COMMIT", CURRENT_TEST_COMMIT.to_owned()),
+        ],
+    )?;
+
+    assert!(
+        !output.status.success(),
+        "wrong L1 dry-run dashboard source_commit must block standalone-ready doc claims"
+    );
+    let report_json = read_report(&report)?;
+    assert!(
+        report_json["claims"][0]["failure_signature"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("release_claim_l1_dashboard_source_commit_stale"),
+        "wrong-source-commit failure not found: {report_json}"
+    );
+    Ok(())
+}
+
+#[test]
 fn l1_dry_run_dashboard_missing_required_row_kind_blocks_release_doc_claim() -> TestResult {
     let dashboard = unique_output_path("missing-perf-l1-dashboard")?;
     let claims = unique_output_path("missing-perf-l1-dashboard-claims")?;
@@ -360,7 +435,7 @@ fn l1_dry_run_dashboard_missing_required_row_kind_blocks_release_doc_claim() -> 
     let log = unique_output_path("missing-perf-l1-dashboard-log")?;
     write_file(
         &dashboard,
-        &l1_dashboard_fixture("2026-05-05T07:00:00Z", false),
+        &l1_dashboard_fixture("2026-05-05T07:00:00Z", CURRENT_TEST_COMMIT, false),
     )?;
     write_file(
         &claims,
@@ -392,7 +467,10 @@ fn l1_dry_run_dashboard_missing_required_row_kind_blocks_release_doc_claim() -> 
             "--log".to_owned(),
             path_arg(&log),
         ],
-        &[("FRANKENLIBC_L1_DRY_RUN_DASHBOARD", path_arg(&dashboard))],
+        &[
+            ("FRANKENLIBC_L1_DRY_RUN_DASHBOARD", path_arg(&dashboard)),
+            ("SOURCE_COMMIT", CURRENT_TEST_COMMIT.to_owned()),
+        ],
     )?;
 
     assert!(

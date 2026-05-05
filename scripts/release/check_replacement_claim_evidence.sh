@@ -203,6 +203,35 @@ def stale_evidence_errors(data, label, max_age_days):
     return []
 
 
+def full_git_commit(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) is not None
+
+
+def l1_dashboard_source_commit_errors(dashboard):
+    dashboard_commit = dashboard.get("source_commit")
+    if not full_git_commit(dashboard_commit):
+        return ["release_claim_l1_dashboard_source_commit_invalid"]
+    if commit == "unknown":
+        return ["release_claim_l1_dashboard_source_commit_unknown"]
+    if dashboard_commit != commit:
+        errors = ["release_claim_l1_dashboard_source_commit_stale"]
+        freshness_policy = dashboard.get("source_commit_freshness_policy", {})
+        if not isinstance(freshness_policy, dict):
+            errors.append("release_claim_l1_dashboard_source_commit_policy_invalid")
+        else:
+            if (
+                freshness_policy.get("stale_result")
+                != "report_blockers_no_auto_promotion"
+            ):
+                errors.append("release_claim_l1_dashboard_source_commit_policy_invalid")
+            if freshness_policy.get("promotion_allowed_when_stale") is not False:
+                errors.append("release_claim_l1_dashboard_source_commit_policy_invalid")
+            if freshness_policy.get("rejected_evidence_kind") != "stale_source_commit":
+                errors.append("release_claim_l1_dashboard_source_commit_policy_invalid")
+        return errors
+    return []
+
+
 def select_field(data, field_path):
     cursor = data
     for segment in str(field_path).split("."):
@@ -356,6 +385,7 @@ def l1_dashboard_errors(claim):
     policy = dashboard.get("policy", {})
     max_age_days = int(policy.get("max_evidence_age_days", default_max_evidence_age_days))
     errors.extend(stale_evidence_errors(dashboard, "l1_dry_run_dashboard", max_age_days))
+    errors.extend(l1_dashboard_source_commit_errors(dashboard))
 
     required_kinds = {
         "forge": "forged_artifact",
