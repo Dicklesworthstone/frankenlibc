@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MANIFEST="${ROOT}/tests/conformance/standalone_replacement_artifact.v1.json"
+MANIFEST="${STANDALONE_REPLACEMENT_MANIFEST:-${ROOT}/tests/conformance/standalone_replacement_artifact.v1.json}"
 PACKAGING="${ROOT}/tests/conformance/packaging_spec.json"
 LEVELS="${ROOT}/tests/conformance/replacement_levels.json"
 OUT_DIR="${STANDALONE_REPLACEMENT_OUT_DIR:-${ROOT}/target/standalone_replacement_artifact}"
@@ -100,6 +100,15 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.sha256",
     "artifact_state.mtime",
 ]
+
+REQUIRED_TOOLS = ["rch", "cargo", "readelf", "nm", "ldd"]
+
+EXPECTED_HASH_EVIDENCE_POLICY = {
+    "algorithm": "sha256",
+    "implementation": "python3 hashlib.sha256",
+    "reported_field": "artifact_state.sha256",
+    "evidence_file": "artifact.sha256",
+}
 
 INSPECTION_TIMEOUT_ENV = "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS"
 INSPECTION_TIMEOUT_DEFAULT_SECS = 60
@@ -443,6 +452,10 @@ def validate_manifest():
         errors.append("required_log_fields do not match script contract")
     if manifest.get("required_report_fields") != REQUIRED_REPORT_FIELDS:
         errors.append("required_report_fields do not match script contract")
+    if manifest.get("required_tools") != REQUIRED_TOOLS:
+        errors.append("required_tools do not match script contract")
+    if manifest.get("hash_evidence_policy") != EXPECTED_HASH_EVIDENCE_POLICY:
+        errors.append("hash_evidence_policy does not match script contract")
     timeout_policy = manifest.get("inspection_timeout_policy", {})
     expected_timeout_policy = {
         "env": INSPECTION_TIMEOUT_ENV,

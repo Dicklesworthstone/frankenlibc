@@ -605,6 +605,16 @@ fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::proces
     run_gate_with_env(mode, prefix, &[])
 }
 
+fn write_manifest_variant(prefix: &str, mut mutate: impl FnMut(&mut serde_json::Value)) -> PathBuf {
+    let dir = unique_temp_dir(prefix);
+    let path = dir.join("standalone_replacement_artifact.v1.json");
+    let mut value = manifest();
+    mutate(&mut value);
+    let content = serde_json::to_string_pretty(&value).expect("manifest variant should serialize");
+    std::fs::write(&path, format!("{content}\n")).expect("write manifest variant");
+    path
+}
+
 #[test]
 fn manifest_matches_forge_contract() {
     let manifest = manifest();
@@ -715,6 +725,71 @@ fn manifest_matches_forge_contract() {
     ] {
         assert!(classifications.contains(signature), "missing {signature}");
     }
+}
+
+#[test]
+fn validate_only_rejects_required_tools_contract_drift() {
+    let manifest_path =
+        write_manifest_variant("standalone-artifact-tools-drift-manifest", |manifest| {
+            manifest["required_tools"] =
+                serde_json::json!(["rch", "cargo", "readelf", "nm", "ldd", "sha256"]);
+        });
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) =
+        run_gate_with_env("--validate-only", "standalone-artifact-tools-drift", &envs);
+    assert!(
+        !output.status.success(),
+        "required_tools drift should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.as_str() == Some("required_tools do not match script contract")),
+        "expected required_tools contract error: {errors:?}"
+    );
+}
+
+#[test]
+fn validate_only_rejects_hash_evidence_policy_contract_drift() {
+    let manifest_path = write_manifest_variant(
+        "standalone-artifact-hash-policy-drift-manifest",
+        |manifest| {
+            manifest["hash_evidence_policy"]["implementation"] =
+                serde_json::Value::String("sha256sum executable".to_owned());
+        },
+    );
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) = run_gate_with_env(
+        "--validate-only",
+        "standalone-artifact-hash-policy-drift",
+        &envs,
+    );
+    assert!(
+        !output.status.success(),
+        "hash_evidence_policy drift should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors.iter().any(|error| {
+            error.as_str() == Some("hash_evidence_policy does not match script contract")
+        }),
+        "expected hash_evidence_policy contract error: {errors:?}"
+    );
 }
 
 #[test]
