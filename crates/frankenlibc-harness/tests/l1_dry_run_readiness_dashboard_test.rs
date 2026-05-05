@@ -371,6 +371,38 @@ fn standalone_artifact_report_rows_are_explicit() -> TestResult {
             "artifact_state.symbol_samples",
         ),
         (
+            "standalone-artifact-report-claim-status-diagnostic",
+            "claim_status",
+        ),
+        (
+            "standalone-artifact-report-source-commit-diagnostic",
+            "source_commit",
+        ),
+        (
+            "standalone-artifact-report-status-diagnostic",
+            "artifact_state.status",
+        ),
+        (
+            "standalone-artifact-report-failure-signature-diagnostic",
+            "artifact_state.failure_signature",
+        ),
+        (
+            "standalone-artifact-report-host-glibc-dependency-diagnostic",
+            "artifact_state.host_glibc_dependency",
+        ),
+        (
+            "standalone-artifact-report-path-diagnostic",
+            "artifact_state.path",
+        ),
+        (
+            "standalone-artifact-report-sha256-diagnostic",
+            "artifact_state.sha256",
+        ),
+        (
+            "standalone-artifact-report-mtime-diagnostic",
+            "artifact_state.mtime",
+        ),
+        (
             "standalone-artifact-report-undefined-symbols-diagnostic",
             "artifact_state.dependency_breakdown.undefined_symbols",
         ),

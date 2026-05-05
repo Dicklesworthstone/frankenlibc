@@ -91,6 +91,14 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.dependency_breakdown.host_resolved_libraries",
     "artifact_state.sampled_symbols_present",
     "artifact_state.symbol_samples",
+    "claim_status",
+    "source_commit",
+    "artifact_state.status",
+    "artifact_state.failure_signature",
+    "artifact_state.host_glibc_dependency",
+    "artifact_state.path",
+    "artifact_state.sha256",
+    "artifact_state.mtime",
 ]
 
 INSPECTION_TIMEOUT_ENV = "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS"
@@ -685,6 +693,10 @@ else:
 
 artifact_state.setdefault("sampled_symbols_present", False)
 artifact_state.setdefault("symbol_samples", empty_symbol_samples())
+artifact_state.setdefault("host_glibc_dependency", None)
+artifact_state.setdefault("path", None)
+artifact_state.setdefault("sha256", None)
+artifact_state.setdefault("mtime", None)
 
 if artifact_state["failure_signature"] == "none" and artifact_state["status"] in {"current", "not_checked"}:
     claim_status = "artifact_current" if artifact_state["status"] == "current" else "schema_validated"

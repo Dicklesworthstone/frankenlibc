@@ -67,7 +67,15 @@
     "artifact_state.dependency_breakdown.host_direct_needed_libraries",
     "artifact_state.dependency_breakdown.host_resolved_libraries",
     "artifact_state.sampled_symbols_present",
-    "artifact_state.symbol_samples"
+    "artifact_state.symbol_samples",
+    "claim_status",
+    "source_commit",
+    "artifact_state.status",
+    "artifact_state.failure_signature",
+    "artifact_state.host_glibc_dependency",
+    "artifact_state.path",
+    "artifact_state.sha256",
+    "artifact_state.mtime"
   ],
   "required_evidence_files": [
     "build.stdout.txt",

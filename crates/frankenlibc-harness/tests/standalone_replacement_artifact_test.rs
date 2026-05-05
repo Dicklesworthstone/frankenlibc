@@ -42,6 +42,14 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.host_resolved_libraries",
     "artifact_state.sampled_symbols_present",
     "artifact_state.symbol_samples",
+    "claim_status",
+    "source_commit",
+    "artifact_state.status",
+    "artifact_state.failure_signature",
+    "artifact_state.host_glibc_dependency",
+    "artifact_state.path",
+    "artifact_state.sha256",
+    "artifact_state.mtime",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -697,6 +705,11 @@ fn validate_only_writes_report_and_required_log_fields() {
         Some(false)
     );
     assert!(symbol_sample_map(&report["artifact_state"]["symbol_samples"]).is_empty());
+    assert!(report["source_commit"].as_str().is_some());
+    assert!(report["artifact_state"]["host_glibc_dependency"].is_null());
+    assert!(report["artifact_state"]["path"].is_null());
+    assert!(report["artifact_state"]["sha256"].is_null());
+    assert!(report["artifact_state"]["mtime"].is_null());
 
     let log = std::fs::read_to_string(log).expect("log should be readable");
     let rows: Vec<serde_json::Value> = log
@@ -732,6 +745,15 @@ fn check_mode_reports_missing_artifact_as_claim_blocked() {
         Some(false)
     );
     assert!(symbol_sample_map(&report["artifact_state"]["symbol_samples"]).is_empty());
+    assert!(report["source_commit"].as_str().is_some());
+    assert!(report["artifact_state"]["host_glibc_dependency"].is_null());
+    assert!(
+        report["artifact_state"]["path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("libfrankenlibc_replace.so"))
+    );
+    assert!(report["artifact_state"]["sha256"].is_null());
+    assert!(report["artifact_state"]["mtime"].is_null());
 }
 
 #[test]
@@ -792,6 +814,28 @@ fn forge_mode_can_materialize_a_supplied_shared_object_for_fast_tests() {
     let report = load_json(&report);
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["artifact_state"]["status"].as_str(), Some("current"));
+    assert!(
+        report["source_commit"]
+            .as_str()
+            .is_some_and(|commit| !commit.is_empty())
+    );
+    assert!(
+        report["artifact_state"]["path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("libfrankenlibc_replace.so"))
+    );
+    assert!(
+        report["artifact_state"]["sha256"]
+            .as_str()
+            .is_some_and(|hash| {
+                hash.len() == 64 && hash.chars().all(|ch| ch.is_ascii_hexdigit())
+            })
+    );
+    assert!(
+        report["artifact_state"]["mtime"]
+            .as_i64()
+            .is_some_and(|mtime| mtime > 0)
+    );
     assert!(
         matches!(
             report["claim_status"].as_str(),
@@ -949,6 +993,10 @@ fn forge_mode_reports_host_dependency_breakdown() {
     let report_json = load_json(&report);
     assert_eq!(report_json["status"].as_str(), Some("pass"));
     assert_eq!(report_json["claim_status"].as_str(), Some("claim_blocked"));
+    assert_eq!(
+        report_json["artifact_state"]["status"].as_str(),
+        Some("current")
+    );
     assert_eq!(
         report_json["artifact_state"]["failure_signature"].as_str(),
         Some("host_glibc_dependency")
