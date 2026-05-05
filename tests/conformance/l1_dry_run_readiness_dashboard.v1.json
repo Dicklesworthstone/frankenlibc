@@ -5,6 +5,14 @@
   "owner_bead": "bd-zyck1",
   "generated_utc": "2026-05-05T05:30:00Z",
   "source_commit": "b00442e165d6cd17135845699018d786ba0a83d1",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "current_head_check": "git rev-parse HEAD",
+    "fresh_result": "eligible_for_row_evaluation_only",
+    "stale_result": "report_blockers_no_auto_promotion",
+    "promotion_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "purpose": "Joins every L1 dry-run input — replacement_levels, standalone artifact forge, CRT/TLS/atexit direct-link proofs, real-program smoke, dlfcn replace-boundary sentinel + L1 burndown, perf baselines + waiver audit, runtime evidence replay — into a single dashboard with pass/blocker rows. The dashboard never promotes current_level automatically; it surfaces the next blocker set with exact artifact refs and source_commit, and fails closed on stale, missing, or contradictory inputs.",
   "subject": {
     "replacement_levels_artifact": "tests/conformance/replacement_levels.json",
@@ -447,6 +455,30 @@
       "field": "summary.overall_failed",
       "expected_value": false,
       "rationale": "ld_preload smoke overall must not be failed."
+    },
+    {
+      "row_id": "l1-dashboard-stale-source-commit-result",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "report_blockers_no_auto_promotion",
+      "rationale": "If the checked-in dashboard source_commit is not current HEAD, consumers must keep the result report-only."
+    },
+    {
+      "row_id": "l1-dashboard-stale-source-commit-no-promotion",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+      "field": "source_commit_freshness_policy.promotion_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "A stale dashboard source_commit cannot authorize L1 promotion."
+    },
+    {
+      "row_id": "l1-dashboard-stale-source-commit-rejection-kind",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_source_commit",
+      "rationale": "Dashboard logs must identify stale source commits with the explicit rejected evidence kind."
     },
     {
       "row_id": "l1-promotion-gate-pinned",

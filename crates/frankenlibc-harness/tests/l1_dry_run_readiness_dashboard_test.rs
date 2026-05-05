@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -78,6 +79,26 @@ fn as_array<'a>(value: &'a Value, context: &str) -> Result<&'a Vec<Value>, Box<d
 
 fn dashboard_path() -> PathBuf {
     workspace_root().join("tests/conformance/l1_dry_run_readiness_dashboard.v1.json")
+}
+
+fn current_git_head(root: &Path) -> Result<String, Box<dyn Error>> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!("git rev-parse HEAD failed with status {}", output.status),
+    )?;
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git rev-parse HEAD should emit UTF-8: {err}")))?;
+    let head = stdout.trim().to_string();
+    ensure(
+        !head.is_empty(),
+        "git rev-parse HEAD returned an empty commit",
+    )?;
+    Ok(head)
 }
 
 const REQUIRED_LOG_FIELDS: &[&str] = &[
@@ -142,13 +163,51 @@ fn dashboard_artifact_is_well_formed() -> TestResult {
         "schema_version",
     )?;
     ensure_eq(dashboard["bead"].as_str(), Some("bd-i90i2"), "bead")?;
+    let source_commit = as_str(&dashboard["source_commit"], "source_commit")?;
+    ensure(!source_commit.is_empty(), "source_commit must be set")?;
     ensure(
-        !dashboard["source_commit"]
-            .as_str()
-            .unwrap_or_default()
-            .is_empty(),
-        "source_commit must be set",
+        source_commit.len() == 40 && source_commit.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "source_commit must be a full hex git commit",
     )?;
+    let freshness_policy = &dashboard["source_commit_freshness_policy"];
+    ensure_eq(
+        freshness_policy["recorded_source_commit_field"].as_str(),
+        Some("source_commit"),
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        freshness_policy["current_head_check"].as_str(),
+        Some("git rev-parse HEAD"),
+        "source_commit_freshness_policy.current_head_check",
+    )?;
+    ensure_eq(
+        freshness_policy["stale_result"].as_str(),
+        Some("report_blockers_no_auto_promotion"),
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    ensure_eq(
+        freshness_policy["promotion_allowed_when_stale"].as_bool(),
+        Some(false),
+        "source_commit_freshness_policy.promotion_allowed_when_stale",
+    )?;
+    ensure_eq(
+        freshness_policy["rejected_evidence_kind"].as_str(),
+        Some("stale_source_commit"),
+        "source_commit_freshness_policy.rejected_evidence_kind",
+    )?;
+    let current_head = current_git_head(&workspace_root())?;
+    if source_commit != current_head {
+        ensure_eq(
+            freshness_policy["stale_result"].as_str(),
+            Some("report_blockers_no_auto_promotion"),
+            "stale dashboard source_commit must remain report-only",
+        )?;
+        ensure_eq(
+            freshness_policy["promotion_allowed_when_stale"].as_bool(),
+            Some(false),
+            "stale dashboard source_commit must not allow promotion",
+        )?;
+    }
 
     let inputs = dashboard["inputs"]
         .as_object()
@@ -549,6 +608,72 @@ fn host_probe_projection_rows_are_explicit() -> TestResult {
         expected_rows.is_empty(),
         format!(
             "missing standalone host probe projection dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
+fn source_commit_freshness_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "l1-dashboard-stale-source-commit-result",
+            (
+                "source_commit_freshness_policy.stale_result",
+                json!("report_blockers_no_auto_promotion"),
+            ),
+        ),
+        (
+            "l1-dashboard-stale-source-commit-no-promotion",
+            (
+                "source_commit_freshness_policy.promotion_allowed_when_stale",
+                json!(false),
+            ),
+        ),
+        (
+            "l1-dashboard-stale-source-commit-rejection-kind",
+            (
+                "source_commit_freshness_policy.rejected_evidence_kind",
+                json!("stale_source_commit"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("l1-dashboard-stale-source-commit-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!("unexpected source commit freshness row: {row_id}"))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "gate_meta",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing source commit freshness dashboard rows: {:?}",
             expected_rows.keys().collect::<Vec<_>>()
         ),
     )
