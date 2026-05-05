@@ -367,6 +367,14 @@ fn standalone_dependency_breakdown_rows_are_explicit() -> TestResult {
             "artifact_state.dependency_breakdown.undefined_tls_symbols",
         ),
         (
+            "standalone-artifact-report-version-needs-diagnostic",
+            "artifact_state.dependency_breakdown.version_needs",
+        ),
+        (
+            "standalone-artifact-report-host-version-requirements-diagnostic",
+            "artifact_state.dependency_breakdown.host_version_requirements",
+        ),
+        (
             "standalone-artifact-report-loader-needed-diagnostic",
             "artifact_state.dependency_breakdown.loader_needed",
         ),

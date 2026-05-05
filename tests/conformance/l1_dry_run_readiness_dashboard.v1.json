@@ -132,7 +132,7 @@
       "row_id": "standalone-artifact-report-loader-needed-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.6",
+      "field": "required_report_fields.8",
       "expected_value": "artifact_state.dependency_breakdown.loader_needed",
       "rationale": "L1 dashboard consumers must see host loader dependency status before replacement claims can advance."
     },
@@ -140,9 +140,25 @@
       "row_id": "standalone-artifact-report-blocking-reasons-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.7",
+      "field": "required_report_fields.9",
       "expected_value": "artifact_state.dependency_breakdown.blocking_reasons",
       "rationale": "L1 dashboard consumers must see aggregate forge blocking reasons, not only a generic claim_blocked result."
+    },
+    {
+      "row_id": "standalone-artifact-report-version-needs-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.6",
+      "expected_value": "artifact_state.dependency_breakdown.version_needs",
+      "rationale": "L1 dashboard consumers must see provider-grouped ELF version needs, not only library names."
+    },
+    {
+      "row_id": "standalone-artifact-report-host-version-requirements-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.7",
+      "expected_value": "artifact_state.dependency_breakdown.host_version_requirements",
+      "rationale": "L1 dashboard consumers must see host-provided GCC/GLIBC version requirements as promotion blockers."
     },
     {
       "row_id": "standalone-link-run-smoke-claim-blocked-policy",
