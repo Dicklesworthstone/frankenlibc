@@ -66,6 +66,16 @@ if audit.get("bead") != "bd-bp8fl.9.3":
     errors.append("audit.bead must be bd-bp8fl.9.3")
 if not audit.get("source_commit"):
     errors.append("audit.source_commit must be set")
+freshness_policy = audit.get("source_commit_freshness_policy", {})
+expected_freshness_policy = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_policy_audit_claims",
+    "policy_claims_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
+}
+if freshness_policy != expected_freshness_policy:
+    errors.append("source_commit_freshness_policy must match the stale policy-audit block contract")
 
 required_log_fields = [
     "trace_id",

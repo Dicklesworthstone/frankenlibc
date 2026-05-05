@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -78,6 +79,26 @@ fn policy_source_path() -> PathBuf {
     workspace_root().join("crates/frankenlibc-membrane/src/runtime_math/policy_table.rs")
 }
 
+fn git_head(root: &Path) -> Result<String, Box<dyn Error>> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(root)
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+    Ok(String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
+        .trim()
+        .to_owned())
+}
+
 const REQUIRED_LOG_FIELDS: &[&str] = &[
     "trace_id",
     "bead_id",
@@ -120,6 +141,32 @@ fn audit_artifact_is_well_formed() -> TestResult {
             .unwrap_or_default()
             .is_empty(),
         "source_commit must be set",
+    )?;
+    let freshness_policy = &audit["source_commit_freshness_policy"];
+    ensure_eq(
+        freshness_policy["recorded_source_commit_field"].as_str(),
+        Some("source_commit"),
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        freshness_policy["comparison_target"].as_str(),
+        Some("current git HEAD"),
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    ensure_eq(
+        freshness_policy["stale_result"].as_str(),
+        Some("block_policy_audit_claims"),
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    ensure_eq(
+        freshness_policy["policy_claims_allowed_when_stale"].as_bool(),
+        Some(false),
+        "source_commit_freshness_policy.policy_claims_allowed_when_stale",
+    )?;
+    ensure_eq(
+        freshness_policy["rejected_evidence_kind"].as_str(),
+        Some("stale_source_commit"),
+        "source_commit_freshness_policy.rejected_evidence_kind",
     )?;
 
     let subject = &audit["subject"];
@@ -214,6 +261,39 @@ fn audit_artifact_is_well_formed() -> TestResult {
             format!("policy.rejected_evidence_kinds must include {kind}"),
         )?;
     }
+    Ok(())
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_policy_audit_claims() -> TestResult {
+    let root = workspace_root();
+    let audit = load_json(&audit_path())?;
+    let audit_commit = as_str(&audit["source_commit"], "source_commit")?;
+    ensure(
+        audit_commit.len() == 40 && audit_commit.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "source_commit must be a 40-character git SHA",
+    )?;
+
+    let current_head = git_head(&root)?;
+    if audit_commit != current_head {
+        let policy = &audit["source_commit_freshness_policy"];
+        ensure_eq(
+            policy["stale_result"].as_str(),
+            Some("block_policy_audit_claims"),
+            "stale proof-policy audit source_commit must block policy audit claims",
+        )?;
+        ensure_eq(
+            policy["policy_claims_allowed_when_stale"].as_bool(),
+            Some(false),
+            "stale proof-policy audit source_commit must not allow policy claims",
+        )?;
+        ensure_eq(
+            policy["rejected_evidence_kind"].as_str(),
+            Some("stale_source_commit"),
+            "stale proof-policy audit source_commit must use stale_source_commit",
+        )?;
+    }
+
     Ok(())
 }
 

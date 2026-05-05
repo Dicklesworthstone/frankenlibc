@@ -4,6 +4,13 @@
   "bead": "bd-bp8fl.9.3",
   "generated_utc": "2026-05-04T17:00:00Z",
   "source_commit": "33a4c631d3cee36f7d3f4db2fed6e55d6a8a822f",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_policy_audit_claims",
+    "policy_claims_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "purpose": "Fail-closed audit binder for the runtime_math/policy_table.rs PCPT (`.pcpt` proof-carrying policy table) loader. Every contract surface — magic, schema/key/cell spec ids, header layout, required TLV catalogue, PolicyTableError variants, and negative-test inventory — must remain bound to current source code. Drift in any anchor blocks claim advancement at every replacement level until the audit is regenerated against fresh evidence.",
   "subject": {
     "module": "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs",
