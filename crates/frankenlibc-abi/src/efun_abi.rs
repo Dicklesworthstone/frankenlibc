@@ -52,7 +52,16 @@ unsafe fn default_efun(eval: c_int, msg: &CStr) -> ! {
 /// failure indicator to the caller). Only the default callback
 /// terminates the process.
 unsafe fn report_failure(eval: c_int, msg: &CStr) {
-    let installed = { *EFUN_CELL.lock().unwrap() };
+    // Graceful poison recovery: this fn is reached from `extern "C"` failure
+    // paths (emalloc, ecalloc, estrdup, ...). Letting `.unwrap()` panic would
+    // unwind across the C ABI boundary, which is UB on `extern "C"` (vs
+    // `extern "C-unwind"`). Match the project-wide `unwrap_or_else(into_inner)`
+    // convention used for every other ABI lock site (bd-0jdwe).
+    let installed = {
+        *EFUN_CELL
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    };
     if let Some(efun) = installed {
         unsafe { efun(eval, msg.as_ptr()) };
     } else {
@@ -70,7 +79,11 @@ unsafe fn report_failure(eval: c_int, msg: &CStr) {
 /// pointer that respects the NetBSD efun callback contract.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn esetfunc(new: Option<EFunc>) -> Option<EFunc> {
-    let mut cell = EFUN_CELL.lock().unwrap();
+    // See report_failure: graceful poison recovery on the extern "C"
+    // boundary, matching the project-wide ABI lock convention (bd-0jdwe).
+    let mut cell = EFUN_CELL
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let prev = *cell;
     *cell = new;
     prev
@@ -310,7 +323,9 @@ pub(crate) mod test_helpers {
     use super::{EFUN_CELL, EFunc};
 
     pub fn reset_efun() -> Option<EFunc> {
-        let mut cell = EFUN_CELL.lock().unwrap();
+        let mut cell = EFUN_CELL
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         let prev = *cell;
         *cell = None;
         prev
