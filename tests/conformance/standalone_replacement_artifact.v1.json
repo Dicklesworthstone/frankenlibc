@@ -1,0 +1,113 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-replacement-artifact",
+  "bead": "bd-srtkq",
+  "generated_utc": "2026-05-05T05:31:00Z",
+  "description": "Deterministic forge and evidence gate for the canonical standalone replacement artifact. This gate materializes libfrankenlibc_replace.so from the current frankenlibc-abi release cdylib, records loader/symbol/dependency evidence, and keeps replacement claims blocked when evidence is absent, stale, misnamed, non-ELF, or still host-glibc-dependent.",
+  "inputs": {
+    "packaging_spec": "tests/conformance/packaging_spec.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json"
+  },
+  "artifact_policy": {
+    "canonical_artifact_name": "libfrankenlibc_replace.so",
+    "source_cdylib_name": "libfrankenlibc_abi.so",
+    "cargo_package": "frankenlibc-abi",
+    "cargo_profile": "release",
+    "cargo_features": ["standalone"],
+    "default_cargo_target_dir": "target/standalone_replacement_artifact/cargo-target",
+    "artifact_env": "FRANKENLIBC_STANDALONE_LIB",
+    "source_artifact_env": "STANDALONE_REPLACEMENT_SOURCE_LIB",
+    "cargo_target_dir_env": "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR",
+    "build_command_env": "STANDALONE_REPLACEMENT_BUILD_CMD",
+    "skip_build_env": "STANDALONE_REPLACEMENT_SKIP_BUILD",
+    "stale_if_older_than_head": true,
+    "ld_preload_substitutes_allowed": false
+  },
+  "required_tools": ["rch", "cargo", "readelf", "nm", "ldd", "sha256"],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "event",
+    "mode",
+    "artifact_path",
+    "artifact_status",
+    "claim_status",
+    "source_commit",
+    "artifact_sha256",
+    "command",
+    "exit_code",
+    "failure_signature",
+    "artifact_refs"
+  ],
+  "required_evidence_files": [
+    "build.stdout.txt",
+    "build.stderr.txt",
+    "artifact.sha256",
+    "artifact.readelf.dynamic.txt",
+    "artifact.readelf.symbols.txt",
+    "artifact.nm.dynamic.txt",
+    "artifact.ldd.txt"
+  ],
+  "symbol_samples": [
+    "__libc_start_main",
+    "malloc",
+    "free",
+    "printf",
+    "pthread_create",
+    "getaddrinfo"
+  ],
+  "expected_failure_classifications": [
+    {
+      "failure_signature": "standalone_artifact_missing",
+      "expected_result": "claim_blocked",
+      "description": "No source cdylib or canonical replacement artifact exists for this source commit."
+    },
+    {
+      "failure_signature": "standalone_artifact_stale",
+      "expected_result": "claim_blocked",
+      "description": "The canonical artifact predates HEAD and must not be used as current proof."
+    },
+    {
+      "failure_signature": "wrong_artifact_profile",
+      "expected_result": "claim_blocked",
+      "description": "The artifact has the wrong name/profile and must not be accepted as standalone replacement evidence."
+    },
+    {
+      "failure_signature": "non_elf_artifact",
+      "expected_result": "fail",
+      "description": "The materialized artifact is not a readable ELF shared object."
+    },
+    {
+      "failure_signature": "host_glibc_dependency",
+      "expected_result": "claim_blocked",
+      "description": "The artifact was produced, but dependency evidence still shows host libc linkage."
+    },
+    {
+      "failure_signature": "symbol_evidence_missing",
+      "expected_result": "claim_blocked",
+      "description": "The artifact exists, but sampled public replacement symbols are missing from dynamic-symbol evidence."
+    }
+  ],
+  "claim_policy": {
+    "current_level_must_remain": "L0",
+    "successful_forge_is_not_promotion": true,
+    "claim_unblocked_only_when": [
+      "artifact_status=current",
+      "artifact_name=libfrankenlibc_replace.so",
+      "readelf_dynamic_status=pass",
+      "host_glibc_dependency=false",
+      "sampled_symbols_present=true",
+      "source_commit matches HEAD"
+    ]
+  },
+  "summary": {
+    "bead": "bd-srtkq",
+    "row_count": 1,
+    "ld_preload_substitutes_for_standalone": false,
+    "next_consumers": [
+      "bd-4xk24",
+      "tests/conformance/standalone_link_run_smoke.v1.json"
+    ]
+  }
+}
