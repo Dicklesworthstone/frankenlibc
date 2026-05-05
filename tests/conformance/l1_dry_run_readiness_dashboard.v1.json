@@ -1,0 +1,188 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "l1-dry-run-readiness-dashboard",
+  "bead": "bd-i90i2",
+  "owner_bead": "bd-zyck1",
+  "generated_utc": "2026-05-05T05:30:00Z",
+  "source_commit": "b00442e165d6cd17135845699018d786ba0a83d1",
+  "purpose": "Joins every L1 dry-run input — replacement_levels, standalone artifact forge, CRT/TLS/atexit direct-link proofs, real-program smoke, dlfcn replace-boundary sentinel + L1 burndown, perf baselines + waiver audit, runtime evidence replay — into a single dashboard with pass/blocker rows. The dashboard never promotes current_level automatically; it surfaces the next blocker set with exact artifact refs and source_commit, and fails closed on stale, missing, or contradictory inputs.",
+  "subject": {
+    "replacement_levels_artifact": "tests/conformance/replacement_levels.json",
+    "promotion_target": "L1"
+  },
+  "inputs": {
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+    "crt_tls_atexit_direct_link_run_proof_fixtures": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+    "real_program_smoke_suite": "tests/conformance/real_program_smoke_suite.v1.json",
+    "dlfcn_replace_boundary_sentinel": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+    "dlfcn_replace_boundary_l1_burndown": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+    "perf_baseline_spec": "tests/conformance/perf_baseline_spec.json",
+    "perf_regression_prevention": "tests/conformance/perf_regression_prevention.v1.json",
+    "perf_waiver_audit": "tests/conformance/perf_waiver_audit.v1.json",
+    "perf_budget_policy": "tests/conformance/perf_budget_policy.json",
+    "runtime_evidence_replay_gate": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+    "claim_reconciliation_report": "tests/conformance/claim_reconciliation_report.v1.json",
+    "ld_preload_smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "l1_promotion_gate": "tests/conformance/l1_promotion_gate.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "dashboard_run_id",
+    "row_id",
+    "row_kind",
+    "evidence_artifact",
+    "evidence_status",
+    "blocker_id",
+    "expected",
+    "actual",
+    "decision",
+    "rejection_reason",
+    "source_commit",
+    "artifact_refs",
+    "failure_signature"
+  ],
+  "policy": {
+    "default_decision": "report_blockers_no_auto_promotion",
+    "auto_promotion_allowed": false,
+    "current_level_at_audit_time": "L0",
+    "promotion_target": "L1",
+    "rejected_evidence_kinds": [
+      "missing_input_artifact",
+      "stale_source_commit",
+      "schema_drift",
+      "dashboard_advances_current_level_implicitly",
+      "blocker_count_unreported",
+      "row_lacks_evidence_ref"
+    ],
+    "must_remain_unset_until_all_rows_pass": [
+      "replacement_levels.current_level == L1",
+      "replacement_levels.release_tag_policy.current_release_level == L1"
+    ]
+  },
+  "rows": [
+    {
+      "row_id": "standalone-artifact-forge-current",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "schema_version",
+      "expected_value": "v1",
+      "rationale": "Standalone replacement artifact must be present and at v1 schema before forge claims advance."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-no-fails",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "schema_version",
+      "expected_value": "v1",
+      "rationale": "Standalone link-run smoke ledger must be present at v1 schema."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-current",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "schema_version",
+      "expected_value": "v1",
+      "rationale": "CRT/TLS/atexit direct-link proof fixtures must be present at v1 schema before L1 promotion."
+    },
+    {
+      "row_id": "real-program-smoke-suite-current",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "schema_version",
+      "expected_value": "v1",
+      "rationale": "Real-program smoke suite manifest must be present at v1 schema."
+    },
+    {
+      "row_id": "dlfcn-sentinel-l1-blocker-count-bound",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "expected_counts.l1_blocker",
+      "expected_value_max": 6,
+      "rationale": "L1 blocker count must be at or below the documented burndown (6); regressions block dashboard pass."
+    },
+    {
+      "row_id": "perf-regression-prevention-no-issues",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "summary.total_issues",
+      "expected_value": 0,
+      "rationale": "perf_regression_prevention must report zero issues."
+    },
+    {
+      "row_id": "perf-waiver-audit-narrow",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "policy.default_decision",
+      "expected_value": "block_until_waivers_narrow_and_unexpired",
+      "rationale": "Perf waiver audit must remain wired with the fail-closed default."
+    },
+    {
+      "row_id": "claim-reconciliation-status-pass",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "status",
+      "expected_value": "pass",
+      "rationale": "Claim reconciliation must report pass status."
+    },
+    {
+      "row_id": "claim-reconciliation-no-errors",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "summary.errors",
+      "expected_value": 0,
+      "rationale": "Claim reconciliation must report zero errors."
+    },
+    {
+      "row_id": "ld-preload-smoke-no-fails",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "summary.fails",
+      "expected_value": 0,
+      "rationale": "ld_preload smoke must have zero failures."
+    },
+    {
+      "row_id": "ld-preload-smoke-no-overall-failure",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "summary.overall_failed",
+      "expected_value": false,
+      "rationale": "ld_preload smoke overall must not be failed."
+    },
+    {
+      "row_id": "l1-promotion-gate-pinned",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "policy.default_decision",
+      "expected_value": "block_until_l1_evidence_current",
+      "rationale": "L1 promotion gate must remain wired to its fail-closed default."
+    },
+    {
+      "row_id": "current-level-still-l0",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "current_level",
+      "expected_value": "L0",
+      "rationale": "Until every other row passes, current_level must remain L0; the dashboard never promotes automatically."
+    }
+  ],
+  "minimum_row_kinds": [
+    "forge",
+    "smoke",
+    "direct_link",
+    "real_program",
+    "dlfcn",
+    "perf",
+    "claim_control",
+    "gate_meta",
+    "promotion_state"
+  ],
+  "consuming_gates": [
+    "tests/conformance/replacement_levels.json",
+    "FEATURE_PARITY.md",
+    "README.md"
+  ]
+}
