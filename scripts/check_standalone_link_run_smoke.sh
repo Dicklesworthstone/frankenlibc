@@ -242,6 +242,12 @@ def run_probe_command(command):
             "stdout": exc.stdout or "",
             "stderr": exc.stderr or "timeout",
         }
+    except OSError as exc:
+        return {
+            "returncode": 127,
+            "stdout": "",
+            "stderr": str(exc),
+        }
 
 
 def classify_artifact():
@@ -270,14 +276,14 @@ def classify_artifact():
             }
         readelf_dynamic = run_probe_command(["readelf", "-d", str(candidate)])
         ldd = run_probe_command(["ldd", str(candidate)])
-        if readelf_dynamic["returncode"] != 0:
+        if readelf_dynamic["returncode"] != 0 or ldd["returncode"] != 0:
             return {
                 "status": "inspection_failed",
                 "path": str(candidate),
                 "mtime": mtime,
                 "head_epoch": head_epoch,
                 "failure_signature": "artifact_dependency_inspection_failed",
-                "loader_error": "readelf -d failed for standalone artifact",
+                "loader_error": "dependency inspection failed for standalone artifact",
             }
         dep_text = "\n".join(
             [

@@ -123,6 +123,11 @@
       "description": "The supplied artifact is current and correctly named but still advertises host libc or loader dependencies."
     },
     {
+      "failure_signature": "artifact_dependency_inspection_failed",
+      "expected_result": "claim_blocked",
+      "description": "A declared dependency inspection probe failed while checking a current, correctly named standalone artifact."
+    },
+    {
       "failure_signature": "missing_obligation",
       "expected_result": "claim_blocked",
       "description": "The row intentionally requires replacement obligations that the current artifact profile does not own."

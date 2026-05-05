@@ -4,6 +4,7 @@
 //! LD_PRELOAD interpose evidence as a replacement-level proof.
 
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -54,6 +55,29 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
     dir
 }
 
+fn fake_ldd_failure_path(temp: &Path) -> OsString {
+    let fake_bin = temp.join("fake-bin");
+    std::fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_ldd = fake_bin.join("ldd");
+    std::fs::write(&fake_ldd, "#!/bin/sh\necho ldd probe failed >&2\nexit 42\n")
+        .expect("write fake ldd");
+    let chmod = Command::new("chmod")
+        .arg("+x")
+        .arg(&fake_ldd)
+        .output()
+        .expect("chmod should run");
+    assert!(
+        chmod.status.success(),
+        "chmod failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&chmod.stdout),
+        String::from_utf8_lossy(&chmod.stderr)
+    );
+    let mut path = OsString::from(fake_bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    path
+}
+
 fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
     let root = workspace_root();
     let temp = unique_temp_dir(prefix);
@@ -92,6 +116,16 @@ fn manifest_defines_required_rows_and_log_contract() {
     assert_eq!(
         manifest["current_claim_policy"]["host_glibc_dependency_result"].as_str(),
         Some("claim_blocked")
+    );
+    let failure_signatures: HashSet<_> = manifest["expected_failure_classifications"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["failure_signature"].as_str().unwrap())
+        .collect();
+    assert!(
+        failure_signatures.contains("artifact_dependency_inspection_failed"),
+        "manifest should classify dependency inspection failures"
     );
 
     let log_fields: Vec<_> = manifest["required_log_fields"]
@@ -415,6 +449,88 @@ fn dry_run_blocks_host_libc_dependent_candidate_artifact() {
             && matches!(
                 row["failure_signature"].as_str(),
                 Some("host_glibc_dependency")
+            )
+    }));
+}
+
+#[test]
+fn dry_run_blocks_candidate_artifact_when_ldd_probe_fails() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-ldd-probe-failed");
+    let source = temp.join("sample.c");
+    let artifact = temp.join("libfrankenlibc_replace.so");
+    std::fs::write(
+        &source,
+        "int frankenlibc_probe_sample(void) { return 0; }\n",
+    )
+    .expect("write sample source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source)
+        .arg("-o")
+        .arg(&artifact)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+
+    let out_dir = temp.join("target");
+    let report = temp.join("standalone_link_run_smoke.report.json");
+    let log = temp.join("standalone_link_run_smoke.log.jsonl");
+    let output = Command::new(root.join("scripts/check_standalone_link_run_smoke.sh"))
+        .arg("--dry-run")
+        .current_dir(&root)
+        .env("PATH", fake_ldd_failure_path(&temp))
+        .env("STANDALONE_SMOKE_TARGET_DIR", &out_dir)
+        .env("STANDALONE_SMOKE_REPORT", &report)
+        .env("STANDALONE_SMOKE_LOG", &log)
+        .env("STANDALONE_SMOKE_RUN_ID", "standalone-ldd-probe-failed")
+        .env("FRANKENLIBC_STANDALONE_LIB", &artifact)
+        .env_remove("LD_PRELOAD")
+        .output()
+        .expect("standalone link-run smoke gate should execute");
+    assert!(
+        output.status.success(),
+        "dry-run gate failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_json = load_json(&report);
+    let expected_candidate_rows = load_manifest()["smoke_rows"].as_array().unwrap().len() * 2;
+    assert_eq!(report_json["status"].as_str(), Some("pass"));
+    assert_eq!(report_json["claim_status"].as_str(), Some("claim_blocked"));
+    assert_eq!(
+        report_json["artifact_state"]["status"].as_str(),
+        Some("inspection_failed")
+    );
+    assert_eq!(
+        report_json["artifact_state"]["failure_signature"].as_str(),
+        Some("artifact_dependency_inspection_failed")
+    );
+    assert_eq!(
+        report_json["summary"]["candidate_blocked"].as_u64(),
+        Some(expected_candidate_rows as u64)
+    );
+
+    let log = std::fs::read_to_string(&log).expect("log should be readable");
+    let rows: Vec<serde_json::Value> = log
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("log line should parse"))
+        .collect();
+    assert!(rows.iter().any(|row| {
+        row["event"].as_str() == Some("candidate_direct_link")
+            && row["actual_status"].as_str() == Some("claim_blocked")
+            && matches!(
+                row["failure_signature"].as_str(),
+                Some("artifact_dependency_inspection_failed")
             )
     }));
 }
