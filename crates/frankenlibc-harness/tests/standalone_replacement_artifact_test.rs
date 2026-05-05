@@ -369,6 +369,86 @@ fn forge_mode_can_materialize_a_supplied_shared_object_for_fast_tests() {
 }
 
 #[test]
+fn forge_mode_stamps_materialized_artifact_from_old_source() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-artifact-old-source-forge");
+    let source_c = temp.join("sample.c");
+    let source_so = temp.join("libfrankenlibc_abi.so");
+    std::fs::write(
+        &source_c,
+        "int frankenlibc_old_source_symbol(void) { return 11; }\n",
+    )
+    .expect("write sample source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source_c)
+        .arg("-o")
+        .arg(&source_so)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+    let touch_output = Command::new("touch")
+        .arg("-d")
+        .arg("@1")
+        .arg(&source_so)
+        .output();
+    let Ok(touch_output) = touch_output else {
+        return;
+    };
+    if !touch_output.status.success() {
+        return;
+    }
+
+    let out_dir = temp.join("out");
+    let cargo_target = temp.join("cargo-target");
+    let report = temp.join("standalone_replacement_artifact.report.json");
+    let log = temp.join("standalone_replacement_artifact.log.jsonl");
+    let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+        .arg("--forge")
+        .current_dir(&root)
+        .env("STANDALONE_REPLACEMENT_OUT_DIR", &out_dir)
+        .env("STANDALONE_REPLACEMENT_CARGO_TARGET_DIR", &cargo_target)
+        .env("STANDALONE_REPLACEMENT_REPORT", &report)
+        .env("STANDALONE_REPLACEMENT_LOG", &log)
+        .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
+        .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
+        .env_remove("LD_PRELOAD")
+        .output()
+        .expect("forge mode should run");
+    assert!(
+        output.status.success(),
+        "forge mode failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&report);
+    assert_eq!(report["status"].as_str(), Some("pass"));
+    assert_eq!(report["artifact_state"]["status"].as_str(), Some("current"));
+    assert_ne!(
+        report["artifact_state"]["failure_signature"].as_str(),
+        Some("standalone_artifact_stale")
+    );
+    let mtime = report["artifact_state"]["mtime"]
+        .as_i64()
+        .expect("artifact mtime should be recorded");
+    let head_epoch = report["head_epoch"]
+        .as_i64()
+        .expect("head epoch should be recorded");
+    assert!(
+        mtime >= head_epoch,
+        "forged artifact mtime {mtime} should be at least HEAD epoch {head_epoch}"
+    );
+}
+
+#[test]
 fn forge_mode_reports_host_dependency_breakdown() {
     if Command::new("cc").arg("--version").output().is_err() {
         return;

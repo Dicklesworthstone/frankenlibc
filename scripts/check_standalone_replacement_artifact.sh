@@ -451,6 +451,7 @@ def forge_artifact():
             return target
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+        os.utime(target, None)
     return target
 
 
