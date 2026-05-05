@@ -497,6 +497,46 @@
       "rationale": "L1 promotion gate must remain wired to its fail-closed default."
     },
     {
+      "row_id": "l1-promotion-gate-source-commit-field",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "Dashboard consumers must see that the L1 promotion gate freshness policy is bound to its source_commit field."
+    },
+    {
+      "row_id": "l1-promotion-gate-source-commit-comparison-target",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "Dashboard consumers must see that promotion-gate freshness compares against the current source checkout."
+    },
+    {
+      "row_id": "l1-promotion-gate-source-commit-stale-result",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_l1_promotion",
+      "rationale": "A stale L1 promotion-gate source commit must block promotion, not merely report blockers."
+    },
+    {
+      "row_id": "l1-promotion-gate-source-commit-no-promotion",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "source_commit_freshness_policy.promotion_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Stale L1 promotion-gate evidence cannot authorize L1 promotion."
+    },
+    {
+      "row_id": "l1-promotion-gate-source-commit-rejection-kind",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_source_commit",
+      "rationale": "Dashboard consumers must see stale promotion-gate source drift as the explicit stale_source_commit rejection kind."
+    },
+    {
       "row_id": "current-level-still-l0",
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",

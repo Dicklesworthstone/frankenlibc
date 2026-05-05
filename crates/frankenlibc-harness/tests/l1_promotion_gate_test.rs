@@ -8,7 +8,7 @@
 //! `levels[level=L1]`-style filter for the replacement-levels artifact)
 //! and asserts byte-for-byte equality.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -128,6 +128,24 @@ const BLOCK_PROMOTION_KINDS: &[&str] = &[
     "blocker_unresolved",
 ];
 
+fn expected_source_commit_freshness_policy() -> Value {
+    json!({
+        "recorded_source_commit_field": "source_commit",
+        "comparison_target": "current git HEAD",
+        "stale_result": "block_l1_promotion",
+        "promotion_allowed_when_stale": false,
+        "rejected_evidence_kind": "stale_source_commit",
+    })
+}
+
+fn assert_source_commit_freshness_policy(gate: &Value) -> TestResult {
+    ensure_eq(
+        gate["source_commit_freshness_policy"].clone(),
+        expected_source_commit_freshness_policy(),
+        "source_commit_freshness_policy",
+    )
+}
+
 /// Resolve a dotted-path field expression with one supported filter form:
 ///
 ///   `levels[level=L1].blockers`  → find array element where .level == "L1"
@@ -167,6 +185,7 @@ fn gate_artifact_is_well_formed() -> TestResult {
         "source_commit must be set",
     )?;
     let freshness_policy = &gate["source_commit_freshness_policy"];
+    assert_source_commit_freshness_policy(&gate)?;
     ensure_eq(
         freshness_policy["recorded_source_commit_field"].as_str(),
         Some("source_commit"),
@@ -269,6 +288,18 @@ fn gate_artifact_is_well_formed() -> TestResult {
         )?;
     }
     Ok(())
+}
+
+#[test]
+fn malformed_source_commit_policy_blocks_l1_promotion_metadata() -> TestResult {
+    let mut gate = load_json(&gate_path())?;
+    gate["source_commit_freshness_policy"]["promotion_allowed_when_stale"] = json!(true);
+    let err = assert_source_commit_freshness_policy(&gate)
+        .expect_err("malformed source_commit_freshness_policy must fail validation");
+    ensure(
+        err.to_string().contains("source_commit_freshness_policy"),
+        format!("error should identify source_commit_freshness_policy: {err}"),
+    )
 }
 
 #[test]

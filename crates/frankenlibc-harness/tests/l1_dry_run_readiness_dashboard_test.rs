@@ -710,6 +710,93 @@ fn source_commit_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn l1_promotion_gate_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "l1-promotion-gate-pinned",
+            (
+                "policy.default_decision",
+                json!("block_until_l1_evidence_current"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-source-commit-field",
+            (
+                "source_commit_freshness_policy.recorded_source_commit_field",
+                json!("source_commit"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-source-commit-comparison-target",
+            (
+                "source_commit_freshness_policy.comparison_target",
+                json!("current git HEAD"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-source-commit-stale-result",
+            (
+                "source_commit_freshness_policy.stale_result",
+                json!("block_l1_promotion"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-source-commit-no-promotion",
+            (
+                "source_commit_freshness_policy.promotion_allowed_when_stale",
+                json!(false),
+            ),
+        ),
+        (
+            "l1-promotion-gate-source-commit-rejection-kind",
+            (
+                "source_commit_freshness_policy.rejected_evidence_kind",
+                json!("stale_source_commit"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("l1-promotion-gate-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows
+            .remove(row_id)
+            .ok_or_else(|| test_error(format!("unexpected L1 promotion gate row: {row_id}")))?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "gate_meta",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/l1_promotion_gate.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing L1 promotion gate dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn consuming_gates_exist_on_disk() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let root = workspace_root();
