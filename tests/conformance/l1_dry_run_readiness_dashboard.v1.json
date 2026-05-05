@@ -169,6 +169,38 @@
       "rationale": "L1 dashboard consumers must see host-provided GCC/GLIBC version requirements as promotion blockers."
     },
     {
+      "row_id": "standalone-artifact-report-tool-exit-code-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.11",
+      "expected_value": "tool_evidence.*.exit_code",
+      "rationale": "L1 dashboard consumers must see per-probe inspection exit codes instead of only aggregate claim_blocked state."
+    },
+    {
+      "row_id": "standalone-artifact-report-tool-timeout-flag-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.12",
+      "expected_value": "tool_evidence.*.timed_out",
+      "rationale": "L1 dashboard consumers must distinguish failed inspection tools from timed-out inspection tools."
+    },
+    {
+      "row_id": "standalone-artifact-report-tool-timeout-budget-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.13",
+      "expected_value": "tool_evidence.*.timeout_secs",
+      "rationale": "L1 dashboard consumers must see the effective timeout budget used by each standalone forge inspection probe."
+    },
+    {
+      "row_id": "standalone-artifact-report-tool-path-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.14",
+      "expected_value": "tool_evidence.*.path",
+      "rationale": "L1 dashboard consumers must see the evidence artifact path for each standalone forge inspection probe."
+    },
+    {
       "row_id": "standalone-link-run-smoke-claim-blocked-policy",
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",

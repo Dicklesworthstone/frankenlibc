@@ -339,7 +339,7 @@ fn critical_l1_evidence_rows_do_not_pass_on_schema_presence_only() -> TestResult
 }
 
 #[test]
-fn standalone_dependency_breakdown_rows_are_explicit() -> TestResult {
+fn standalone_artifact_report_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let expected_rows: BTreeSet<(&str, &str)> = [
         (
@@ -386,6 +386,22 @@ fn standalone_dependency_breakdown_rows_are_explicit() -> TestResult {
             "standalone-artifact-report-blocking-reasons-diagnostic",
             "artifact_state.dependency_breakdown.blocking_reasons",
         ),
+        (
+            "standalone-artifact-report-tool-exit-code-diagnostic",
+            "tool_evidence.*.exit_code",
+        ),
+        (
+            "standalone-artifact-report-tool-timeout-flag-diagnostic",
+            "tool_evidence.*.timed_out",
+        ),
+        (
+            "standalone-artifact-report-tool-timeout-budget-diagnostic",
+            "tool_evidence.*.timeout_secs",
+        ),
+        (
+            "standalone-artifact-report-tool-path-diagnostic",
+            "tool_evidence.*.path",
+        ),
     ]
     .into_iter()
     .collect();
@@ -411,7 +427,7 @@ fn standalone_dependency_breakdown_rows_are_explicit() -> TestResult {
     ensure_eq(
         seen,
         expected_rows,
-        "standalone dependency-breakdown dashboard rows",
+        "standalone artifact report dashboard rows",
     )
 }
 
