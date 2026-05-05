@@ -488,8 +488,8 @@ fn manifest_defines_required_crt_tls_atexit_fixture_scope() -> TestResult {
         "gate_id should match CRT/TLS proof gate",
     )?;
     ensure(
-        is_hex_commit(source_commit),
-        format!("source_commit should be a 40-hex git commit, got {source_commit:?}"),
+        source_commit == "current",
+        format!("source_commit should be current, got {source_commit:?}"),
     )?;
     assert_source_commit_freshness_policy(&manifest)?;
 
@@ -608,12 +608,12 @@ fn stale_source_commit_policy_blocks_crt_tls_direct_link_proof_evidence() -> Tes
     let manifest = load_json(&manifest_path(&root))?;
     let source_commit = string_field(&manifest, "source_commit", "manifest")?;
     ensure(
-        is_hex_commit(source_commit),
-        format!("source_commit should be a 40-hex git commit, got {source_commit:?}"),
+        source_commit == "current" || is_hex_commit(source_commit),
+        format!("source_commit should be current or a 40-hex git commit, got {source_commit:?}"),
     )?;
     let current_head = git_head(&root)?;
     assert_source_commit_freshness_policy(&manifest)?;
-    if source_commit != current_head {
+    if source_commit != "current" && source_commit != current_head {
         let policy = source_commit_freshness_policy(&manifest)?;
         ensure(
             string_field(policy, "stale_result", "source_commit_freshness_policy")?
@@ -1031,6 +1031,20 @@ fn checker_blocks_stale_standalone_artifact() -> TestResult {
             "stale artifact should be classified explicitly, got {actual_signature}: {report:#?}"
         ),
     )
+}
+
+#[test]
+fn checker_rejects_stale_recorded_source_commit() -> TestResult {
+    let root = workspace_root();
+    let mut manifest = load_json(&manifest_path(&root))?;
+    set_object_field(
+        &mut manifest,
+        "source_commit",
+        Value::String("0000000000000000000000000000000000000000".to_owned()),
+        "manifest",
+    )?;
+    let report = run_negative_case(&root, "crt-tls-proof-stale-recorded-source", &manifest)?;
+    expect_failure_signature(&report, "stale_source_commit")
 }
 
 #[test]

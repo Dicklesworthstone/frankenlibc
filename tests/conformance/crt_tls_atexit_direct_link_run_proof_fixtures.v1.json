@@ -2,7 +2,7 @@
   "schema_version": "v1",
   "bead_id": "bd-b92jd.1.2",
   "gate_id": "crt-tls-atexit-direct-link-run-proof-fixtures-v1",
-  "source_commit": "53b3496cd5b91b3f151178bd09573e06d3323117",
+  "source_commit": "current",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",

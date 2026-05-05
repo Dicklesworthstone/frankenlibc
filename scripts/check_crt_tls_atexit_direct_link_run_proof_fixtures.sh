@@ -222,6 +222,12 @@ def commit_is_current(commit_marker):
     return commit_marker in {"current", "unknown", source_commit}
 
 
+def full_git_commit(value):
+    return isinstance(value, str) and len(value) == 40 and all(
+        byte in "0123456789abcdefABCDEF" for byte in value
+    )
+
+
 def validate_freshness_policy(manifest):
     expected = {
         "recorded_source_commit_field": "source_commit",
@@ -481,10 +487,10 @@ if manifest.get("required_log_fields") != REQUIRED_LOG_FIELDS:
 
 freshness = require_object(manifest.get("freshness"), "freshness")
 manifest_commit = manifest.get("source_commit")
-if not isinstance(manifest_commit, str) or len(manifest_commit) != 40 or not all(
-    byte in "0123456789abcdefABCDEF" for byte in manifest_commit
-):
-    fail("missing_source_commit", "manifest.source_commit must be a 40-hex git commit")
+if not (manifest_commit == "current" or full_git_commit(manifest_commit)):
+    fail("missing_source_commit", "manifest.source_commit must be 'current' or a 40-hex git commit")
+elif not commit_is_current(manifest_commit):
+    fail("stale_source_commit", f"manifest.source_commit {manifest_commit!r} is stale")
 validate_freshness_policy(manifest)
 required_commit = str(freshness.get("required_source_commit", ""))
 if not commit_is_current(required_commit):
