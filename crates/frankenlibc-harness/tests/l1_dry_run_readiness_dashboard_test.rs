@@ -119,6 +119,8 @@ const REQUIRED_ROW_KINDS: &[&str] = &[
     "promotion_state",
 ];
 
+const STATUS_SEMANTIC_ROW_KINDS: &[&str] = &["forge", "smoke", "direct_link", "real_program"];
+
 fn select_field<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     let mut cursor = root;
     for segment in path.split('.') {
@@ -301,6 +303,35 @@ fn minimum_row_kinds_each_have_at_least_one_row() -> TestResult {
         ensure(
             kinds_seen.contains(required),
             format!("minimum_row_kinds requires at least one row of kind {required}; none present"),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn critical_l1_evidence_rows_do_not_pass_on_schema_presence_only() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut semantic_counts = BTreeSet::new();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let kind = as_str(&row["row_kind"], "row.row_kind")?;
+        if STATUS_SEMANTIC_ROW_KINDS.contains(&kind) {
+            let field = as_str(&row["field"], "row.field")?;
+            ensure(
+                field != "schema_version",
+                format!(
+                    "row {}: critical L1 evidence row must assert a status/policy field, not schema_version",
+                    as_str(&row["row_id"], "row.row_id")?
+                ),
+            )?;
+            semantic_counts.insert(kind.to_string());
+        }
+    }
+    for kind in STATUS_SEMANTIC_ROW_KINDS {
+        ensure(
+            semantic_counts.contains(*kind),
+            format!(
+                "critical L1 evidence row kind {kind} must have at least one semantic status/policy row"
+            ),
         )?;
     }
     Ok(())

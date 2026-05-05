@@ -65,36 +65,68 @@
   },
   "rows": [
     {
-      "row_id": "standalone-artifact-forge-current",
+      "row_id": "standalone-artifact-forge-not-promotion",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "schema_version",
-      "expected_value": "v1",
-      "rationale": "Standalone replacement artifact must be present and at v1 schema before forge claims advance."
+      "field": "claim_policy.successful_forge_is_not_promotion",
+      "expected_value": true,
+      "rationale": "A successful forge row is evidence only; it must never promote replacement level by itself."
     },
     {
-      "row_id": "standalone-link-run-smoke-no-fails",
+      "row_id": "standalone-artifact-forge-rejects-ld-preload-substitute",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "artifact_policy.ld_preload_substitutes_allowed",
+      "expected_value": false,
+      "rationale": "LD_PRELOAD/interpose artifacts cannot substitute for standalone replacement evidence."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-claim-blocked-policy",
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
-      "field": "schema_version",
-      "expected_value": "v1",
-      "rationale": "Standalone link-run smoke ledger must be present at v1 schema."
+      "field": "summary.standalone_claim_status",
+      "expected_value": "blocked_until_current_artifact_and_obligations_pass",
+      "rationale": "Standalone link-run smoke must remain claim-blocked until the current artifact and obligations pass."
     },
     {
-      "row_id": "crt-tls-atexit-direct-link-proof-current",
+      "row_id": "standalone-link-run-smoke-missing-stale-claim-blocked",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "current_claim_policy.missing_or_stale_candidate_result",
+      "expected_value": "claim_blocked",
+      "rationale": "Missing or stale standalone candidates must produce claim_blocked evidence, not a pass."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-blocked-status",
       "row_kind": "direct_link",
       "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
-      "field": "schema_version",
-      "expected_value": "v1",
-      "rationale": "CRT/TLS/atexit direct-link proof fixtures must be present at v1 schema before L1 promotion."
+      "field": "summary.current_gate_status",
+      "expected_value": "blocked",
+      "rationale": "CRT/TLS/atexit direct-link proof must surface its blocked state until current standalone evidence exists."
     },
     {
-      "row_id": "real-program-smoke-suite-current",
+      "row_id": "crt-tls-atexit-direct-link-proof-blocked-count",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "summary.claim_blocked_count",
+      "expected_value": 8,
+      "rationale": "The dashboard must expose all eight currently blocked direct-link proof fixtures."
+    },
+    {
+      "row_id": "real-program-smoke-suite-standalone-count",
       "row_kind": "real_program",
       "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
-      "field": "schema_version",
-      "expected_value": "v1",
-      "rationale": "Real-program smoke suite manifest must be present at v1 schema."
+      "field": "summary.standalone_direct_link_real_program_case_count",
+      "expected_value": 2,
+      "rationale": "Real-program smoke coverage must include the standalone direct-link real-program rows."
+    },
+    {
+      "row_id": "real-program-smoke-suite-stale-claim-blocked",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "artifact_policy.stale_result",
+      "expected_value": "claim_blocked",
+      "rationale": "Stale standalone real-program evidence must remain claim_blocked."
     },
     {
       "row_id": "dlfcn-sentinel-l1-blocker-count-bound",
