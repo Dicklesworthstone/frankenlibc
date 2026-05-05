@@ -117,6 +117,14 @@ REQUIRED_EVIDENCE_FILES = [
 
 EXPECTED_MANIFEST_ID = "standalone-replacement-artifact"
 
+EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_replacement_artifact_evidence",
+    "standalone_artifact_evidence_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
+}
+
 EXPECTED_INPUTS = {
     "packaging_spec": "tests/conformance/packaging_spec.json",
     "replacement_levels": "tests/conformance/replacement_levels.json",
@@ -623,6 +631,15 @@ def validate_manifest():
         errors.append("manifest must be linked to bd-srtkq")
     if manifest.get("manifest_id") != EXPECTED_MANIFEST_ID:
         errors.append("manifest_id does not match script contract")
+    source_commit = manifest.get("source_commit")
+    source_commit_policy_ok = (
+        isinstance(source_commit, str)
+        and re.fullmatch(r"[0-9a-fA-F]{40}", source_commit) is not None
+        and manifest.get("source_commit_freshness_policy") == EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY
+    )
+    checks["source_commit_freshness_policy"] = "pass" if source_commit_policy_ok else "fail"
+    if not source_commit_policy_ok:
+        errors.append("source_commit_freshness_policy does not match script contract")
     if manifest.get("inputs") != EXPECTED_INPUTS:
         errors.append("inputs do not match script contract")
     if manifest.get("summary") != EXPECTED_SUMMARY:

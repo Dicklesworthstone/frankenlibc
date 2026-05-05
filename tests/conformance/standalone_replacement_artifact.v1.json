@@ -2,6 +2,14 @@
   "schema_version": "v1",
   "manifest_id": "standalone-replacement-artifact",
   "bead": "bd-srtkq",
+  "source_commit": "f5c62668ad77b7d24170ed67f6303d7caa10e5d4",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_replacement_artifact_evidence",
+    "standalone_artifact_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "generated_utc": "2026-05-05T05:31:00Z",
   "description": "Deterministic forge and evidence gate for the canonical standalone replacement artifact. This gate materializes libfrankenlibc_replace.so from the current frankenlibc-abi release cdylib, records loader/symbol/dependency evidence, and keeps replacement claims blocked when evidence is absent, stale, misnamed, non-ELF, or still host-glibc-dependent.",
   "inputs": {

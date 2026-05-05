@@ -81,6 +81,45 @@ fn load_json(path: &Path) -> serde_json::Value {
     serde_json::from_str(&content).expect("json should parse")
 }
 
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn git_head(root: &Path) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .expect("git rev-parse HEAD should run");
+    assert!(
+        output.status.success(),
+        "git rev-parse HEAD failed with status {}",
+        output.status
+    );
+    let stdout = String::from_utf8(output.stdout).expect("git rev-parse HEAD should emit UTF-8");
+    let head = stdout.trim().to_owned();
+    assert!(
+        is_hex_commit(&head),
+        "git HEAD should be a 40-hex commit, got {head:?}"
+    );
+    head
+}
+
+fn assert_source_commit_freshness_policy(manifest: &serde_json::Value) {
+    assert_eq!(
+        manifest["source_commit_freshness_policy"],
+        serde_json::json!({
+            "recorded_source_commit_field": "source_commit",
+            "comparison_target": "current git HEAD",
+            "stale_result": "block_standalone_replacement_artifact_evidence",
+            "standalone_artifact_evidence_allowed_when_stale": false,
+            "rejected_evidence_kind": "stale_source_commit",
+        })
+    );
+}
+
 fn string_set(value: &serde_json::Value) -> HashSet<String> {
     value
         .as_array()
@@ -621,6 +660,14 @@ fn manifest_matches_forge_contract() {
     let manifest = manifest();
     assert_eq!(manifest["schema_version"].as_str(), Some("v1"));
     assert_eq!(manifest["bead"].as_str(), Some("bd-srtkq"));
+    let source_commit = manifest["source_commit"]
+        .as_str()
+        .expect("source_commit should be present");
+    assert!(
+        is_hex_commit(source_commit),
+        "source_commit should be a 40-hex commit, got {source_commit:?}"
+    );
+    assert_source_commit_freshness_policy(&manifest);
     assert_eq!(
         manifest["manifest_id"].as_str(),
         Some("standalone-replacement-artifact")
@@ -900,6 +947,39 @@ fn manifest_matches_forge_contract() {
 }
 
 #[test]
+fn stale_source_commit_policy_blocks_artifact_evidence() {
+    let root = workspace_root();
+    let manifest = manifest();
+    let source_commit = manifest["source_commit"]
+        .as_str()
+        .expect("source_commit should be present");
+    assert!(
+        is_hex_commit(source_commit),
+        "source_commit should be a 40-hex commit, got {source_commit:?}"
+    );
+    let current_head = git_head(&root);
+    assert_source_commit_freshness_policy(&manifest);
+    if source_commit != current_head {
+        let policy = &manifest["source_commit_freshness_policy"];
+        assert_eq!(
+            policy["stale_result"].as_str(),
+            Some("block_standalone_replacement_artifact_evidence"),
+            "stale source commits must block standalone artifact evidence"
+        );
+        assert_eq!(
+            policy["standalone_artifact_evidence_allowed_when_stale"].as_bool(),
+            Some(false),
+            "stale source commits must not allow standalone artifact evidence"
+        );
+        assert_eq!(
+            policy["rejected_evidence_kind"].as_str(),
+            Some("stale_source_commit"),
+            "stale source commits must use stale_source_commit"
+        );
+    }
+}
+
+#[test]
 fn validate_only_rejects_required_tools_contract_drift() {
     let manifest_path =
         write_manifest_variant("standalone-artifact-tools-drift-manifest", |manifest| {
@@ -926,6 +1006,46 @@ fn validate_only_rejects_required_tools_contract_drift() {
             .iter()
             .any(|error| error.as_str() == Some("required_tools do not match script contract")),
         "expected required_tools contract error: {errors:?}"
+    );
+}
+
+#[test]
+fn validate_only_rejects_missing_source_commit_freshness_policy() {
+    let manifest_path = write_manifest_variant(
+        "standalone-artifact-missing-source-policy-manifest",
+        |manifest| {
+            manifest
+                .as_object_mut()
+                .expect("manifest should be object")
+                .remove("source_commit_freshness_policy");
+        },
+    );
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) = run_gate_with_env(
+        "--validate-only",
+        "standalone-artifact-missing-source-policy",
+        &envs,
+    );
+    assert!(
+        !output.status.success(),
+        "missing source_commit_freshness_policy should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    assert_eq!(
+        report_json["checks"]["source_commit_freshness_policy"].as_str(),
+        Some("fail")
+    );
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors.iter().any(|error| error.as_str()
+            == Some("source_commit_freshness_policy does not match script contract")),
+        "expected source_commit_freshness_policy contract error: {errors:?}"
     );
 }
 
@@ -1293,6 +1413,10 @@ fn validate_only_writes_report_and_required_log_fields() {
     let report = load_json(&report);
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["claim_status"].as_str(), Some("schema_validated"));
+    assert_eq!(
+        report["checks"]["source_commit_freshness_policy"].as_str(),
+        Some("pass")
+    );
     assert_eq!(
         report["artifact_state"]["status"].as_str(),
         Some("not_checked")
