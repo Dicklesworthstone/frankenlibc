@@ -221,7 +221,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "summary.forge_projection_field_count",
-      "expected_value": 18,
+      "expected_value": 19,
       "rationale": "L1 dashboard consumers must see the number of standalone forge report fields projected by host probes."
     },
     {

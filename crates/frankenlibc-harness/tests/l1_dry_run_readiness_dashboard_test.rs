@@ -821,7 +821,7 @@ fn host_probe_projection_rows_are_explicit() -> TestResult {
         (
             "standalone-host-probe-projection-field-count-diagnostic",
             "summary.forge_projection_field_count",
-            json!(18),
+            json!(19),
         ),
         (
             "standalone-host-probe-projection-blocking-reason-count-diagnostic",
