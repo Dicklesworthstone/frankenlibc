@@ -621,6 +621,30 @@ fn manifest_matches_forge_contract() {
     assert_eq!(manifest["schema_version"].as_str(), Some("v1"));
     assert_eq!(manifest["bead"].as_str(), Some("bd-srtkq"));
     assert_eq!(
+        manifest["manifest_id"].as_str(),
+        Some("standalone-replacement-artifact")
+    );
+    assert_eq!(
+        manifest["inputs"],
+        serde_json::json!({
+            "packaging_spec": "tests/conformance/packaging_spec.json",
+            "replacement_levels": "tests/conformance/replacement_levels.json",
+            "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
+        })
+    );
+    assert_eq!(
+        manifest["summary"],
+        serde_json::json!({
+            "bead": "bd-srtkq",
+            "row_count": 1,
+            "ld_preload_substitutes_for_standalone": false,
+            "next_consumers": [
+                "bd-4xk24",
+                "tests/conformance/standalone_link_run_smoke.v1.json",
+            ],
+        })
+    );
+    assert_eq!(
         manifest["artifact_policy"],
         serde_json::json!({
             "canonical_artifact_name": "libfrankenlibc_replace.so",
@@ -947,6 +971,51 @@ fn validate_only_rejects_artifact_policy_contract_drift() {
             .any(|error| error.as_str() == Some("artifact_policy does not match script contract")),
         "expected artifact_policy contract error: {errors:?}"
     );
+}
+
+#[test]
+fn validate_only_rejects_manifest_identity_contract_drift() {
+    let manifest_path = write_manifest_variant("standalone-identity-drift-manifest", |manifest| {
+        manifest["manifest_id"] =
+            serde_json::Value::String("standalone-replacement-artifact-v2".to_owned());
+        manifest["inputs"]["packaging_spec"] =
+            serde_json::Value::String("tests/conformance/packaging_spec.next.json".to_owned());
+        manifest["inputs"]["standalone_link_run_smoke"] = serde_json::Value::String(
+            "tests/conformance/ld_preload_smoke_summary.v1.json".to_owned(),
+        );
+        manifest["summary"]["row_count"] = serde_json::Value::Number(2.into());
+        manifest["summary"]["ld_preload_substitutes_for_standalone"] =
+            serde_json::Value::Bool(true);
+        manifest["summary"]["next_consumers"] = serde_json::json!([
+            "bd-4xk24",
+            "tests/conformance/ld_preload_smoke_summary.v1.json",
+        ]);
+    });
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) =
+        run_gate_with_env("--validate-only", "standalone-identity-drift", &envs);
+    assert!(
+        !output.status.success(),
+        "manifest identity drift should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    for expected in [
+        "manifest_id does not match script contract",
+        "inputs do not match script contract",
+        "summary does not match script contract",
+    ] {
+        assert!(
+            errors.iter().any(|error| error.as_str() == Some(expected)),
+            "expected {expected}: {errors:?}"
+        );
+    }
 }
 
 #[test]

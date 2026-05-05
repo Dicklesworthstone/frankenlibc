@@ -114,6 +114,24 @@ REQUIRED_EVIDENCE_FILES = [
     "artifact.ldd.txt",
 ]
 
+EXPECTED_MANIFEST_ID = "standalone-replacement-artifact"
+
+EXPECTED_INPUTS = {
+    "packaging_spec": "tests/conformance/packaging_spec.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
+}
+
+EXPECTED_SUMMARY = {
+    "bead": "bd-srtkq",
+    "row_count": 1,
+    "ld_preload_substitutes_for_standalone": False,
+    "next_consumers": [
+        "bd-4xk24",
+        "tests/conformance/standalone_link_run_smoke.v1.json",
+    ],
+}
+
 EXPECTED_HASH_EVIDENCE_POLICY = {
     "algorithm": "sha256",
     "implementation": "python3 hashlib.sha256",
@@ -508,6 +526,12 @@ def validate_manifest():
         errors.append("manifest schema_version must be v1")
     if manifest.get("bead") != "bd-srtkq":
         errors.append("manifest must be linked to bd-srtkq")
+    if manifest.get("manifest_id") != EXPECTED_MANIFEST_ID:
+        errors.append("manifest_id does not match script contract")
+    if manifest.get("inputs") != EXPECTED_INPUTS:
+        errors.append("inputs do not match script contract")
+    if manifest.get("summary") != EXPECTED_SUMMARY:
+        errors.append("summary does not match script contract")
     if manifest.get("required_log_fields") != REQUIRED_LOG_FIELDS:
         errors.append("required_log_fields do not match script contract")
     if manifest.get("required_report_fields") != REQUIRED_REPORT_FIELDS:
