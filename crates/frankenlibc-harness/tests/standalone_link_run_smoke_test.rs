@@ -700,6 +700,79 @@ fn dry_run_blocks_wrong_profile_candidate_artifact() {
 }
 
 #[test]
+fn dry_run_blocks_stale_candidate_artifact() {
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-stale-artifact");
+    let artifact = temp.join("libfrankenlibc_replace.so");
+    std::fs::write(&artifact, b"stale replacement artifact").expect("write stale artifact");
+    let touch = Command::new("touch")
+        .arg("-t")
+        .arg("200001010000.00")
+        .arg(&artifact)
+        .output()
+        .expect("touch should run");
+    assert!(
+        touch.status.success(),
+        "touch failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&touch.stdout),
+        String::from_utf8_lossy(&touch.stderr)
+    );
+
+    let out_dir = temp.join("target");
+    let report = temp.join("standalone_link_run_smoke.report.json");
+    let log = temp.join("standalone_link_run_smoke.log.jsonl");
+    let output = Command::new(root.join("scripts/check_standalone_link_run_smoke.sh"))
+        .arg("--dry-run")
+        .current_dir(&root)
+        .env("STANDALONE_SMOKE_TARGET_DIR", &out_dir)
+        .env("STANDALONE_SMOKE_REPORT", &report)
+        .env("STANDALONE_SMOKE_LOG", &log)
+        .env("STANDALONE_SMOKE_RUN_ID", "standalone-stale-artifact")
+        .env("FRANKENLIBC_STANDALONE_LIB", &artifact)
+        .env_remove("LD_PRELOAD")
+        .output()
+        .expect("standalone link-run smoke gate should execute");
+    assert!(
+        output.status.success(),
+        "dry-run gate failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_json = load_json(&report);
+    let expected_candidate_rows = load_manifest()["smoke_rows"].as_array().unwrap().len() * 2;
+    assert_eq!(report_json["status"].as_str(), Some("pass"));
+    assert_eq!(report_json["claim_status"].as_str(), Some("claim_blocked"));
+    assert_eq!(
+        report_json["artifact_state"]["status"].as_str(),
+        Some("stale")
+    );
+    assert_eq!(
+        report_json["artifact_state"]["failure_signature"].as_str(),
+        Some("standalone_artifact_stale")
+    );
+    assert_eq!(
+        report_json["summary"]["candidate_blocked"].as_u64(),
+        Some(expected_candidate_rows as u64)
+    );
+
+    let log = std::fs::read_to_string(&log).expect("log should be readable");
+    let rows: Vec<serde_json::Value> = log
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("log line should parse"))
+        .collect();
+    assert!(rows.iter().any(|row| {
+        row["event"].as_str() == Some("candidate_direct_link")
+            && row["actual_status"].as_str() == Some("claim_blocked")
+            && matches!(
+                row["failure_signature"].as_str(),
+                Some("standalone_artifact_stale")
+            )
+    }));
+}
+
+#[test]
 fn dry_run_blocks_candidate_artifact_when_ldd_probe_fails() {
     if Command::new("cc").arg("--version").output().is_err() {
         return;
