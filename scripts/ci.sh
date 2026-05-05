@@ -222,6 +222,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- release replacement claim evidence gate ---"
+    scripts/release/check_replacement_claim_evidence.sh
+    echo "PASS"
+    echo ""
+
     echo "--- claim gate positive/negative matrix ---"
     scripts/check_claim_gate_positive_negative_matrix.sh
     echo "PASS"

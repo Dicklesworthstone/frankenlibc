@@ -88,6 +88,10 @@ l1_matrix_path = artifact_path(
     "FRANKENLIBC_L1_PROOF_MATRIX",
     "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
 )
+l1_dashboard_path = artifact_path(
+    "FRANKENLIBC_L1_DRY_RUN_DASHBOARD",
+    "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+)
 standalone_matrix_path = artifact_path(
     "FRANKENLIBC_STANDALONE_PROOF_MATRIX",
     "tests/conformance/standalone_readiness_proof_matrix.v1.json",
@@ -174,7 +178,7 @@ def parse_timestamp(value):
 
 
 def generated_at(data):
-    for key in ("generated_at_utc", "generated_at", "source_generated_at_utc"):
+    for key in ("generated_utc", "generated_at_utc", "generated_at", "source_generated_at_utc"):
         parsed = parse_timestamp(data.get(key))
         if parsed is not None:
             return parsed
@@ -197,6 +201,52 @@ def stale_evidence_errors(data, label, max_age_days):
     if age_days > max_age_days:
         return [f"release_claim_stale_{label}_evidence"]
     return []
+
+
+def select_field(data, field_path):
+    cursor = data
+    for segment in str(field_path).split("."):
+        if not isinstance(cursor, dict) or segment not in cursor:
+            return None
+        cursor = cursor[segment]
+    return cursor
+
+
+def standalone_readiness_text(text):
+    if not isinstance(text, str):
+        return False
+    normalized = " ".join(text.lower().split())
+    patterns = [
+        r"\b(is|are|now|today|ready)\s+(a\s+)?(full\s+)?standalone\s+(libc\s+)?replacement\b",
+        r"\bready\s+as\s+a\s+(full\s+)?standalone\s+(libc\s+)?replacement\b",
+        r"\b(is|are|now|today|ready)\s+(a\s+)?drop-in\s+replacement\s+for\s+glibc\b",
+        r"\bstandalone\s+(libc\s+)?replacement\s+(is\s+)?(ready|supported|available|complete|done)\b",
+        r"\bdrop-in\s+replacement\s+(is\s+)?(ready|supported|available|complete|done)\b",
+        r"\bcan\s+replace\s+glibc\s+(today|now|as\s+a\s+standalone)\b",
+    ]
+    return any(re.search(pattern, normalized) for pattern in patterns)
+
+
+def claim_doc_texts(claim):
+    values = []
+    for key in ("claim_text", "text", "summary"):
+        value = claim.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    doc_claims = claim.get("doc_claims")
+    if isinstance(doc_claims, list):
+        for doc_claim in doc_claims:
+            if isinstance(doc_claim, dict):
+                text = doc_claim.get("claim_text") or doc_claim.get("text")
+                if isinstance(text, str):
+                    values.append(text)
+            elif isinstance(doc_claim, str):
+                values.append(doc_claim)
+    return values
+
+
+def claim_implies_standalone_readiness(claim):
+    return any(standalone_readiness_text(text) for text in claim_doc_texts(claim))
 
 
 def support_matrix_counts(data):
@@ -261,6 +311,14 @@ def readme_claim_errors(current_release_level):
     for level in matches:
         if level_rank[level] > level_rank[current_release_level]:
             return ["release_claim_readme_overclaims_current_release_level"]
+    if standalone_readiness_text(text):
+        return ["release_claim_readme_standalone_readiness_requires_l1_dashboard"]
+    return []
+
+
+def doc_claim_errors(claim):
+    if claim_implies_standalone_readiness(claim):
+        return ["release_claim_doc_standalone_readiness_requires_l1_dashboard"]
     return []
 
 
@@ -285,6 +343,74 @@ def l1_evidence_errors(claim, current_level, current_release_level):
         errors.append("release_claim_l1_gate_not_pass")
     if summary.get("blocked_row_count", 0) != 0:
         errors.append("release_claim_l1_blocked_rows_present")
+    return errors
+
+
+def l1_dashboard_errors(claim):
+    errors = []
+    dashboard_ref = rel(l1_dashboard_path)
+    if not cited(claim, dashboard_ref):
+        return ["release_claim_missing_l1_dry_run_dashboard_evidence"]
+
+    dashboard = load_json(l1_dashboard_path)
+    policy = dashboard.get("policy", {})
+    max_age_days = int(policy.get("max_evidence_age_days", default_max_evidence_age_days))
+    errors.extend(stale_evidence_errors(dashboard, "l1_dry_run_dashboard", max_age_days))
+
+    required_kinds = {
+        "forge": "forged_artifact",
+        "direct_link": "direct_link",
+        "real_program": "real_program",
+        "dlfcn": "dlfcn",
+        "perf": "perf",
+    }
+    rows_by_kind = {kind: [] for kind in required_kinds}
+    rows = dashboard.get("rows", [])
+    if not isinstance(rows, list):
+        return errors + ["release_claim_l1_dashboard_rows_missing"]
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("row_kind", ""))
+        if kind in rows_by_kind:
+            rows_by_kind[kind].append(row)
+
+    for kind, label in required_kinds.items():
+        if not rows_by_kind[kind]:
+            errors.append(f"release_claim_l1_dashboard_missing_required_row_kind:{label}")
+
+    for kind, rows in rows_by_kind.items():
+        for row in rows:
+            row_id = str(row.get("row_id", kind))
+            artifact_rel = row.get("evidence_artifact")
+            if not isinstance(artifact_rel, str) or not artifact_rel:
+                errors.append(f"release_claim_l1_dashboard_row_lacks_evidence_ref:{row_id}")
+                continue
+            artifact = root / artifact_rel
+            if not artifact.exists():
+                errors.append(f"release_claim_l1_dashboard_missing_row_artifact:{row_id}")
+                continue
+            artifact_json = load_json(artifact)
+            if stale_evidence_errors(artifact_json, "row", max_age_days):
+                errors.append(f"release_claim_stale_l1_dashboard_row_evidence:{row_id}")
+
+            field = row.get("field")
+            actual = select_field(artifact_json, field)
+            if actual is None:
+                errors.append(f"release_claim_l1_dashboard_row_field_missing:{row_id}")
+                continue
+            if "expected_value" in row:
+                if actual != row["expected_value"]:
+                    errors.append(f"release_claim_l1_dashboard_blocked_row:{row_id}")
+            elif "expected_value_max" in row:
+                try:
+                    if float(actual) > float(row["expected_value_max"]):
+                        errors.append(f"release_claim_l1_dashboard_blocked_row:{row_id}")
+                except (TypeError, ValueError):
+                    errors.append(f"release_claim_l1_dashboard_blocked_row:{row_id}")
+            else:
+                errors.append(f"release_claim_l1_dashboard_row_missing_expectation:{row_id}")
     return errors
 
 
@@ -335,13 +461,19 @@ for claim in claims:
     if claimed_level not in level_rank:
         failure_signatures.append("release_claim_level_unparseable")
     else:
+        doc_requires_l1_dashboard = claim_implies_standalone_readiness(claim)
+        evidence_level = claimed_level
+        if doc_requires_l1_dashboard and level_rank[claimed_level] < level_rank["L1"]:
+            evidence_level = "L1"
         failure_signatures.extend(readme_claim_errors(current_release_level))
-        if level_rank[claimed_level] >= level_rank["L1"]:
-            failure_signatures.extend(support_matrix_errors(claim, claimed_level))
+        failure_signatures.extend(doc_claim_errors(claim))
+        if level_rank[claimed_level] >= level_rank["L1"] or doc_requires_l1_dashboard:
+            failure_signatures.extend(support_matrix_errors(claim, evidence_level))
             failure_signatures.extend(compatibility_report_errors(claim))
             failure_signatures.extend(
                 l1_evidence_errors(claim, current_level, current_release_level)
             )
+            failure_signatures.extend(l1_dashboard_errors(claim))
         if level_rank[claimed_level] >= level_rank["L2"]:
             failure_signatures.extend(
                 standalone_evidence_errors(
@@ -356,9 +488,14 @@ for claim in claims:
             )
 
     required_evidence = [rel(levels_path)]
-    if claimed_level in ("L1", "L2", "L3"):
+    if claimed_level in ("L1", "L2", "L3") or claim_implies_standalone_readiness(claim):
         required_evidence.extend(
-            [rel(support_matrix_path), rel(compatibility_report_path), rel(l1_matrix_path)]
+            [
+                rel(support_matrix_path),
+                rel(compatibility_report_path),
+                rel(l1_matrix_path),
+                rel(l1_dashboard_path),
+            ]
         )
     if claimed_level in ("L2", "L3"):
         required_evidence.append(rel(standalone_matrix_path))
@@ -394,6 +531,7 @@ report = {
         "support_matrix": rel(support_matrix_path),
         "compatibility_report": rel(compatibility_report_path),
         "L1": rel(l1_matrix_path),
+        "l1_dry_run_dashboard": rel(l1_dashboard_path),
         "L2": rel(standalone_matrix_path),
         "L3": rel(standalone_matrix_path),
     },

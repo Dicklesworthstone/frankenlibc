@@ -75,6 +75,59 @@ fn release_claim_refs(extra_refs: &[String]) -> TestResult<String> {
         .join(", "))
 }
 
+fn l1_dashboard_fixture(generated_utc: &str, include_perf: bool) -> String {
+    let perf_rows = if include_perf {
+        r#",
+    {
+      "row_id": "perf-regression-prevention-no-issues",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "summary.total_issues",
+      "expected_value": 0
+    }"#
+    } else {
+        ""
+    };
+    format!(
+        r#"{{
+  "schema_version": "v1",
+  "generated_utc": "{generated_utc}",
+  "policy": {{"max_evidence_age_days": 180}},
+  "rows": [
+    {{
+      "row_id": "standalone-artifact-forge-current",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "schema_version",
+      "expected_value": "v1"
+    }},
+    {{
+      "row_id": "crt-tls-atexit-direct-link-proof-current",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "schema_version",
+      "expected_value": "v1"
+    }},
+    {{
+      "row_id": "real-program-smoke-suite-current",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "schema_version",
+      "expected_value": "v1"
+    }},
+    {{
+      "row_id": "dlfcn-sentinel-l1-blocker-count-bound",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "expected_counts.l1_blocker",
+      "expected_value_max": 6
+    }}{perf_rows}
+  ]
+}}
+"#
+    )
+}
+
 #[test]
 fn current_l0_release_policy_passes_without_l1_evidence() -> TestResult {
     let report = unique_output_path("current-l0-report")?;
@@ -96,6 +149,97 @@ fn current_l0_release_policy_passes_without_l1_evidence() -> TestResult {
     let report_json = read_report(&report)?;
     assert_eq!(report_json["status"].as_str(), Some("pass"));
     assert_eq!(report_json["current_release_level"].as_str(), Some("L0"));
+    Ok(())
+}
+
+#[test]
+fn release_doc_known_limitation_claim_passes_without_l1_dashboard() -> TestResult {
+    let claims = unique_output_path("known-limitation-doc-claims")?;
+    let report = unique_output_path("known-limitation-doc-report")?;
+    let log = unique_output_path("known-limitation-doc-log")?;
+    write_file(
+        &claims,
+        r#"{
+  "schema_version": "v1",
+  "claims": [
+    {
+      "id": "release-doc-known-limitation",
+      "tag": "v0.1.0-L0",
+      "claimed_level": "L0",
+      "claim_surface": "README.md",
+      "claim_text": "Full standalone replacement remains planned; the current release claim is L0 interpose.",
+      "artifact_refs": ["tests/conformance/replacement_levels.json"]
+    }
+  ]
+}
+"#,
+    )?;
+
+    let output = run_gate(&[
+        "--claims".to_owned(),
+        path_arg(&claims),
+        "--report".to_owned(),
+        path_arg(&report),
+        "--log".to_owned(),
+        path_arg(&log),
+    ])?;
+
+    assert!(
+        output.status.success(),
+        "known-limitation doc claim should pass\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = read_report(&report)?;
+    assert_eq!(report_json["status"].as_str(), Some("pass"));
+    Ok(())
+}
+
+#[test]
+fn release_doc_standalone_readiness_without_l1_dashboard_fails_closed() -> TestResult {
+    let claims = unique_output_path("standalone-ready-doc-claims")?;
+    let report = unique_output_path("standalone-ready-doc-report")?;
+    let log = unique_output_path("standalone-ready-doc-log")?;
+    write_file(
+        &claims,
+        r#"{
+  "schema_version": "v1",
+  "claims": [
+    {
+      "id": "release-doc-standalone-ready",
+      "tag": "v0.1.0-L0",
+      "claimed_level": "L0",
+      "claim_surface": "README.md",
+      "claim_text": "FrankenLibC is ready as a standalone replacement for glibc today.",
+      "artifact_refs": ["tests/conformance/replacement_levels.json"]
+    }
+  ]
+}
+"#,
+    )?;
+
+    let output = run_gate(&[
+        "--claims".to_owned(),
+        path_arg(&claims),
+        "--report".to_owned(),
+        path_arg(&report),
+        "--log".to_owned(),
+        path_arg(&log),
+    ])?;
+
+    assert!(
+        !output.status.success(),
+        "standalone-ready release doc claim must fail without dashboard evidence"
+    );
+    let report_json = read_report(&report)?;
+    let signature = report_json["claims"][0]["failure_signature"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        signature.contains("release_claim_doc_standalone_readiness_requires_l1_dashboard")
+            && signature.contains("release_claim_missing_l1_dry_run_dashboard_evidence"),
+        "standalone-ready doc claim failures not found: {report_json}"
+    );
     Ok(())
 }
 
@@ -146,6 +290,122 @@ fn l1_release_tag_without_evidence_file_fails_closed() -> TestResult {
             .unwrap_or_default()
             .contains("release_claim_missing_l1_evidence"),
         "missing-evidence failure not found: {report_json}"
+    );
+    Ok(())
+}
+
+#[test]
+fn stale_l1_dry_run_dashboard_fixture_blocks_release_doc_claim() -> TestResult {
+    let dashboard = unique_output_path("stale-l1-dashboard")?;
+    let claims = unique_output_path("stale-l1-dashboard-claims")?;
+    let report = unique_output_path("stale-l1-dashboard-report")?;
+    let log = unique_output_path("stale-l1-dashboard-log")?;
+    write_file(
+        &dashboard,
+        &l1_dashboard_fixture("2000-01-01T00:00:00Z", true),
+    )?;
+    write_file(
+        &claims,
+        &format!(
+            r#"{{
+  "schema_version": "v1",
+  "claims": [
+    {{
+      "id": "stale-dashboard-doc-claim",
+      "tag": "v9.9.9-L1",
+      "claimed_level": "L1",
+      "claim_surface": "RELEASE.md",
+      "claim_text": "FrankenLibC is ready as a standalone replacement for glibc today.",
+      "artifact_refs": [{}]
+    }}
+  ]
+}}
+"#,
+            release_claim_refs(&[rel_path(&dashboard)?])?
+        ),
+    )?;
+
+    let output = run_gate_with_env(
+        &[
+            "--claims".to_owned(),
+            path_arg(&claims),
+            "--report".to_owned(),
+            path_arg(&report),
+            "--log".to_owned(),
+            path_arg(&log),
+        ],
+        &[("FRANKENLIBC_L1_DRY_RUN_DASHBOARD", path_arg(&dashboard))],
+    )?;
+
+    assert!(
+        !output.status.success(),
+        "stale L1 dry-run dashboard must block standalone-ready doc claims"
+    );
+    let report_json = read_report(&report)?;
+    assert!(
+        report_json["claims"][0]["failure_signature"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("release_claim_stale_l1_dry_run_dashboard_evidence"),
+        "stale-dashboard failure not found: {report_json}"
+    );
+    Ok(())
+}
+
+#[test]
+fn l1_dry_run_dashboard_missing_required_row_kind_blocks_release_doc_claim() -> TestResult {
+    let dashboard = unique_output_path("missing-perf-l1-dashboard")?;
+    let claims = unique_output_path("missing-perf-l1-dashboard-claims")?;
+    let report = unique_output_path("missing-perf-l1-dashboard-report")?;
+    let log = unique_output_path("missing-perf-l1-dashboard-log")?;
+    write_file(
+        &dashboard,
+        &l1_dashboard_fixture("2026-05-05T07:00:00Z", false),
+    )?;
+    write_file(
+        &claims,
+        &format!(
+            r#"{{
+  "schema_version": "v1",
+  "claims": [
+    {{
+      "id": "missing-dashboard-perf-doc-claim",
+      "tag": "v9.9.9-L1",
+      "claimed_level": "L1",
+      "claim_surface": "README.md",
+      "claim_text": "FrankenLibC is ready as a standalone replacement for glibc today.",
+      "artifact_refs": [{}]
+    }}
+  ]
+}}
+"#,
+            release_claim_refs(&[rel_path(&dashboard)?])?
+        ),
+    )?;
+
+    let output = run_gate_with_env(
+        &[
+            "--claims".to_owned(),
+            path_arg(&claims),
+            "--report".to_owned(),
+            path_arg(&report),
+            "--log".to_owned(),
+            path_arg(&log),
+        ],
+        &[("FRANKENLIBC_L1_DRY_RUN_DASHBOARD", path_arg(&dashboard))],
+    )?;
+
+    assert!(
+        !output.status.success(),
+        "L1 dashboard missing the perf row kind must block doc claims"
+    );
+    let report_json = read_report(&report)?;
+    assert!(
+        report_json["claims"][0]["failure_signature"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("release_claim_l1_dashboard_missing_required_row_kind:perf"),
+        "missing-row-kind failure not found: {report_json}"
     );
     Ok(())
 }

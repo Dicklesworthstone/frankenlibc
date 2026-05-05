@@ -649,12 +649,111 @@
           "evidence_refs": ["README.md", "tests/conformance/claim_reconciliation_report.v1.json"]
         }
       }
+    },
+    {
+      "claim_gate_id": "release-replacement-claim-evidence",
+      "owner_bead": "bd-5unc9",
+      "source_artifact": "tests/conformance/replacement_levels.json",
+      "generated_artifact": "tests/conformance/replacement_claim_doc_audit.v1.json",
+      "gate_script": "scripts/release/check_replacement_claim_evidence.sh",
+      "harness_test": "crates/frankenlibc-harness/tests/release_claim_gate_test.rs",
+      "claim_surfaces": ["README.md", "RELEASE.md", "tests/conformance/replacement_levels.json", "tests/conformance/l1_dry_run_readiness_dashboard.v1.json", "tests/conformance/replacement_claim_doc_audit.v1.json"],
+      "evidence_categories": {
+        "source_artifact": ["tests/conformance/replacement_levels.json"],
+        "generated_artifact": ["tests/conformance/replacement_claim_doc_audit.v1.json"],
+        "user_visible_claim_type": ["readme_claim", "release_doc_claim", "standalone_readiness_claim"],
+        "replacement_level": ["L0", "L1", "L2", "L3"],
+        "runtime_mode": ["strict", "hardened"],
+        "oracle_kind": ["l1_dry_run_dashboard", "forged_artifact", "direct_link", "real_program", "dlfcn", "perf"],
+        "owner_bead": ["bd-5unc9"]
+      },
+      "positive_tests": [
+        {
+          "scenario_id": "release-doc-known-limitation-l0",
+          "harness_test_anchor": "release_doc_known_limitation_claim_passes_without_l1_dashboard",
+          "expected_decision": "allow",
+          "runtime_modes": ["strict", "hardened"],
+          "replacement_level": "L0",
+          "evidence_refs": ["tests/conformance/replacement_levels.json", "tests/conformance/replacement_claim_doc_audit.v1.json", "crates/frankenlibc-harness/tests/release_claim_gate_test.rs"],
+          "freshness_state": "current"
+        },
+        {
+          "scenario_id": "l1-dashboard-required-evidence-families-current",
+          "harness_test_anchor": "l1_dashboard_fixture",
+          "expected_decision": "satisfied",
+          "runtime_modes": ["strict", "hardened"],
+          "replacement_level": "L1",
+          "evidence_refs": ["tests/conformance/l1_dry_run_readiness_dashboard.v1.json", "tests/conformance/perf_regression_prevention.v1.json"],
+          "freshness_state": "current"
+        }
+      ],
+      "negative_tests": {
+        "missing_artifact": {
+          "scenario_id": "release-doc-standalone-readiness-missing-dashboard",
+          "harness_test_anchor": "release_doc_standalone_readiness_without_l1_dashboard_fails_closed",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_missing_artifact",
+          "evidence_refs": ["crates/frankenlibc-harness/tests/release_claim_gate_test.rs"]
+        },
+        "stale_artifact": {
+          "scenario_id": "release-doc-stale-l1-dashboard",
+          "harness_test_anchor": "stale_l1_dry_run_dashboard_fixture_blocks_release_doc_claim",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_stale_artifact",
+          "freshness_state": "stale",
+          "evidence_refs": ["tests/conformance/l1_dry_run_readiness_dashboard.v1.json"]
+        },
+        "contradictory_artifact": {
+          "scenario_id": "release-doc-contradictory-readme-level",
+          "harness_test_anchor": "contradictory_readme_claim_blocks_current_policy",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_contradictory_artifact",
+          "contradiction_state": "contradictory",
+          "evidence_refs": ["README.md", "tests/conformance/replacement_levels.json"]
+        },
+        "wrong_source_commit": {
+          "scenario_id": "release-doc-dashboard-source-drift",
+          "harness_test_anchor": "stale_l1_dry_run_dashboard_fixture_blocks_release_doc_claim",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_wrong_source_commit",
+          "freshness_state": "wrong_source_commit",
+          "evidence_refs": ["tests/conformance/l1_dry_run_readiness_dashboard.v1.json"]
+        },
+        "insufficient_replacement_level": {
+          "scenario_id": "release-doc-l0-standalone-readiness-overclaim",
+          "harness_test_anchor": "release_doc_standalone_readiness_without_l1_dashboard_fails_closed",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_insufficient_replacement_level",
+          "evidence_refs": ["tests/conformance/replacement_levels.json", "README.md"]
+        },
+        "skipped_runtime_mode": {
+          "scenario_id": "release-doc-dashboard-missing-required-row-kind",
+          "harness_test_anchor": "l1_dry_run_dashboard_missing_required_row_kind_blocks_release_doc_claim",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_skipped_runtime_mode",
+          "evidence_refs": ["tests/conformance/l1_dry_run_readiness_dashboard.v1.json"]
+        },
+        "unsupported_workload": {
+          "scenario_id": "release-doc-standalone-matrix-not-ready",
+          "harness_test_anchor": "l2_release_tag_without_standalone_matrix_fails_closed",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_unsupported_workload",
+          "evidence_refs": ["tests/conformance/standalone_readiness_proof_matrix.v1.json"]
+        },
+        "prose_only_advancement": {
+          "scenario_id": "release-doc-prose-only-standalone-readiness",
+          "harness_test_anchor": "release_doc_standalone_readiness_without_l1_dashboard_fails_closed",
+          "expected_decision": "block",
+          "failure_signature": "claim_gate_prose_only_advancement",
+          "evidence_refs": ["README.md", "crates/frankenlibc-harness/tests/release_claim_gate_test.rs"]
+        }
+      }
     }
   ],
   "summary": {
-    "claim_gate_count": 6,
-    "positive_test_count": 11,
-    "negative_test_count": 48,
+    "claim_gate_count": 7,
+    "positive_test_count": 13,
+    "negative_test_count": 56,
     "required_negative_kind_count": 8,
     "required_evidence_category_count": 7
   }

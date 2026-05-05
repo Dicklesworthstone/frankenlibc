@@ -50,6 +50,7 @@ const EXPECTED_CLAIM_GATES: &[&str] = &[
     "replacement-levels",
     "user-workload-acceptance",
     "claim-reconciliation",
+    "release-replacement-claim-evidence",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -214,9 +215,9 @@ fn matrix_lists_every_claim_gate_with_positive_and_negative_coverage() {
     }
 
     let summary = &matrix["summary"];
-    assert_eq!(summary["claim_gate_count"].as_u64(), Some(6));
-    assert_eq!(summary["positive_test_count"].as_u64(), Some(11));
-    assert_eq!(summary["negative_test_count"].as_u64(), Some(48));
+    assert_eq!(summary["claim_gate_count"].as_u64(), Some(7));
+    assert_eq!(summary["positive_test_count"].as_u64(), Some(13));
+    assert_eq!(summary["negative_test_count"].as_u64(), Some(56));
 }
 
 #[test]
@@ -246,9 +247,9 @@ fn gate_script_passes_and_emits_report_and_jsonl_log() {
     let report = load_json(&out_dir.join("claim-gate-matrix.report.json"));
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["bead"].as_str(), Some("bd-bp8fl.7.6"));
-    assert_eq!(report["summary"]["claim_gate_count"].as_u64(), Some(6));
-    assert_eq!(report["summary"]["positive_test_count"].as_u64(), Some(11));
-    assert_eq!(report["summary"]["negative_test_count"].as_u64(), Some(48));
+    assert_eq!(report["summary"]["claim_gate_count"].as_u64(), Some(7));
+    assert_eq!(report["summary"]["positive_test_count"].as_u64(), Some(13));
+    assert_eq!(report["summary"]["negative_test_count"].as_u64(), Some(56));
     assert!(report["errors"].as_array().unwrap().is_empty());
 
     let log_text = std::fs::read_to_string(out_dir.join("claim-gate-matrix.log.jsonl")).unwrap();
@@ -258,7 +259,7 @@ fn gate_script_passes_and_emits_report_and_jsonl_log() {
     }
     assert_eq!(
         rows.len(),
-        59,
+        69,
         "expected one row per positive/negative test"
     );
     let mut decisions = BTreeSet::new();
