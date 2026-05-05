@@ -116,7 +116,11 @@ fn diff_b64_ntop_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "__b64_ntop divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "__b64_ntop divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 /// Decode test inputs covering valid encodings, padding variants, embedded
@@ -132,12 +136,12 @@ const PTON_INPUTS: &[&[u8]] = &[
     b"YWJj\n",
     b"Y W J j",
     // Malformed:
-    b"YQ",        // missing pad
-    b"YWI",       // missing pad
-    b"YWJj====",  // extra pad
-    b"!!!!",      // non-base64 chars
-    b"YQ=Q",      // pad in middle
-    b"========",  // all-pad
+    b"YQ",       // missing pad
+    b"YWI",      // missing pad
+    b"YWJj====", // extra pad
+    b"!!!!",     // non-base64 chars
+    b"YQ=Q",     // pad in middle
+    b"========", // all-pad
 ];
 
 #[test]
@@ -174,7 +178,11 @@ fn diff_b64_pton_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "__b64_pton divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "__b64_pton divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

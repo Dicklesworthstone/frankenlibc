@@ -88,7 +88,10 @@ fn metamorphic_nanosleep_returns_zero_for_short_uninterrupted() {
 
 #[test]
 fn metamorphic_nanosleep_zero_returns_immediately() {
-    let req = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let req = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     let mut rem: libc::timespec = unsafe { std::mem::zeroed() };
     let start = Instant::now();
     let r = unsafe { fl_time::nanosleep(&req, &mut rem) };

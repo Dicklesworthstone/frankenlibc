@@ -7,7 +7,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up — extending libresolv parity coverage.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 
 use frankenlibc_abi::resolv_abi as fl;
 
@@ -36,11 +36,11 @@ fn render_divs(divs: &[Divergence]) -> String {
 }
 
 const DATE_INPUTS: &[&[u8]] = &[
-    b"20240101120000",  // 2024-01-01 12:00 UTC
-    b"21000101000000",  // 2100-01-01 (well after y2k38)
-    b"20000229235959",  // Y2K leap day
-    b"19990101000000",  // 1999
-    b"20300615123045",  // arbitrary mid-future date
+    b"20240101120000", // 2024-01-01 12:00 UTC
+    b"21000101000000", // 2100-01-01 (well after y2k38)
+    b"20000229235959", // Y2K leap day
+    b"19990101000000", // 1999
+    b"20300615123045", // arbitrary mid-future date
     // Invalid / boundary
     b"BAD",
     b"",
@@ -86,7 +86,11 @@ fn diff_ns_datetosecs_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "ns_datetosecs divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "ns_datetosecs divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

@@ -17,7 +17,13 @@ use frankenlibc_abi::stdlib_abi as fl;
 
 #[test]
 fn metamorphic_getauxval_deterministic() {
-    for at in &[libc::AT_PAGESZ, libc::AT_UID, libc::AT_EUID, libc::AT_GID, libc::AT_EGID] {
+    for at in &[
+        libc::AT_PAGESZ,
+        libc::AT_UID,
+        libc::AT_EUID,
+        libc::AT_GID,
+        libc::AT_EGID,
+    ] {
         let v1 = unsafe { fl::getauxval(*at) };
         let v2 = unsafe { fl::getauxval(*at) };
         let v3 = unsafe { fl::getauxval(*at) };

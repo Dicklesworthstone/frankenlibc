@@ -2098,12 +2098,7 @@ pub unsafe fn sys_mseal(addr: *mut u8, length: usize, flags: u32) -> Result<(), 
 /// bytes describing a valid `struct rseq`.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_rseq(
-    rseq_ptr: *mut u8,
-    rseq_len: u32,
-    flags: i32,
-    sig: u32,
-) -> Result<(), i32> {
+pub unsafe fn sys_rseq(rseq_ptr: *mut u8, rseq_len: u32, flags: i32, sig: u32) -> Result<(), i32> {
     let ret = unsafe {
         raw::syscall4(
             SYS_RSEQ,
@@ -2447,11 +2442,7 @@ pub unsafe fn sys_removexattrat(
 /// `param_values`, when non-NULL, must be a NUL-terminated C string.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_finit_module(
-    fd: i32,
-    param_values: *const u8,
-    flags: i32,
-) -> Result<(), i32> {
+pub unsafe fn sys_finit_module(fd: i32, param_values: *const u8, flags: i32) -> Result<(), i32> {
     let ret = unsafe {
         raw::syscall3(
             SYS_FINIT_MODULE,
@@ -2472,12 +2463,7 @@ pub unsafe fn sys_finit_module(
 /// storage matching the cmd's expected struct.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_quotactl_fd(
-    fd: u32,
-    cmd: i32,
-    id: u32,
-    addr: *mut u8,
-) -> Result<(), i32> {
+pub unsafe fn sys_quotactl_fd(fd: u32, cmd: i32, id: u32, addr: *mut u8) -> Result<(), i32> {
     let ret = unsafe {
         raw::syscall4(
             SYS_QUOTACTL_FD,
@@ -2518,15 +2504,8 @@ pub unsafe fn sys_kexec_load(
     segments: *const u8,
     flags: usize,
 ) -> Result<(), i32> {
-    let ret = unsafe {
-        raw::syscall4(
-            SYS_KEXEC_LOAD,
-            entry,
-            nr_segments,
-            segments as usize,
-            flags,
-        )
-    };
+    let ret =
+        unsafe { raw::syscall4(SYS_KEXEC_LOAD, entry, nr_segments, segments as usize, flags) };
     syscall_result(ret).map(|_| ())
 }
 
@@ -2661,11 +2640,7 @@ pub unsafe fn sys_lsm_set_self_attr(
 /// non-NULL, must point to at least `*size` writable bytes.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_lsm_list_modules(
-    ids: *mut u64,
-    size: *mut u32,
-    flags: u32,
-) -> Result<(), i32> {
+pub unsafe fn sys_lsm_list_modules(ids: *mut u64, size: *mut u32, flags: u32) -> Result<(), i32> {
     let ret = unsafe {
         raw::syscall3(
             SYS_LSM_LIST_MODULES,
@@ -2716,12 +2691,7 @@ pub unsafe fn sys_io_pgetevents(
 /// `uaddr` must point to a valid aligned futex word.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_futex_wake(
-    uaddr: *mut u8,
-    mask: usize,
-    nr: i32,
-    flags: u32,
-) -> Result<i32, i32> {
+pub unsafe fn sys_futex_wake(uaddr: *mut u8, mask: usize, nr: i32, flags: u32) -> Result<i32, i32> {
     let ret = unsafe {
         raw::syscall4(
             SYS_FUTEX_WAKE,
@@ -2800,14 +2770,8 @@ pub unsafe fn sys_futex_requeue(
 /// otherwise.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_map_shadow_stack(
-    addr: usize,
-    size: usize,
-    flags: u32,
-) -> Result<usize, i32> {
-    let ret = unsafe {
-        raw::syscall3(SYS_MAP_SHADOW_STACK, addr, size, flags as usize)
-    };
+pub unsafe fn sys_map_shadow_stack(addr: usize, size: usize, flags: u32) -> Result<usize, i32> {
+    let ret = unsafe { raw::syscall3(SYS_MAP_SHADOW_STACK, addr, size, flags as usize) };
     syscall_result(ret)
 }
 

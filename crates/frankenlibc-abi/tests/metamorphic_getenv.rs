@@ -14,7 +14,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::sync::{Mutex, MutexGuard};
 
 use frankenlibc_abi::stdlib_abi as fl;
@@ -99,7 +99,11 @@ fn metamorphic_setenv_overwrite_zero_preserves_existing() {
     let r = unsafe { fl::setenv(cn.as_ptr(), v2.as_ptr(), 0) };
     assert_eq!(r, 0);
     let p = unsafe { fl::getenv(cn.as_ptr()) };
-    assert_eq!(cstr_or_none(p).as_deref(), Some("first"), "no-overwrite changed value");
+    assert_eq!(
+        cstr_or_none(p).as_deref(),
+        Some("first"),
+        "no-overwrite changed value"
+    );
     let _ = unsafe { fl::unsetenv(cn.as_ptr()) };
 }
 

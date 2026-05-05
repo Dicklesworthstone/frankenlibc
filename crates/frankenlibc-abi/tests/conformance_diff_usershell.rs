@@ -10,7 +10,7 @@
 //! Filed under [bd-xn6p8] follow-up.
 
 use std::collections::BTreeSet;
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 
 use frankenlibc_abi::stdlib_abi as fl;
 
@@ -62,7 +62,8 @@ fn diff_usershell_full_iteration_yields_same_set() {
     // its contents.
     if std::fs::metadata("/etc/shells").is_ok() {
         assert_eq!(
-            fl_set, lc_set,
+            fl_set,
+            lc_set,
             "fl/lc shell sets diverge:\n  fl - lc = {:?}\n  lc - fl = {:?}",
             fl_set.difference(&lc_set).collect::<Vec<_>>(),
             lc_set.difference(&fl_set).collect::<Vec<_>>()
@@ -91,7 +92,10 @@ fn diff_usershell_endusershell_resets_iterator() {
     // again.
     fl::setusershell();
     let p = fl::getusershell();
-    assert!(!p.is_null(), "fl getusershell after endusershell+setusershell");
+    assert!(
+        !p.is_null(),
+        "fl getusershell after endusershell+setusershell"
+    );
     fl::endusershell();
 }
 
@@ -102,7 +106,11 @@ fn diff_usershell_first_shell_is_consistent() {
     let fl_first = if fl_first_p.is_null() {
         None
     } else {
-        Some(unsafe { CStr::from_ptr(fl_first_p) }.to_string_lossy().into_owned())
+        Some(
+            unsafe { CStr::from_ptr(fl_first_p) }
+                .to_string_lossy()
+                .into_owned(),
+        )
     };
     fl::endusershell();
 
@@ -111,7 +119,11 @@ fn diff_usershell_first_shell_is_consistent() {
     let lc_first = if lc_first_p.is_null() {
         None
     } else {
-        Some(unsafe { CStr::from_ptr(lc_first_p) }.to_string_lossy().into_owned())
+        Some(
+            unsafe { CStr::from_ptr(lc_first_p) }
+                .to_string_lossy()
+                .into_owned(),
+        )
     };
     unsafe { endusershell() };
 

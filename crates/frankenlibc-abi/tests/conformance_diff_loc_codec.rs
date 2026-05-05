@@ -10,7 +10,7 @@
 //!
 //! Filed under [bd-58e87f] follow-up.
 
-use std::ffi::{c_char, c_int, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int};
 
 use frankenlibc_abi::resolv_abi as fl;
 
@@ -29,8 +29,12 @@ fn ntoa_both(binary: &[u8; 16]) -> (String, String) {
     let lc_p = unsafe { loc_ntoa(binary.as_ptr(), lc_buf.as_mut_ptr() as *mut c_char) };
     assert!(!fl_p.is_null(), "fl __loc_ntoa returned NULL");
     assert!(!lc_p.is_null(), "lc loc_ntoa returned NULL");
-    let fl_s = unsafe { CStr::from_ptr(fl_p) }.to_string_lossy().into_owned();
-    let lc_s = unsafe { CStr::from_ptr(lc_p) }.to_string_lossy().into_owned();
+    let fl_s = unsafe { CStr::from_ptr(fl_p) }
+        .to_string_lossy()
+        .into_owned();
+    let lc_s = unsafe { CStr::from_ptr(lc_p) }
+        .to_string_lossy()
+        .into_owned();
     (fl_s, lc_s)
 }
 

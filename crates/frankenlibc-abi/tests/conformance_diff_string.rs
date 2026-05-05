@@ -553,19 +553,19 @@ const STRCASECMP_CASES: &[(&[u8], &[u8])] = &[
     // Strict less / greater
     (b"abc", b"abd"),
     (b"abd", b"abc"),
-    (b"abc", b"abcd"),                // prefix
+    (b"abc", b"abcd"), // prefix
     (b"abcd", b"abc"),
     // First-byte diff (case-folded vs not)
     (b"a", b"b"),
     (b"A", b"b"),
     (b"a", b"B"),
     // Boundary: byte just before/after the A-Z range
-    (b"@", b"`"),                     // 0x40 vs 0x60 — both unaffected by folding, must NOT be equalized
-    (b"[", b"{"),                     // 0x5B vs 0x7B — same
+    (b"@", b"`"), // 0x40 vs 0x60 — both unaffected by folding, must NOT be equalized
+    (b"[", b"{"), // 0x5B vs 0x7B — same
     // High-bit bytes — POSIX says only ASCII A-Za-z are folded
-    (b"\xc3", b"\xe3"),               // identical case insensitive ONLY if locale folds it; in C locale, they differ as raw bytes
+    (b"\xc3", b"\xe3"), // identical case insensitive ONLY if locale folds it; in C locale, they differ as raw bytes
     (b"\xff", b"\xff"),
-    (b"\x80", b"\x7f"),               // 0x80 (high) vs 0x7f (DEL) — sign-extension trap
+    (b"\x80", b"\x7f"), // 0x80 (high) vs 0x7f (DEL) — sign-extension trap
     // Digits and punctuation — pass-through untouched
     (b"123", b"123"),
     (b"abc123", b"ABC123"),
@@ -610,17 +610,17 @@ const STRNCASECMP_CASES: &[(&[u8], &[u8], usize)] = &[
     (b"", b"", 0),
     (b"\xff", b"\x00", 0),
     // Bound stops before any difference would surface
-    (b"abc", b"abd", 2),                // bound 2 → "ab" == "ab"
-    (b"ABC", b"abd", 2),                // bound 2 + folding
+    (b"abc", b"abd", 2), // bound 2 → "ab" == "ab"
+    (b"ABC", b"abd", 2), // bound 2 + folding
     // Bound exactly at the differing position
     (b"abc", b"abd", 3),
     // Bound past either string
     (b"abc", b"ABC", 100),
     (b"abc", b"abcd", 100),
     // Prefix relations under bound
-    (b"abc", b"abcd", 3),               // "abc" == "abc" within first 3
-    (b"abcd", b"abc", 3),               // same
-    (b"abcd", b"abc", 4),               // "abcd" > "abc\0"
+    (b"abc", b"abcd", 3), // "abc" == "abc" within first 3
+    (b"abcd", b"abc", 3), // same
+    (b"abcd", b"abc", 4), // "abcd" > "abc\0"
     // High-bit pass-through, bounded
     (b"\xc3z", b"\xc3Z", 2),
     // NUL inside — bound spans past first NUL (POSIX: stop on NUL even
@@ -666,14 +666,14 @@ fn diff_strncasecmp_cases() {
 // match offset for found-cases, different sentinel.
 
 const STRCHRNUL_CASES: &[(&[u8], i32)] = &[
-    (b"hello", b'l' as i32),         // first 'l' at 2
-    (b"hello", b'h' as i32),         // first byte
-    (b"hello", b'o' as i32),         // last char
-    (b"hello", b'z' as i32),         // no-match: glibc returns ptr to NUL (offset 5)
-    (b"hello", 0),                   // search for NUL: same as strlen offset
-    (b"", b'a' as i32),              // empty: returns ptr to NUL (offset 0)
+    (b"hello", b'l' as i32), // first 'l' at 2
+    (b"hello", b'h' as i32), // first byte
+    (b"hello", b'o' as i32), // last char
+    (b"hello", b'z' as i32), // no-match: glibc returns ptr to NUL (offset 5)
+    (b"hello", 0),           // search for NUL: same as strlen offset
+    (b"", b'a' as i32),      // empty: returns ptr to NUL (offset 0)
     (b"", 0),
-    (b"\xff\xfe\xfd", 0xff),         // high-bit byte
+    (b"\xff\xfe\xfd", 0xff), // high-bit byte
 ];
 
 #[test]
@@ -709,22 +709,22 @@ fn diff_strchrnul_cases() {
 const STRVERSCMP_CASES: &[(&[u8], &[u8])] = &[
     (b"", b""),
     (b"abc", b"abc"),
-    (b"abc", b"abd"),                // simple lex
+    (b"abc", b"abd"), // simple lex
     (b"abc", b"abd"),
     (b"file1", b"file2"),
-    (b"file9", b"file10"),           // the canonical version case
+    (b"file9", b"file10"), // the canonical version case
     (b"file10", b"file9"),
-    (b"1.0.10", b"1.0.2"),           // multi-segment
+    (b"1.0.10", b"1.0.2"), // multi-segment
     (b"1.0.2", b"1.0.10"),
     (b"v1.0", b"v1.1"),
     (b"alpha", b"beta"),
-    (b"a", b"a0"),                   // numeric suffix
+    (b"a", b"a0"), // numeric suffix
     (b"a0", b"a"),
-    (b"abc1", b"abc01"),             // leading zero in numeric segment
-    (b"a01", b"a010"),               // zero-prefixed prefix after non-zero digit
-    (b"a010", b"a01"),               // reverse ordering of the prefix case
-    (b"a0", b"a00"),                 // all-zero prefix has opposite GNU ordering
-    (b"a00", b"a001"),               // all-zero run before the first non-zero digit
+    (b"abc1", b"abc01"), // leading zero in numeric segment
+    (b"a01", b"a010"),   // zero-prefixed prefix after non-zero digit
+    (b"a010", b"a01"),   // reverse ordering of the prefix case
+    (b"a0", b"a00"),     // all-zero prefix has opposite GNU ordering
+    (b"a00", b"a001"),   // all-zero run before the first non-zero digit
 ];
 
 #[test]
@@ -733,12 +733,10 @@ fn diff_strverscmp_cases() {
     for (a, b) in STRVERSCMP_CASES {
         let av = cstr(a);
         let bv = cstr(b);
-        let fl_v = unsafe {
-            fl::strverscmp(av.as_ptr() as *const c_char, bv.as_ptr() as *const c_char)
-        };
-        let lc_v = unsafe {
-            strverscmp(av.as_ptr() as *const c_char, bv.as_ptr() as *const c_char)
-        };
+        let fl_v =
+            unsafe { fl::strverscmp(av.as_ptr() as *const c_char, bv.as_ptr() as *const c_char) };
+        let lc_v =
+            unsafe { strverscmp(av.as_ptr() as *const c_char, bv.as_ptr() as *const c_char) };
         if sign(fl_v) != sign(lc_v) {
             divs.push(Divergence {
                 function: "strverscmp",

@@ -70,10 +70,7 @@ fn metamorphic_single_bit_flip_changes_hash() {
             let mut mutated = base.to_vec();
             mutated[i] ^= 1 << bit;
             let h = unsafe { fl::__nss_hash(mutated.as_ptr() as *const c_void, mutated.len()) };
-            assert_ne!(
-                h, h0,
-                "bit-flip in byte {i} bit {bit} did not change hash"
-            );
+            assert_ne!(h, h0, "bit-flip in byte {i} bit {bit} did not change hash");
         }
     }
 }

@@ -1689,9 +1689,7 @@ pub unsafe extern "C" fn raise_default_signal(sig: c_int) -> c_int {
 
     // 4. Restore mask. If unblocking the queued sig terminates the
     //    process under SIG_DFL we never reach the next line.
-    if unsafe { sigprocmask(libc::SIG_SETMASK, &omask, std::ptr::null_mut()) } == -1
-        && error == 0
-    {
+    if unsafe { sigprocmask(libc::SIG_SETMASK, &omask, std::ptr::null_mut()) } == -1 && error == 0 {
         error = -1;
     }
 

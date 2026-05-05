@@ -14,7 +14,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_int, c_void, CString};
+use std::ffi::{CString, c_int, c_void};
 
 use frankenlibc_abi::glibc_internal_abi as fl;
 use frankenlibc_abi::unistd_abi as fl_un;
@@ -82,8 +82,14 @@ fn diff_futimes_explicit_times() {
     let fl_file = TempFile::new("flfut");
     let lc_file = TempFile::new("lcfut");
     let tv = [
-        Timeval { tv_sec: 1_111_111_111, tv_usec: 250_000 },
-        Timeval { tv_sec: 1_222_222_222, tv_usec: 750_000 },
+        Timeval {
+            tv_sec: 1_111_111_111,
+            tv_usec: 250_000,
+        },
+        Timeval {
+            tv_sec: 1_222_222_222,
+            tv_usec: 750_000,
+        },
     ];
 
     let fl_fd = fl_file.open_rdwr();
@@ -108,8 +114,14 @@ fn diff_futimes_explicit_times() {
 #[test]
 fn diff_futimes_invalid_fd_errors_match() {
     let tv = [
-        Timeval { tv_sec: 0, tv_usec: 0 },
-        Timeval { tv_sec: 0, tv_usec: 0 },
+        Timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+        Timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
     ];
     let fl_r = unsafe { fl::futimes(-1, tv.as_ptr() as *const c_void) };
     let lc_r = unsafe { futimes(-1, tv.as_ptr() as *const c_void) };
@@ -130,9 +142,7 @@ fn diff_lutimes_does_not_follow_symlink() {
     let lc_link = CString::new(format!("/tmp/fl_lutimes_link_lc_{nanos}")).unwrap();
 
     // Create target file.
-    let fd = unsafe {
-        libc::open(target_path.as_ptr(), libc::O_CREAT | libc::O_WRONLY, 0o644)
-    };
+    let fd = unsafe { libc::open(target_path.as_ptr(), libc::O_CREAT | libc::O_WRONLY, 0o644) };
     assert!(fd >= 0);
     unsafe { libc::close(fd) };
 
@@ -143,8 +153,14 @@ fn diff_lutimes_does_not_follow_symlink() {
     assert_eq!(r2, 0);
 
     let tv = [
-        Timeval { tv_sec: 900_000_000, tv_usec: 0 },
-        Timeval { tv_sec: 950_000_000, tv_usec: 0 },
+        Timeval {
+            tv_sec: 900_000_000,
+            tv_usec: 0,
+        },
+        Timeval {
+            tv_sec: 950_000_000,
+            tv_usec: 0,
+        },
     ];
     let fl_r = unsafe { fl::lutimes(fl_link.as_ptr(), tv.as_ptr() as *const c_void) };
     let lc_r = unsafe { lutimes(lc_link.as_ptr(), tv.as_ptr() as *const c_void) };
@@ -170,8 +186,14 @@ fn diff_futimens_nanosecond_precision() {
     let fl_file = TempFile::new("flns");
     let lc_file = TempFile::new("lcns");
     let ts = [
-        libc::timespec { tv_sec: 1_333_333_333, tv_nsec: 123_456_789 },
-        libc::timespec { tv_sec: 1_444_444_444, tv_nsec: 987_654_321 },
+        libc::timespec {
+            tv_sec: 1_333_333_333,
+            tv_nsec: 123_456_789,
+        },
+        libc::timespec {
+            tv_sec: 1_444_444_444,
+            tv_nsec: 987_654_321,
+        },
     ];
     let fl_fd = fl_file.open_rdwr();
     let lc_fd = lc_file.open_rdwr();
@@ -202,8 +224,14 @@ fn diff_futimens_utime_now_sentinel() {
     let fl_file = TempFile::new("flnow");
     let lc_file = TempFile::new("lcnow");
     let ts = [
-        libc::timespec { tv_sec: 0, tv_nsec: UTIME_NOW },
-        libc::timespec { tv_sec: 0, tv_nsec: UTIME_NOW },
+        libc::timespec {
+            tv_sec: 0,
+            tv_nsec: UTIME_NOW,
+        },
+        libc::timespec {
+            tv_sec: 0,
+            tv_nsec: UTIME_NOW,
+        },
     ];
     let fl_fd = fl_file.open_rdwr();
     let lc_fd = lc_file.open_rdwr();
@@ -234,8 +262,14 @@ fn diff_futimens_utime_omit_sentinel() {
     let lc_file = TempFile::new("lcom");
     // Set a known baseline first.
     let baseline = [
-        libc::timespec { tv_sec: 800_000_000, tv_nsec: 0 },
-        libc::timespec { tv_sec: 800_000_000, tv_nsec: 0 },
+        libc::timespec {
+            tv_sec: 800_000_000,
+            tv_nsec: 0,
+        },
+        libc::timespec {
+            tv_sec: 800_000_000,
+            tv_nsec: 0,
+        },
     ];
     let fl_fd = fl_file.open_rdwr();
     let lc_fd = lc_file.open_rdwr();
@@ -245,8 +279,14 @@ fn diff_futimens_utime_omit_sentinel() {
     }
 
     let omit = [
-        libc::timespec { tv_sec: 0, tv_nsec: UTIME_OMIT },
-        libc::timespec { tv_sec: 0, tv_nsec: UTIME_OMIT },
+        libc::timespec {
+            tv_sec: 0,
+            tv_nsec: UTIME_OMIT,
+        },
+        libc::timespec {
+            tv_sec: 0,
+            tv_nsec: UTIME_OMIT,
+        },
     ];
     let fl_r = unsafe { fl_un::futimens(fl_fd, omit.as_ptr()) };
     let lc_r = unsafe { futimens(lc_fd, omit.as_ptr()) };

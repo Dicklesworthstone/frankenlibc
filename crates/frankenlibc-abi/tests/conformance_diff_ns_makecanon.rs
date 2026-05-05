@@ -7,7 +7,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up — extending libresolv parity coverage.
 
-use std::ffi::{c_char, c_int, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int};
 
 use frankenlibc_abi::resolv_abi as fl;
 
@@ -58,8 +58,7 @@ fn diff_ns_makecanon_cases() {
         let c_input = CString::new(*input).unwrap();
         let mut fl_buf = vec![0i8; 256];
         let mut lc_buf = vec![0i8; 256];
-        let fl_n =
-            unsafe { fl::ns_makecanon(c_input.as_ptr(), fl_buf.as_mut_ptr(), fl_buf.len()) };
+        let fl_n = unsafe { fl::ns_makecanon(c_input.as_ptr(), fl_buf.as_mut_ptr(), fl_buf.len()) };
         let lc_n = unsafe { ns_makecanon(c_input.as_ptr(), lc_buf.as_mut_ptr(), lc_buf.len()) };
         let case = format!("{:?}", String::from_utf8_lossy(input));
         if fl_n != lc_n {
@@ -83,7 +82,11 @@ fn diff_ns_makecanon_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "ns_makecanon divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "ns_makecanon divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 /// Buffer-too-small contract — fl and host must agree on EMSGSIZE.

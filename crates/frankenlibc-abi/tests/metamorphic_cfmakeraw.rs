@@ -19,16 +19,17 @@ use frankenlibc_abi::stdlib_abi as fl;
 
 fn make_default_termios() -> libc::termios {
     let mut t: libc::termios = unsafe { std::mem::zeroed() };
-    t.c_iflag =
-        (libc::BRKINT | libc::ICRNL | libc::INPCK | libc::ISTRIP | libc::IXON | libc::IGNBRK
-            | libc::PARMRK) as libc::tcflag_t;
+    t.c_iflag = (libc::BRKINT
+        | libc::ICRNL
+        | libc::INPCK
+        | libc::ISTRIP
+        | libc::IXON
+        | libc::IGNBRK
+        | libc::PARMRK) as libc::tcflag_t;
     t.c_oflag = libc::OPOST as libc::tcflag_t;
     t.c_cflag = (libc::CSIZE | libc::CS7 | libc::PARENB) as libc::tcflag_t;
-    t.c_lflag = (libc::ECHO
-        | libc::ECHONL
-        | libc::ICANON
-        | libc::ISIG
-        | libc::IEXTEN) as libc::tcflag_t;
+    t.c_lflag =
+        (libc::ECHO | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN) as libc::tcflag_t;
     t.c_cc[libc::VMIN] = 0;
     t.c_cc[libc::VTIME] = 5;
     t

@@ -50,8 +50,7 @@ fn within_ulps(a: f64, b: f64, ulps: u64) -> bool {
 #[test]
 fn diff_tgamma_within_4_ulps() {
     let inputs: &[f64] = &[
-        0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 0.1, 4.5, 100.0, 0.01,
-        -0.5, -1.5, -2.5, -3.5,
+        0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 0.1, 4.5, 100.0, 0.01, -0.5, -1.5, -2.5, -3.5,
     ];
     let mut divs = Vec::new();
     for &x in inputs {
@@ -66,9 +65,7 @@ fn diff_tgamma_within_4_ulps() {
 
 #[test]
 fn diff_lgamma_within_4_ulps() {
-    let inputs: &[f64] = &[
-        0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 100.0, 1e6, 1e10,
-    ];
+    let inputs: &[f64] = &[0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 100.0, 1e6, 1e10];
     let mut divs = Vec::new();
     for &x in inputs {
         let fl_y = unsafe { fl::lgamma(x) };
@@ -82,9 +79,7 @@ fn diff_lgamma_within_4_ulps() {
 
 #[test]
 fn diff_erf_within_4_ulps() {
-    let inputs: &[f64] = &[
-        0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 0.001, 6.0, -0.5, -1.0, -3.0,
-    ];
+    let inputs: &[f64] = &[0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 0.001, 6.0, -0.5, -1.0, -3.0];
     let mut divs = Vec::new();
     for &x in inputs {
         let fl_y = unsafe { fl::erf(x) };
@@ -98,14 +93,16 @@ fn diff_erf_within_4_ulps() {
             divs.push(format!("erfc({x}): fl={fl_y} lc={lc_y}"));
         }
     }
-    assert!(divs.is_empty(), "erf/erfc divergences:\n{}", divs.join("\n"));
+    assert!(
+        divs.is_empty(),
+        "erf/erfc divergences:\n{}",
+        divs.join("\n")
+    );
 }
 
 #[test]
 fn diff_bessel_j_within_4_ulps() {
-    let inputs: &[f64] = &[
-        0.0, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 100.0, 0.001,
-    ];
+    let inputs: &[f64] = &[0.0, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 100.0, 0.001];
     let mut divs = Vec::new();
     for &x in inputs {
         let fl_y = unsafe { fl::j0(x) };
@@ -126,7 +123,11 @@ fn diff_bessel_j_within_4_ulps() {
             }
         }
     }
-    assert!(divs.is_empty(), "Bessel J divergences:\n{}", divs.join("\n"));
+    assert!(
+        divs.is_empty(),
+        "Bessel J divergences:\n{}",
+        divs.join("\n")
+    );
 }
 
 #[test]
@@ -153,7 +154,11 @@ fn diff_bessel_y_within_4_ulps() {
             }
         }
     }
-    assert!(divs.is_empty(), "Bessel Y divergences:\n{}", divs.join("\n"));
+    assert!(
+        divs.is_empty(),
+        "Bessel Y divergences:\n{}",
+        divs.join("\n")
+    );
 }
 
 #[test]

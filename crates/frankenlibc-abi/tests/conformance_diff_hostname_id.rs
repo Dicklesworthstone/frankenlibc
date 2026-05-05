@@ -9,7 +9,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::{CStr, c_char, c_int};
 
 use frankenlibc_abi::unistd_abi as fl;
 
@@ -25,12 +25,16 @@ fn diff_gethostname_match() {
     let mut lc_buf = vec![0i8; 256];
     let fl_r = unsafe { fl::gethostname(fl_buf.as_mut_ptr(), fl_buf.len()) };
     let lc_r = unsafe { gethostname(lc_buf.as_mut_ptr(), lc_buf.len()) };
-    assert_eq!(fl_r, lc_r, "gethostname return mismatch: fl={fl_r} lc={lc_r}");
+    assert_eq!(
+        fl_r, lc_r,
+        "gethostname return mismatch: fl={fl_r} lc={lc_r}"
+    );
     if fl_r == 0 {
         let fl_s = unsafe { CStr::from_ptr(fl_buf.as_ptr()).to_bytes() };
         let lc_s = unsafe { CStr::from_ptr(lc_buf.as_ptr()).to_bytes() };
         assert_eq!(
-            fl_s, lc_s,
+            fl_s,
+            lc_s,
             "gethostname strings differ: fl={:?} lc={:?}",
             String::from_utf8_lossy(fl_s),
             String::from_utf8_lossy(lc_s)
@@ -58,12 +62,16 @@ fn diff_getdomainname_match() {
     let mut lc_buf = vec![0i8; 256];
     let fl_r = unsafe { fl::getdomainname(fl_buf.as_mut_ptr(), fl_buf.len()) };
     let lc_r = unsafe { getdomainname(lc_buf.as_mut_ptr(), lc_buf.len()) };
-    assert_eq!(fl_r, lc_r, "getdomainname return mismatch: fl={fl_r} lc={lc_r}");
+    assert_eq!(
+        fl_r, lc_r,
+        "getdomainname return mismatch: fl={fl_r} lc={lc_r}"
+    );
     if fl_r == 0 {
         let fl_s = unsafe { CStr::from_ptr(fl_buf.as_ptr()).to_bytes() };
         let lc_s = unsafe { CStr::from_ptr(lc_buf.as_ptr()).to_bytes() };
         assert_eq!(
-            fl_s, lc_s,
+            fl_s,
+            lc_s,
             "getdomainname strings differ: fl={:?} lc={:?}",
             String::from_utf8_lossy(fl_s),
             String::from_utf8_lossy(lc_s)

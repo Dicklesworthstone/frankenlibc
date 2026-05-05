@@ -35,7 +35,10 @@ fn diff_ns_get16_cases() {
     for buf in inputs {
         let fl_v = unsafe { fl::ns_get16(buf.as_ptr()) };
         let lc_v = unsafe { ns_get16(buf.as_ptr()) };
-        assert_eq!(fl_v, lc_v, "ns_get16 diff for buf={buf:?}: fl={fl_v} glibc={lc_v}");
+        assert_eq!(
+            fl_v, lc_v,
+            "ns_get16 diff for buf={buf:?}: fl={fl_v} glibc={lc_v}"
+        );
     }
 }
 
@@ -54,7 +57,10 @@ fn diff_ns_get32_cases() {
     for buf in inputs {
         let fl_v = unsafe { fl::ns_get32(buf.as_ptr()) };
         let lc_v = unsafe { ns_get32(buf.as_ptr()) };
-        assert_eq!(fl_v, lc_v, "ns_get32 diff for buf={buf:?}: fl={fl_v} glibc={lc_v}");
+        assert_eq!(
+            fl_v, lc_v,
+            "ns_get32 diff for buf={buf:?}: fl={fl_v} glibc={lc_v}"
+        );
     }
 }
 

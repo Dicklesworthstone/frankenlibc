@@ -5258,9 +5258,7 @@ pub unsafe extern "C" fn cachestat(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    match unsafe {
-        syscall::sys_cachestat(fd, cstat_range as *const u8, cstat as *mut u8, flags)
-    } {
+    match unsafe { syscall::sys_cachestat(fd, cstat_range as *const u8, cstat as *mut u8, flags) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -5288,9 +5286,7 @@ pub unsafe extern "C" fn set_mempolicy(
     nodemask: *const c_ulong,
     maxnode: c_ulong,
 ) -> c_long {
-    match unsafe {
-        syscall::sys_set_mempolicy(mode, nodemask as *const usize, maxnode as usize)
-    } {
+    match unsafe { syscall::sys_set_mempolicy(mode, nodemask as *const usize, maxnode as usize) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -5491,9 +5487,7 @@ pub unsafe extern "C" fn statmount(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    match unsafe {
-        syscall::sys_statmount(req as *const u8, out as *mut u8, bufsize, flags)
-    } {
+    match unsafe { syscall::sys_statmount(req as *const u8, out as *mut u8, bufsize, flags) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -5521,9 +5515,7 @@ pub unsafe extern "C" fn listmount(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    match unsafe {
-        syscall::sys_listmount(req as *const u8, mnt_ids, count, flags)
-    } {
+    match unsafe { syscall::sys_listmount(req as *const u8, mnt_ids, count, flags) } {
         Ok(n) => n as c_int,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -5733,9 +5725,7 @@ pub unsafe extern "C" fn get_robust_list(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    match unsafe {
-        syscall::sys_get_robust_list(pid, head_ptr as *mut *mut u8, len_ptr)
-    } {
+    match unsafe { syscall::sys_get_robust_list(pid, head_ptr as *mut *mut u8, len_ptr) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -25139,7 +25129,13 @@ pub unsafe extern "C" fn file_setattr(
     at_flags: c_uint,
 ) -> c_int {
     match unsafe {
-        syscall::sys_file_setattr(dirfd, path as *const u8, uattr as *const u8, usize_, at_flags)
+        syscall::sys_file_setattr(
+            dirfd,
+            path as *const u8,
+            uattr as *const u8,
+            usize_,
+            at_flags,
+        )
     } {
         Ok(()) => 0,
         Err(e) => {
@@ -25240,9 +25236,7 @@ pub unsafe extern "C" fn futex_requeue(
     nr_wake: c_int,
     nr_requeue: c_int,
 ) -> c_int {
-    match unsafe {
-        syscall::sys_futex_requeue(waiters as *const u8, flags, nr_wake, nr_requeue)
-    } {
+    match unsafe { syscall::sys_futex_requeue(waiters as *const u8, flags, nr_wake, nr_requeue) } {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };

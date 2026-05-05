@@ -346,11 +346,28 @@ fn wctype_utf8_subprocess_invocation() {
     // fl's iswctype takes fl's index (1..12), glibc's takes its opaque pointer.
     // Each pair is internally consistent — the booleans should match.
     let class_names: &[&[u8]] = &[
-        b"alpha\0", b"alnum\0", b"digit\0", b"lower\0", b"upper\0", b"space\0",
-        b"print\0", b"punct\0", b"cntrl\0", b"graph\0", b"blank\0", b"xdigit\0",
+        b"alpha\0",
+        b"alnum\0",
+        b"digit\0",
+        b"lower\0",
+        b"upper\0",
+        b"space\0",
+        b"print\0",
+        b"punct\0",
+        b"cntrl\0",
+        b"graph\0",
+        b"blank\0",
+        b"xdigit\0",
     ];
     let dispatch_cases: &[u32] = &[
-        b'a' as u32, b'A' as u32, b'5' as u32, 0x0410, 0x0430, 0x4E00, 0x3000, 0x2028,
+        b'a' as u32,
+        b'A' as u32,
+        b'5' as u32,
+        0x0410,
+        0x0430,
+        0x4E00,
+        0x3000,
+        0x2028,
     ];
     for class in class_names {
         let fl_desc = unsafe { fl::wctype(class.as_ptr()) };
@@ -377,11 +394,16 @@ fn wctype_utf8_subprocess_invocation() {
     // Same matched-pair-of-descriptors strategy.
     let trans_names: &[&[u8]] = &[b"toupper\0", b"tolower\0"];
     let trans_cases: &[u32] = &[
-        b'a' as u32, b'A' as u32, 0x0410, 0x0430, 0x00DF, 0xFB00, 0x4E00,
+        b'a' as u32,
+        b'A' as u32,
+        0x0410,
+        0x0430,
+        0x00DF,
+        0xFB00,
+        0x4E00,
     ];
     for trans in trans_names {
-        let fl_desc =
-            unsafe { fl_unistd::wctrans(trans.as_ptr() as *const libc::c_char) };
+        let fl_desc = unsafe { fl_unistd::wctrans(trans.as_ptr() as *const libc::c_char) };
         let lc_desc = unsafe { wctrans(trans.as_ptr() as *const libc::c_char) };
         for &wc in trans_cases {
             let fl_v = unsafe { fl_unistd::towctrans(wc, fl_desc) };

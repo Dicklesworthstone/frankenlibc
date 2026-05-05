@@ -9,7 +9,7 @@
 //! Filed under [bd-xn6p8] follow-up — extending host-libc parity coverage
 //! into the printf family.
 
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::{CStr, c_char, c_int};
 
 unsafe extern "C" {
     fn asprintf(strp: *mut *mut c_char, fmt: *const c_char, ...) -> c_int;
@@ -84,9 +84,7 @@ fn diff_asprintf_format_specifiers() {
     // Plain string passthrough.
     run_diff_pair(
         "literal",
-        |p| unsafe {
-            frankenlibc_abi::stdio_abi::asprintf(p, c"hello world".as_ptr())
-        },
+        |p| unsafe { frankenlibc_abi::stdio_abi::asprintf(p, c"hello world".as_ptr()) },
         |p| unsafe { asprintf(p, c"hello world".as_ptr()) },
         &mut divs,
     );
@@ -119,11 +117,14 @@ fn diff_asprintf_format_specifiers() {
     run_diff_pair(
         "name=%s age=%d",
         |p| unsafe {
-            frankenlibc_abi::stdio_abi::asprintf(p, c"name=%s age=%d".as_ptr(), c"alice".as_ptr(), 30)
+            frankenlibc_abi::stdio_abi::asprintf(
+                p,
+                c"name=%s age=%d".as_ptr(),
+                c"alice".as_ptr(),
+                30,
+            )
         },
-        |p| unsafe {
-            asprintf(p, c"name=%s age=%d".as_ptr(), c"alice".as_ptr(), 30)
-        },
+        |p| unsafe { asprintf(p, c"name=%s age=%d".as_ptr(), c"alice".as_ptr(), 30) },
         &mut divs,
     );
 
@@ -151,7 +152,11 @@ fn diff_asprintf_format_specifiers() {
         &mut divs,
     );
 
-    assert!(divs.is_empty(), "asprintf divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "asprintf divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

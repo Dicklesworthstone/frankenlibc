@@ -17,7 +17,7 @@
 //!
 //! Filed under [bd-58e87f] follow-up.
 
-use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
 use frankenlibc_abi::resolv_abi as fl;
 
@@ -44,10 +44,26 @@ fn build_table() -> &'static [ResSym] {
     static GAMMA_DESC: &[u8] = b"gamma (long)\0";
 
     static TABLE: [ResSym; 4] = [
-        ResSym { number: 100, name: ALPHA.as_ptr() as *const c_char, humanname: ALPHA_DESC.as_ptr() as *const c_char },
-        ResSym { number: 200, name: BETA.as_ptr() as *const c_char,  humanname: BETA_DESC.as_ptr() as *const c_char },
-        ResSym { number: 300, name: GAMMA.as_ptr() as *const c_char, humanname: GAMMA_DESC.as_ptr() as *const c_char },
-        ResSym { number: -1,  name: std::ptr::null(),                 humanname: std::ptr::null() },
+        ResSym {
+            number: 100,
+            name: ALPHA.as_ptr() as *const c_char,
+            humanname: ALPHA_DESC.as_ptr() as *const c_char,
+        },
+        ResSym {
+            number: 200,
+            name: BETA.as_ptr() as *const c_char,
+            humanname: BETA_DESC.as_ptr() as *const c_char,
+        },
+        ResSym {
+            number: 300,
+            name: GAMMA.as_ptr() as *const c_char,
+            humanname: GAMMA_DESC.as_ptr() as *const c_char,
+        },
+        ResSym {
+            number: -1,
+            name: std::ptr::null(),
+            humanname: std::ptr::null(),
+        },
     ];
     // SAFETY: TABLE is 'static.
     &TABLE
@@ -144,7 +160,10 @@ fn metamorphic_ntop_distinct_inputs_produce_distinct_output() {
     let mut s2: c_int = 0;
     let p2 = unsafe { fl::__sym_ntop(tab_ptr, 67890, &mut s2) };
     let str2 = unsafe { CStr::from_ptr(p2) }.to_string_lossy().to_string();
-    assert_ne!(str1, str2, "distinct unknowns must encode to distinct decimals");
+    assert_ne!(
+        str1, str2,
+        "distinct unknowns must encode to distinct decimals"
+    );
     assert_eq!(str1, "12345");
     assert_eq!(str2, "67890");
 }
@@ -157,8 +176,16 @@ fn metamorphic_table_walking_terminates_at_null_name() {
     static NAME: &[u8] = b"ONLY\0";
     static DESC: &[u8] = b"only entry\0";
     static TABLE: [ResSym; 2] = [
-        ResSym { number: 1, name: NAME.as_ptr() as *const c_char, humanname: DESC.as_ptr() as *const c_char },
-        ResSym { number: -77, name: std::ptr::null(),              humanname: std::ptr::null() },
+        ResSym {
+            number: 1,
+            name: NAME.as_ptr() as *const c_char,
+            humanname: DESC.as_ptr() as *const c_char,
+        },
+        ResSym {
+            number: -77,
+            name: std::ptr::null(),
+            humanname: std::ptr::null(),
+        },
     ];
     let tab_ptr = TABLE.as_ptr() as *const c_void;
     let cs = CString::new("UNKNOWN_NAME").unwrap();

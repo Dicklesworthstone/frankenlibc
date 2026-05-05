@@ -7,7 +7,7 @@
 //! gate. Filed under [bd-xn6p8] follow-up — extending host-libc parity
 //! coverage.
 
-use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
 use frankenlibc_abi::unistd_abi as fl;
 
@@ -68,11 +68,11 @@ const CASES: &[(&str, c_int)] = &[
     ("\"quoted phrase\"", 0),
     ("'single quoted'", 0),
     ("'a b' 'c d'", 0),
-    ("a\tb\tc", 0),                    // tab-separated
-    ("    leading spaces", 0),         // collapses
-    ("trailing\t", 0),                  // trailing whitespace
-    ("`id`", 4),         // WRDE_NOCMD = 4 — forbidden command substitution
-    ("$(id)", 4),        // forbidden $()
+    ("a\tb\tc", 0),            // tab-separated
+    ("    leading spaces", 0), // collapses
+    ("trailing\t", 0),         // trailing whitespace
+    ("`id`", 4),               // WRDE_NOCMD = 4 — forbidden command substitution
+    ("$(id)", 4),              // forbidden $()
 ];
 
 #[test]
@@ -81,13 +81,29 @@ fn diff_wordexp_simple_cases() {
     for (input, flags) in CASES {
         let c_input = CString::new(*input).unwrap();
         // Allocate two wordexp_t structs.
-        let mut fl_we = WordexpT { we_wordc: 0, we_wordv: std::ptr::null_mut(), we_offs: 0 };
-        let mut lc_we = WordexpT { we_wordc: 0, we_wordv: std::ptr::null_mut(), we_offs: 0 };
+        let mut fl_we = WordexpT {
+            we_wordc: 0,
+            we_wordv: std::ptr::null_mut(),
+            we_offs: 0,
+        };
+        let mut lc_we = WordexpT {
+            we_wordc: 0,
+            we_wordv: std::ptr::null_mut(),
+            we_offs: 0,
+        };
         let fl_r = unsafe {
-            fl::wordexp(c_input.as_ptr(), &mut fl_we as *mut _ as *mut c_void, *flags)
+            fl::wordexp(
+                c_input.as_ptr(),
+                &mut fl_we as *mut _ as *mut c_void,
+                *flags,
+            )
         };
         let lc_r = unsafe {
-            wordexp(c_input.as_ptr(), &mut lc_we as *mut _ as *mut c_void, *flags)
+            wordexp(
+                c_input.as_ptr(),
+                &mut lc_we as *mut _ as *mut c_void,
+                *flags,
+            )
         };
         let case = format!("({:?}, flags={:#x})", input, flags);
         if fl_r != lc_r {
@@ -118,7 +134,11 @@ fn diff_wordexp_simple_cases() {
             unsafe { wordfree(&mut lc_we as *mut _ as *mut c_void) };
         }
     }
-    assert!(divs.is_empty(), "wordexp divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wordexp divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

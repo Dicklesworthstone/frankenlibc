@@ -36,15 +36,33 @@ const LINUX_CAPABILITY_VERSION_3: u32 = 0x20080522;
 
 #[test]
 fn metamorphic_capget_self_deterministic() {
-    let mut hdr1 = UserCapHeader { version: LINUX_CAPABILITY_VERSION_3, pid: 0 };
+    let mut hdr1 = UserCapHeader {
+        version: LINUX_CAPABILITY_VERSION_3,
+        pid: 0,
+    };
     let mut hdr2 = hdr1;
     let mut hdr3 = hdr1;
     let mut d1 = [UserCapData::default(); 2];
     let mut d2 = [UserCapData::default(); 2];
     let mut d3 = [UserCapData::default(); 2];
-    let r1 = unsafe { fl::capget(&mut hdr1 as *mut _ as *mut std::ffi::c_void, d1.as_mut_ptr() as *mut std::ffi::c_void) };
-    let r2 = unsafe { fl::capget(&mut hdr2 as *mut _ as *mut std::ffi::c_void, d2.as_mut_ptr() as *mut std::ffi::c_void) };
-    let r3 = unsafe { fl::capget(&mut hdr3 as *mut _ as *mut std::ffi::c_void, d3.as_mut_ptr() as *mut std::ffi::c_void) };
+    let r1 = unsafe {
+        fl::capget(
+            &mut hdr1 as *mut _ as *mut std::ffi::c_void,
+            d1.as_mut_ptr() as *mut std::ffi::c_void,
+        )
+    };
+    let r2 = unsafe {
+        fl::capget(
+            &mut hdr2 as *mut _ as *mut std::ffi::c_void,
+            d2.as_mut_ptr() as *mut std::ffi::c_void,
+        )
+    };
+    let r3 = unsafe {
+        fl::capget(
+            &mut hdr3 as *mut _ as *mut std::ffi::c_void,
+            d3.as_mut_ptr() as *mut std::ffi::c_void,
+        )
+    };
     assert_eq!(r1, 0);
     assert_eq!(r2, 0);
     assert_eq!(r3, 0);
@@ -56,7 +74,12 @@ fn metamorphic_capget_self_deterministic() {
 fn metamorphic_capget_invalid_version_writes_preferred() {
     let mut hdr = UserCapHeader { version: 0, pid: 0 };
     let mut data = [UserCapData::default(); 2];
-    let r = unsafe { fl::capget(&mut hdr as *mut _ as *mut std::ffi::c_void, data.as_mut_ptr() as *mut std::ffi::c_void) };
+    let r = unsafe {
+        fl::capget(
+            &mut hdr as *mut _ as *mut std::ffi::c_void,
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+        )
+    };
     assert_eq!(r, -1);
     assert_ne!(hdr.version, 0, "kernel must write its version");
     // Should be V1, V2, or V3 — all have a known offset_basis-style
@@ -72,9 +95,17 @@ fn metamorphic_capget_invalid_version_writes_preferred() {
 
 #[test]
 fn metamorphic_capget_permitted_superset_of_effective() {
-    let mut hdr = UserCapHeader { version: LINUX_CAPABILITY_VERSION_3, pid: 0 };
+    let mut hdr = UserCapHeader {
+        version: LINUX_CAPABILITY_VERSION_3,
+        pid: 0,
+    };
     let mut data = [UserCapData::default(); 2];
-    let r = unsafe { fl::capget(&mut hdr as *mut _ as *mut std::ffi::c_void, data.as_mut_ptr() as *mut std::ffi::c_void) };
+    let r = unsafe {
+        fl::capget(
+            &mut hdr as *mut _ as *mut std::ffi::c_void,
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+        )
+    };
     assert_eq!(r, 0);
     for (i, slot) in data.iter().enumerate() {
         // Every effective bit must be in permitted.
@@ -91,27 +122,56 @@ fn metamorphic_capget_permitted_superset_of_effective() {
 #[test]
 fn metamorphic_capset_self_with_current_is_noop() {
     // Read current caps, then set them back; must succeed.
-    let mut hdr = UserCapHeader { version: LINUX_CAPABILITY_VERSION_3, pid: 0 };
+    let mut hdr = UserCapHeader {
+        version: LINUX_CAPABILITY_VERSION_3,
+        pid: 0,
+    };
     let mut data = [UserCapData::default(); 2];
-    let r = unsafe { fl::capget(&mut hdr as *mut _ as *mut std::ffi::c_void, data.as_mut_ptr() as *mut std::ffi::c_void) };
+    let r = unsafe {
+        fl::capget(
+            &mut hdr as *mut _ as *mut std::ffi::c_void,
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+        )
+    };
     if r != 0 {
         return; // skip
     }
     let mut hdr2 = hdr;
-    let r2 = unsafe { fl::capset(&mut hdr2 as *mut _ as *mut std::ffi::c_void, data.as_ptr() as *const std::ffi::c_void) };
+    let r2 = unsafe {
+        fl::capset(
+            &mut hdr2 as *mut _ as *mut std::ffi::c_void,
+            data.as_ptr() as *const std::ffi::c_void,
+        )
+    };
     assert_eq!(r2, 0, "capset with current caps should succeed");
 }
 
 #[test]
 fn metamorphic_capget_repeated_consistent() {
     // 16 rapid calls must all yield identical data.
-    let mut hdr0 = UserCapHeader { version: LINUX_CAPABILITY_VERSION_3, pid: 0 };
+    let mut hdr0 = UserCapHeader {
+        version: LINUX_CAPABILITY_VERSION_3,
+        pid: 0,
+    };
     let mut data0 = [UserCapData::default(); 2];
-    unsafe { fl::capget(&mut hdr0 as *mut _ as *mut std::ffi::c_void, data0.as_mut_ptr() as *mut std::ffi::c_void) };
+    unsafe {
+        fl::capget(
+            &mut hdr0 as *mut _ as *mut std::ffi::c_void,
+            data0.as_mut_ptr() as *mut std::ffi::c_void,
+        )
+    };
     for _ in 0..16 {
-        let mut hdr = UserCapHeader { version: LINUX_CAPABILITY_VERSION_3, pid: 0 };
+        let mut hdr = UserCapHeader {
+            version: LINUX_CAPABILITY_VERSION_3,
+            pid: 0,
+        };
         let mut data = [UserCapData::default(); 2];
-        unsafe { fl::capget(&mut hdr as *mut _ as *mut std::ffi::c_void, data.as_mut_ptr() as *mut std::ffi::c_void) };
+        unsafe {
+            fl::capget(
+                &mut hdr as *mut _ as *mut std::ffi::c_void,
+                data.as_mut_ptr() as *mut std::ffi::c_void,
+            )
+        };
         assert_eq!(data, data0);
     }
 }

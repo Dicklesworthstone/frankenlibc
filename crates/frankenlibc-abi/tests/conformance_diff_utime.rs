@@ -7,7 +7,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_int, c_void, CString};
+use std::ffi::{CString, c_int, c_void};
 
 use frankenlibc_abi::glibc_internal_abi as fl;
 
@@ -124,8 +124,14 @@ fn diff_utimes_microsecond_precision() {
     let fl_file = TempFile::new("flus");
     let lc_file = TempFile::new("lcus");
     let tv = [
-        Timeval { tv_sec: 1_000_000_000, tv_usec: 250_000 },
-        Timeval { tv_sec: 1_500_000_000, tv_usec: 750_000 },
+        Timeval {
+            tv_sec: 1_000_000_000,
+            tv_usec: 250_000,
+        },
+        Timeval {
+            tv_sec: 1_500_000_000,
+            tv_usec: 750_000,
+        },
     ];
     let fl_r = unsafe { fl::utimes(fl_file.as_ptr(), tv.as_ptr() as *const c_void) };
     let lc_r = unsafe { utimes(lc_file.as_ptr(), tv.as_ptr() as *const c_void) };

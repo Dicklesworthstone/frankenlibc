@@ -7,7 +7,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up — extending libresolv parity coverage.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 
 use frankenlibc_abi::resolv_abi as fl;
 
@@ -60,7 +60,10 @@ fn diff_dn_count_labels_cases() {
         divs.is_empty(),
         "__dn_count_labels divergences:\n{}",
         divs.iter()
-            .map(|d| format!("  case: {} | fl: {} | glibc: {}\n", d.case, d.frankenlibc, d.glibc))
+            .map(|d| format!(
+                "  case: {} | fl: {} | glibc: {}\n",
+                d.case, d.frankenlibc, d.glibc
+            ))
             .collect::<String>()
     );
 }

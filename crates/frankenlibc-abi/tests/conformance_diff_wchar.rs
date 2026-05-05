@@ -34,36 +34,17 @@ unsafe extern "C" {
     fn wcsncpy(dst: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize) -> *mut libc::wchar_t;
     fn mbstowcs(dst: *mut libc::wchar_t, src: *const libc::c_char, n: usize) -> usize;
     fn wcstombs(dst: *mut libc::c_char, src: *const libc::wchar_t, n: usize) -> usize;
-    fn wmemcpy(
-        dst: *mut libc::wchar_t,
-        src: *const libc::wchar_t,
-        n: usize,
-    ) -> *mut libc::wchar_t;
-    fn wmemmove(
-        dst: *mut libc::wchar_t,
-        src: *const libc::wchar_t,
-        n: usize,
-    ) -> *mut libc::wchar_t;
+    fn wmemcpy(dst: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize) -> *mut libc::wchar_t;
+    fn wmemmove(dst: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize)
+    -> *mut libc::wchar_t;
     fn wmemset(dst: *mut libc::wchar_t, c: libc::wchar_t, n: usize) -> *mut libc::wchar_t;
     fn wmemcmp(s1: *const libc::wchar_t, s2: *const libc::wchar_t, n: usize) -> c_int;
     fn wcpcpy(dst: *mut libc::wchar_t, src: *const libc::wchar_t) -> *mut libc::wchar_t;
-    fn wcpncpy(
-        dst: *mut libc::wchar_t,
-        src: *const libc::wchar_t,
-        n: usize,
-    ) -> *mut libc::wchar_t;
+    fn wcpncpy(dst: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize) -> *mut libc::wchar_t;
     fn wcscat(dst: *mut libc::wchar_t, src: *const libc::wchar_t) -> *mut libc::wchar_t;
-    fn wcsncat(
-        dst: *mut libc::wchar_t,
-        src: *const libc::wchar_t,
-        n: usize,
-    ) -> *mut libc::wchar_t;
+    fn wcsncat(dst: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize) -> *mut libc::wchar_t;
     fn wcscasecmp(s1: *const libc::wchar_t, s2: *const libc::wchar_t) -> c_int;
-    fn wcsncasecmp(
-        s1: *const libc::wchar_t,
-        s2: *const libc::wchar_t,
-        n: usize,
-    ) -> c_int;
+    fn wcsncasecmp(s1: *const libc::wchar_t, s2: *const libc::wchar_t, n: usize) -> c_int;
     /// Host glibc `wcstol` — wide-char strtol.
     fn wcstol(
         nptr: *const libc::wchar_t,
@@ -93,17 +74,9 @@ unsafe extern "C" {
     /// Host glibc `wcstof` — wide-char strtof.
     fn wcstof(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f32;
     /// Host glibc `wcstoimax` — wide-char strtoimax (intmax_t = i64).
-    fn wcstoimax(
-        nptr: *const libc::wchar_t,
-        endptr: *mut *mut libc::wchar_t,
-        base: c_int,
-    ) -> i64;
+    fn wcstoimax(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> i64;
     /// Host glibc `wcstoumax` — wide-char strtoumax (uintmax_t = u64).
-    fn wcstoumax(
-        nptr: *const libc::wchar_t,
-        endptr: *mut *mut libc::wchar_t,
-        base: c_int,
-    ) -> u64;
+    fn wcstoumax(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> u64;
     /// Host glibc `wcsspn` — span over wide-char accept set.
     fn wcsspn(s: *const libc::wchar_t, accept: *const libc::wchar_t) -> usize;
     /// Host glibc `wcscspn` — span over wide-char reject set.
@@ -913,13 +886,13 @@ fn diff_wcstombs_ascii_cases() {
 
 const WIDE_BUFS: &[&[u32]] = &[
     &[],
-    &[0x41],                                  // single ASCII
-    &[0x41, 0x42, 0x43],                      // ASCII run
-    &[0x80, 0x100, 0x10FF],                   // mid-BMP
-    &[0x10FFFF],                              // max codepoint
-    &[0, 0, 0],                               // all-zero, no NUL semantics for wmem*
-    &[0x41, 0, 0x42],                         // embedded zero (must NOT terminate scan)
-    &[0xFFFFFFFF],                            // u32 saturation (wchar_t max as i32 is 0x7fffffff)
+    &[0x41],                // single ASCII
+    &[0x41, 0x42, 0x43],    // ASCII run
+    &[0x80, 0x100, 0x10FF], // mid-BMP
+    &[0x10FFFF],            // max codepoint
+    &[0, 0, 0],             // all-zero, no NUL semantics for wmem*
+    &[0x41, 0, 0x42],       // embedded zero (must NOT terminate scan)
+    &[0xFFFFFFFF],          // u32 saturation (wchar_t max as i32 is 0x7fffffff)
 ];
 
 #[test]
@@ -964,7 +937,11 @@ fn diff_wmemcpy_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "wmemcpy divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wmemcpy divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -975,11 +952,11 @@ fn diff_wmemmove_cases() {
     let mut divs = Vec::new();
     let cases: &[(&[u32], usize, isize, usize)] = &[
         // (initial_buffer, src_offset, dst_delta_from_src_in_words, n)
-        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 0, 0),       // n=0 no-op
-        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 0, 4),       // exact overlap
-        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 2, 4),       // forward overlap
-        (&[1, 2, 3, 4, 5, 6, 7, 8], 2, -2, 4),      // backward overlap
-        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 4, 4),       // disjoint within buf
+        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 0, 0),  // n=0 no-op
+        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 0, 4),  // exact overlap
+        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 2, 4),  // forward overlap
+        (&[1, 2, 3, 4, 5, 6, 7, 8], 2, -2, 4), // backward overlap
+        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 4, 4),  // disjoint within buf
     ];
     for &(initial, src_off, dst_delta, n) in cases {
         let mut buf_fl = initial.to_vec();
@@ -1000,10 +977,10 @@ fn diff_wmemmove_cases() {
                 n,
             )
         };
-        let fl_off = (fl_r as usize).wrapping_sub(buf_fl.as_ptr() as usize)
-            / std::mem::size_of::<u32>();
-        let lc_off = (lc_r as usize).wrapping_sub(buf_lc.as_ptr() as usize)
-            / std::mem::size_of::<u32>();
+        let fl_off =
+            (fl_r as usize).wrapping_sub(buf_fl.as_ptr() as usize) / std::mem::size_of::<u32>();
+        let lc_off =
+            (lc_r as usize).wrapping_sub(buf_lc.as_ptr() as usize) / std::mem::size_of::<u32>();
         if fl_off != lc_off {
             divs.push(Divergence {
                 function: "wmemmove",
@@ -1023,7 +1000,11 @@ fn diff_wmemmove_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wmemmove divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wmemmove divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1036,8 +1017,13 @@ fn diff_wmemset_cases() {
             let mut dst_lc = vec![0xCDCDCDCDu32; 16];
             // SAFETY: dst is 16 wchar_ts; n ≤ 16.
             let fl_r = unsafe { fl::wmemset(dst_fl.as_mut_ptr(), c, n) };
-            let lc_r =
-                unsafe { wmemset(dst_lc.as_mut_ptr() as *mut libc::wchar_t, c as libc::wchar_t, n) };
+            let lc_r = unsafe {
+                wmemset(
+                    dst_lc.as_mut_ptr() as *mut libc::wchar_t,
+                    c as libc::wchar_t,
+                    n,
+                )
+            };
             let fl_off = (fl_r as usize).wrapping_sub(dst_fl.as_ptr() as usize);
             let lc_off = (lc_r as usize).wrapping_sub(dst_lc.as_ptr() as usize);
             if fl_off != lc_off {
@@ -1060,7 +1046,11 @@ fn diff_wmemset_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "wmemset divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wmemset divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1104,7 +1094,11 @@ fn diff_wmemchr_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wmemchr divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wmemchr divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1113,13 +1107,13 @@ fn diff_wmemcmp_cases() {
     // POSIX requires only the sign of wmemcmp's result to be portable.
     let cases: &[(&[u32], &[u32], usize)] = &[
         (&[], &[], 0),
-        (&[0x41, 0x42, 0x43], &[0x41, 0x42, 0x43], 3),       // equal
-        (&[0x41, 0x42, 0x43], &[0x41, 0x42, 0x44], 3),       // a<b at index 2
-        (&[0x41, 0x42, 0x44], &[0x41, 0x42, 0x43], 3),       // a>b at index 2
-        (&[0x41, 0x42, 0x43], &[0x41, 0x42, 0x44], 2),       // bound stops before diff
-        (&[0xFFFFFFFF, 0], &[0, 0], 1),                      // unsigned compare (high bit set)
+        (&[0x41, 0x42, 0x43], &[0x41, 0x42, 0x43], 3), // equal
+        (&[0x41, 0x42, 0x43], &[0x41, 0x42, 0x44], 3), // a<b at index 2
+        (&[0x41, 0x42, 0x44], &[0x41, 0x42, 0x43], 3), // a>b at index 2
+        (&[0x41, 0x42, 0x43], &[0x41, 0x42, 0x44], 2), // bound stops before diff
+        (&[0xFFFFFFFF, 0], &[0, 0], 1),                // unsigned compare (high bit set)
         (&[0x10FFFF], &[0x10FFFE], 1),
-        (&[0, 0, 0], &[0, 0, 1], 3),                         // embedded zeros, no NUL semantics
+        (&[0, 0, 0], &[0, 0, 1], 3), // embedded zeros, no NUL semantics
     ];
     for (a, b, n) in cases {
         let fl_r = unsafe { fl::wmemcmp(a.as_ptr(), b.as_ptr(), *n) };
@@ -1140,7 +1134,11 @@ fn diff_wmemcmp_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wmemcmp divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wmemcmp divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -1158,10 +1156,10 @@ fn diff_wmemcmp_cases() {
 fn diff_wcpcpy_cases() {
     let mut divs = Vec::new();
     let cases: &[&[u32]] = &[
-        &[],                                  // empty src (only NUL written)
-        &[0x41],                              // single char
-        &[0x41, 0x42, 0x43],                  // ASCII run
-        &[0x80, 0x100, 0x10FF, 0x10FFFF],     // BMP + supplementary plane
+        &[],                              // empty src (only NUL written)
+        &[0x41],                          // single char
+        &[0x41, 0x42, 0x43],              // ASCII run
+        &[0x80, 0x100, 0x10FF, 0x10FFFF], // BMP + supplementary plane
     ];
     for src_chars in cases {
         let src = wcstring(src_chars);
@@ -1197,18 +1195,17 @@ fn diff_wcpcpy_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcpcpy divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcpcpy divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
 fn diff_wcpncpy_cases() {
     let mut divs = Vec::new();
-    let src_cases: &[&[u32]] = &[
-        &[],
-        &[0x41],
-        &[0x41, 0x42, 0x43],
-        &[0x80, 0x100, 0x10FF],
-    ];
+    let src_cases: &[&[u32]] = &[&[], &[0x41], &[0x41, 0x42, 0x43], &[0x80, 0x100, 0x10FF]];
     for src_chars in src_cases {
         let src = wcstring(src_chars);
         for &n in &[0usize, 1, 2, 4, 8, 16] {
@@ -1246,7 +1243,11 @@ fn diff_wcpncpy_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "wcpncpy divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcpncpy divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -1258,11 +1259,11 @@ fn diff_wcscat_cases() {
     let mut divs = Vec::new();
     // (initial dst contents up to NUL, src) — dst capacity is 32.
     let cases: &[(&[u32], &[u32])] = &[
-        (&[], &[]),                           // empty + empty
-        (&[], &[0x41, 0x42]),                 // empty + run
-        (&[0x41, 0x42], &[]),                 // run + empty
-        (&[0x41, 0x42, 0x43], &[0x44, 0x45]), // ASCII concat
-        (&[0x80, 0x100], &[0x10FF, 0x10FFFF]),// supplementary
+        (&[], &[]),                            // empty + empty
+        (&[], &[0x41, 0x42]),                  // empty + run
+        (&[0x41, 0x42], &[]),                  // run + empty
+        (&[0x41, 0x42, 0x43], &[0x44, 0x45]),  // ASCII concat
+        (&[0x80, 0x100], &[0x10FF, 0x10FFFF]), // supplementary
     ];
     for (init, src_chars) in cases {
         let mut dst_fl = vec![0xCDCDCDCDu32; 32];
@@ -1295,7 +1296,11 @@ fn diff_wcscat_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcscat divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcscat divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1303,9 +1308,9 @@ fn diff_wcsncat_cases() {
     let mut divs = Vec::new();
     let cases: &[(&[u32], &[u32], usize)] = &[
         (&[], &[], 0),
-        (&[], &[0x41, 0x42, 0x43], 0),         // n=0 must not append
-        (&[0x41], &[0x42, 0x43], 1),           // exact-fit append
-        (&[0x41], &[0x42, 0x43, 0x44], 2),     // partial append (truncated)
+        (&[], &[0x41, 0x42, 0x43], 0),     // n=0 must not append
+        (&[0x41], &[0x42, 0x43], 1),       // exact-fit append
+        (&[0x41], &[0x42, 0x43, 0x44], 2), // partial append (truncated)
         (&[0x41, 0x42], &[0x43, 0x44, 0x45], 100), // n past src length
         (&[0x80], &[0x100, 0x10FF], 2),
     ];
@@ -1339,7 +1344,11 @@ fn diff_wcsncat_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcsncat divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcsncat divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -1355,17 +1364,17 @@ fn diff_wcscasecmp_cases() {
     let mut divs = Vec::new();
     let cases: &[(&[u32], &[u32])] = &[
         (&[], &[]),
-        (&[0x41, 0x42, 0x43], &[0x41, 0x42, 0x43]),               // equal
-        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x63]),               // ABC == abc
-        (&[0x61, 0x62, 0x63], &[0x41, 0x42, 0x43]),               // abc == ABC
-        (&[0x41], &[0x42]),                                        // a < b
-        (&[0x42], &[0x41]),                                        // a > b
-        (&[0x41, 0x42], &[0x41, 0x42, 0x43]),                      // prefix < longer
-        (&[0x41, 0x42, 0x43], &[0x41, 0x42]),                      // longer > prefix
-        (&[0x40], &[0x60]),                                        // '@' (0x40) vs '`' (0x60) — neither is A-Z, NO folding
-        (&[0x10FFFF], &[0x10FFFF]),                                // max codepoint, equal
-        (&[0x100], &[0x101]),                                      // non-ASCII pass-through
-        (&[0x80], &[0x7F]),                                        // unsigned compare boundary
+        (&[0x41, 0x42, 0x43], &[0x41, 0x42, 0x43]), // equal
+        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x63]), // ABC == abc
+        (&[0x61, 0x62, 0x63], &[0x41, 0x42, 0x43]), // abc == ABC
+        (&[0x41], &[0x42]),                         // a < b
+        (&[0x42], &[0x41]),                         // a > b
+        (&[0x41, 0x42], &[0x41, 0x42, 0x43]),       // prefix < longer
+        (&[0x41, 0x42, 0x43], &[0x41, 0x42]),       // longer > prefix
+        (&[0x40], &[0x60]), // '@' (0x40) vs '`' (0x60) — neither is A-Z, NO folding
+        (&[0x10FFFF], &[0x10FFFF]), // max codepoint, equal
+        (&[0x100], &[0x101]), // non-ASCII pass-through
+        (&[0x80], &[0x7F]), // unsigned compare boundary
     ];
     for (a_chars, b_chars) in cases {
         let a = wcstring(a_chars);
@@ -1387,20 +1396,24 @@ fn diff_wcscasecmp_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcscasecmp divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcscasecmp divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
 fn diff_wcsncasecmp_cases() {
     let mut divs = Vec::new();
     let cases: &[(&[u32], &[u32], usize)] = &[
-        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x64], 0),             // n=0 always equal
-        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x64], 2),             // bound stops before diff
-        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x64], 3),             // diff at index 2
-        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x63], 100),           // n past either string
-        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x63, 0x64], 3),       // prefix match within bound
-        (&[0x41, 0x42, 0x43, 0x44], &[0x61, 0x62, 0x63], 4),       // longer > shorter at NUL boundary
-        (&[0x100, 0x41], &[0x100, 0x61], 2),                       // non-ASCII followed by case-folded ASCII
+        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x64], 0), // n=0 always equal
+        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x64], 2), // bound stops before diff
+        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x64], 3), // diff at index 2
+        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x63], 100), // n past either string
+        (&[0x41, 0x42, 0x43], &[0x61, 0x62, 0x63, 0x64], 3), // prefix match within bound
+        (&[0x41, 0x42, 0x43, 0x44], &[0x61, 0x62, 0x63], 4), // longer > shorter at NUL boundary
+        (&[0x100, 0x41], &[0x100, 0x61], 2),           // non-ASCII followed by case-folded ASCII
     ];
     for (a_chars, b_chars, n) in cases {
         let a = wcstring(a_chars);
@@ -1423,7 +1436,11 @@ fn diff_wcsncasecmp_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcsncasecmp divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcsncasecmp divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -1445,8 +1462,8 @@ const WCS_INT_INPUTS: &[(&[u8], c_int)] = &[
     (b"-7", 0),
     (b"+99", 0),
     (b"  123", 0),
-    (b"0x1F", 0),       // base 0 → hex
-    (b"017", 0),        // base 0 → octal
+    (b"0x1F", 0), // base 0 → hex
+    (b"017", 0),  // base 0 → octal
     (b"0", 0),
     (b"42", 10),
     (b"FF", 16),
@@ -1496,7 +1513,11 @@ fn diff_wcstol_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcstol divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcstol divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1530,7 +1551,11 @@ fn diff_wcstoul_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcstoul divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcstoul divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1564,7 +1589,11 @@ fn diff_wcstoll_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcstoll divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcstoll divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1598,7 +1627,11 @@ fn diff_wcstoull_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcstoull divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcstoull divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -1618,14 +1651,14 @@ const WCS_FLOAT_INPUTS: &[&[u8]] = &[
     b"3.14159",
     b"1e10",
     b"-1.5e-10",
-    b"0x1.fp3",          // hex float, glibc supports
+    b"0x1.fp3", // hex float, glibc supports
     b"inf",
     b"-inf",
     b"nan",
-    b"  42.5",           // leading whitespace
-    b"abc",              // no digits
-    b"",                 // empty
-    b"123abc",           // trailing garbage
+    b"  42.5", // leading whitespace
+    b"abc",    // no digits
+    b"",       // empty
+    b"123abc", // trailing garbage
 ];
 
 #[test]
@@ -1636,9 +1669,7 @@ fn diff_wcstod_cases() {
         let p = w.as_ptr();
         let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
         let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
-        let fl_v = unsafe {
-            fl::wcstod(p as *const libc::wchar_t, &mut fl_end)
-        };
+        let fl_v = unsafe { fl::wcstod(p as *const libc::wchar_t, &mut fl_end) };
         let lc_v = unsafe { wcstod(p as *const libc::wchar_t, &mut lc_end) };
         let fl_off = ptr_offset_w(p, fl_end);
         let lc_off = ptr_offset_w(p, lc_end);
@@ -1669,7 +1700,11 @@ fn diff_wcstod_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcstod divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcstod divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1680,9 +1715,7 @@ fn diff_wcstof_cases() {
         let p = w.as_ptr();
         let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
         let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
-        let fl_v = unsafe {
-            fl::wcstof(p as *const libc::wchar_t, &mut fl_end)
-        };
+        let fl_v = unsafe { fl::wcstof(p as *const libc::wchar_t, &mut fl_end) };
         let lc_v = unsafe { wcstof(p as *const libc::wchar_t, &mut lc_end) };
         let fl_off = ptr_offset_w(p, fl_end);
         let lc_off = ptr_offset_w(p, lc_end);
@@ -1710,7 +1743,11 @@ fn diff_wcstof_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcstof divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcstof divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -1730,9 +1767,7 @@ fn diff_wcstoimax_cases() {
         let p = w.as_ptr();
         let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
         let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
-        let fl_v = unsafe {
-            fl::wcstoimax(p, &mut fl_end as *mut _ as *mut *mut u32, *base)
-        };
+        let fl_v = unsafe { fl::wcstoimax(p, &mut fl_end as *mut _ as *mut *mut u32, *base) };
         let lc_v = unsafe { wcstoimax(p as *const libc::wchar_t, &mut lc_end, *base) };
         let fl_off = ptr_offset_w(p, fl_end);
         let lc_off = ptr_offset_w(p, lc_end);
@@ -1755,7 +1790,11 @@ fn diff_wcstoimax_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcstoimax divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcstoimax divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1766,9 +1805,7 @@ fn diff_wcstoumax_cases() {
         let p = w.as_ptr();
         let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
         let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
-        let fl_v = unsafe {
-            fl::wcstoumax(p, &mut fl_end as *mut _ as *mut *mut u32, *base)
-        };
+        let fl_v = unsafe { fl::wcstoumax(p, &mut fl_end as *mut _ as *mut *mut u32, *base) };
         let lc_v = unsafe { wcstoumax(p as *const libc::wchar_t, &mut lc_end, *base) };
         let fl_off = ptr_offset_w(p, fl_end);
         let lc_off = ptr_offset_w(p, lc_end);
@@ -1791,7 +1828,11 @@ fn diff_wcstoumax_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcstoumax divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcstoumax divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1829,18 +1870,31 @@ fn diff_wcsspn_cases() {
         let ws = ascii_to_wchars(s);
         let wset = ascii_to_wchars(set);
         let fl_v = unsafe { fl::wcsspn(ws.as_ptr(), wset.as_ptr()) };
-        let lc_v = unsafe { wcsspn(ws.as_ptr() as *const libc::wchar_t, wset.as_ptr() as *const libc::wchar_t) };
+        let lc_v = unsafe {
+            wcsspn(
+                ws.as_ptr() as *const libc::wchar_t,
+                wset.as_ptr() as *const libc::wchar_t,
+            )
+        };
         if fl_v != lc_v {
             divs.push(Divergence {
                 function: "wcsspn",
-                case: format!("(s={:?}, set={:?})", String::from_utf8_lossy(s), String::from_utf8_lossy(set)),
+                case: format!(
+                    "(s={:?}, set={:?})",
+                    String::from_utf8_lossy(s),
+                    String::from_utf8_lossy(set)
+                ),
                 field: "return",
                 frankenlibc: format!("{fl_v}"),
                 glibc: format!("{lc_v}"),
             });
         }
     }
-    assert!(divs.is_empty(), "wcsspn divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcsspn divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1850,18 +1904,31 @@ fn diff_wcscspn_cases() {
         let ws = ascii_to_wchars(s);
         let wset = ascii_to_wchars(set);
         let fl_v = unsafe { fl::wcscspn(ws.as_ptr(), wset.as_ptr()) };
-        let lc_v = unsafe { wcscspn(ws.as_ptr() as *const libc::wchar_t, wset.as_ptr() as *const libc::wchar_t) };
+        let lc_v = unsafe {
+            wcscspn(
+                ws.as_ptr() as *const libc::wchar_t,
+                wset.as_ptr() as *const libc::wchar_t,
+            )
+        };
         if fl_v != lc_v {
             divs.push(Divergence {
                 function: "wcscspn",
-                case: format!("(s={:?}, set={:?})", String::from_utf8_lossy(s), String::from_utf8_lossy(set)),
+                case: format!(
+                    "(s={:?}, set={:?})",
+                    String::from_utf8_lossy(s),
+                    String::from_utf8_lossy(set)
+                ),
                 field: "return",
                 frankenlibc: format!("{fl_v}"),
                 glibc: format!("{lc_v}"),
             });
         }
     }
-    assert!(divs.is_empty(), "wcscspn divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcscspn divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1871,7 +1938,14 @@ fn diff_wcscspn_cases() {
 // ---------------------------------------------------------------------------
 #[test]
 fn diff_wcsdup_cases() {
-    const CASES: &[&[u8]] = &[b"", b"a", b"hello", b"the quick brown fox", b"\xff", b"\x00"];
+    const CASES: &[&[u8]] = &[
+        b"",
+        b"a",
+        b"hello",
+        b"the quick brown fox",
+        b"\xff",
+        b"\x00",
+    ];
     let mut divs = Vec::new();
     for input in CASES {
         let w = ascii_to_wchars(input);
@@ -1921,7 +1995,11 @@ fn diff_wcsdup_cases() {
             unsafe { libc::free(lc_p as *mut libc::c_void) };
         }
     }
-    assert!(divs.is_empty(), "wcsdup divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcsdup divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1958,7 +2036,11 @@ fn diff_wcsnlen_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcsnlen divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcsnlen divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1996,7 +2078,11 @@ fn diff_wcschrnul_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcschrnul divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcschrnul divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2025,24 +2111,40 @@ fn correctness_wmemrchr_cases() {
     for (input, c, n) in CASES {
         let w: Vec<u32> = input.iter().map(|&b| b as u32).collect();
         let fl_p = unsafe { fl::wmemrchr(w.as_ptr(), *c as u32, *n) };
-        let fl_off = if fl_p.is_null() { -1 } else { (fl_p as isize - w.as_ptr() as isize) / 4 };
+        let fl_off = if fl_p.is_null() {
+            -1
+        } else {
+            (fl_p as isize - w.as_ptr() as isize) / 4
+        };
         // Reference: scan first `n` elements right-to-left.
         let target = *c as u32;
-        let expected: isize = w.iter().take(*n).enumerate().rev()
+        let expected: isize = w
+            .iter()
+            .take(*n)
+            .enumerate()
+            .rev()
             .find(|&(_, &b)| b == target)
             .map(|(i, _)| i as isize)
             .unwrap_or(-1);
         if fl_off != expected {
             divs.push(Divergence {
                 function: "wmemrchr",
-                case: format!("({:?}, c={:?}, n={n})", String::from_utf8_lossy(input), *c as char),
+                case: format!(
+                    "({:?}, c={:?}, n={n})",
+                    String::from_utf8_lossy(input),
+                    *c as char
+                ),
                 field: "offset",
                 frankenlibc: format!("{fl_off}"),
                 glibc: format!("(reference) {expected}"),
             });
         }
     }
-    assert!(divs.is_empty(), "wmemrchr divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wmemrchr divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2086,7 +2188,11 @@ fn diff_wcwidth_locale_invariant_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcwidth divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcwidth divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -2116,7 +2222,11 @@ fn diff_wcswidth_locale_invariant_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "wcswidth divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "wcswidth divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2157,7 +2267,11 @@ fn diff_btowc_wctob_ascii_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "btowc/wctob divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "btowc/wctob divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

@@ -20,10 +20,12 @@ unsafe extern "C" {
 fn make_default_termios() -> libc::termios {
     let mut t: libc::termios = unsafe { std::mem::zeroed() };
     // Populate with realistic non-raw flags so cfmakeraw has work to do.
-    t.c_iflag = (libc::BRKINT | libc::ICRNL | libc::INPCK | libc::ISTRIP | libc::IXON) as libc::tcflag_t;
+    t.c_iflag =
+        (libc::BRKINT | libc::ICRNL | libc::INPCK | libc::ISTRIP | libc::IXON) as libc::tcflag_t;
     t.c_oflag = libc::OPOST as libc::tcflag_t;
     t.c_cflag = (libc::CSIZE | libc::CS7 | libc::PARENB) as libc::tcflag_t;
-    t.c_lflag = (libc::ECHO | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN) as libc::tcflag_t;
+    t.c_lflag =
+        (libc::ECHO | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN) as libc::tcflag_t;
     t.c_cc[libc::VMIN] = 0;
     t.c_cc[libc::VTIME] = 5;
     t
@@ -52,8 +54,14 @@ fn diff_cfmakeraw_sets_cs8_and_vmin_vtime() {
     let mut lc_t = make_default_termios();
     unsafe { cfmakeraw(&mut lc_t) };
     // CS8 must be set in cflag.
-    assert_eq!(fl_t.c_cflag & libc::CSIZE as libc::tcflag_t, libc::CS8 as libc::tcflag_t);
-    assert_eq!(lc_t.c_cflag & libc::CSIZE as libc::tcflag_t, libc::CS8 as libc::tcflag_t);
+    assert_eq!(
+        fl_t.c_cflag & libc::CSIZE as libc::tcflag_t,
+        libc::CS8 as libc::tcflag_t
+    );
+    assert_eq!(
+        lc_t.c_cflag & libc::CSIZE as libc::tcflag_t,
+        libc::CS8 as libc::tcflag_t
+    );
     // VMIN=1, VTIME=0 — read at least 1 byte, no inter-byte timeout.
     assert_eq!(fl_t.c_cc[libc::VMIN], 1);
     assert_eq!(fl_t.c_cc[libc::VTIME], 0);

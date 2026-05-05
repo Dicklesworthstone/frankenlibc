@@ -3175,9 +3175,10 @@ pub unsafe extern "C" fn iswblank(wc: u32) -> c_int {
         0x09                     // TAB
             | 0x20               // SPACE
             | 0x1680             // OGHAM SPACE MARK
-            | 0x2000..=0x200A    // EN QUAD .. HAIR SPACE
+            | 0x2000
+            ..=0x200A    // EN QUAD .. HAIR SPACE
             | 0x205F             // MEDIUM MATHEMATICAL SPACE
-            | 0x3000             // IDEOGRAPHIC SPACE
+            | 0x3000 // IDEOGRAPHIC SPACE
     ) {
         1
     } else {

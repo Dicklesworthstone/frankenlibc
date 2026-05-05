@@ -43,10 +43,8 @@ fn diff_getrusage_thread_user_time_monotonic_after_busy_loop() {
     std::hint::black_box(acc);
     let r2 = unsafe { fl::getrusage(libc::RUSAGE_THREAD, &mut after) };
     assert_eq!(r2, 0);
-    let before_us =
-        before.ru_utime.tv_sec as i64 * 1_000_000 + before.ru_utime.tv_usec as i64;
-    let after_us =
-        after.ru_utime.tv_sec as i64 * 1_000_000 + after.ru_utime.tv_usec as i64;
+    let before_us = before.ru_utime.tv_sec as i64 * 1_000_000 + before.ru_utime.tv_usec as i64;
+    let after_us = after.ru_utime.tv_sec as i64 * 1_000_000 + after.ru_utime.tv_usec as i64;
     assert!(
         after_us >= before_us,
         "user time should not decrease: before={before_us} after={after_us}"
@@ -92,8 +90,8 @@ fn diff_getrusage_thread_separate_threads_have_separate_times() {
     // Sanity: should be non-negative.
     assert!(other_us >= 0);
     // Main-thread time wasn't burning during the spawn.
-    let main_us = main_before.ru_utime.tv_sec as i64 * 1_000_000
-        + main_before.ru_utime.tv_usec as i64;
+    let main_us =
+        main_before.ru_utime.tv_sec as i64 * 1_000_000 + main_before.ru_utime.tv_usec as i64;
     let _ = main_us;
 }
 

@@ -11,7 +11,7 @@
 //! Filed under [bd-xn6p8] follow-up.
 
 use std::collections::BTreeSet;
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 
 unsafe extern "C" {
     fn __nss_hash(name: *const c_void, len: usize) -> u32;
@@ -22,7 +22,9 @@ use frankenlibc_abi::unistd_abi as fl;
 #[test]
 fn fl_nss_hash_is_deterministic() {
     // Same input → same output across calls.
-    for s in ["hosts", "passwd", "group", "shadow", "files", "dns", "compat"] {
+    for s in [
+        "hosts", "passwd", "group", "shadow", "files", "dns", "compat",
+    ] {
         let cs = CString::new(s).unwrap();
         let h1 = unsafe { fl::__nss_hash(cs.as_ptr() as *const c_void, s.len()) };
         let h2 = unsafe { fl::__nss_hash(cs.as_ptr() as *const c_void, s.len()) };
@@ -35,8 +37,7 @@ fn fl_nss_hash_known_inputs_distinct() {
     // The 9 NSS database/source names commonly looked up should
     // hash to 9 distinct values.
     let names = [
-        "hosts", "passwd", "group", "shadow", "services",
-        "files", "compat", "dns", "nis",
+        "hosts", "passwd", "group", "shadow", "services", "files", "compat", "dns", "nis",
     ];
     let mut hashes = BTreeSet::new();
     for s in &names {
@@ -57,8 +58,7 @@ fn diff_nss_hash_glibc_also_distinguishes_same_inputs() {
     // returns distinct hashes for the same set — proving both
     // impls behave as proper hash functions on this corpus.
     let names = [
-        "hosts", "passwd", "group", "shadow", "services",
-        "files", "compat", "dns", "nis",
+        "hosts", "passwd", "group", "shadow", "services", "files", "compat", "dns", "nis",
     ];
     let mut fl_hashes = BTreeSet::new();
     let mut lc_hashes = BTreeSet::new();

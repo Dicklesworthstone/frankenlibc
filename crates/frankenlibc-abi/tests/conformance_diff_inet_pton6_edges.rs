@@ -10,7 +10,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_int, CString};
+use std::ffi::{CString, c_int};
 
 use frankenlibc_abi::inet_abi as fl;
 
@@ -44,8 +44,8 @@ fn diff_inet_pton6_full_8group_form() {
     let (fl_o, lc_o) = parse_both("1:2:3:4:5:6:7:8");
     assert_eq!(fl_o, lc_o);
     let expected = [
-        0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04,
-        0x00, 0x05, 0x00, 0x06, 0x00, 0x07, 0x00, 0x08,
+        0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00, 0x05, 0x00, 0x06, 0x00, 0x07, 0x00,
+        0x08,
     ];
     assert_eq!(fl_o, Some(expected));
 }
@@ -56,8 +56,7 @@ fn diff_inet_pton6_ipv4_mapped() {
     let (fl_o, lc_o) = parse_both("::ffff:192.168.1.1");
     assert_eq!(fl_o, lc_o);
     let expected = [
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0xff, 0xff, 0xc0, 0xa8, 0x01, 0x01,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xc0, 0xa8, 0x01, 0x01,
     ];
     assert_eq!(fl_o, Some(expected));
 }
@@ -67,10 +66,7 @@ fn diff_inet_pton6_ipv4_compatible() {
     // ::1.2.3.4 — IPv4-compatible (deprecated but still parses).
     let (fl_o, lc_o) = parse_both("::1.2.3.4");
     assert_eq!(fl_o, lc_o);
-    let expected = [
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0x01, 0x02, 0x03, 0x04,
-    ];
+    let expected = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x02, 0x03, 0x04];
     assert_eq!(fl_o, Some(expected));
 }
 

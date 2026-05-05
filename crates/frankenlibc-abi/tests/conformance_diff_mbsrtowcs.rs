@@ -63,10 +63,20 @@ fn diff_mbsrtowcs_ascii_only() {
         let mut fl_src = input.as_ptr() as *const c_char;
         let mut lc_src = input.as_ptr() as *const c_char;
         let fl_n = unsafe {
-            fl::mbsrtowcs(fl_dst.as_mut_ptr(), &mut fl_src, fl_dst.len(), std::ptr::null_mut())
+            fl::mbsrtowcs(
+                fl_dst.as_mut_ptr(),
+                &mut fl_src,
+                fl_dst.len(),
+                std::ptr::null_mut(),
+            )
         };
         let lc_n = unsafe {
-            mbsrtowcs(lc_dst.as_mut_ptr(), &mut lc_src, lc_dst.len(), std::ptr::null_mut())
+            mbsrtowcs(
+                lc_dst.as_mut_ptr(),
+                &mut lc_src,
+                lc_dst.len(),
+                std::ptr::null_mut(),
+            )
         };
         assert_eq!(fl_n, lc_n, "mbsrtowcs(ascii): fl={fl_n} lc={lc_n}");
         assert_eq!(fl_n, 11);
@@ -84,10 +94,20 @@ fn diff_mbsrtowcs_with_cjk() {
         let mut fl_src = input.as_ptr() as *const c_char;
         let mut lc_src = input.as_ptr() as *const c_char;
         let fl_n = unsafe {
-            fl::mbsrtowcs(fl_dst.as_mut_ptr(), &mut fl_src, fl_dst.len(), std::ptr::null_mut())
+            fl::mbsrtowcs(
+                fl_dst.as_mut_ptr(),
+                &mut fl_src,
+                fl_dst.len(),
+                std::ptr::null_mut(),
+            )
         };
         let lc_n = unsafe {
-            mbsrtowcs(lc_dst.as_mut_ptr(), &mut lc_src, lc_dst.len(), std::ptr::null_mut())
+            mbsrtowcs(
+                lc_dst.as_mut_ptr(),
+                &mut lc_src,
+                lc_dst.len(),
+                std::ptr::null_mut(),
+            )
         };
         assert_eq!(fl_n, lc_n, "mbsrtowcs(CJK): fl={fl_n} lc={lc_n}");
         if fl_n == 1 {
@@ -105,12 +125,10 @@ fn diff_mbsrtowcs_dst_null_returns_required_len() {
         let input = b"foo bar\0";
         let mut fl_src = input.as_ptr() as *const c_char;
         let mut lc_src = input.as_ptr() as *const c_char;
-        let fl_n = unsafe {
-            fl::mbsrtowcs(std::ptr::null_mut(), &mut fl_src, 100, std::ptr::null_mut())
-        };
-        let lc_n = unsafe {
-            mbsrtowcs(std::ptr::null_mut(), &mut lc_src, 100, std::ptr::null_mut())
-        };
+        let fl_n =
+            unsafe { fl::mbsrtowcs(std::ptr::null_mut(), &mut fl_src, 100, std::ptr::null_mut()) };
+        let lc_n =
+            unsafe { mbsrtowcs(std::ptr::null_mut(), &mut lc_src, 100, std::ptr::null_mut()) };
         assert_eq!(fl_n, lc_n, "mbsrtowcs(NULL dst): fl={fl_n} lc={lc_n}");
         assert_eq!(fl_n, 7);
     });
@@ -120,8 +138,8 @@ fn diff_mbsrtowcs_dst_null_returns_required_len() {
 fn diff_wcsrtombs_ascii_round_trip() {
     with_utf8(|| {
         let wide: [i32; 12] = [
-            'h' as i32, 'e' as i32, 'l' as i32, 'l' as i32, 'o' as i32, ' ' as i32,
-            'w' as i32, 'o' as i32, 'r' as i32, 'l' as i32, 'd' as i32, 0,
+            'h' as i32, 'e' as i32, 'l' as i32, 'l' as i32, 'o' as i32, ' ' as i32, 'w' as i32,
+            'o' as i32, 'r' as i32, 'l' as i32, 'd' as i32, 0,
         ];
         let mut fl_dst = [0u8; 32];
         let mut lc_dst = [0u8; 32];

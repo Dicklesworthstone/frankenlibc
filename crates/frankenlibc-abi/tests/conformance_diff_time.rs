@@ -295,12 +295,12 @@ const STRFTIME_FORMATS: &[&[u8]] = &[
     b"static text only",  // no conversions
     // Year-format specifiers — exercise the no-width contract that fl
     // previously violated by zero-padding.
-    b"%c",                // preferred date/time (uses %Y bare)
-    b"%C",                // century, bare-decimal
-    b"%Y",                // full year, bare-decimal
-    b"%G",                // ISO year, bare-decimal
-    b"%F",                // %Y-%m-%d
-    b"%y %g",             // 2-digit year + 2-digit ISO year (zero-padded)
+    b"%c",    // preferred date/time (uses %Y bare)
+    b"%C",    // century, bare-decimal
+    b"%Y",    // full year, bare-decimal
+    b"%G",    // ISO year, bare-decimal
+    b"%F",    // %Y-%m-%d
+    b"%y %g", // 2-digit year + 2-digit ISO year (zero-padded)
 ];
 
 #[test]
@@ -406,53 +406,216 @@ struct StrptimeCase {
 
 const STRPTIME_CASES: &[StrptimeCase] = &[
     // --- %Y / %C / %y year handling ---
-    StrptimeCase { fmt: b"%Y", input: b"2024", fields: TM_FIELD_YEAR, expect_failure: false },
-    StrptimeCase { fmt: b"%Y", input: b"1970", fields: TM_FIELD_YEAR, expect_failure: false },
-    StrptimeCase { fmt: b"%Y", input: b"9999", fields: TM_FIELD_YEAR, expect_failure: false },
-    StrptimeCase { fmt: b"%y", input: b"00",   fields: TM_FIELD_YEAR, expect_failure: false },
-    StrptimeCase { fmt: b"%y", input: b"68",   fields: TM_FIELD_YEAR, expect_failure: false },
-    StrptimeCase { fmt: b"%y", input: b"69",   fields: TM_FIELD_YEAR, expect_failure: false },
-    StrptimeCase { fmt: b"%y", input: b"99",   fields: TM_FIELD_YEAR, expect_failure: false },
-    StrptimeCase { fmt: b"%C%y", input: b"2024", fields: TM_FIELD_YEAR, expect_failure: false },
-    StrptimeCase { fmt: b"%C%y", input: b"1969", fields: TM_FIELD_YEAR, expect_failure: false },
-
+    StrptimeCase {
+        fmt: b"%Y",
+        input: b"2024",
+        fields: TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%Y",
+        input: b"1970",
+        fields: TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%Y",
+        input: b"9999",
+        fields: TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%y",
+        input: b"00",
+        fields: TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%y",
+        input: b"68",
+        fields: TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%y",
+        input: b"69",
+        fields: TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%y",
+        input: b"99",
+        fields: TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%C%y",
+        input: b"2024",
+        fields: TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%C%y",
+        input: b"1969",
+        fields: TM_FIELD_YEAR,
+        expect_failure: false,
+    },
     // --- %m month numeric ---
-    StrptimeCase { fmt: b"%m", input: b"01", fields: TM_FIELD_MON, expect_failure: false },
-    StrptimeCase { fmt: b"%m", input: b"12", fields: TM_FIELD_MON, expect_failure: false },
-    StrptimeCase { fmt: b"%m", input: b"06", fields: TM_FIELD_MON, expect_failure: false },
-
+    StrptimeCase {
+        fmt: b"%m",
+        input: b"01",
+        fields: TM_FIELD_MON,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%m",
+        input: b"12",
+        fields: TM_FIELD_MON,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%m",
+        input: b"06",
+        fields: TM_FIELD_MON,
+        expect_failure: false,
+    },
     // --- %B / %b / %h month name ---
-    StrptimeCase { fmt: b"%B", input: b"January",   fields: TM_FIELD_MON, expect_failure: false },
-    StrptimeCase { fmt: b"%B", input: b"December",  fields: TM_FIELD_MON, expect_failure: false },
-    StrptimeCase { fmt: b"%B", input: b"february",  fields: TM_FIELD_MON, expect_failure: false }, // case-insensitive
-    StrptimeCase { fmt: b"%b", input: b"Jan",       fields: TM_FIELD_MON, expect_failure: false },
-    StrptimeCase { fmt: b"%b", input: b"Dec",       fields: TM_FIELD_MON, expect_failure: false },
-    StrptimeCase { fmt: b"%h", input: b"Jul",       fields: TM_FIELD_MON, expect_failure: false },
-
+    StrptimeCase {
+        fmt: b"%B",
+        input: b"January",
+        fields: TM_FIELD_MON,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%B",
+        input: b"December",
+        fields: TM_FIELD_MON,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%B",
+        input: b"february",
+        fields: TM_FIELD_MON,
+        expect_failure: false,
+    }, // case-insensitive
+    StrptimeCase {
+        fmt: b"%b",
+        input: b"Jan",
+        fields: TM_FIELD_MON,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%b",
+        input: b"Dec",
+        fields: TM_FIELD_MON,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%h",
+        input: b"Jul",
+        fields: TM_FIELD_MON,
+        expect_failure: false,
+    },
     // --- %d / %e day-of-month ---
-    StrptimeCase { fmt: b"%d", input: b"01", fields: TM_FIELD_MDAY, expect_failure: false },
-    StrptimeCase { fmt: b"%d", input: b"15", fields: TM_FIELD_MDAY, expect_failure: false },
-    StrptimeCase { fmt: b"%d", input: b"31", fields: TM_FIELD_MDAY, expect_failure: false },
-    StrptimeCase { fmt: b"%e", input: b" 1", fields: TM_FIELD_MDAY, expect_failure: false },
-    StrptimeCase { fmt: b"%e", input: b"31", fields: TM_FIELD_MDAY, expect_failure: false },
-
+    StrptimeCase {
+        fmt: b"%d",
+        input: b"01",
+        fields: TM_FIELD_MDAY,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%d",
+        input: b"15",
+        fields: TM_FIELD_MDAY,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%d",
+        input: b"31",
+        fields: TM_FIELD_MDAY,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%e",
+        input: b" 1",
+        fields: TM_FIELD_MDAY,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%e",
+        input: b"31",
+        fields: TM_FIELD_MDAY,
+        expect_failure: false,
+    },
     // --- %H 24-hour ---
-    StrptimeCase { fmt: b"%H", input: b"00", fields: TM_FIELD_HOUR, expect_failure: false },
-    StrptimeCase { fmt: b"%H", input: b"12", fields: TM_FIELD_HOUR, expect_failure: false },
-    StrptimeCase { fmt: b"%H", input: b"23", fields: TM_FIELD_HOUR, expect_failure: false },
-
+    StrptimeCase {
+        fmt: b"%H",
+        input: b"00",
+        fields: TM_FIELD_HOUR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%H",
+        input: b"12",
+        fields: TM_FIELD_HOUR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%H",
+        input: b"23",
+        fields: TM_FIELD_HOUR,
+        expect_failure: false,
+    },
     // --- %I + %p 12-hour conversion ---
-    StrptimeCase { fmt: b"%I:%M %p", input: b"12:34 AM", fields: TM_FIELD_HOUR | TM_FIELD_MIN, expect_failure: false },
-    StrptimeCase { fmt: b"%I:%M %p", input: b"12:34 PM", fields: TM_FIELD_HOUR | TM_FIELD_MIN, expect_failure: false },
-    StrptimeCase { fmt: b"%I:%M %p", input: b"01:00 AM", fields: TM_FIELD_HOUR | TM_FIELD_MIN, expect_failure: false },
-    StrptimeCase { fmt: b"%I:%M %p", input: b"11:59 PM", fields: TM_FIELD_HOUR | TM_FIELD_MIN, expect_failure: false },
-
+    StrptimeCase {
+        fmt: b"%I:%M %p",
+        input: b"12:34 AM",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%I:%M %p",
+        input: b"12:34 PM",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%I:%M %p",
+        input: b"01:00 AM",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%I:%M %p",
+        input: b"11:59 PM",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN,
+        expect_failure: false,
+    },
     // --- %M / %S ---
-    StrptimeCase { fmt: b"%M", input: b"00", fields: TM_FIELD_MIN, expect_failure: false },
-    StrptimeCase { fmt: b"%M", input: b"59", fields: TM_FIELD_MIN, expect_failure: false },
-    StrptimeCase { fmt: b"%S", input: b"00", fields: TM_FIELD_SEC, expect_failure: false },
-    StrptimeCase { fmt: b"%S", input: b"59", fields: TM_FIELD_SEC, expect_failure: false },
-
+    StrptimeCase {
+        fmt: b"%M",
+        input: b"00",
+        fields: TM_FIELD_MIN,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%M",
+        input: b"59",
+        fields: TM_FIELD_MIN,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%S",
+        input: b"00",
+        fields: TM_FIELD_SEC,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%S",
+        input: b"59",
+        fields: TM_FIELD_SEC,
+        expect_failure: false,
+    },
     // --- composite specifiers ---
     StrptimeCase {
         fmt: b"%D",
@@ -478,7 +641,6 @@ const STRPTIME_CASES: &[StrptimeCase] = &[
         fields: TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_YEAR,
         expect_failure: false,
     },
-
     // --- whitespace and literal directives ---
     StrptimeCase {
         fmt: b"%Y%n%m",
@@ -495,7 +657,12 @@ const STRPTIME_CASES: &[StrptimeCase] = &[
     StrptimeCase {
         fmt: b"%Y-%m-%d %H:%M:%S",
         input: b"2024-12-31 23:59:59",
-        fields: TM_FIELD_YEAR | TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_HOUR | TM_FIELD_MIN | TM_FIELD_SEC,
+        fields: TM_FIELD_YEAR
+            | TM_FIELD_MON
+            | TM_FIELD_MDAY
+            | TM_FIELD_HOUR
+            | TM_FIELD_MIN
+            | TM_FIELD_SEC,
         expect_failure: false,
     },
     StrptimeCase {
@@ -504,21 +671,85 @@ const STRPTIME_CASES: &[StrptimeCase] = &[
         fields: 0,
         expect_failure: false,
     },
-
     // --- failure paths: both impls must reject ---
-    StrptimeCase { fmt: b"%Y", input: b"abc",   fields: 0, expect_failure: true },
-    StrptimeCase { fmt: b"%m", input: b"00",    fields: 0, expect_failure: true }, // 00 is invalid; 1..=12
-    StrptimeCase { fmt: b"%m", input: b"13",    fields: 0, expect_failure: true },
-    StrptimeCase { fmt: b"%d", input: b"00",    fields: 0, expect_failure: true }, // 00 is invalid; 1..=31
-    StrptimeCase { fmt: b"%d", input: b"32",    fields: 0, expect_failure: true },
-    StrptimeCase { fmt: b"%H", input: b"24",    fields: 0, expect_failure: true }, // 0..=23 only
-    StrptimeCase { fmt: b"%I", input: b"00",    fields: 0, expect_failure: true }, // 1..=12 only
-    StrptimeCase { fmt: b"%I", input: b"13",    fields: 0, expect_failure: true },
-    StrptimeCase { fmt: b"%j", input: b"000",   fields: 0, expect_failure: true }, // 1..=366
-    StrptimeCase { fmt: b"%j", input: b"367",   fields: 0, expect_failure: true },
-    StrptimeCase { fmt: b"%b", input: b"Foo",   fields: 0, expect_failure: true }, // not a month
-    StrptimeCase { fmt: b"%p", input: b"XM",    fields: 0, expect_failure: true }, // neither AM nor PM
-    StrptimeCase { fmt: b"%Y", input: b"",      fields: 0, expect_failure: true }, // empty
+    StrptimeCase {
+        fmt: b"%Y",
+        input: b"abc",
+        fields: 0,
+        expect_failure: true,
+    },
+    StrptimeCase {
+        fmt: b"%m",
+        input: b"00",
+        fields: 0,
+        expect_failure: true,
+    }, // 00 is invalid; 1..=12
+    StrptimeCase {
+        fmt: b"%m",
+        input: b"13",
+        fields: 0,
+        expect_failure: true,
+    },
+    StrptimeCase {
+        fmt: b"%d",
+        input: b"00",
+        fields: 0,
+        expect_failure: true,
+    }, // 00 is invalid; 1..=31
+    StrptimeCase {
+        fmt: b"%d",
+        input: b"32",
+        fields: 0,
+        expect_failure: true,
+    },
+    StrptimeCase {
+        fmt: b"%H",
+        input: b"24",
+        fields: 0,
+        expect_failure: true,
+    }, // 0..=23 only
+    StrptimeCase {
+        fmt: b"%I",
+        input: b"00",
+        fields: 0,
+        expect_failure: true,
+    }, // 1..=12 only
+    StrptimeCase {
+        fmt: b"%I",
+        input: b"13",
+        fields: 0,
+        expect_failure: true,
+    },
+    StrptimeCase {
+        fmt: b"%j",
+        input: b"000",
+        fields: 0,
+        expect_failure: true,
+    }, // 1..=366
+    StrptimeCase {
+        fmt: b"%j",
+        input: b"367",
+        fields: 0,
+        expect_failure: true,
+    },
+    StrptimeCase {
+        fmt: b"%b",
+        input: b"Foo",
+        fields: 0,
+        expect_failure: true,
+    }, // not a month
+    StrptimeCase {
+        fmt: b"%p",
+        input: b"XM",
+        fields: 0,
+        expect_failure: true,
+    }, // neither AM nor PM
+    StrptimeCase {
+        fmt: b"%Y",
+        input: b"",
+        fields: 0,
+        expect_failure: true,
+    }, // empty
 ];
 
 // glibc strptime has divergent quirks we intentionally do NOT pin here:
@@ -534,11 +765,11 @@ const STRPTIME_CASES: &[StrptimeCase] = &[
 fn collect_field_diffs(case: &str, fl: &libc::tm, lc: &libc::tm, fields: u32) -> Vec<Divergence> {
     let mut out = Vec::new();
     let pairs: &[(u32, &str, i32, i32)] = &[
-        (TM_FIELD_SEC,  "tm_sec",  fl.tm_sec,  lc.tm_sec),
-        (TM_FIELD_MIN,  "tm_min",  fl.tm_min,  lc.tm_min),
+        (TM_FIELD_SEC, "tm_sec", fl.tm_sec, lc.tm_sec),
+        (TM_FIELD_MIN, "tm_min", fl.tm_min, lc.tm_min),
         (TM_FIELD_HOUR, "tm_hour", fl.tm_hour, lc.tm_hour),
         (TM_FIELD_MDAY, "tm_mday", fl.tm_mday, lc.tm_mday),
-        (TM_FIELD_MON,  "tm_mon",  fl.tm_mon,  lc.tm_mon),
+        (TM_FIELD_MON, "tm_mon", fl.tm_mon, lc.tm_mon),
         (TM_FIELD_YEAR, "tm_year", fl.tm_year, lc.tm_year),
     ];
     for &(mask, field, fv, lv) in pairs {
@@ -722,9 +953,7 @@ fn diff_gmtime_r_overflow_returns_null() {
 fn diff_strftime_boundary_years() {
     let mut divs = Vec::new();
     let years_to_test: &[i32] = &[0, 50, 200, 999, 10000, 99999, -100];
-    let format_specs: &[&[u8]] = &[
-        b"%Y", b"%C", b"%c", b"%F", b"%y", b"%G",
-    ];
+    let format_specs: &[&[u8]] = &[b"%Y", b"%C", b"%c", b"%F", b"%y", b"%G"];
     for &year in years_to_test {
         // Build tm by hand. tm_year is years-since-1900.
         let mut tm: libc::tm = unsafe { std::mem::zeroed() };
@@ -792,20 +1021,29 @@ fn diff_strftime_boundary_years() {
 // padded year to width 4 and put a literal space before the %2d day, both
 // of which diverge for boundary inputs.
 // ===========================================================================
-type AsctimeCase = (c_int, c_int, c_int, c_int, c_int, c_int, c_int, &'static str);
+type AsctimeCase = (
+    c_int,
+    c_int,
+    c_int,
+    c_int,
+    c_int,
+    c_int,
+    c_int,
+    &'static str,
+);
 const ASCTIME_TM_CASES: &[AsctimeCase] = &[
     // (sec, min, hour, mday, mon, year, wday, label)
-    (0, 0, 0, 1, 0, 70, 4, "1970 epoch"),                  // Thu Jan  1 00:00:00 1970
-    (1, 2, 3, 5, 0, 50, 0, "1950"),                         // Sun Jan  5 03:02:01 1950
-    (0, 0, 0, 100, 0, 0, 0, "day 100, year 1900"),          // tests %3d overflow
-    (0, 0, 0, 1, 0, -1900, 0, "year 0"),                    // tests no-pad year
-    (0, 0, 0, 1, 0, -2000, 0, "year -100"),                 // negative year
+    (0, 0, 0, 1, 0, 70, 4, "1970 epoch"), // Thu Jan  1 00:00:00 1970
+    (1, 2, 3, 5, 0, 50, 0, "1950"),       // Sun Jan  5 03:02:01 1950
+    (0, 0, 0, 100, 0, 0, 0, "day 100, year 1900"), // tests %3d overflow
+    (0, 0, 0, 1, 0, -1900, 0, "year 0"),  // tests no-pad year
+    (0, 0, 0, 1, 0, -2000, 0, "year -100"), // negative year
     // year 99999 omitted: glibc returns NULL when the formatted result
     // would exceed the 25-char canonical width; fl is more permissive.
     // The format-string fix is what we want to lock down here, not the
     // boundary-overflow rejection policy.
-    (59, 59, 23, 31, 11, 200 - 1900, 6, "Sat Dec 31 200"),  // 3-digit year
-    (0, 0, 0, 5, 5, 1500 - 1900, 1, "Mon Jun 5 1500"),      // single-digit day
+    (59, 59, 23, 31, 11, 200 - 1900, 6, "Sat Dec 31 200"), // 3-digit year
+    (0, 0, 0, 5, 5, 1500 - 1900, 1, "Mon Jun 5 1500"),     // single-digit day
 ];
 
 #[test]
@@ -868,7 +1106,7 @@ fn time_diff_coverage_report() {
     let total = GMTIME_EPOCHS.len() * 3                            // gmtime_r + timegm + mktime
         + 7                                                          // difftime cases
         + GMTIME_EPOCHS.len() * STRFTIME_FORMATS.len()             // strftime
-        + STRPTIME_CASES.len();                                    // strptime
+        + STRPTIME_CASES.len(); // strptime
     eprintln!(
         "{{\"family\":\"time.h\",\"reference\":\"glibc\",\"functions\":6,\"total_diff_calls\":{},\"divergences\":0}}",
         total,

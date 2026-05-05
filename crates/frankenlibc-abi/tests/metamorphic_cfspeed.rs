@@ -32,7 +32,13 @@ fn fresh_termios() -> libc::termios {
 
 #[test]
 fn metamorphic_cfsetispeed_then_get_returns_same() {
-    for &speed in &[libc::B0, libc::B9600, libc::B19200, libc::B38400, libc::B115200] {
+    for &speed in &[
+        libc::B0,
+        libc::B9600,
+        libc::B19200,
+        libc::B38400,
+        libc::B115200,
+    ] {
         let mut t = fresh_termios();
         let r = unsafe { fl::cfsetispeed(&mut t, speed) };
         assert_eq!(r, 0, "cfsetispeed({speed}) failed");
@@ -43,7 +49,13 @@ fn metamorphic_cfsetispeed_then_get_returns_same() {
 
 #[test]
 fn metamorphic_cfsetospeed_then_get_returns_same() {
-    for &speed in &[libc::B0, libc::B9600, libc::B19200, libc::B38400, libc::B115200] {
+    for &speed in &[
+        libc::B0,
+        libc::B9600,
+        libc::B19200,
+        libc::B38400,
+        libc::B115200,
+    ] {
         let mut t = fresh_termios();
         let r = unsafe { fl::cfsetospeed(&mut t, speed) };
         assert_eq!(r, 0);

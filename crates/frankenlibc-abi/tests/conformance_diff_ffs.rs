@@ -22,9 +22,31 @@ unsafe extern "C" {
 #[test]
 fn diff_ffs_matches_glibc_full_int_range_samples() {
     let cases: &[c_int] = &[
-        0, 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256,
-        0x10000, 0x80000000u32 as c_int, -1, -2, c_int::MAX, c_int::MIN,
-        0x1248_8000, 0x0001_0001,
+        0,
+        1,
+        2,
+        3,
+        4,
+        7,
+        8,
+        15,
+        16,
+        31,
+        32,
+        63,
+        64,
+        127,
+        128,
+        255,
+        256,
+        0x10000,
+        0x80000000u32 as c_int,
+        -1,
+        -2,
+        c_int::MAX,
+        c_int::MIN,
+        0x1248_8000,
+        0x0001_0001,
     ];
     for &v in cases {
         let fl_v = fl::ffs(v);
@@ -55,8 +77,16 @@ fn diff_ffs_powers_of_two_return_index_plus_one() {
 #[test]
 fn diff_ffsl_matches_glibc() {
     let cases: &[c_long] = &[
-        0, 1, 2, 0x100, 0x10000, 0x1_0000_0000, 0x8000_0000_0000_0000u64 as c_long,
-        -1, c_long::MIN, c_long::MAX,
+        0,
+        1,
+        2,
+        0x100,
+        0x10000,
+        0x1_0000_0000,
+        0x8000_0000_0000_0000u64 as c_long,
+        -1,
+        c_long::MIN,
+        c_long::MAX,
     ];
     for &v in cases {
         let fl_v = fl::ffsl(v);
@@ -68,9 +98,15 @@ fn diff_ffsl_matches_glibc() {
 #[test]
 fn diff_ffsll_matches_glibc() {
     let cases: &[c_longlong] = &[
-        0, 1, 0x100, 0x10000, 0x1_0000_0000,
+        0,
+        1,
+        0x100,
+        0x10000,
+        0x1_0000_0000,
         0x8000_0000_0000_0000u64 as c_longlong,
-        -1, c_longlong::MIN, c_longlong::MAX,
+        -1,
+        c_longlong::MIN,
+        c_longlong::MAX,
     ];
     for &v in cases {
         let fl_v = fl::ffsll(v);

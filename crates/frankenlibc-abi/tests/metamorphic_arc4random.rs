@@ -83,11 +83,7 @@ fn metamorphic_buf_does_not_overwrite_past_size() {
     }
     // Bytes 64..1024 must still be 0xa5.
     for (i, &b) in buf[64..].iter().enumerate() {
-        assert_eq!(
-            b, 0xa5,
-            "byte {} overwritten past requested size",
-            i + 64
-        );
+        assert_eq!(b, 0xa5, "byte {} overwritten past requested size", i + 64);
     }
     // First 64 bytes should be highly varied (≤ 5% zeros).
     let zeros = buf[..64].iter().filter(|&&b| b == 0).count();

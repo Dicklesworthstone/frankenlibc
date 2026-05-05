@@ -232,7 +232,7 @@ const PATHOLOGICAL_INPUTS: &[&[u8]] = &[
     b"=,=,=",
     b"foo=bar=baz=qux",
     b"size=large,name=ostrich",
-    b"name=hello\\,world",  // backslash-escape (NOT supported by getsubopt — backslash is literal)
+    b"name=hello\\,world", // backslash-escape (NOT supported by getsubopt — backslash is literal)
 ];
 
 #[test]

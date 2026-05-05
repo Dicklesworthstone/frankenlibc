@@ -20,13 +20,9 @@ unsafe extern "C" {
 #[test]
 fn diff_sethostname_unprivileged_returns_eperm() {
     let new_name = b"frankenlibc-test\0";
-    let fl_v = unsafe {
-        fl::sethostname(new_name.as_ptr() as *const c_char, new_name.len() - 1)
-    };
+    let fl_v = unsafe { fl::sethostname(new_name.as_ptr() as *const c_char, new_name.len() - 1) };
     let fl_e = unsafe { *libc::__errno_location() };
-    let lc_v = unsafe {
-        sethostname(new_name.as_ptr() as *const c_char, new_name.len() - 1)
-    };
+    let lc_v = unsafe { sethostname(new_name.as_ptr() as *const c_char, new_name.len() - 1) };
     let lc_e = unsafe { *libc::__errno_location() };
     if fl_v == -1 || lc_v == -1 {
         assert_eq!(fl_v, lc_v, "sethostname ret: fl={fl_v} lc={lc_v}");
@@ -37,13 +33,9 @@ fn diff_sethostname_unprivileged_returns_eperm() {
 #[test]
 fn diff_setdomainname_unprivileged_returns_eperm() {
     let new_name = b"frankenlibc.test\0";
-    let fl_v = unsafe {
-        fl::setdomainname(new_name.as_ptr() as *const c_char, new_name.len() - 1)
-    };
+    let fl_v = unsafe { fl::setdomainname(new_name.as_ptr() as *const c_char, new_name.len() - 1) };
     let fl_e = unsafe { *libc::__errno_location() };
-    let lc_v = unsafe {
-        setdomainname(new_name.as_ptr() as *const c_char, new_name.len() - 1)
-    };
+    let lc_v = unsafe { setdomainname(new_name.as_ptr() as *const c_char, new_name.len() - 1) };
     let lc_e = unsafe { *libc::__errno_location() };
     if fl_v == -1 || lc_v == -1 {
         assert_eq!(fl_v, lc_v);

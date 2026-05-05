@@ -32,23 +32,13 @@ unsafe extern "C" {
     /// pointer to a static buffer.
     fn l64a(value: c_long) -> *mut c_char;
     /// Host glibc `ecvt` — double → digit string + decpt + sign.
-    fn ecvt(
-        value: f64,
-        ndigit: c_int,
-        decpt: *mut c_int,
-        sign: *mut c_int,
-    ) -> *mut c_char;
+    fn ecvt(value: f64, ndigit: c_int, decpt: *mut c_int, sign: *mut c_int) -> *mut c_char;
     /// Host glibc `gcvt` — double → printable string written into the
     /// caller's buffer. Per POSIX/glibc: `%.<ndigit>g` semantics.
     fn gcvt(value: f64, ndigit: c_int, buf: *mut c_char) -> *mut c_char;
     /// Host glibc `fcvt` — double → digit string with `ndigit` digits
     /// after the decimal point.
-    fn fcvt(
-        value: f64,
-        ndigit: c_int,
-        decpt: *mut c_int,
-        sign: *mut c_int,
-    ) -> *mut c_char;
+    fn fcvt(value: f64, ndigit: c_int, decpt: *mut c_int, sign: *mut c_int) -> *mut c_char;
     // The q* (long-double) variants — qecvt / qfcvt / qgcvt /
     // qecvt_r / qfcvt_r — are NOT diff-tested here. On x86_64 glibc
     // they take 80-bit extended precision, but the FrankenLibC impl
@@ -90,10 +80,7 @@ unsafe extern "C" {
     /// matches the FrankenLibC `CDiv`/`CLdiv`/`CLldiv` types.
     fn div(numer: c_int, denom: c_int) -> HostDiv;
     fn ldiv(numer: c_long, denom: c_long) -> HostLdiv;
-    fn lldiv(
-        numer: std::ffi::c_longlong,
-        denom: std::ffi::c_longlong,
-    ) -> HostLldiv;
+    fn lldiv(numer: std::ffi::c_longlong, denom: std::ffi::c_longlong) -> HostLldiv;
     /// Host glibc `ffs` — find first set bit in an int.
     fn ffs(i: c_int) -> c_int;
     /// Host glibc `ffsl` — find first set bit in a long.
@@ -721,21 +708,21 @@ fn diff_strtof_cases() {
 //     the alphabet, shifted by position.
 
 const A64L_DECODE_CASES: &[&[u8]] = &[
-    b"",                  // empty -> 0
-    b".",                 // single 0-bit char -> 0
-    b"/",                 // single 1-bit char -> 1
-    b"0",                 // alphabet pos 2 -> 2
-    b"9",                 // alphabet pos 11 -> 11
-    b"A",                 // alphabet pos 12 -> 12
-    b"Z",                 // alphabet pos 37 -> 37
-    b"a",                 // alphabet pos 38 -> 38
-    b"z",                 // alphabet pos 63 -> 63
-    b"01",                // 2-char encoding
-    b"abc",               // 3-char
-    b"hello",             // 5-char
-    b"zzzzzz",            // 6-char (max length)
-    b"//////",            // all 1s — high-bit pattern
-    b"......",            // all dots — explicit zero in 6 chars
+    b"",       // empty -> 0
+    b".",      // single 0-bit char -> 0
+    b"/",      // single 1-bit char -> 1
+    b"0",      // alphabet pos 2 -> 2
+    b"9",      // alphabet pos 11 -> 11
+    b"A",      // alphabet pos 12 -> 12
+    b"Z",      // alphabet pos 37 -> 37
+    b"a",      // alphabet pos 38 -> 38
+    b"z",      // alphabet pos 63 -> 63
+    b"01",     // 2-char encoding
+    b"abc",    // 3-char
+    b"hello",  // 5-char
+    b"zzzzzz", // 6-char (max length)
+    b"//////", // all 1s — high-bit pattern
+    b"......", // all dots — explicit zero in 6 chars
 ];
 
 #[test]
@@ -988,12 +975,8 @@ fn diff_gcvt_cases() {
             // SAFETY: each buffer is 64 bytes — large enough for any
             // gcvt output up to ndigit=10. caller-supplied buffer
             // contract per POSIX.
-            let _ = unsafe {
-                fl::gcvt(*value, ndigit, fl_buf.as_mut_ptr() as *mut c_char)
-            };
-            let _ = unsafe {
-                gcvt(*value, ndigit, lc_buf.as_mut_ptr() as *mut c_char)
-            };
+            let _ = unsafe { fl::gcvt(*value, ndigit, fl_buf.as_mut_ptr() as *mut c_char) };
+            let _ = unsafe { gcvt(*value, ndigit, lc_buf.as_mut_ptr() as *mut c_char) };
             let fl_str = c_str_to_vec(fl_buf.as_ptr() as *const c_char);
             let lc_str = c_str_to_vec(lc_buf.as_ptr() as *const c_char);
             if fl_str != lc_str {
@@ -1127,7 +1110,11 @@ fn diff_ecvt_r_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "ecvt_r divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "ecvt_r divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1202,7 +1189,11 @@ fn diff_fcvt_r_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "fcvt_r divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "fcvt_r divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1318,11 +1309,18 @@ fn nul_terminated_slice(buf: &[u8]) -> &[u8] {
 // arithmetic AND the struct-return calling-convention parity.
 
 const DIV_PAIRS: &[(c_int, c_int)] = &[
-    (10, 3), (-10, 3), (10, -3), (-10, -3),
-    (0, 5), (5, 1), (1, 1),
-    (c_int::MAX, 1), (c_int::MAX, c_int::MAX),
+    (10, 3),
+    (-10, 3),
+    (10, -3),
+    (-10, -3),
+    (0, 5),
+    (5, 1),
+    (1, 1),
+    (c_int::MAX, 1),
+    (c_int::MAX, c_int::MAX),
     (c_int::MIN, 1),
-    (7, 4), (-7, 4), // signed division C99: trunc toward zero
+    (7, 4),
+    (-7, 4), // signed division C99: trunc toward zero
 ];
 
 #[test]
@@ -1351,11 +1349,17 @@ fn diff_div_cases() {
 }
 
 const LDIV_PAIRS: &[(c_long, c_long)] = &[
-    (10, 3), (-10, 3), (10, -3), (-10, -3),
-    (0, 5), (5, 1),
-    (i64::MAX, 1), (i64::MAX, i64::MAX),
+    (10, 3),
+    (-10, 3),
+    (10, -3),
+    (-10, -3),
+    (0, 5),
+    (5, 1),
+    (i64::MAX, 1),
+    (i64::MAX, i64::MAX),
     (i64::MIN, 1),
-    (1 << 32, 1 << 16), (-(1i64 << 32), 1 << 16),
+    (1 << 32, 1 << 16),
+    (-(1i64 << 32), 1 << 16),
 ];
 
 #[test]
@@ -1384,9 +1388,14 @@ fn diff_ldiv_cases() {
 fn diff_lldiv_cases() {
     let mut divs = Vec::new();
     let pairs: &[(std::ffi::c_longlong, std::ffi::c_longlong)] = &[
-        (10, 3), (-10, 3), (10, -3), (-10, -3),
-        (0, 5), (5, 1),
-        (i64::MAX, 1), (i64::MIN, 1),
+        (10, 3),
+        (-10, 3),
+        (10, -3),
+        (-10, -3),
+        (0, 5),
+        (5, 1),
+        (i64::MAX, 1),
+        (i64::MIN, 1),
     ];
     for &(n, d) in pairs {
         if d == 0 {
@@ -1404,7 +1413,11 @@ fn diff_lldiv_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "lldiv divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "lldiv divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -1416,9 +1429,7 @@ fn diff_lldiv_cases() {
 // in two's-complement); glibc and our impl both wrap via wrapping_abs,
 // but the comparison still pins parity at the bit level.
 
-const ABS_INPUTS: &[c_int] = &[
-    0, 1, -1, 42, -42, c_int::MIN, c_int::MAX, c_int::MIN + 1,
-];
+const ABS_INPUTS: &[c_int] = &[0, 1, -1, 42, -42, c_int::MIN, c_int::MAX, c_int::MIN + 1];
 
 #[test]
 fn diff_abs_cases() {
@@ -1440,8 +1451,16 @@ fn diff_abs_cases() {
 }
 
 const LABS_INPUTS: &[c_long] = &[
-    0, 1, -1, 42, -42, i64::MIN, i64::MAX, i64::MIN + 1,
-    1 << 32, -(1i64 << 32),
+    0,
+    1,
+    -1,
+    42,
+    -42,
+    i64::MIN,
+    i64::MAX,
+    i64::MIN + 1,
+    1 << 32,
+    -(1i64 << 32),
 ];
 
 #[test]
@@ -1466,9 +1485,7 @@ fn diff_labs_cases() {
 #[test]
 fn diff_llabs_cases() {
     let mut divs = Vec::new();
-    let inputs: &[std::ffi::c_longlong] = &[
-        0, 1, -1, 42, -42, i64::MIN, i64::MAX, i64::MIN + 1,
-    ];
+    let inputs: &[std::ffi::c_longlong] = &[0, 1, -1, 42, -42, i64::MIN, i64::MAX, i64::MIN + 1];
     for &v in inputs {
         let fl_v = fl::llabs(v);
         let lc_v = unsafe { llabs(v) };
@@ -1482,15 +1499,17 @@ fn diff_llabs_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "llabs divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "llabs divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
 fn diff_imaxabs_cases() {
     let mut divs = Vec::new();
-    let inputs: &[std::ffi::c_longlong] = &[
-        0, 1, -1, 42, -42, i64::MIN, i64::MAX, i64::MIN + 1,
-    ];
+    let inputs: &[std::ffi::c_longlong] = &[0, 1, -1, 42, -42, i64::MIN, i64::MAX, i64::MIN + 1];
     for &v in inputs {
         let fl_v = fl::imaxabs(v);
         let lc_v = unsafe { imaxabs(v) };
@@ -1504,7 +1523,11 @@ fn diff_imaxabs_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "imaxabs divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "imaxabs divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -1517,11 +1540,21 @@ fn diff_imaxabs_cases() {
 // delegators to frankenlibc-core. Pure functions, deterministic.
 
 const FFS_INT_INPUTS: &[c_int] = &[
-    0, 1, 2, 3, 4, 5, 7, 8,
-    0x80, 0x100, -1,
-    0x7FFFFFFF,                  // INT_MAX
-    i32::MIN,                    // sign bit only
-    0x55555555, 0xAAAAAAAAu32 as c_int,
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    7,
+    8,
+    0x80,
+    0x100,
+    -1,
+    0x7FFFFFFF, // INT_MAX
+    i32::MIN,   // sign bit only
+    0x55555555,
+    0xAAAAAAAAu32 as c_int,
 ];
 
 #[test]
@@ -1544,9 +1577,14 @@ fn diff_ffs_cases() {
 }
 
 const FFSL_INPUTS: &[c_long] = &[
-    0, 1, 2, 0x100000000, -1,
-    1 << 62, 1 << (63 - 1),
-    i64::MIN,                    // sign bit only on 64-bit long
+    0,
+    1,
+    2,
+    0x100000000,
+    -1,
+    1 << 62,
+    1 << (63 - 1),
+    i64::MIN, // sign bit only on 64-bit long
 ];
 
 #[test]
@@ -1568,11 +1606,8 @@ fn diff_ffsl_cases() {
     assert!(divs.is_empty(), "ffsl divergences:\n{}", render_divs(&divs));
 }
 
-const FFSLL_INPUTS: &[std::ffi::c_longlong] = &[
-    0, 1, 2, 0x100000000, -1,
-    1 << 62, 1 << (63 - 1),
-    i64::MIN,
-];
+const FFSLL_INPUTS: &[std::ffi::c_longlong] =
+    &[0, 1, 2, 0x100000000, -1, 1 << 62, 1 << (63 - 1), i64::MIN];
 
 #[test]
 fn diff_ffsll_cases() {
@@ -1590,7 +1625,11 @@ fn diff_ffsll_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "ffsll divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "ffsll divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -1618,7 +1657,7 @@ fn stdlib_numeric_diff_coverage_report() {
         + 8 * 2                                  // llabs + imaxabs (8 inputs each)
         + DIV_PAIRS.len()                        // div
         + LDIV_PAIRS.len()                       // ldiv
-        + 8;                                     // lldiv (8 pairs)
+        + 8; // lldiv (8 pairs)
     eprintln!(
         "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":26,\"total_diff_calls\":{},\"divergences\":0}}",
         total,

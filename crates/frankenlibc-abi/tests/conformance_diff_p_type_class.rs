@@ -9,7 +9,7 @@
 //! Filed under [bd-58e87f] — libresolv DNS RR symbol formatter stubs.
 //! Continues bd-xn6p8 follow-up.
 
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::{CStr, c_char, c_int};
 
 use frankenlibc_abi::resolv_abi as fl;
 
@@ -46,8 +46,7 @@ fn diff_p_type_known_and_unknown() {
     let mut divs = Vec::new();
     let types: &[c_int] = &[
         // Classic types both fl and glibc map to a name:
-        1, 2, 5, 6, 12, 15, 16, 28, 33, 35, 255,
-        // Unknown / fallback to decimal.
+        1, 2, 5, 6, 12, 15, 16, 28, 33, 35, 255, // Unknown / fallback to decimal.
         0, 99, 999, 65535, 100,
     ];
     // fl's __p_type table is broader than glibc's: it knows the post-RFC-1035
@@ -80,7 +79,11 @@ fn diff_p_type_known_and_unknown() {
             });
         }
     }
-    assert!(divs.is_empty(), "__p_type divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "__p_type divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -113,7 +116,11 @@ fn diff_p_class_known_and_unknown() {
             });
         }
     }
-    assert!(divs.is_empty(), "__p_class divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "__p_class divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -146,16 +153,27 @@ fn diff_p_rcode_known_and_unknown() {
             });
         }
     }
-    assert!(divs.is_empty(), "__p_rcode divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "__p_rcode divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
 fn diff_p_time_known_and_unknown() {
     let mut divs = Vec::new();
     let times: &[u32] = &[
-        0, 1, 60, 3600, 86400, 604800,
+        0,
+        1,
+        60,
+        3600,
+        86400,
+        604800,
         // Multi-unit
-        90090, 1234567, 60 * 60 * 24 * 365,
+        90090,
+        1234567,
+        60 * 60 * 24 * 365,
         u32::MAX,
     ];
     for &t in times {
@@ -184,15 +202,18 @@ fn diff_p_time_known_and_unknown() {
             });
         }
     }
-    assert!(divs.is_empty(), "__p_time divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "__p_time divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
 fn diff_p_option_known_and_unknown() {
     let mut divs = Vec::new();
     let opts: &[c_int] = &[
-        0x0001, 0x0002, 0x0008, 0x0020, 0x0040, 0x0080, 0x0100, 0x0200,
-        0x1000, 0x4000,
+        0x0001, 0x0002, 0x0008, 0x0020, 0x0040, 0x0080, 0x0100, 0x0200, 0x1000, 0x4000,
         // Unknown — should fall back to "?0xN?"
         0x0, 0x4, 0x10, 0x400, 0x800, 0x2000, 0x8000,
     ];
@@ -222,7 +243,11 @@ fn diff_p_option_known_and_unknown() {
             });
         }
     }
-    assert!(divs.is_empty(), "__p_option divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "__p_option divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

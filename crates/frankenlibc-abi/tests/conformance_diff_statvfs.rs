@@ -8,7 +8,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_int, CString};
+use std::ffi::{CString, c_int};
 
 use frankenlibc_abi::unistd_abi as fl;
 
@@ -36,7 +36,12 @@ fn render_divs(divs: &[Divergence]) -> String {
     out
 }
 
-fn assert_statvfs_match(case: &str, fl_buf: &libc::statvfs, lc_buf: &libc::statvfs, divs: &mut Vec<Divergence>) {
+fn assert_statvfs_match(
+    case: &str,
+    fl_buf: &libc::statvfs,
+    lc_buf: &libc::statvfs,
+    divs: &mut Vec<Divergence>,
+) {
     macro_rules! check {
         ($field:ident) => {
             if fl_buf.$field != lc_buf.$field {
@@ -86,7 +91,11 @@ fn diff_statvfs_root_and_tmp() {
             assert_statvfs_match(path, &fl_buf, &lc_buf, &mut divs);
         }
     }
-    assert!(divs.is_empty(), "statvfs divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "statvfs divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -100,11 +109,18 @@ fn diff_fstatvfs_open_fd() {
     let fl_r = unsafe { fl::fstatvfs(fd, &mut fl_buf) };
     let lc_r = unsafe { fstatvfs(fd, &mut lc_buf) };
     unsafe { libc::close(fd) };
-    assert_eq!(fl_r, lc_r, "fstatvfs return mismatch: fl={fl_r} glibc={lc_r}");
+    assert_eq!(
+        fl_r, lc_r,
+        "fstatvfs return mismatch: fl={fl_r} glibc={lc_r}"
+    );
     if fl_r == 0 {
         assert_statvfs_match("fd-/", &fl_buf, &lc_buf, &mut divs);
     }
-    assert!(divs.is_empty(), "fstatvfs divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "fstatvfs divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

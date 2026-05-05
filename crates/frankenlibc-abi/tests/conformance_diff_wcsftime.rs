@@ -6,7 +6,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 
 use frankenlibc_abi::wchar_abi as fl;
 
@@ -25,9 +25,9 @@ fn make_fixed_tm() -> libc::tm {
         tm_min: 30,
         tm_hour: 14,
         tm_mday: 25,
-        tm_mon: 11,    // December (0-based)
-        tm_year: 124,  // 2024 (years since 1900)
-        tm_wday: 3,    // Wednesday
+        tm_mon: 11,   // December (0-based)
+        tm_year: 124, // 2024 (years since 1900)
+        tm_wday: 3,   // Wednesday
         tm_yday: 359,
         tm_isdst: 0,
         tm_gmtoff: 0,
@@ -45,7 +45,14 @@ fn render_both(format_str: &str, tm: &libc::tm) -> (Vec<libc::wchar_t>, Vec<libc
     let fmt = wide_string(format_str);
     let mut fl_buf = vec![0 as libc::wchar_t; 256];
     let mut lc_buf = vec![0 as libc::wchar_t; 256];
-    let fl_n = unsafe { fl::wcsftime(fl_buf.as_mut_ptr(), fl_buf.len(), fmt.as_ptr(), tm as *const _ as *const c_void) };
+    let fl_n = unsafe {
+        fl::wcsftime(
+            fl_buf.as_mut_ptr(),
+            fl_buf.len(),
+            fmt.as_ptr(),
+            tm as *const _ as *const c_void,
+        )
+    };
     let lc_n = unsafe { wcsftime(lc_buf.as_mut_ptr(), lc_buf.len(), fmt.as_ptr(), tm) };
     fl_buf.truncate(fl_n);
     lc_buf.truncate(lc_n);

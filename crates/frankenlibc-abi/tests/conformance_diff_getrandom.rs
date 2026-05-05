@@ -88,7 +88,10 @@ fn diff_getrandom_zero_length_returns_zero() {
     let mut lc_buf = [0u8; 4];
     let fl_n = unsafe { fl::getrandom(fl_buf.as_mut_ptr() as *mut c_void, 0, 0) };
     let lc_n = unsafe { getrandom(lc_buf.as_mut_ptr() as *mut c_void, 0, 0) };
-    assert_eq!(fl_n, lc_n, "getrandom(len=0) mismatch: fl={fl_n} glibc={lc_n}");
+    assert_eq!(
+        fl_n, lc_n,
+        "getrandom(len=0) mismatch: fl={fl_n} glibc={lc_n}"
+    );
 }
 
 #[test]

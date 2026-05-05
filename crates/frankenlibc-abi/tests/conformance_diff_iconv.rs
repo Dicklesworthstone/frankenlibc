@@ -11,7 +11,7 @@
 //! Filed under [bd-xn6p8] follow-up — extending host-libc conformance
 //! coverage beyond libresolv into iconv.
 
-use std::ffi::{c_char, c_void, CString};
+use std::ffi::{CString, c_char, c_void};
 
 use frankenlibc_abi::iconv_abi as fl;
 
@@ -112,9 +112,7 @@ fn diff_iconv_open_close_convert() {
                 src,
             )
         };
-        let lc_result = unsafe {
-            run_iconv(iconv_open, iconv_close, iconv, tocode, fromcode, src)
-        };
+        let lc_result = unsafe { run_iconv(iconv_open, iconv_close, iconv, tocode, fromcode, src) };
         let case = format!("{:?}->{:?} src={:?}", fromcode, tocode, src);
         let fl_some = fl_result.is_some();
         let lc_some = lc_result.is_some();
@@ -138,7 +136,11 @@ fn diff_iconv_open_close_convert() {
             });
         }
     }
-    assert!(divs.is_empty(), "iconv divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "iconv divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

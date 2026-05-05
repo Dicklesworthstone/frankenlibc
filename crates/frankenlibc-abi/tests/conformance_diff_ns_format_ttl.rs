@@ -15,7 +15,7 @@
 //! taking u_long (= u64 on Linux/x86_64). fl matches that signature now
 //! (previously was u32, which truncated for src > 0xFFFFFFFF).
 
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::{CStr, c_char, c_int};
 
 use frankenlibc_abi::resolv_abi as fl;
 
@@ -44,26 +44,26 @@ fn render_divs(divs: &[Divergence]) -> String {
 }
 
 const TTL_INPUTS: &[u64] = &[
-    0,                          // → "0S"
-    1,                          // → "1S"
-    59,                         // → "59S"
-    60,                         // → "1M"
-    61,                         // → "1m1s"
-    3599,                       // → "59m59s"
-    3600,                       // → "1H"
-    3601,                       // → "1h1s"
-    86399,                      // 1 second short of 1 day
-    86400,                      // → "1D"
-    86461,                      // 1 day, 1 minute, 1 second
-    604800,                     // → "1W"
-    604801,                     // 1 week + 1 second
-    2419200,                    // → "4W"
-    90090,                      // → "1d1h1m30s"
-    2_147_483_647,              // i32::MAX
+    0,             // → "0S"
+    1,             // → "1S"
+    59,            // → "59S"
+    60,            // → "1M"
+    61,            // → "1m1s"
+    3599,          // → "59m59s"
+    3600,          // → "1H"
+    3601,          // → "1h1s"
+    86399,         // 1 second short of 1 day
+    86400,         // → "1D"
+    86461,         // 1 day, 1 minute, 1 second
+    604800,        // → "1W"
+    604801,        // 1 week + 1 second
+    2419200,       // → "4W"
+    90090,         // → "1d1h1m30s"
+    2_147_483_647, // i32::MAX
     u32::MAX as u64,
     // u64 range — fl's old u32 signature truncated these; now matches.
-    0x100000000u64,             // 2^32
-    0xFFFFFFFFFFu64,            // ~17.5 trillion seconds
+    0x100000000u64,  // 2^32
+    0xFFFFFFFFFFu64, // ~17.5 trillion seconds
     1_000_000_000_000u64,
 ];
 
@@ -73,12 +73,10 @@ fn diff_ns_format_ttl_cases() {
     for &src in TTL_INPUTS {
         let mut fl_buf = [0i8; 64];
         let mut lc_buf = [0i8; 64];
-        let fl_n = unsafe {
-            fl::ns_format_ttl(src as libc::c_ulong, fl_buf.as_mut_ptr(), fl_buf.len())
-        };
-        let lc_n = unsafe {
-            ns_format_ttl(src as libc::c_ulong, lc_buf.as_mut_ptr(), lc_buf.len())
-        };
+        let fl_n =
+            unsafe { fl::ns_format_ttl(src as libc::c_ulong, fl_buf.as_mut_ptr(), fl_buf.len()) };
+        let lc_n =
+            unsafe { ns_format_ttl(src as libc::c_ulong, lc_buf.as_mut_ptr(), lc_buf.len()) };
         let case = format!("{src}");
         if fl_n != lc_n {
             divs.push(Divergence {
@@ -101,7 +99,11 @@ fn diff_ns_format_ttl_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "ns_format_ttl divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "ns_format_ttl divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 /// Buffer-too-small contract: both impls should return -1 / EMSGSIZE

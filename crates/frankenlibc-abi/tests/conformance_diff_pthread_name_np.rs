@@ -8,7 +8,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_char, c_int, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int};
 
 use frankenlibc_abi::pthread_abi as fl;
 
@@ -28,7 +28,7 @@ fn diff_pthread_setname_get_round_trip() {
     let names: &[&str] = &[
         "thread-0",
         "abc",
-        "exactly-15-char",  // 15 chars + NUL = 16 (max)
+        "exactly-15-char", // 15 chars + NUL = 16 (max)
         "",
     ];
     for name in names {
@@ -39,7 +39,12 @@ fn diff_pthread_setname_get_round_trip() {
         let g = unsafe { fl::pthread_getname_np(fl_me, buf.as_mut_ptr(), buf.len()) };
         assert_eq!(g, 0, "fl pthread_getname_np failed: {g}");
         let got = unsafe { CStr::from_ptr(buf.as_ptr()).to_bytes() };
-        assert_eq!(got, name.as_bytes(), "fl name mismatch: set={name:?}, got={:?}", String::from_utf8_lossy(got));
+        assert_eq!(
+            got,
+            name.as_bytes(),
+            "fl name mismatch: set={name:?}, got={:?}",
+            String::from_utf8_lossy(got)
+        );
 
         // Same with glibc:
         let r = unsafe { pthread_setname_np(lc_me, cn.as_ptr()) };
@@ -59,10 +64,7 @@ fn diff_pthread_setname_too_long_rejected() {
     let cn = CString::new("this-name-is-way-too-long-for-linux").unwrap();
     let fl_r = unsafe { fl::pthread_setname_np(fl_me, cn.as_ptr()) };
     let lc_r = unsafe { pthread_setname_np(lc_me, cn.as_ptr()) };
-    assert_eq!(
-        fl_r, lc_r,
-        "long-name return mismatch: fl={fl_r} lc={lc_r}"
-    );
+    assert_eq!(fl_r, lc_r, "long-name return mismatch: fl={fl_r} lc={lc_r}");
     // Both should reject with the same errno (typically ERANGE = 34).
     assert_ne!(fl_r, 0, "long name should be rejected");
 }
@@ -76,10 +78,7 @@ fn diff_pthread_getname_buffer_too_small() {
     let mut tiny = [0i8; 2]; // less than 5 bytes for "smol\0"
     let fl_r = unsafe { fl::pthread_getname_np(fl_me, tiny.as_mut_ptr(), tiny.len()) };
     let lc_r = unsafe { pthread_getname_np(lc_me, tiny.as_mut_ptr(), tiny.len()) };
-    assert_eq!(
-        fl_r, lc_r,
-        "small-buf return mismatch: fl={fl_r} lc={lc_r}"
-    );
+    assert_eq!(fl_r, lc_r, "small-buf return mismatch: fl={fl_r} lc={lc_r}");
 }
 
 #[test]

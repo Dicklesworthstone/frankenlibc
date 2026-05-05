@@ -54,10 +54,7 @@ fn metamorphic_ftok_proj_id_high_bits_masked_to_low_byte() {
     let k_01 = unsafe { fl::ftok(path.as_ptr(), 0x0001) };
     let k_101 = unsafe { fl::ftok(path.as_ptr(), 0x0101) };
     let k_ff01 = unsafe { fl::ftok(path.as_ptr(), 0xff01u32 as i32) };
-    assert_eq!(
-        k_01, k_101,
-        "proj_id 0x101 should mask to 0x01"
-    );
+    assert_eq!(k_01, k_101, "proj_id 0x101 should mask to 0x01");
     assert_eq!(k_01, k_ff01, "proj_id 0xff01 should mask to 0x01");
 }
 
@@ -74,7 +71,10 @@ fn metamorphic_ftok_different_paths_low_24_typically_differ() {
     // At least two of the three should be distinct on any
     // reasonable filesystem.
     let distinct = (k1 != k2) as u32 + (k1 != k3) as u32 + (k2 != k3) as u32;
-    assert!(distinct >= 2, "low 24 bits clustered: {k1:#x} {k2:#x} {k3:#x}");
+    assert!(
+        distinct >= 2,
+        "low 24 bits clustered: {k1:#x} {k2:#x} {k3:#x}"
+    );
 }
 
 #[test]

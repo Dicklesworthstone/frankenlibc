@@ -42,10 +42,16 @@ fn diff_makedev_round_trip() {
         // round-trip: gnu_dev_major(makedev(M, m)) == M
         let fl_maj = unsafe { fl::gnu_dev_major(fl_dev) };
         let lc_maj = unsafe { gnu_dev_major(lc_dev) };
-        assert_eq!(fl_maj, lc_maj, "major({fl_dev:#x}): fl={fl_maj} lc={lc_maj}");
+        assert_eq!(
+            fl_maj, lc_maj,
+            "major({fl_dev:#x}): fl={fl_maj} lc={lc_maj}"
+        );
         let fl_min = unsafe { fl::gnu_dev_minor(fl_dev) };
         let lc_min = unsafe { gnu_dev_minor(lc_dev) };
-        assert_eq!(fl_min, lc_min, "minor({fl_dev:#x}): fl={fl_min} lc={lc_min}");
+        assert_eq!(
+            fl_min, lc_min,
+            "minor({fl_dev:#x}): fl={fl_min} lc={lc_min}"
+        );
     }
 }
 
@@ -60,10 +66,9 @@ fn diff_major_minor_extract_known_devs() {
         let fl_dev = unsafe { fl::gnu_dev_makedev(maj, min) };
         let lc_dev = unsafe { gnu_dev_makedev(maj, min) };
         assert_eq!(fl_dev, lc_dev);
-        let fl_back = (
-            unsafe { fl::gnu_dev_major(fl_dev) },
-            unsafe { fl::gnu_dev_minor(fl_dev) },
-        );
+        let fl_back = (unsafe { fl::gnu_dev_major(fl_dev) }, unsafe {
+            fl::gnu_dev_minor(fl_dev)
+        });
         assert_eq!(fl_back, (maj, min), "round-trip failed for {maj}:{min}");
     }
 }

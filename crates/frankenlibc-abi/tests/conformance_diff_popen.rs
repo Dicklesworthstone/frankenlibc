@@ -16,7 +16,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_int, CString};
+use std::ffi::{CString, c_int};
 
 use frankenlibc_abi::stdio_abi as fl;
 
@@ -30,14 +30,7 @@ unsafe fn read_lc_pipe(fp: *mut libc::FILE) -> Vec<u8> {
     let mut out = Vec::new();
     let mut buf = [0u8; 4096];
     loop {
-        let n = unsafe {
-            libc::fread(
-                buf.as_mut_ptr() as *mut libc::c_void,
-                1,
-                buf.len(),
-                fp,
-            )
-        };
+        let n = unsafe { libc::fread(buf.as_mut_ptr() as *mut libc::c_void, 1, buf.len(), fp) };
         if n == 0 {
             break;
         }

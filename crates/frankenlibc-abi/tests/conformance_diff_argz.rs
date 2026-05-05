@@ -10,7 +10,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 
 use frankenlibc_abi::malloc_abi::free as fl_free;
 use frankenlibc_abi::string_abi as fl;
@@ -140,7 +140,11 @@ fn diff_argz_create_sep_and_iterate() {
             unsafe { libc::free(lc_argz as *mut libc::c_void) };
         }
     }
-    assert!(divs.is_empty(), "argz_create_sep divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "argz_create_sep divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

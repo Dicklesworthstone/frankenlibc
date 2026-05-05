@@ -8,7 +8,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 
 use frankenlibc_abi::locale_abi as fl;
 
@@ -89,7 +89,11 @@ fn diff_nl_langinfo_c_locale_items() {
             });
         }
     }
-    assert!(divs.is_empty(), "nl_langinfo divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "nl_langinfo divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

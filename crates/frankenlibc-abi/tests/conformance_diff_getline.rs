@@ -14,11 +14,7 @@ use std::ffi::{c_char, c_int, c_void};
 unsafe extern "C" {
     fn fmemopen(buf: *mut c_void, size: usize, mode: *const c_char) -> *mut libc::FILE;
     fn fclose(fp: *mut libc::FILE) -> c_int;
-    fn getline(
-        lineptr: *mut *mut c_char,
-        n: *mut usize,
-        stream: *mut libc::FILE,
-    ) -> isize;
+    fn getline(lineptr: *mut *mut c_char, n: *mut usize, stream: *mut libc::FILE) -> isize;
     fn getdelim(
         lineptr: *mut *mut c_char,
         n: *mut usize,
@@ -111,7 +107,9 @@ fn diff_getline_empty_input() {
 #[test]
 fn diff_getline_single_long_line() {
     // 200-char line forces buffer growth in both impls.
-    let line: Vec<u8> = std::iter::repeat_n(b'x', 200).chain(std::iter::once(b'\n')).collect();
+    let line: Vec<u8> = std::iter::repeat_n(b'x', 200)
+        .chain(std::iter::once(b'\n'))
+        .collect();
     let fl_lines = collect_lines(&line, |lp, n, fp| unsafe {
         frankenlibc_abi::stdio_abi::getline(lp, n, fp as *mut c_void)
     });

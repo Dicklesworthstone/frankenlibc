@@ -9,7 +9,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 
 use frankenlibc_abi::locale_abi as fl;
 
@@ -78,10 +78,26 @@ fn diff_localeconv_string_fields_match_in_c_locale() {
     cmp("decimal_point", fl_l.decimal_point, lc_l.decimal_point);
     cmp("thousands_sep", fl_l.thousands_sep, lc_l.thousands_sep);
     cmp("grouping", fl_l.grouping, lc_l.grouping);
-    cmp("int_curr_symbol", fl_l.int_curr_symbol, lc_l.int_curr_symbol);
-    cmp("currency_symbol", fl_l.currency_symbol, lc_l.currency_symbol);
-    cmp("mon_decimal_point", fl_l.mon_decimal_point, lc_l.mon_decimal_point);
-    cmp("mon_thousands_sep", fl_l.mon_thousands_sep, lc_l.mon_thousands_sep);
+    cmp(
+        "int_curr_symbol",
+        fl_l.int_curr_symbol,
+        lc_l.int_curr_symbol,
+    );
+    cmp(
+        "currency_symbol",
+        fl_l.currency_symbol,
+        lc_l.currency_symbol,
+    );
+    cmp(
+        "mon_decimal_point",
+        fl_l.mon_decimal_point,
+        lc_l.mon_decimal_point,
+    );
+    cmp(
+        "mon_thousands_sep",
+        fl_l.mon_thousands_sep,
+        lc_l.mon_thousands_sep,
+    );
     cmp("mon_grouping", fl_l.mon_grouping, lc_l.mon_grouping);
     cmp("positive_sign", fl_l.positive_sign, lc_l.positive_sign);
     cmp("negative_sign", fl_l.negative_sign, lc_l.negative_sign);
@@ -106,7 +122,11 @@ fn diff_localeconv_numeric_fields_match_in_c_locale() {
         // fields that have no value. fl and glibc both encode this.
         assert_eq!(fl, lc, "{label}: fl={fl} lc={lc}");
     };
-    cmp_num("int_frac_digits", fl_l.int_frac_digits, lc_l.int_frac_digits);
+    cmp_num(
+        "int_frac_digits",
+        fl_l.int_frac_digits,
+        lc_l.int_frac_digits,
+    );
     cmp_num("frac_digits", fl_l.frac_digits, lc_l.frac_digits);
     cmp_num("p_cs_precedes", fl_l.p_cs_precedes, lc_l.p_cs_precedes);
     cmp_num("p_sep_by_space", fl_l.p_sep_by_space, lc_l.p_sep_by_space);
@@ -114,12 +134,36 @@ fn diff_localeconv_numeric_fields_match_in_c_locale() {
     cmp_num("n_sep_by_space", fl_l.n_sep_by_space, lc_l.n_sep_by_space);
     cmp_num("p_sign_posn", fl_l.p_sign_posn, lc_l.p_sign_posn);
     cmp_num("n_sign_posn", fl_l.n_sign_posn, lc_l.n_sign_posn);
-    cmp_num("int_p_cs_precedes", fl_l.int_p_cs_precedes, lc_l.int_p_cs_precedes);
-    cmp_num("int_p_sep_by_space", fl_l.int_p_sep_by_space, lc_l.int_p_sep_by_space);
-    cmp_num("int_n_cs_precedes", fl_l.int_n_cs_precedes, lc_l.int_n_cs_precedes);
-    cmp_num("int_n_sep_by_space", fl_l.int_n_sep_by_space, lc_l.int_n_sep_by_space);
-    cmp_num("int_p_sign_posn", fl_l.int_p_sign_posn, lc_l.int_p_sign_posn);
-    cmp_num("int_n_sign_posn", fl_l.int_n_sign_posn, lc_l.int_n_sign_posn);
+    cmp_num(
+        "int_p_cs_precedes",
+        fl_l.int_p_cs_precedes,
+        lc_l.int_p_cs_precedes,
+    );
+    cmp_num(
+        "int_p_sep_by_space",
+        fl_l.int_p_sep_by_space,
+        lc_l.int_p_sep_by_space,
+    );
+    cmp_num(
+        "int_n_cs_precedes",
+        fl_l.int_n_cs_precedes,
+        lc_l.int_n_cs_precedes,
+    );
+    cmp_num(
+        "int_n_sep_by_space",
+        fl_l.int_n_sep_by_space,
+        lc_l.int_n_sep_by_space,
+    );
+    cmp_num(
+        "int_p_sign_posn",
+        fl_l.int_p_sign_posn,
+        lc_l.int_p_sign_posn,
+    );
+    cmp_num(
+        "int_n_sign_posn",
+        fl_l.int_n_sign_posn,
+        lc_l.int_n_sign_posn,
+    );
 }
 
 #[test]

@@ -10,7 +10,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up — extending libresolv parity coverage.
 
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 
 use frankenlibc_abi::resolv_abi as fl;
 
@@ -89,7 +89,11 @@ fn diff_inet_neta_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "inet_neta divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "inet_neta divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 /// Buffer-too-small contract — both impls should return NULL when the

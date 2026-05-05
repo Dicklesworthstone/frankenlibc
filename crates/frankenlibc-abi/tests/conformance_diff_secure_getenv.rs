@@ -13,7 +13,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 
 use frankenlibc_abi::stdlib_abi as fl;
 

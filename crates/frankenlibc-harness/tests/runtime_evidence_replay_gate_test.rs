@@ -120,12 +120,7 @@ fn as_object<'a>(
         .ok_or_else(|| test_error(format!("{context} must be an object")))
 }
 
-fn set_object_field(
-    value: &mut Value,
-    key: &str,
-    replacement: Value,
-    context: &str,
-) -> TestResult {
+fn set_object_field(value: &mut Value, key: &str, replacement: Value, context: &str) -> TestResult {
     let object = value
         .as_object_mut()
         .ok_or_else(|| test_error(format!("{context} must be an object")))?;
@@ -354,12 +349,16 @@ fn gate_fails_closed_for_out_of_order_ring_events() -> TestResult {
     let record = mutable_replay_records(&mut gate)?
         .get_mut(2)
         .ok_or_else(|| test_error("missing repair replay record"))?;
-    set_snapshot_field(record, "event_ids", json!([
-        "ev-1020-policy",
-        "ev-1023-heal",
-        "ev-1022-generation",
-        "ev-1024-repair"
-    ]))?;
+    set_snapshot_field(
+        record,
+        "event_ids",
+        json!([
+            "ev-1020-policy",
+            "ev-1023-heal",
+            "ev-1022-generation",
+            "ev-1024-repair"
+        ]),
+    )?;
     let report = run_gate_with_fixture(&root, "out_of_order_events", &gate)?;
     expect_error_signature(&report, "runtime_replay_out_of_order")
 }

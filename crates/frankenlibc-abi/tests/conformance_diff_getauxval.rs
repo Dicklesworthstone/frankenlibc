@@ -75,7 +75,10 @@ fn diff_getauxval_constants() {
         divs.is_empty(),
         "getauxval divergences:\n{}",
         divs.iter()
-            .map(|d| format!("  case: {} | fl: {} | glibc: {}\n", d.case, d.frankenlibc, d.glibc))
+            .map(|d| format!(
+                "  case: {} | fl: {} | glibc: {}\n",
+                d.case, d.frankenlibc, d.glibc
+            ))
             .collect::<String>()
     );
 }

@@ -25,7 +25,7 @@
 //! `fl_crypt_accepts_modern_method_salts` runs by default and only
 //! verifies fl returns non-null with the correct method-tag prefix.
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 
 use frankenlibc_abi::unistd_abi as fl;
 
@@ -60,13 +60,11 @@ const CRYPT_CASES: &[(&[u8], &[u8])] = &[
     (b"", b"$1$abcdefgh$"),
     (b"hello", b"$1$short$"),
     (b"the quick brown fox", b"$1$abcdefgh$"),
-
     (b"password", b"$5$saltsaltsalt$"),
     (b"password", b"$5$rounds=5000$saltsaltsalt$"),
     (b"password", b"$5$rounds=1000$saltsaltsalt$"),
     (b"", b"$5$emptysalt$"),
     (b"a", b"$5$saltsalt$"),
-
     (b"password", b"$6$saltsaltsalt$"),
     (b"password", b"$6$rounds=5000$saltsaltsalt$"),
     (b"password", b"$6$rounds=1000$saltsaltsalt$"),
@@ -147,7 +145,11 @@ fn report_crypt_divergences_against_host() {
             });
         }
     }
-    eprintln!("crypt divergences ({}):\n{}", divs.len(), render_divs(&divs));
+    eprintln!(
+        "crypt divergences ({}):\n{}",
+        divs.len(),
+        render_divs(&divs)
+    );
 }
 
 #[test]

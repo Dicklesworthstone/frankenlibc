@@ -80,7 +80,10 @@ fn diff_capget_invalid_version_returns_einval() {
     assert_eq!(fl_r, lc_r, "invalid-version ret: fl={fl_r} lc={lc_r}");
     assert_eq!(fl_r, -1);
     // Both impls must update hdrp.version with the kernel's preferred version.
-    assert_eq!(fl_hdr.version, lc_hdr.version, "version negotiation differs");
+    assert_eq!(
+        fl_hdr.version, lc_hdr.version,
+        "version negotiation differs"
+    );
     assert_ne!(fl_hdr.version, 0, "kernel should write its version");
 }
 
