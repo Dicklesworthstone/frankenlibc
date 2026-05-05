@@ -7,7 +7,7 @@
 //!
 //! Supports:
 //! - **JSONL export** for offline replay and deterministic analysis
-//! - **OTLP export stubs** for live dashboard integration
+//! - **OTLP-shaped JSON export** for live dashboard integration
 //! - **Privacy/redaction policy** to prevent PII leakage in trace data
 //!
 //! # Design invariants
@@ -418,40 +418,29 @@ impl EvidenceLedger {
         result
     }
 
-    /// OTLP export stub: returns a serializable representation of retained records.
+    /// Export retained records as deterministic OTLP-shaped JSON log records.
     ///
-    /// This is a future integration point for OpenTelemetry Protocol export.
-    /// Currently returns a structured summary; full OTLP span/log conversion
-    /// will be implemented when the OTLP dependency is added.
+    /// The export intentionally stays dependency-light and serializes to the
+    /// OpenTelemetry Logs JSON shape expected by dashboards: resource logs,
+    /// scope logs, and one log record per retained evidence entry.
     #[must_use]
-    pub fn otlp_export_stub(&self) -> OtlpExportSummary {
+    pub fn otlp_export(&self) -> OtlpExport {
         let records = self.records.lock();
         let mut category_counts = [0u64; 5];
         let mut level_counts = [0u64; 5];
+        let mut log_records = Vec::with_capacity(records.len());
         for record in records.iter() {
-            let cat_idx = match record.category {
-                EvidenceCategory::MetricsSnapshot => 0,
-                EvidenceCategory::HealingAction => 1,
-                EvidenceCategory::ValidationDecision => 2,
-                EvidenceCategory::ConformanceResult => 3,
-                EvidenceCategory::RuntimeMathDecision => 4,
-            };
-            category_counts[cat_idx] += 1;
-            let level_idx = match record.level {
-                EvidenceLevel::Trace => 0,
-                EvidenceLevel::Debug => 1,
-                EvidenceLevel::Info => 2,
-                EvidenceLevel::Warn => 3,
-                EvidenceLevel::Error => 4,
-            };
-            level_counts[level_idx] += 1;
+            increment_count(&mut category_counts, category_index(record.category));
+            increment_count(&mut level_counts, level_index(record.level));
+            log_records.push(self.record_to_otlp_log(record));
         }
-        OtlpExportSummary {
-            total_records: records.len() as u64,
+        OtlpExport {
+            total_records: u64::try_from(records.len()).unwrap_or(u64::MAX),
             total_appended: self.seqno.load(Ordering::Relaxed),
             category_counts,
             level_counts,
             redaction_policy: self.redaction_policy,
+            log_records,
         }
     }
 
@@ -513,6 +502,60 @@ impl EvidenceLedger {
         out
     }
 
+    fn record_to_otlp_log(&self, record: &EvidenceRecord) -> serde_json::Value {
+        let mode_str = match record.mode {
+            SafetyLevel::Strict => "strict",
+            SafetyLevel::Hardened => "hardened",
+            SafetyLevel::Off => "off",
+        };
+        let trace_id_str = self.redact_trace_id(record.trace_id.as_str());
+        let symbol_str = self.redact_symbol(&record.symbol);
+        let healing_value = record
+            .healing_action
+            .as_ref()
+            .map_or(serde_json::Value::Null, |action| {
+                serde_json::Value::String(healing_action_name(action).to_string())
+            });
+        let details_value = if record.details_json.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_str(&record.details_json)
+                .unwrap_or_else(|_| serde_json::Value::String(record.details_json.clone()))
+        };
+        let time_unix_nano =
+            (record.timestamp_secs as u128 * 1_000_000_000) + record.timestamp_nanos as u128;
+
+        serde_json::json!({
+            "timeUnixNano": time_unix_nano.to_string(),
+            "observedTimeUnixNano": time_unix_nano.to_string(),
+            "severityNumber": otlp_severity_number(record.level),
+            "severityText": otlp_severity_text(record.level),
+            "body": {
+                "stringValue": &record.outcome,
+            },
+            "attributes": [
+                otlp_string_attr("frankenlibc.trace_id", trace_id_str),
+                otlp_int_attr("frankenlibc.evidence_seqno", record.seqno),
+                otlp_int_attr("frankenlibc.decision_id", record.decision_id.as_u64()),
+                otlp_int_attr("frankenlibc.policy_id", record.policy_id.as_u32()),
+                otlp_string_attr("frankenlibc.schema_version", MEMBRANE_SCHEMA_VERSION.to_string()),
+                otlp_string_attr("frankenlibc.category", record.category.as_str()),
+                otlp_string_attr("frankenlibc.level", record.level.as_str()),
+                otlp_string_attr("frankenlibc.mode", mode_str),
+                otlp_string_attr("frankenlibc.api_family", &record.api_family),
+                otlp_string_attr("frankenlibc.symbol", symbol_str),
+                otlp_string_attr("frankenlibc.decision_path", &record.decision_path),
+                otlp_string_attr("frankenlibc.outcome", &record.outcome),
+                otlp_json_attr("frankenlibc.healing_action", healing_value),
+                otlp_int_attr("frankenlibc.errno", record.errno_val),
+                otlp_int_attr("frankenlibc.latency_ns", record.latency_ns),
+                otlp_json_attr("frankenlibc.details", details_value),
+                otlp_json_attr("frankenlibc.artifact_refs", serde_json::json!(&record.artifact_refs)),
+                otlp_string_attr("frankenlibc.redaction_policy", redaction_policy_str(self.redaction_policy)),
+            ],
+        })
+    }
+
     fn redact_trace_id(&self, trace_id: &str) -> String {
         match self.redaction_policy {
             RedactionPolicy::None => sanitize_json_string(trace_id),
@@ -544,9 +587,9 @@ impl Default for EvidenceLedger {
     }
 }
 
-/// Summary for OTLP export stub.
+/// Deterministic OTLP-shaped export of retained evidence records.
 #[derive(Debug, Clone)]
-pub struct OtlpExportSummary {
+pub struct OtlpExport {
     /// Records currently in the ring buffer.
     pub total_records: u64,
     /// Total records ever appended (including evicted).
@@ -558,33 +601,85 @@ pub struct OtlpExportSummary {
     pub level_counts: [u64; 5],
     /// Active redaction policy.
     pub redaction_policy: RedactionPolicy,
+    /// OTLP log records in the same order as the retained ring buffer.
+    log_records: Vec<serde_json::Value>,
 }
 
-impl OtlpExportSummary {
-    /// Serialize the summary as a JSON string.
+impl OtlpExport {
+    /// Number of OTLP log records emitted by this export.
+    #[must_use]
+    pub fn log_record_count(&self) -> usize {
+        self.log_records.len()
+    }
+
+    /// Serialize the export as an OTLP-shaped JSON string.
     #[must_use]
     pub fn to_json(&self) -> String {
-        format!(
-            "{{\"total_records\":{},\"total_appended\":{},\
-\"category_counts\":{{\"metrics_snapshot\":{},\"healing_action\":{},\
-\"validation_decision\":{},\"conformance_result\":{},\"runtime_math_decision\":{}}},\
-\"level_counts\":{{\"trace\":{},\"debug\":{},\"info\":{},\"warn\":{},\"error\":{}}},\
-\"redaction_policy\":\"{}\",\
-\"otlp_status\":\"stub_only\"}}",
-            self.total_records,
-            self.total_appended,
-            self.category_counts[0],
-            self.category_counts[1],
-            self.category_counts[2],
-            self.category_counts[3],
-            self.category_counts[4],
-            self.level_counts[0],
-            self.level_counts[1],
-            self.level_counts[2],
-            self.level_counts[3],
-            self.level_counts[4],
-            redaction_policy_str(self.redaction_policy),
-        )
+        let [
+            metrics_snapshot_count,
+            healing_action_count,
+            validation_decision_count,
+            conformance_result_count,
+            runtime_math_decision_count,
+        ] = self.category_counts;
+        let [
+            trace_count,
+            debug_count,
+            info_count,
+            warn_count,
+            error_count,
+        ] = self.level_counts;
+        let export = serde_json::json!({
+            "otlp_schema": "logs/v1",
+            "total_records": self.total_records,
+            "total_appended": self.total_appended,
+            "record_count": self.log_records.len(),
+            "category_counts": {
+                "metrics_snapshot": metrics_snapshot_count,
+                "healing_action": healing_action_count,
+                "validation_decision": validation_decision_count,
+                "conformance_result": conformance_result_count,
+                "runtime_math_decision": runtime_math_decision_count,
+            },
+            "level_counts": {
+                "trace": trace_count,
+                "debug": debug_count,
+                "info": info_count,
+                "warn": warn_count,
+                "error": error_count,
+            },
+            "redaction_policy": redaction_policy_str(self.redaction_policy),
+            "resourceLogs": [
+                {
+                    "resource": {
+                        "attributes": [
+                            otlp_string_attr("service.name", "frankenlibc"),
+                            otlp_string_attr("telemetry.sdk.name", "frankenlibc-membrane"),
+                            otlp_string_attr(
+                                "frankenlibc.schema_version",
+                                MEMBRANE_SCHEMA_VERSION.to_string(),
+                            ),
+                            otlp_string_attr(
+                                "frankenlibc.redaction_policy",
+                                redaction_policy_str(self.redaction_policy),
+                            ),
+                        ],
+                    },
+                    "scopeLogs": [
+                        {
+                            "scope": {
+                                "name": "frankenlibc.evidence_ledger",
+                                "version": MEMBRANE_SCHEMA_VERSION.to_string(),
+                            },
+                            "logRecords": self.log_records.clone(),
+                        },
+                    ],
+                },
+            ],
+        });
+        serde_json::to_string(&export).unwrap_or_else(|_| {
+            "{\"otlp_schema\":\"logs/v1\",\"serialization_error\":true}".to_string()
+        })
     }
 }
 
@@ -654,6 +749,80 @@ fn healing_action_to_json(action: &HealingAction) -> String {
         HealingAction::UpgradeToSafeVariant => "{\"action\":\"UpgradeToSafeVariant\"}".to_string(),
         HealingAction::None => "{\"action\":\"None\"}".to_string(),
     }
+}
+
+fn category_index(category: EvidenceCategory) -> usize {
+    match category {
+        EvidenceCategory::MetricsSnapshot => 0,
+        EvidenceCategory::HealingAction => 1,
+        EvidenceCategory::ValidationDecision => 2,
+        EvidenceCategory::ConformanceResult => 3,
+        EvidenceCategory::RuntimeMathDecision => 4,
+    }
+}
+
+fn level_index(level: EvidenceLevel) -> usize {
+    match level {
+        EvidenceLevel::Trace => 0,
+        EvidenceLevel::Debug => 1,
+        EvidenceLevel::Info => 2,
+        EvidenceLevel::Warn => 3,
+        EvidenceLevel::Error => 4,
+    }
+}
+
+fn increment_count(counts: &mut [u64; 5], index: usize) {
+    if let Some(count) = counts.get_mut(index) {
+        *count = count.saturating_add(1);
+    }
+}
+
+fn otlp_severity_text(level: EvidenceLevel) -> &'static str {
+    match level {
+        EvidenceLevel::Trace => "TRACE",
+        EvidenceLevel::Debug => "DEBUG",
+        EvidenceLevel::Info => "INFO",
+        EvidenceLevel::Warn => "WARN",
+        EvidenceLevel::Error => "ERROR",
+    }
+}
+
+fn otlp_severity_number(level: EvidenceLevel) -> u8 {
+    match level {
+        EvidenceLevel::Trace => 1,
+        EvidenceLevel::Debug => 5,
+        EvidenceLevel::Info => 9,
+        EvidenceLevel::Warn => 13,
+        EvidenceLevel::Error => 17,
+    }
+}
+
+fn otlp_string_attr(key: &str, value: impl AsRef<str>) -> serde_json::Value {
+    serde_json::json!({
+        "key": key,
+        "value": {
+            "stringValue": value.as_ref(),
+        },
+    })
+}
+
+fn otlp_int_attr(key: &str, value: impl ToString) -> serde_json::Value {
+    serde_json::json!({
+        "key": key,
+        "value": {
+            "intValue": value.to_string(),
+        },
+    })
+}
+
+fn otlp_json_attr(key: &str, value: serde_json::Value) -> serde_json::Value {
+    let string_value = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
+    serde_json::json!({
+        "key": key,
+        "value": {
+            "stringValue": string_value,
+        },
+    })
 }
 
 fn sanitize_json_string(s: &str) -> String {
@@ -772,6 +941,13 @@ mod tests {
             details_json: "{\"size\":1024}".to_string(),
             artifact_refs: vec![],
         }
+    }
+
+    fn find_otlp_string_attr<'a>(attrs: &'a [serde_json::Value], key: &str) -> Option<&'a str> {
+        attrs
+            .iter()
+            .find(|attr| attr["key"] == key)
+            .and_then(|attr| attr["value"]["stringValue"].as_str())
     }
 
     #[test]
@@ -966,20 +1142,67 @@ mod tests {
     }
 
     #[test]
-    fn otlp_export_stub_counts_categories() {
+    fn otlp_export_emits_log_records_and_counts() {
         let ledger = make_test_ledger();
-        ledger.append(make_record(EvidenceCategory::ValidationDecision, "t1"));
+        let mut first = make_record(EvidenceCategory::ValidationDecision, "t1");
+        first.artifact_refs = vec!["artifacts/proof.json".to_string()];
+        ledger.append(first);
         ledger.append(make_record(EvidenceCategory::ValidationDecision, "t2"));
         ledger.append(make_record(EvidenceCategory::HealingAction, "t3"));
 
-        let summary = ledger.otlp_export_stub();
-        assert_eq!(summary.total_records, 3);
-        assert_eq!(summary.category_counts[2], 2); // ValidationDecision
-        assert_eq!(summary.category_counts[1], 1); // HealingAction
+        let export = ledger.otlp_export();
+        assert_eq!(export.total_records, 3);
+        assert_eq!(export.log_record_count(), 3);
+        assert_eq!(export.category_counts[2], 2); // ValidationDecision
+        assert_eq!(export.category_counts[1], 1); // HealingAction
 
-        let json = summary.to_json();
+        let json = export.to_json();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["otlp_status"], "stub_only");
+        assert!(parsed.get("otlp_status").is_none());
+        assert_eq!(parsed["otlp_schema"], "logs/v1");
+        assert_eq!(parsed["record_count"], 3);
+
+        let log_records = parsed["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
+            .as_array()
+            .expect("OTLP export must include log records");
+        assert_eq!(log_records.len(), 3);
+        assert_eq!(log_records[0]["body"]["stringValue"], "allow");
+        assert_eq!(log_records[0]["severityText"], "INFO");
+
+        let attrs = log_records[0]["attributes"]
+            .as_array()
+            .expect("OTLP log record must include attributes");
+        assert_eq!(
+            find_otlp_string_attr(attrs, "frankenlibc.category"),
+            Some("validation_decision")
+        );
+        assert_eq!(
+            find_otlp_string_attr(attrs, "frankenlibc.details"),
+            Some("{\"size\":1024}")
+        );
+        assert_eq!(
+            find_otlp_string_attr(attrs, "frankenlibc.artifact_refs"),
+            Some("[\"artifacts/proof.json\"]")
+        );
+    }
+
+    #[test]
+    fn otlp_export_applies_pointer_redaction() {
+        let ledger = EvidenceLedger::with_config(16, RedactionPolicy::RedactPointers);
+        ledger.append(make_record(
+            EvidenceCategory::ValidationDecision,
+            "ptr::0x7fffffffe000",
+        ));
+
+        let json = ledger.otlp_export().to_json();
+        assert!(
+            !json.contains("0x7fffffffe000"),
+            "OTLP export should redact pointer-like trace data: {json}"
+        );
+        assert!(
+            json.contains("[REDACTED]"),
+            "OTLP export should preserve redaction marker: {json}"
+        );
     }
 
     #[test]

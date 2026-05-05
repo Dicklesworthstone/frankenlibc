@@ -82,8 +82,8 @@ pub use evidence::{
     next_stdio_trace_id, serialize_stdio_evidence_row,
 };
 pub use evidence_ledger::{
-    EvidenceCategory, EvidenceLedger, EvidenceLevel, EvidenceRecord, OtlpExportSummary,
-    RedactionPolicy, ValidationEvidence, global_evidence_ledger,
+    EvidenceCategory, EvidenceLedger, EvidenceLevel, EvidenceRecord, OtlpExport, RedactionPolicy,
+    ValidationEvidence, global_evidence_ledger,
 };
 pub use heal::{HealingAction, HealingPolicy};
 pub use ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, SchemaVersion, TraceId};

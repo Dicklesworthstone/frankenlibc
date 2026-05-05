@@ -115,11 +115,14 @@ fn main() {
     let index = ledger.correlation_index();
     println!("   distinct trace_ids: {}", index.len());
 
-    // OTLP stub
-    let otlp = ledger.otlp_export_stub();
+    // OTLP-shaped export
+    let otlp = ledger.otlp_export();
     println!(
-        "   categories: metrics={}, healing={}, validation={}",
-        otlp.category_counts[0], otlp.category_counts[1], otlp.category_counts[2]
+        "   otlp records: {}, categories: metrics={}, healing={}, validation={}",
+        otlp.log_record_count(),
+        otlp.category_counts[0],
+        otlp.category_counts[1],
+        otlp.category_counts[2]
     );
     println!();
 
