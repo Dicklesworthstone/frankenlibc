@@ -54,6 +54,8 @@ const REQUIRED_PROOF_SURFACES: &[&str] = &[
     "cross_environment_evidence",
 ];
 
+const STANDALONE_ARTIFACT_REF: &str = "tests/conformance/standalone_replacement_artifact.v1.json";
+
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest)
@@ -71,6 +73,14 @@ fn load_json(path: &Path) -> serde_json::Value {
 
 fn load_matrix() -> serde_json::Value {
     load_json(&workspace_root().join("tests/conformance/standalone_readiness_proof_matrix.v1.json"))
+}
+
+fn json_array_contains(value: &serde_json::Value, needle: &str) -> bool {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry.as_str() == Some(needle))
 }
 
 fn assert_repo_relative_existing_path(root: &Path, rel: &str, context: &str) {
@@ -119,6 +129,42 @@ fn artifact_exists_and_has_required_shape() {
         .map(|field| field.as_str().unwrap())
         .collect();
     assert_eq!(log_fields, REQUIRED_LOG_FIELDS);
+}
+
+#[test]
+fn standalone_artifact_is_first_class_readiness_evidence() {
+    let root = workspace_root();
+    let matrix = load_matrix();
+
+    assert_eq!(
+        matrix["inputs"]["standalone_replacement_artifact"].as_str(),
+        Some(STANDALONE_ARTIFACT_REF)
+    );
+    assert_repo_relative_existing_path(&root, STANDALONE_ARTIFACT_REF, "inputs");
+
+    let proof_rows = matrix["proof_rows"].as_array().unwrap();
+    for proof_row_id in ["symbol_version_nodes", "host_glibc_free_execution"] {
+        let row = proof_rows
+            .iter()
+            .find(|row| row["proof_row_id"].as_str() == Some(proof_row_id))
+            .expect("proof row must exist");
+        assert!(
+            json_array_contains(&row["artifact_refs"], STANDALONE_ARTIFACT_REF),
+            "{proof_row_id}: artifact_refs must include {STANDALONE_ARTIFACT_REF}"
+        );
+    }
+
+    let obligations = matrix["obligations"].as_array().unwrap();
+    for obligation_id in ["l2-versioned-symbol-subset", "l2-host-dependency-allowlist"] {
+        let obligation = obligations
+            .iter()
+            .find(|entry| entry["id"].as_str() == Some(obligation_id))
+            .expect("obligation must exist");
+        assert!(
+            json_array_contains(&obligation["evidence_artifacts"], STANDALONE_ARTIFACT_REF),
+            "{obligation_id}: evidence_artifacts must include {STANDALONE_ARTIFACT_REF}"
+        );
+    }
 }
 
 #[test]
@@ -362,10 +408,12 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         "json_parse",
         "top_level_shape",
         "required_log_fields",
+        "standalone_artifact_input",
         "current_level_guard",
         "readiness_levels",
         "proof_rows",
         "obligations",
+        "standalone_artifact_refs",
         "dimension_coverage",
         "claim_policy",
         "summary_counts",

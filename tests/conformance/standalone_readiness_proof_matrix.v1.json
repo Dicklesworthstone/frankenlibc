@@ -8,6 +8,7 @@
     "packaging_spec": "tests/conformance/packaging_spec.json",
     "closure_contract": "tests/conformance/closure_contract.v1.json",
     "user_workload_acceptance_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
     "support_matrix": "support_matrix.json",
     "version_script": "crates/frankenlibc-abi/version_scripts/libc.map"
   },
@@ -224,6 +225,7 @@
       "replacement_level": "L2",
       "artifact_refs": [
         "crates/frankenlibc-abi/version_scripts/libc.map",
+        "tests/conformance/standalone_replacement_artifact.v1.json",
         "support_matrix.json"
       ],
       "required_evidence": [
@@ -319,6 +321,7 @@
       "replacement_level": "L3",
       "artifact_refs": [
         "tests/conformance/host_libc_dependency_inventory.v1.json",
+        "tests/conformance/standalone_replacement_artifact.v1.json",
         "tests/conformance/replacement_levels.json"
       ],
       "required_evidence": [
@@ -467,6 +470,7 @@
       "blocker_reason": "Current symbol counts do not prove subset version-node compatibility or semantic fixture coverage.",
       "evidence_artifacts": [
         "crates/frankenlibc-abi/version_scripts/libc.map",
+        "tests/conformance/standalone_replacement_artifact.v1.json",
         "support_matrix.json",
         "tests/conformance/symbol_fixture_coverage.v1.json"
       ],
@@ -501,6 +505,7 @@
       "blocker_reason": "Host-dependency inventory is not yet a current release gate for standalone claims.",
       "evidence_artifacts": [
         "tests/conformance/replacement_levels.json",
+        "tests/conformance/standalone_replacement_artifact.v1.json",
         "tests/conformance/semantic_contract_inventory.v1.json",
         "tests/conformance/standalone_readiness_proof_matrix.v1.json"
       ],

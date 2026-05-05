@@ -78,6 +78,7 @@ REQUIRED_OBLIGATION_FIELDS = [
     "negative_claim_tests",
 ]
 REQUIRED_LEVELS = {"L2", "L3"}
+STANDALONE_ARTIFACT_REF = "tests/conformance/standalone_replacement_artifact.v1.json"
 
 def load_json(path):
     try:
@@ -115,6 +116,23 @@ if matrix.get("required_log_fields") == REQUIRED_LOG_FIELDS:
 else:
     checks["required_log_fields"] = "fail"
     errors.append("required_log_fields must match the standard structured log contract")
+
+inputs = matrix.get("inputs", {})
+standalone_artifact_input_ok = (
+    isinstance(inputs, dict)
+    and inputs.get("standalone_replacement_artifact") == STANDALONE_ARTIFACT_REF
+)
+if standalone_artifact_input_ok:
+    artifact_path = repo_relative_path(STANDALONE_ARTIFACT_REF, "standalone_replacement_artifact input")
+    if artifact_path is None or not artifact_path.exists():
+        standalone_artifact_input_ok = False
+        errors.append(f"standalone_replacement_artifact input does not exist: {STANDALONE_ARTIFACT_REF}")
+else:
+    errors.append(
+        "inputs.standalone_replacement_artifact must reference "
+        + STANDALONE_ARTIFACT_REF
+    )
+checks["standalone_artifact_input"] = "pass" if standalone_artifact_input_ok else "fail"
 
 level_by_id = {entry.get("level"): entry for entry in levels.get("levels", [])}
 claim_policy = matrix.get("claim_policy", {})
@@ -270,6 +288,26 @@ for obligation in obligations:
                 errors.append(f"{oid}: negative test missing {field}")
 
 checks["obligations"] = "pass" if obligations_ok else "fail"
+
+proof_rows_by_id = {row.get("proof_row_id"): row for row in proof_rows}
+obligations_by_id = {obligation.get("id"): obligation for obligation in obligations}
+standalone_artifact_refs_ok = True
+for kind, by_id, target_id, field in [
+    ("proof row", proof_rows_by_id, "symbol_version_nodes", "artifact_refs"),
+    ("proof row", proof_rows_by_id, "host_glibc_free_execution", "artifact_refs"),
+    ("obligation", obligations_by_id, "l2-versioned-symbol-subset", "evidence_artifacts"),
+    ("obligation", obligations_by_id, "l2-host-dependency-allowlist", "evidence_artifacts"),
+]:
+    target = by_id.get(target_id)
+    if target is None:
+        standalone_artifact_refs_ok = False
+        errors.append(f"{kind} {target_id}: missing target for standalone artifact evidence check")
+        continue
+    refs = target.get(field, [])
+    if STANDALONE_ARTIFACT_REF not in refs:
+        standalone_artifact_refs_ok = False
+        errors.append(f"{kind} {target_id}: {field} must include {STANDALONE_ARTIFACT_REF}")
+checks["standalone_artifact_refs"] = "pass" if standalone_artifact_refs_ok else "fail"
 
 missing_dimensions = sorted(required_dimensions - set(dimension_coverage))
 if not missing_dimensions:
