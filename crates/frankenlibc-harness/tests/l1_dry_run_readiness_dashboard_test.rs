@@ -877,6 +877,88 @@ fn host_probe_projection_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn crt_tls_atexit_direct_link_source_freshness_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "crt-tls-atexit-direct-link-source-commit-field",
+            (
+                "source_commit_freshness_policy.recorded_source_commit_field",
+                json!("source_commit"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-source-commit-comparison-target",
+            (
+                "source_commit_freshness_policy.comparison_target",
+                json!("current git HEAD"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-source-commit-stale-result",
+            (
+                "source_commit_freshness_policy.stale_result",
+                json!("block_crt_tls_atexit_direct_link_proof_evidence"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-source-commit-no-evidence",
+            (
+                "source_commit_freshness_policy.direct_link_proof_evidence_allowed_when_stale",
+                json!(false),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-source-commit-rejection-kind",
+            (
+                "source_commit_freshness_policy.rejected_evidence_kind",
+                json!("stale_source_commit"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("crt-tls-atexit-direct-link-source-commit-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected CRT/TLS/atexit direct-link freshness row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "direct_link",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing CRT/TLS/atexit direct-link freshness dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn source_commit_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [

@@ -489,6 +489,46 @@
       "rationale": "Missing or stale standalone candidates must produce claim_blocked evidence, not a pass."
     },
     {
+      "row_id": "crt-tls-atexit-direct-link-source-commit-field",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "L1 dashboard consumers must see that CRT/TLS/atexit direct-link freshness is bound to the fixture manifest source_commit."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-source-commit-comparison-target",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "L1 dashboard consumers must see that CRT/TLS/atexit direct-link freshness compares against the current source checkout."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-source-commit-stale-result",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_crt_tls_atexit_direct_link_proof_evidence",
+      "rationale": "A stale CRT/TLS/atexit direct-link fixture source commit must block direct-link proof evidence."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-source-commit-no-evidence",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "source_commit_freshness_policy.direct_link_proof_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Stale CRT/TLS/atexit direct-link proof evidence cannot support L1 readiness rows."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-source-commit-rejection-kind",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_source_commit",
+      "rationale": "Dashboard consumers must see stale CRT/TLS/atexit direct-link proof source drift as stale_source_commit evidence."
+    },
+    {
       "row_id": "crt-tls-atexit-direct-link-proof-blocked-status",
       "row_kind": "direct_link",
       "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
