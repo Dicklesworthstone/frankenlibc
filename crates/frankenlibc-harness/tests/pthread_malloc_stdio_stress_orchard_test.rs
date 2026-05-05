@@ -5,9 +5,8 @@
 //! `tests/conformance/pthread_malloc_stdio_stress_orchard.v1.json` declares
 //! every deterministic stress scenario that must remain replayable under
 //! rch with a fixed PCG32 seed, bounded iteration tier, and explicit
-//! oracle. This gate verifies the manifest's structural invariants — it
-//! does NOT actually run the heavy stress kernels (those land in their
-//! own per-scenario harness_test_name files referenced by each row).
+//! oracle. This gate verifies the manifest's structural invariants; the
+//! execution contract is covered by the sibling `*_execution_test` gate.
 //! The contract:
 //!
 //!   * scenario_id, harness_test_name, and seed are unique across rows;
@@ -24,7 +23,7 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -32,11 +31,23 @@ fn test_error(message: impl Into<String>) -> Box<dyn Error> {
     std::io::Error::other(message.into()).into()
 }
 
+fn test_error_args(message: std::fmt::Arguments<'_>) -> Box<dyn Error> {
+    std::io::Error::other(message.to_string()).into()
+}
+
 fn ensure(condition: bool, message: impl Into<String>) -> TestResult {
     if condition {
         Ok(())
     } else {
         Err(test_error(message))
+    }
+}
+
+fn ensure_args(condition: bool, message: std::fmt::Arguments<'_>) -> TestResult {
+    if condition {
+        Ok(())
+    } else {
+        Err(test_error_args(message))
     }
 }
 
@@ -52,6 +63,20 @@ where
             context.into(),
             expected,
             actual
+        )))
+    }
+}
+
+fn ensure_eq_args<T>(actual: T, expected: T, context: std::fmt::Arguments<'_>) -> TestResult
+where
+    T: std::fmt::Debug + PartialEq,
+{
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(test_error(format!(
+            "{context}: expected {:?}, got {:?}",
+            expected, actual
         )))
     }
 }
@@ -77,6 +102,42 @@ fn as_array<'a>(value: &'a Value, context: &str) -> Result<&'a Vec<Value>, Box<d
     value
         .as_array()
         .ok_or_else(|| test_error(format!("{context} must be an array")))
+}
+
+fn field<'a>(value: &'a Value, key: &str, context: &str) -> Result<&'a Value, Box<dyn Error>> {
+    value
+        .get(key)
+        .ok_or_else(|| test_error(format!("{context}.{key} is missing")))
+}
+
+fn string_field<'a>(value: &'a Value, key: &str, context: &str) -> Result<&'a str, Box<dyn Error>> {
+    as_str(field(value, key, context)?, &format!("{context}.{key}"))
+}
+
+fn array_field<'a>(
+    value: &'a Value,
+    key: &str,
+    context: &str,
+) -> Result<&'a Vec<Value>, Box<dyn Error>> {
+    as_array(field(value, key, context)?, &format!("{context}.{key}"))
+}
+
+fn u64_field(value: &Value, key: &str, context: &str) -> Result<u64, Box<dyn Error>> {
+    field(value, key, context)?
+        .as_u64()
+        .ok_or_else(|| test_error(format!("{context}.{key} must be an integer")))
+}
+
+fn safe_workspace_path(root: &Path, reference: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let rel_path = Path::new(reference);
+    ensure(!rel_path.is_absolute(), "workspace path must be relative")?;
+    for component in rel_path.components() {
+        ensure(
+            matches!(component, Component::Normal(_)),
+            "workspace path contains unsafe components",
+        )?;
+    }
+    Ok(root.join(rel_path)) // ubs:ignore - rel_path is rejected unless relative with only normal components.
 }
 
 fn manifest_path() -> PathBuf {
@@ -119,24 +180,23 @@ const REJECTED_EVIDENCE_KINDS: &[&str] = &[
 #[test]
 fn manifest_is_well_formed() -> TestResult {
     let manifest = load_json(&manifest_path())?;
+    let source_commit = string_field(&manifest, "source_commit", "manifest")?;
     ensure_eq(
-        manifest["schema_version"].as_str(),
-        Some("v1"),
+        string_field(&manifest, "schema_version", "manifest")?,
+        "v1",
         "schema_version",
     )?;
-    ensure_eq(manifest["bead"].as_str(), Some("bd-b92jd.5.3"), "bead")?;
-    ensure(
-        !manifest["source_commit"]
-            .as_str()
-            .unwrap_or_default()
-            .is_empty(),
-        "source_commit must be set",
+    ensure_eq(
+        string_field(&manifest, "bead", "manifest")?,
+        "bd-b92jd.5.3",
+        "bead",
     )?;
+    ensure(!source_commit.is_empty(), "source_commit must be set")?;
 
-    let log_fields: Vec<&str> = as_array(&manifest["required_log_fields"], "required_log_fields")?
+    let log_fields: Vec<&str> = array_field(&manifest, "required_log_fields", "manifest")?
         .iter()
-        .map(|v| v.as_str().unwrap_or_default())
-        .collect();
+        .map(|v| as_str(v, "required_log_fields[]"))
+        .collect::<Result<_, _>>()?;
     ensure_eq(
         log_fields,
         REQUIRED_LOG_FIELDS.to_vec(),
@@ -148,35 +208,32 @@ fn manifest_is_well_formed() -> TestResult {
 #[test]
 fn execution_policy_pins_rch_only_default_runner() -> TestResult {
     let manifest = load_json(&manifest_path())?;
-    let policy = &manifest["execution_policy"];
+    let policy = field(&manifest, "execution_policy", "manifest")?;
     ensure_eq(
-        policy["default_runner"].as_str(),
-        Some("rch_only"),
+        string_field(policy, "default_runner", "execution_policy")?,
+        "rch_only",
         "execution_policy.default_runner",
     )?;
-    let template = as_str(
-        &policy["cargo_invocation_template"],
-        "execution_policy.cargo_invocation_template",
-    )?;
+    let template = string_field(policy, "cargo_invocation_template", "execution_policy")?;
     for marker in [
         "rch exec",
         "cargo test",
         "-p frankenlibc-harness",
         "<scenario_test_name>",
     ] {
-        ensure(
+        ensure_args(
             template.contains(marker),
-            format!("cargo_invocation_template must contain {marker:?}; got {template:?}"),
+            format_args!("cargo_invocation_template must contain {marker:?}; got {template:?}"),
         )?;
     }
     ensure_eq(
-        policy["iteration_tier_envvar"].as_str(),
-        Some("FRANKENLIBC_STRESS_TIER"),
+        string_field(policy, "iteration_tier_envvar", "execution_policy")?,
+        "FRANKENLIBC_STRESS_TIER",
         "iteration_tier_envvar",
     )?;
     ensure_eq(
-        policy["default_tier"].as_str(),
-        Some("smoke"),
+        string_field(policy, "default_tier", "execution_policy")?,
+        "smoke",
         "default_tier",
     )?;
     Ok(())
@@ -185,7 +242,7 @@ fn execution_policy_pins_rch_only_default_runner() -> TestResult {
 #[test]
 fn iteration_tiers_are_monotone() -> TestResult {
     let manifest = load_json(&manifest_path())?;
-    let tiers = as_array(&manifest["iteration_tiers"], "iteration_tiers")?;
+    let tiers = array_field(&manifest, "iteration_tiers", "manifest")?;
     ensure(
         tiers.len() >= 2,
         "iteration_tiers must declare at least two levels",
@@ -193,29 +250,25 @@ fn iteration_tiers_are_monotone() -> TestResult {
     let mut prev_iters: u64 = 0;
     let mut prev_threads: u64 = 0;
     for tier in tiers {
-        let iters = tier["iterations"]
-            .as_u64()
-            .ok_or_else(|| test_error("iterations must be an integer"))?;
-        let threads = tier["thread_count"]
-            .as_u64()
-            .ok_or_else(|| test_error("thread_count must be an integer"))?;
-        ensure(
+        let iters = u64_field(tier, "iterations", "iteration_tiers[]")?;
+        let threads = u64_field(tier, "thread_count", "iteration_tiers[]")?;
+        ensure_args(
             iters > 0 && iters <= 1_000_000,
-            format!("iteration count {iters} out of bounded range (0, 1_000_000]"),
+            format_args!("iteration count {iters} out of bounded range (0, 1_000_000]"),
         )?;
-        ensure(
+        ensure_args(
             threads > 0 && threads <= 64,
-            format!("thread_count {threads} out of bounded range (0, 64]"),
+            format_args!("thread_count {threads} out of bounded range (0, 64]"),
         )?;
-        ensure(
+        ensure_args(
             iters > prev_iters,
-            format!(
+            format_args!(
                 "iteration_tiers must be monotone increasing in iterations (prev={prev_iters}, this={iters})"
             ),
         )?;
-        ensure(
+        ensure_args(
             threads >= prev_threads,
-            format!(
+            format_args!(
                 "iteration_tiers must be monotone non-decreasing in thread_count (prev={prev_threads}, this={threads})"
             ),
         )?;
@@ -228,77 +281,83 @@ fn iteration_tiers_are_monotone() -> TestResult {
 #[test]
 fn scenarios_carry_unique_ids_seeds_and_test_names() -> TestResult {
     let manifest = load_json(&manifest_path())?;
-    let mut ids: BTreeSet<String> = BTreeSet::new();
-    let mut seeds: BTreeSet<String> = BTreeSet::new();
-    let mut test_names: BTreeSet<String> = BTreeSet::new();
-    let mut artifacts: BTreeSet<String> = BTreeSet::new();
-    let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
+    let mut ids: BTreeSet<&str> = BTreeSet::new();
+    let mut seeds: BTreeSet<&str> = BTreeSet::new();
+    let mut test_names: BTreeSet<&str> = BTreeSet::new();
+    let mut artifacts: BTreeSet<&str> = BTreeSet::new();
+    let mut by_kind: BTreeMap<&str, usize> = BTreeMap::new();
 
-    for row in as_array(&manifest["scenarios"], "scenarios")? {
-        let id = as_str(&row["scenario_id"], "row.scenario_id")?;
-        ensure(
-            ids.insert(id.to_string()),
-            format!("duplicate scenario_id {id}"),
-        )?;
-        let kind = as_str(&row["scenario_kind"], "row.scenario_kind")?;
-        *by_kind.entry(kind.to_string()).or_default() += 1;
-        let seed = as_str(&row["seed"], "row.seed")?;
-        ensure(
+    for row in array_field(&manifest, "scenarios", "manifest")? {
+        let id = string_field(row, "scenario_id", "row")?;
+        ensure_args(ids.insert(id), format_args!("duplicate scenario_id {id}"))?;
+        let kind = string_field(row, "scenario_kind", "row")?;
+        *by_kind.entry(kind).or_default() += 1;
+        let seed = string_field(row, "seed", "row")?;
+        ensure_args(
             seed.starts_with("0x") && seed.len() >= 18,
-            format!("scenario {id}: seed {seed} must be a 0x-prefixed 64-bit literal"),
+            format_args!("scenario {id}: seed {seed} must be a 0x-prefixed 64-bit literal"),
         )?;
-        ensure(
-            seeds.insert(seed.to_string()),
-            format!("duplicate seed across scenarios: {seed}"),
+        ensure_args(
+            seeds.insert(seed),
+            format_args!("duplicate seed across scenarios: {seed}"),
         )?;
-        let test_name = as_str(&row["harness_test_name"], "row.harness_test_name")?;
-        ensure(
-            test_names.insert(test_name.to_string()),
-            format!("duplicate harness_test_name {test_name}"),
+        let test_name = string_field(row, "harness_test_name", "row")?;
+        ensure_args(
+            test_names.insert(test_name),
+            format_args!("duplicate harness_test_name {test_name}"),
         )?;
-        let oracle = as_str(&row["oracle_kind"], "row.oracle_kind")?;
-        ensure(
+        let oracle = string_field(row, "oracle_kind", "row")?;
+        ensure_args(
             !oracle.is_empty(),
-            format!("scenario {id}: oracle_kind must be non-empty"),
+            format_args!("scenario {id}: oracle_kind must be non-empty"),
         )?;
-        let modes = as_array(&row["runtime_modes"], "row.runtime_modes")?;
-        ensure(
+        let modes = array_field(row, "runtime_modes", "row")?;
+        ensure_args(
             !modes.is_empty(),
-            format!("scenario {id}: runtime_modes must be non-empty"),
+            format_args!("scenario {id}: runtime_modes must be non-empty"),
         )?;
         for mode in modes {
             let m = as_str(mode, "row.runtime_modes[]")?;
-            ensure(
+            ensure_args(
                 matches!(m, "strict" | "hardened"),
-                format!("scenario {id}: runtime_mode {m:?} must be strict|hardened"),
+                format_args!("scenario {id}: runtime_mode {m:?} must be strict|hardened"),
             )?;
         }
-        let evidence = as_str(&row["evidence_artifact"], "row.evidence_artifact")?;
-        ensure(
+        let evidence = string_field(row, "evidence_artifact", "row")?;
+        ensure_args(
             evidence.starts_with("target/conformance/stress_orchard/"),
-            format!(
+            format_args!(
                 "scenario {id}: evidence_artifact {evidence:?} must live under target/conformance/stress_orchard/"
             ),
         )?;
-        ensure(
+        ensure_args(
             evidence.ends_with(".jsonl"),
-            format!("scenario {id}: evidence_artifact {evidence:?} must be .jsonl"),
+            format_args!("scenario {id}: evidence_artifact {evidence:?} must be .jsonl"),
         )?;
-        ensure(
-            artifacts.insert(evidence.to_string()),
-            format!("duplicate evidence_artifact {evidence}"),
+        ensure_args(
+            artifacts.insert(evidence),
+            format_args!("duplicate evidence_artifact {evidence}"),
         )?;
     }
 
-    let minimums = manifest["minimum_scenario_counts"]
+    let minimums = field(&manifest, "minimum_scenario_counts", "manifest")?
         .as_object()
         .ok_or_else(|| test_error("minimum_scenario_counts must be an object"))?;
     for (kind, expected) in minimums {
-        let expected = expected.as_u64().unwrap_or(0) as usize;
-        let actual = by_kind.get(kind).copied().unwrap_or(0);
-        ensure(
+        let expected = expected.as_u64().ok_or_else(|| {
+            test_error_args(format_args!(
+                "minimum_scenario_counts.{kind} must be an integer"
+            ))
+        })?;
+        let expected = usize::try_from(expected).map_err(|err| {
+            test_error_args(format_args!(
+                "minimum_scenario_counts.{kind} is too large: {err}"
+            ))
+        })?;
+        let actual = by_kind.get(kind.as_str()).copied().unwrap_or(0);
+        ensure_args(
             actual >= expected,
-            format!("scenario_kind {kind}: have {actual} rows, minimum is {expected}"),
+            format_args!("scenario_kind {kind}: have {actual} rows, minimum is {expected}"),
         )?;
     }
     Ok(())
@@ -307,47 +366,48 @@ fn scenarios_carry_unique_ids_seeds_and_test_names() -> TestResult {
 #[test]
 fn claim_policy_blocks_done_and_replacement_levels_without_evidence() -> TestResult {
     let manifest = load_json(&manifest_path())?;
-    let policy = &manifest["claim_policy"];
+    let policy = field(&manifest, "claim_policy", "manifest")?;
     ensure_eq(
-        policy["default_decision"].as_str(),
-        Some("block_until_orchard_evidence_current"),
+        string_field(policy, "default_decision", "claim_policy")?,
+        "block_until_orchard_evidence_current",
         "claim_policy.default_decision",
     )?;
-    let block_status: Vec<&str> = as_array(
-        &policy["block_status_without_evidence"],
-        "block_status_without_evidence",
-    )?
-    .iter()
-    .map(|v| v.as_str().unwrap_or_default())
-    .collect();
+    let block_status: Vec<&str> =
+        array_field(policy, "block_status_without_evidence", "claim_policy")?
+            .iter()
+            .map(|v| as_str(v, "claim_policy.block_status_without_evidence[]"))
+            .collect::<Result<_, _>>()?;
     ensure(
         block_status.contains(&"DONE"),
         "claim_policy must block DONE without evidence",
     )?;
-    let block_levels: Vec<&str> = as_array(
-        &policy["block_replacement_levels_without_evidence"],
+    let block_levels: Vec<&str> = array_field(
+        policy,
         "block_replacement_levels_without_evidence",
+        "claim_policy",
     )?
     .iter()
-    .map(|v| v.as_str().unwrap_or_default())
-    .collect();
+    .map(|v| {
+        as_str(
+            v,
+            "claim_policy.block_replacement_levels_without_evidence[]",
+        )
+    })
+    .collect::<Result<_, _>>()?;
     for level in ["L1", "L2", "L3"] {
-        ensure(
+        ensure_args(
             block_levels.contains(&level),
-            format!("claim_policy must block replacement level {level}"),
+            format_args!("claim_policy must block replacement level {level}"),
         )?;
     }
-    let rejected: Vec<&str> = as_array(
-        &policy["rejected_evidence_kinds"],
-        "rejected_evidence_kinds",
-    )?
-    .iter()
-    .map(|v| v.as_str().unwrap_or_default())
-    .collect();
+    let rejected: Vec<&str> = array_field(policy, "rejected_evidence_kinds", "claim_policy")?
+        .iter()
+        .map(|v| as_str(v, "claim_policy.rejected_evidence_kinds[]"))
+        .collect::<Result<_, _>>()?;
     for kind in REJECTED_EVIDENCE_KINDS {
-        ensure(
+        ensure_args(
             rejected.contains(kind),
-            format!("rejected_evidence_kinds must include {kind}"),
+            format_args!("rejected_evidence_kinds must include {kind}"),
         )?;
     }
     Ok(())
@@ -359,20 +419,22 @@ fn hardened_repair_scenarios_only_run_in_hardened_mode() -> TestResult {
     // not to take. If a future edit lists strict in runtime_modes for these
     // rows it would silently weaken the assertion; this gate refuses that.
     let manifest = load_json(&manifest_path())?;
-    for row in as_array(&manifest["scenarios"], "scenarios")? {
-        let kind = as_str(&row["scenario_kind"], "row.scenario_kind")?;
+    for row in array_field(&manifest, "scenarios", "manifest")? {
+        let kind = string_field(row, "scenario_kind", "row")?;
         if kind != "hardened_repair" {
             continue;
         }
-        let id = as_str(&row["scenario_id"], "row.scenario_id")?;
-        let modes: Vec<&str> = as_array(&row["runtime_modes"], "row.runtime_modes")?
+        let id = string_field(row, "scenario_id", "row")?;
+        let modes: Vec<&str> = array_field(row, "runtime_modes", "row")?
             .iter()
-            .map(|v| v.as_str().unwrap_or_default())
-            .collect();
-        ensure_eq(
+            .map(|v| as_str(v, "row.runtime_modes[]"))
+            .collect::<Result<_, _>>()?;
+        ensure_eq_args(
             modes,
             vec!["hardened"],
-            format!("hardened_repair scenario {id} must declare runtime_modes=[hardened] only"),
+            format_args!(
+                "hardened_repair scenario {id} must declare runtime_modes=[hardened] only"
+            ),
         )?;
     }
     Ok(())
@@ -382,11 +444,11 @@ fn hardened_repair_scenarios_only_run_in_hardened_mode() -> TestResult {
 fn consuming_gates_exist_on_disk() -> TestResult {
     let manifest = load_json(&manifest_path())?;
     let root = workspace_root();
-    for gate in as_array(&manifest["consuming_gates"], "consuming_gates")? {
+    for gate in array_field(&manifest, "consuming_gates", "manifest")? {
         let path = as_str(gate, "consuming_gates[]")?;
-        ensure(
-            root.join(path).exists(),
-            format!("consuming_gates entry not found on disk: {path}"),
+        ensure_args(
+            safe_workspace_path(&root, path)?.exists(),
+            format_args!("consuming_gates entry not found on disk: {path}"),
         )?;
     }
     Ok(())

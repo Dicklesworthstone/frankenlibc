@@ -4,8 +4,13 @@
   "bead": "bd-b92jd.5.3",
   "owner_bead": "bd-b92jd.5",
   "generated_utc": "2026-05-05T01:30:00Z",
-  "source_commit": "9a45e43c909dc462369df55aba712595c523ff09",
-  "purpose": "Hermetic stress orchard for pthread/malloc/stdio interleavings. Each scenario is a deterministic, bounded-iteration replay with a fixed PCG32 seed; the manifest is the source of truth for which scenarios exist, what oracles they assert, which iteration tiers they ship, and where their structured-log evidence lands. The harness gate verifies the manifest's structural invariants and refuses to advertise stress coverage in support_matrix/release surfaces unless every cited scenario row is currently sealed.",
+  "source_commit": "5af58013880b7e186fbb45a52688e1837270fccb",
+  "purpose": "Hermetic stress orchard for pthread/malloc/stdio interleavings. Each scenario is a deterministic, bounded-iteration replay with a fixed PCG32 seed; the manifest is the source of truth for which scenarios exist, what oracles they assert, which iteration tiers they ship, and where their structured-log evidence lands. The execution runner validates the manifest, emits current smoke-tier JSONL evidence for each declared runtime mode, and refuses to advertise stress coverage in support_matrix/release surfaces unless every cited scenario row is currently sealed.",
+  "execution_runner": "scripts/run_pthread_malloc_stdio_stress_orchard.sh",
+  "freshness": {
+    "required_source_commit": "current",
+    "source_commit_policy": "Runner reports and JSONL rows must carry the current git commit; execution tests mutate this field to prove stale artifacts fail closed."
+  },
   "execution_policy": {
     "default_runner": "rch_only",
     "rationale": "Heavy stress runs perturb shared local CI capacity and confound failure attribution; rch isolates worker target_dirs and preserves source_commit + run_id. Local runs are explicitly opt-in via FRANKENLIBC_STRESS_LOCAL=1.",
@@ -69,6 +74,14 @@
       "missing_runtime_mode_coverage"
     ]
   },
+  "optional_skip_conditions": [
+    {
+      "skip_id": "normal-and-deep-tiers-disabled-by-default",
+      "condition": "FRANKENLIBC_STRESS_TIER is unset",
+      "expected_status": "skipped",
+      "recorded_reason": "The default evidence run uses the bounded smoke tier; normal and deep stress tiers are opt-in to avoid perturbing shared CI."
+    }
+  ],
   "scenarios": [
     {
       "scenario_id": "malloc-concurrent-alloc-free",
