@@ -163,10 +163,7 @@ fn manifest_defines_required_rows_and_log_contract() {
     let source_commit = manifest["source_commit"]
         .as_str()
         .expect("source_commit should be present");
-    assert!(
-        is_hex_commit(source_commit),
-        "source_commit should be a 40-hex commit, got {source_commit:?}"
-    );
+    assert_eq!(source_commit, "current");
     assert_source_commit_freshness_policy(&manifest);
     assert_eq!(
         manifest["freshness"]["required_source_commit"].as_str(),
@@ -271,12 +268,12 @@ fn stale_source_commit_policy_blocks_standalone_smoke_evidence() {
         .as_str()
         .expect("source_commit should be present");
     assert!(
-        is_hex_commit(source_commit),
-        "source_commit should be a 40-hex commit, got {source_commit:?}"
+        source_commit == "current" || is_hex_commit(source_commit),
+        "source_commit should be 'current' or a 40-hex commit, got {source_commit:?}"
     );
     let current_head = git_head(&root);
     assert_source_commit_freshness_policy(&manifest);
-    if source_commit != current_head {
+    if source_commit != "current" && source_commit != current_head {
         let policy = &manifest["source_commit_freshness_policy"];
         assert_eq!(
             policy["stale_result"].as_str(),
@@ -294,6 +291,41 @@ fn stale_source_commit_policy_blocks_standalone_smoke_evidence() {
             "stale source commits must use stale_source_commit"
         );
     }
+}
+
+#[test]
+fn validate_only_rejects_stale_recorded_source_commit() {
+    let temp = unique_temp_dir("standalone-stale-recorded-source-commit");
+    let manifest_path = temp.join("standalone_link_run_smoke.stale_recorded.json");
+    let mut manifest = load_manifest();
+    manifest["source_commit"] =
+        serde_json::Value::String("0000000000000000000000000000000000000000".to_owned());
+    write_json(&manifest_path, &manifest);
+
+    let (_gate_temp, report_path, _log_path, output) = run_gate_with_manifest(
+        "--validate-only",
+        "standalone-stale-recorded-source-commit",
+        Some(&manifest_path),
+    );
+    assert!(
+        !output.status.success(),
+        "validate-only should reject stale recorded source_commit:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&report_path);
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    assert_eq!(
+        report["checks"]["recorded_source_commit_freshness"].as_str(),
+        Some("fail")
+    );
+    let errors = report["errors"].as_array().unwrap();
+    assert!(
+        errors.iter().any(|error| error.as_str()
+            == Some("source_commit must be 'current' or match current git HEAD")),
+        "report should explain the stale recorded source_commit failure"
+    );
 }
 
 #[test]
