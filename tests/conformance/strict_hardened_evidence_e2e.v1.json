@@ -1,0 +1,611 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "strict-hardened-evidence-e2e",
+  "bead": "bd-b92jd.4.3",
+  "description": "Hermetic strict/hardened runtime-evidence e2e scenarios for string, malloc, stdio, pthread, and resolver surfaces. Scenarios persist the rch target directory and source commit used to build the gate artifact.",
+  "generated_utc": "2026-05-05T03:10:00Z",
+  "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+  "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+  "runtime_evidence_enabled": true,
+  "network_policy": {
+    "real_network_required": false,
+    "resolver_fixture": "tests/conformance/fixtures/resolver.json",
+    "notes": "Resolver coverage is fixture-backed and must not perform DNS, socket, or service-discovery I/O."
+  },
+  "operation_safety": {
+    "destructive_system_operation": false,
+    "filesystem_write_scope": "target/conformance/strict_hardened_evidence_e2e only"
+  },
+  "required_api_families": [
+    "string",
+    "malloc",
+    "stdio",
+    "pthread",
+    "resolver"
+  ],
+  "required_modes": [
+    "strict",
+    "hardened"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "api_family",
+    "symbol",
+    "runtime_mode",
+    "validation_profile",
+    "expected_decision",
+    "actual_decision",
+    "healing_action",
+    "denied",
+    "target_dir",
+    "source_commit",
+    "artifact_refs",
+    "safety_signature",
+    "failure_signature"
+  ],
+  "inputs": {
+    "runtime_evidence_module": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+    "runtime_evidence_verifier": "crates/frankenlibc-harness/tests/runtime_evidence_verifier_test.rs",
+    "mode_semantics_matrix": "tests/conformance/mode_semantics_matrix.json",
+    "hardened_repair_deny_matrix": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+    "log_schema": "tests/conformance/log_schema.json",
+    "string_fixture": "tests/conformance/fixtures/string_memory_full.json",
+    "malloc_fixture": "tests/conformance/fixtures/membrane_mode_split.json",
+    "stdio_fixture": "tests/conformance/fixtures/stdio_file_ops.json",
+    "pthread_fixture": "tests/conformance/fixtures/pthread_mutex.json",
+    "resolver_fixture": "tests/conformance/fixtures/resolver.json"
+  },
+  "scenario_policy": {
+    "default_decision": "block_done_until_strict_hardened_e2e_gate_passes",
+    "required_scenario_fields": [
+      "scenario_id",
+      "api_family",
+      "symbol",
+      "mode",
+      "runtime_mode",
+      "runtime_evidence_enabled",
+      "validation_profile",
+      "decision_path",
+      "expected_decision",
+      "actual_decision",
+      "expected_repair",
+      "denied",
+      "source_commit",
+      "target_dir",
+      "source_commit_state",
+      "fixture_case_ref",
+      "artifact_refs",
+      "operation_safety",
+      "evidence_row",
+      "failure_signature"
+    ],
+    "required_negative_cases": [
+      "missing_required_family",
+      "missing_required_mode",
+      "real_network_required",
+      "destructive_system_operation",
+      "repair_missing_healing_action",
+      "strict_repair"
+    ],
+    "fail_closed_signatures": [
+      "strict_hardened_e2e_missing_family",
+      "strict_hardened_e2e_missing_mode",
+      "strict_hardened_e2e_real_network_required",
+      "strict_hardened_e2e_destructive_operation",
+      "strict_hardened_e2e_missing_healing_action",
+      "strict_hardened_e2e_strict_repair_not_allowed",
+      "strict_hardened_e2e_decision_mismatch",
+      "strict_hardened_e2e_missing_target_dir",
+      "strict_hardened_e2e_artifact_missing"
+    ]
+  },
+  "scenarios": [
+    {
+      "scenario_id": "string-memcpy-overflow-strict",
+      "api_family": "string",
+      "symbol": "memcpy",
+      "mode": "strict",
+      "runtime_mode": "strict",
+      "runtime_evidence_enabled": true,
+      "validation_profile": "Full",
+      "decision_path": ["mode", "string_bounds_probe", "full_validate"],
+      "expected_decision": "FullValidate",
+      "actual_decision": "FullValidate",
+      "expected_repair": null,
+      "denied": false,
+      "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+      "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+      "source_commit_state": "current",
+      "fixture_case_ref": "tests/conformance/fixtures/string_memory_full.json#/cases/memcpy_overflow_strict",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/mode_semantics_matrix.json",
+        "tests/conformance/fixtures/string_memory_full.json"
+      ],
+      "operation_safety": {
+        "real_network_required": false,
+        "destructive_system_operation": false
+      },
+      "evidence_row": {
+        "schema": "frankenlibc.runtime_evidence.v1",
+        "trace_id": "bd-b92jd.4.3::string::strict",
+        "bead_id": "bd-b92jd.4.3",
+        "scenario_id": "string-memcpy-overflow-strict",
+        "mode": "strict",
+        "runtime_mode": "strict",
+        "validation_profile": "Full",
+        "decision_action": "FullValidate",
+        "healing_action": null,
+        "denied": false,
+        "latency_ns": 81,
+        "api_family": "string",
+        "symbol": "memcpy",
+        "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+        "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+        "runtime_evidence_enabled": true
+      },
+      "failure_signature": "none"
+    },
+    {
+      "scenario_id": "string-memcpy-overflow-hardened",
+      "api_family": "string",
+      "symbol": "memcpy",
+      "mode": "hardened",
+      "runtime_mode": "hardened",
+      "runtime_evidence_enabled": true,
+      "validation_profile": "Full",
+      "decision_path": ["mode", "string_bounds_probe", "repair"],
+      "expected_decision": "Repair",
+      "actual_decision": "Repair",
+      "expected_repair": "ClampSize",
+      "denied": false,
+      "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+      "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+      "source_commit_state": "current",
+      "fixture_case_ref": "tests/conformance/fixtures/string_memory_full.json#/cases/memcpy_overflow_hardened",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/hardened_repair_deny_matrix.v1.json",
+        "tests/conformance/fixtures/string_memory_full.json"
+      ],
+      "operation_safety": {
+        "real_network_required": false,
+        "destructive_system_operation": false
+      },
+      "evidence_row": {
+        "schema": "frankenlibc.runtime_evidence.v1",
+        "trace_id": "bd-b92jd.4.3::string::hardened",
+        "bead_id": "bd-b92jd.4.3",
+        "scenario_id": "string-memcpy-overflow-hardened",
+        "mode": "hardened",
+        "runtime_mode": "hardened",
+        "validation_profile": "Full",
+        "decision_action": "Repair",
+        "healing_action": "ClampSize",
+        "denied": false,
+        "latency_ns": 142,
+        "api_family": "string",
+        "symbol": "memcpy",
+        "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+        "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+        "runtime_evidence_enabled": true
+      },
+      "failure_signature": "none"
+    },
+    {
+      "scenario_id": "malloc-double-free-strict",
+      "api_family": "malloc",
+      "symbol": "free",
+      "mode": "strict",
+      "runtime_mode": "strict",
+      "runtime_evidence_enabled": true,
+      "validation_profile": "Full",
+      "decision_path": ["mode", "arena_generation_check", "full_validate"],
+      "expected_decision": "FullValidate",
+      "actual_decision": "FullValidate",
+      "expected_repair": null,
+      "denied": false,
+      "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+      "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+      "source_commit_state": "current",
+      "fixture_case_ref": "tests/conformance/fixtures/membrane_mode_split.json#/cases/strict_free_double_free_observed",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/mode_semantics_matrix.json",
+        "tests/conformance/fixtures/membrane_mode_split.json"
+      ],
+      "operation_safety": {
+        "real_network_required": false,
+        "destructive_system_operation": false
+      },
+      "evidence_row": {
+        "schema": "frankenlibc.runtime_evidence.v1",
+        "trace_id": "bd-b92jd.4.3::malloc::strict",
+        "bead_id": "bd-b92jd.4.3",
+        "scenario_id": "malloc-double-free-strict",
+        "mode": "strict",
+        "runtime_mode": "strict",
+        "validation_profile": "Full",
+        "decision_action": "FullValidate",
+        "healing_action": null,
+        "denied": false,
+        "latency_ns": 74,
+        "api_family": "malloc",
+        "symbol": "free",
+        "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+        "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+        "runtime_evidence_enabled": true
+      },
+      "failure_signature": "none"
+    },
+    {
+      "scenario_id": "malloc-double-free-hardened",
+      "api_family": "malloc",
+      "symbol": "free",
+      "mode": "hardened",
+      "runtime_mode": "hardened",
+      "runtime_evidence_enabled": true,
+      "validation_profile": "Full",
+      "decision_path": ["mode", "arena_generation_check", "repair"],
+      "expected_decision": "Repair",
+      "actual_decision": "Repair",
+      "expected_repair": "IgnoreDoubleFree",
+      "denied": false,
+      "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+      "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+      "source_commit_state": "current",
+      "fixture_case_ref": "tests/conformance/fixtures/membrane_mode_split.json#/cases/hardened_free_double_free_ignored",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/hardened_repair_deny_matrix.v1.json",
+        "tests/conformance/fixtures/membrane_mode_split.json"
+      ],
+      "operation_safety": {
+        "real_network_required": false,
+        "destructive_system_operation": false
+      },
+      "evidence_row": {
+        "schema": "frankenlibc.runtime_evidence.v1",
+        "trace_id": "bd-b92jd.4.3::malloc::hardened",
+        "bead_id": "bd-b92jd.4.3",
+        "scenario_id": "malloc-double-free-hardened",
+        "mode": "hardened",
+        "runtime_mode": "hardened",
+        "validation_profile": "Full",
+        "decision_action": "Repair",
+        "healing_action": "IgnoreDoubleFree",
+        "denied": false,
+        "latency_ns": 126,
+        "api_family": "malloc",
+        "symbol": "free",
+        "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+        "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+        "runtime_evidence_enabled": true
+      },
+      "failure_signature": "none"
+    },
+    {
+      "scenario_id": "stdio-invalid-stream-strict",
+      "api_family": "stdio",
+      "symbol": "fread",
+      "mode": "strict",
+      "runtime_mode": "strict",
+      "runtime_evidence_enabled": true,
+      "validation_profile": "Full",
+      "decision_path": ["mode", "stream_validation", "deny"],
+      "expected_decision": "Deny",
+      "actual_decision": "Deny",
+      "expected_repair": null,
+      "denied": true,
+      "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+      "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+      "source_commit_state": "current",
+      "fixture_case_ref": "tests/conformance/fixtures/stdio_file_ops.json#/cases/strict_invalid_stream_error",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/mode_semantics_matrix.json",
+        "tests/conformance/fixtures/stdio_file_ops.json"
+      ],
+      "operation_safety": {
+        "real_network_required": false,
+        "destructive_system_operation": false
+      },
+      "evidence_row": {
+        "schema": "frankenlibc.runtime_evidence.v1",
+        "trace_id": "bd-b92jd.4.3::stdio::strict",
+        "bead_id": "bd-b92jd.4.3",
+        "scenario_id": "stdio-invalid-stream-strict",
+        "mode": "strict",
+        "runtime_mode": "strict",
+        "validation_profile": "Full",
+        "decision_action": "Deny",
+        "healing_action": null,
+        "denied": true,
+        "latency_ns": 69,
+        "api_family": "stdio",
+        "symbol": "fread",
+        "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+        "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+        "runtime_evidence_enabled": true
+      },
+      "failure_signature": "none"
+    },
+    {
+      "scenario_id": "stdio-invalid-stream-hardened",
+      "api_family": "stdio",
+      "symbol": "fread",
+      "mode": "hardened",
+      "runtime_mode": "hardened",
+      "runtime_evidence_enabled": true,
+      "validation_profile": "Full",
+      "decision_path": ["mode", "stream_validation", "repair"],
+      "expected_decision": "Repair",
+      "actual_decision": "Repair",
+      "expected_repair": "ReturnSafeDefault",
+      "denied": false,
+      "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+      "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+      "source_commit_state": "current",
+      "fixture_case_ref": "tests/conformance/fixtures/stdio_file_ops.json#/cases/hardened_invalid_stream_safe_default",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/hardened_repair_deny_matrix.v1.json",
+        "tests/conformance/fixtures/stdio_file_ops.json"
+      ],
+      "operation_safety": {
+        "real_network_required": false,
+        "destructive_system_operation": false
+      },
+      "evidence_row": {
+        "schema": "frankenlibc.runtime_evidence.v1",
+        "trace_id": "bd-b92jd.4.3::stdio::hardened",
+        "bead_id": "bd-b92jd.4.3",
+        "scenario_id": "stdio-invalid-stream-hardened",
+        "mode": "hardened",
+        "runtime_mode": "hardened",
+        "validation_profile": "Full",
+        "decision_action": "Repair",
+        "healing_action": "ReturnSafeDefault",
+        "denied": false,
+        "latency_ns": 133,
+        "api_family": "stdio",
+        "symbol": "fread",
+        "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+        "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+        "runtime_evidence_enabled": true
+      },
+      "failure_signature": "none"
+    },
+    {
+      "scenario_id": "pthread-unlock-without-owner-strict",
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_unlock",
+      "mode": "strict",
+      "runtime_mode": "strict",
+      "runtime_evidence_enabled": true,
+      "validation_profile": "Full",
+      "decision_path": ["mode", "thread_ownership_check", "deny"],
+      "expected_decision": "Deny",
+      "actual_decision": "Deny",
+      "expected_repair": null,
+      "denied": true,
+      "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+      "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+      "source_commit_state": "current",
+      "fixture_case_ref": "tests/conformance/fixtures/pthread_mutex.json#/cases/strict_unlock_without_owner_eperm",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/mode_semantics_matrix.json",
+        "tests/conformance/fixtures/pthread_mutex.json"
+      ],
+      "operation_safety": {
+        "real_network_required": false,
+        "destructive_system_operation": false
+      },
+      "evidence_row": {
+        "schema": "frankenlibc.runtime_evidence.v1",
+        "trace_id": "bd-b92jd.4.3::pthread::strict",
+        "bead_id": "bd-b92jd.4.3",
+        "scenario_id": "pthread-unlock-without-owner-strict",
+        "mode": "strict",
+        "runtime_mode": "strict",
+        "validation_profile": "Full",
+        "decision_action": "Deny",
+        "healing_action": null,
+        "denied": true,
+        "latency_ns": 93,
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_unlock",
+        "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+        "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+        "runtime_evidence_enabled": true
+      },
+      "failure_signature": "none"
+    },
+    {
+      "scenario_id": "pthread-unlock-without-owner-hardened",
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_unlock",
+      "mode": "hardened",
+      "runtime_mode": "hardened",
+      "runtime_evidence_enabled": true,
+      "validation_profile": "Full",
+      "decision_path": ["mode", "thread_ownership_check", "repair"],
+      "expected_decision": "Repair",
+      "actual_decision": "Repair",
+      "expected_repair": "ReturnSafeDefault",
+      "denied": false,
+      "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+      "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+      "source_commit_state": "current",
+      "fixture_case_ref": "tests/conformance/fixtures/pthread_mutex.json#/cases/hardened_unlock_without_owner_ignored",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/mode_semantics_matrix.json",
+        "tests/conformance/fixtures/pthread_mutex.json"
+      ],
+      "operation_safety": {
+        "real_network_required": false,
+        "destructive_system_operation": false
+      },
+      "evidence_row": {
+        "schema": "frankenlibc.runtime_evidence.v1",
+        "trace_id": "bd-b92jd.4.3::pthread::hardened",
+        "bead_id": "bd-b92jd.4.3",
+        "scenario_id": "pthread-unlock-without-owner-hardened",
+        "mode": "hardened",
+        "runtime_mode": "hardened",
+        "validation_profile": "Full",
+        "decision_action": "Repair",
+        "healing_action": "ReturnSafeDefault",
+        "denied": false,
+        "latency_ns": 155,
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_unlock",
+        "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+        "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+        "runtime_evidence_enabled": true
+      },
+      "failure_signature": "none"
+    },
+    {
+      "scenario_id": "resolver-invalid-hints-strict",
+      "api_family": "resolver",
+      "symbol": "getaddrinfo",
+      "mode": "strict",
+      "runtime_mode": "strict",
+      "runtime_evidence_enabled": true,
+      "validation_profile": "Full",
+      "decision_path": ["mode", "resolver_hint_validation", "deny"],
+      "expected_decision": "Deny",
+      "actual_decision": "Deny",
+      "expected_repair": null,
+      "denied": true,
+      "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+      "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+      "source_commit_state": "current",
+      "fixture_case_ref": "tests/conformance/fixtures/resolver.json#/cases/strict_invalid_hints_badflags",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/mode_semantics_matrix.json",
+        "tests/conformance/fixtures/resolver.json"
+      ],
+      "operation_safety": {
+        "real_network_required": false,
+        "destructive_system_operation": false
+      },
+      "evidence_row": {
+        "schema": "frankenlibc.runtime_evidence.v1",
+        "trace_id": "bd-b92jd.4.3::resolver::strict",
+        "bead_id": "bd-b92jd.4.3",
+        "scenario_id": "resolver-invalid-hints-strict",
+        "mode": "strict",
+        "runtime_mode": "strict",
+        "validation_profile": "Full",
+        "decision_action": "Deny",
+        "healing_action": null,
+        "denied": true,
+        "latency_ns": 88,
+        "api_family": "resolver",
+        "symbol": "getaddrinfo",
+        "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+        "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+        "runtime_evidence_enabled": true
+      },
+      "failure_signature": "none"
+    },
+    {
+      "scenario_id": "resolver-invalid-hints-hardened",
+      "api_family": "resolver",
+      "symbol": "getaddrinfo",
+      "mode": "hardened",
+      "runtime_mode": "hardened",
+      "runtime_evidence_enabled": true,
+      "validation_profile": "Full",
+      "decision_path": ["mode", "resolver_hint_validation", "repair"],
+      "expected_decision": "Repair",
+      "actual_decision": "Repair",
+      "expected_repair": "ReturnSafeDefault",
+      "denied": false,
+      "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+      "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+      "source_commit_state": "current",
+      "fixture_case_ref": "tests/conformance/fixtures/resolver.json#/cases/hardened_invalid_hints_safe_defaults",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/mode_semantics_matrix.json",
+        "tests/conformance/fixtures/resolver.json"
+      ],
+      "operation_safety": {
+        "real_network_required": false,
+        "destructive_system_operation": false
+      },
+      "evidence_row": {
+        "schema": "frankenlibc.runtime_evidence.v1",
+        "trace_id": "bd-b92jd.4.3::resolver::hardened",
+        "bead_id": "bd-b92jd.4.3",
+        "scenario_id": "resolver-invalid-hints-hardened",
+        "mode": "hardened",
+        "runtime_mode": "hardened",
+        "validation_profile": "Full",
+        "decision_action": "Repair",
+        "healing_action": "ReturnSafeDefault",
+        "denied": false,
+        "latency_ns": 149,
+        "api_family": "resolver",
+        "symbol": "getaddrinfo",
+        "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+        "target_dir": "/data/tmp/rch_target_frankenlibc_swiftknoll_bd_b92jd_4_3",
+        "runtime_evidence_enabled": true
+      },
+      "failure_signature": "none"
+    }
+  ],
+  "negative_scenario_cases": [
+    {
+      "case_id": "missing-family-blocks-e2e-gate",
+      "mutation": "missing_required_family",
+      "target_scenario_id": "resolver-invalid-hints-hardened",
+      "expected_failure_signature": "strict_hardened_e2e_missing_family"
+    },
+    {
+      "case_id": "missing-mode-blocks-e2e-gate",
+      "mutation": "missing_required_mode",
+      "target_scenario_id": "string-memcpy-overflow-hardened",
+      "expected_failure_signature": "strict_hardened_e2e_missing_mode"
+    },
+    {
+      "case_id": "real-network-blocks-e2e-gate",
+      "mutation": "real_network_required",
+      "target_scenario_id": "resolver-invalid-hints-strict",
+      "expected_failure_signature": "strict_hardened_e2e_real_network_required"
+    },
+    {
+      "case_id": "destructive-operation-blocks-e2e-gate",
+      "mutation": "destructive_system_operation",
+      "target_scenario_id": "stdio-invalid-stream-strict",
+      "expected_failure_signature": "strict_hardened_e2e_destructive_operation"
+    },
+    {
+      "case_id": "missing-healing-action-blocks-e2e-gate",
+      "mutation": "repair_missing_healing_action",
+      "target_scenario_id": "malloc-double-free-hardened",
+      "expected_failure_signature": "strict_hardened_e2e_missing_healing_action"
+    },
+    {
+      "case_id": "strict-repair-blocks-e2e-gate",
+      "mutation": "strict_repair",
+      "target_scenario_id": "string-memcpy-overflow-strict",
+      "expected_failure_signature": "strict_hardened_e2e_strict_repair_not_allowed"
+    }
+  ],
+  "summary": {
+    "scenario_count": 10,
+    "required_family_count": 5,
+    "required_mode_count": 2,
+    "negative_case_count": 6,
+    "required_log_field_count": 16
+  }
+}
