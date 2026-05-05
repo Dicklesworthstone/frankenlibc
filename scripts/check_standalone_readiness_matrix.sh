@@ -122,6 +122,22 @@ def full_git_commit(value):
         and all(byte in "0123456789abcdefABCDEF" for byte in value)
     )
 
+def current_commit():
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+source_commit = current_commit()
+
+def source_commit_marker_is_current(value):
+    return value == "current" or (source_commit != "unknown" and value == source_commit)
+
 matrix = load_json(matrix_path)
 levels = load_json(levels_path)
 checks["json_parse"] = "pass" if isinstance(matrix, dict) and isinstance(levels, dict) else "fail"
@@ -144,14 +160,22 @@ expected_freshness_policy = {
     "rejected_evidence_kind": "stale_source_commit",
 }
 source_commit_policy_ok = (
-    full_git_commit(matrix.get("source_commit"))
+    (matrix.get("source_commit") == "current" or full_git_commit(matrix.get("source_commit")))
     and matrix.get("source_commit_freshness_policy") == expected_freshness_policy
 )
 checks["source_commit_freshness_policy"] = "pass" if source_commit_policy_ok else "fail"
+recorded_source_commit_current = (
+    source_commit_policy_ok and source_commit_marker_is_current(matrix.get("source_commit"))
+)
+checks["recorded_source_commit_freshness"] = (
+    "pass" if recorded_source_commit_current else "fail"
+)
 if not source_commit_policy_ok:
     errors.append(
         "source_commit_freshness_policy must match the stale standalone readiness matrix block contract"
     )
+elif not recorded_source_commit_current:
+    errors.append("source_commit must be 'current' or match current git HEAD")
 
 if matrix.get("required_log_fields") == REQUIRED_LOG_FIELDS:
     checks["required_log_fields"] = "pass"
@@ -421,16 +445,6 @@ summary_ok = (
 checks["summary_counts"] = "pass" if summary_ok else "fail"
 if not summary_ok:
     errors.append("summary counts do not match obligations, dimensions, blocked states, and negative tests")
-
-try:
-    source_commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=root,
-        text=True,
-        stderr=subprocess.DEVNULL,
-    ).strip()
-except Exception:
-    source_commit = "unknown"
 
 status = "pass" if not errors else "fail"
 artifact_refs = [

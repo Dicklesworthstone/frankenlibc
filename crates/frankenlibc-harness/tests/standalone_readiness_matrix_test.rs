@@ -61,6 +61,10 @@ fn is_hex_commit(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+fn source_commit_is_current(value: &str, current_head: &str) -> bool {
+    value == "current" || value == current_head
+}
+
 fn git_head(root: &Path) -> String {
     let output = Command::new("git")
         .arg("-C")
@@ -176,8 +180,24 @@ fn assert_source_commit_freshness_policy(matrix: &serde_json::Value) {
     );
 }
 
+fn assert_recorded_source_commit_is_current(root: &Path, matrix: &serde_json::Value) {
+    let source_commit = matrix["source_commit"]
+        .as_str()
+        .expect("source_commit must be present");
+    assert!(
+        source_commit == "current" || is_hex_commit(source_commit),
+        "source_commit must be 'current' or a 40-hex commit, got {source_commit:?}",
+    );
+    let current_head = git_head(root);
+    assert!(
+        source_commit_is_current(source_commit, &current_head),
+        "source_commit must be 'current' or match current git HEAD",
+    );
+}
+
 #[test]
 fn artifact_exists_and_has_required_shape() {
+    let root = workspace_root();
     let matrix = load_matrix();
     assert_eq!(matrix["schema_version"].as_str(), Some("v1"));
     assert_eq!(matrix["bead"].as_str(), Some("bd-bp8fl.6.6"));
@@ -198,10 +218,8 @@ fn artifact_exists_and_has_required_shape() {
     let source_commit = matrix["source_commit"]
         .as_str()
         .expect("source_commit must be present");
-    assert!(
-        is_hex_commit(source_commit),
-        "source_commit must be a 40-hex commit, got {source_commit:?}",
-    );
+    assert_eq!(source_commit, "current");
+    assert_recorded_source_commit_is_current(&root, &matrix);
     assert_source_commit_freshness_policy(&matrix);
 
     let log_fields: Vec<_> = matrix["required_log_fields"]
@@ -221,12 +239,12 @@ fn stale_source_commit_policy_blocks_standalone_readiness_evidence() {
         .as_str()
         .expect("source_commit must be present");
     assert!(
-        is_hex_commit(source_commit),
-        "source_commit must be a 40-hex commit, got {source_commit:?}",
+        source_commit == "current" || is_hex_commit(source_commit),
+        "source_commit must be 'current' or a 40-hex commit, got {source_commit:?}",
     );
     let current_head = git_head(&root);
     assert_source_commit_freshness_policy(&matrix);
-    if source_commit != current_head {
+    if !source_commit_is_current(source_commit, &current_head) {
         let policy = &matrix["source_commit_freshness_policy"];
         assert_eq!(
             policy["stale_result"].as_str(),
@@ -244,6 +262,15 @@ fn stale_source_commit_policy_blocks_standalone_readiness_evidence() {
             "stale source commits must use stale_source_commit",
         );
     }
+}
+
+#[test]
+#[should_panic(expected = "source_commit must be 'current' or match current git HEAD")]
+fn stale_recorded_source_commit_helper_rejects_standalone_readiness_evidence() {
+    let root = workspace_root();
+    let mut matrix = load_matrix();
+    matrix["source_commit"] = serde_json::json!("0000000000000000000000000000000000000000");
+    assert_recorded_source_commit_is_current(&root, &matrix);
 }
 
 #[test]
@@ -618,6 +645,7 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         "standalone_artifact_refs",
         "standalone_forge_evidence_semantics",
         "source_commit_freshness_policy",
+        "recorded_source_commit_freshness",
         "dimension_coverage",
         "claim_policy",
         "summary_counts",
@@ -642,6 +670,46 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
             "structured log row missing {key}"
         );
     }
+}
+
+#[test]
+fn gate_rejects_stale_recorded_source_commit() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_standalone_readiness_matrix.sh");
+    let mut matrix = load_matrix();
+    matrix["source_commit"] = serde_json::json!("0000000000000000000000000000000000000000");
+    let matrix_path = unique_target_path(&root, "stale-source-matrix");
+    let report_path = unique_target_path(&root, "stale-source-report");
+    let log_path = unique_target_path(&root, "stale-source-log");
+    write_json(&matrix_path, &matrix);
+
+    let output = Command::new(&script)
+        .current_dir(&root)
+        .env("FLC_STANDALONE_READINESS_MATRIX", &matrix_path)
+        .env("FLC_STANDALONE_READINESS_REPORT", &report_path)
+        .env("FLC_STANDALONE_READINESS_LOG", &log_path)
+        .output()
+        .expect("failed to run standalone readiness matrix gate");
+    assert!(
+        !output.status.success(),
+        "stale recorded source_commit must fail the gate"
+    );
+    let report = load_json(&report_path);
+    assert_eq!(
+        report["checks"]["recorded_source_commit_freshness"].as_str(),
+        Some("fail"),
+    );
+    assert!(
+        report["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|error| error
+                .as_str()
+                .unwrap_or_default()
+                .contains("source_commit must be 'current' or match current git HEAD")),
+        "report should identify stale source_commit failure: {report:#?}",
+    );
 }
 
 #[test]
