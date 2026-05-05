@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-b92jd.2.2",
-  "generated_at_utc": "2026-05-04T18:33:09Z",
-  "source_commit": "e92f61b5",
+  "generated_at_utc": "2026-05-05T04:23:14Z",
+  "source_commit": "0afbe0bd",
   "purpose": "Fail-closed manifest for strict hot-path symbols not covered by the current benchmark suite map.",
   "inputs": {
     "support_matrix": "support_matrix.json",
@@ -16,8 +16,8 @@
     "benchmark_coverage_inventory": "e4532cab8cc55da76499f14b9f0dcbeb0be45d463e86e1844abb7e8d6a76c591",
     "perf_baseline": "22cb5fcf7f762e268df2fb478b49ecbd8aa12502a19b4aaee23178fb37dbde3c",
     "perf_baseline_spec": "e12a3ed8c5ab3b9164c8489351fc3950e9e8d9147639c9a3846ffd87840046af",
-    "perf_budget_policy": "49104d5ab4cc9a597c145d98384f2f7c6546d3105a5fee068a8a7f3d7410abc9",
-    "perf_regression_prevention": "5e10de7ffa4b714f7bc4d86517bd9c6cd7b7cf6c0cb9ad598a47d47d54c7c73c",
+    "perf_budget_policy": "df4e8f522d1faa4283660c6cb9a532080f44a05106a6005dc47f681a9e790c7c",
+    "perf_regression_prevention": "eb2955dfa21ad83819bac35268229fb7a554b54d4b1d222e401b64a0bb8bc79d",
     "support_matrix": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d"
   },
   "required_row_fields": [
@@ -3069,5 +3069,5 @@
     "target_report": "target/conformance/uncovered_hotpath_benchmark_manifest.report.json",
     "target_log": "target/conformance/uncovered_hotpath_benchmark_manifest.log.jsonl"
   },
-  "artifact_hash": "67bfffabc75e22720a049663fc451cf6e6f31d7ab55556885d9fa38d21f394ec"
+  "artifact_hash": "f68ba5940964cf2e5b27f96fd8cac58a8cf754770b68f4d03c0184f39daeb212"
 }

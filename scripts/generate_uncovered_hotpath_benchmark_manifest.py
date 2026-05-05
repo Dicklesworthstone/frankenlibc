@@ -506,7 +506,7 @@ def build_report(root: Path, target_dir: str) -> tuple[dict[str, object], list[d
             "artifact_refs": list(report["inputs"].values()) + [report["closure_evidence"]["committed_artifact"]],
             "source_commit": commit,
             "target_dir": target_dir,
-            "failure_signature": None,
+            "failure_signature": "no_failure",
         }
         for module in modules
     ]

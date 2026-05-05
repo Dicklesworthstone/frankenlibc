@@ -6,6 +6,7 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn repo_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -23,10 +24,25 @@ fn load_json(path: &Path) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
 }
 
+fn generated_report_path(root: &Path, label: &str) -> std::path::PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after UNIX_EPOCH")
+        .as_nanos();
+    let out_dir = root.join("target/conformance");
+    std::fs::create_dir_all(&out_dir)
+        .unwrap_or_else(|e| panic!("Failed to create {}: {}", out_dir.display(), e));
+    out_dir.join(format!(
+        "perf_regression_prevention_{label}_{}_{}.json",
+        std::process::id(),
+        stamp
+    ))
+}
+
 #[test]
 fn prevention_report_generates_successfully() {
     let root = repo_root();
-    let report_path = root.join("tests/conformance/perf_regression_prevention.v1.json");
+    let report_path = generated_report_path(&root, "generated");
     let output = Command::new("python3")
         .args([
             root.join("scripts/generate_perf_regression_prevention.py")
@@ -54,18 +70,11 @@ fn prevention_report_generates_successfully() {
 fn prevention_report_schema_complete() {
     let root = repo_root();
     let report_path = root.join("tests/conformance/perf_regression_prevention.v1.json");
-    if !report_path.exists() {
-        let _ = Command::new("python3")
-            .args([
-                root.join("scripts/generate_perf_regression_prevention.py")
-                    .to_str()
-                    .unwrap(),
-                "-o",
-                report_path.to_str().unwrap(),
-            ])
-            .current_dir(&root)
-            .output();
-    }
+    assert!(
+        report_path.exists(),
+        "Committed report missing at {}",
+        report_path.display()
+    );
     let data = load_json(&report_path);
 
     assert_eq!(
