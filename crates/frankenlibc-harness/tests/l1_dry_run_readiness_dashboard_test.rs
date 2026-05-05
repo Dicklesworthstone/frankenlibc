@@ -126,6 +126,7 @@ fn select_field<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     for segment in path.split('.') {
         cursor = match cursor {
             Value::Object(map) => map.get(segment)?,
+            Value::Array(values) => values.get(segment.parse::<usize>().ok()?)?,
             _ => return None,
         };
     }
@@ -335,6 +336,71 @@ fn critical_l1_evidence_rows_do_not_pass_on_schema_presence_only() -> TestResult
         )?;
     }
     Ok(())
+}
+
+#[test]
+fn standalone_dependency_breakdown_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let expected_rows: BTreeSet<(&str, &str)> = [
+        (
+            "standalone-artifact-report-needed-libraries-diagnostic",
+            "artifact_state.dependency_breakdown.needed_libraries",
+        ),
+        (
+            "standalone-artifact-report-ldd-libraries-diagnostic",
+            "artifact_state.dependency_breakdown.ldd_libraries",
+        ),
+        (
+            "standalone-artifact-report-host-needed-libraries-diagnostic",
+            "artifact_state.dependency_breakdown.host_needed_libraries",
+        ),
+        (
+            "standalone-artifact-report-unwind-symbols-diagnostic",
+            "artifact_state.dependency_breakdown.undefined_unwind_symbols",
+        ),
+        (
+            "standalone-artifact-report-glibc-symbols-diagnostic",
+            "artifact_state.dependency_breakdown.undefined_glibc_symbols",
+        ),
+        (
+            "standalone-artifact-report-tls-symbols-diagnostic",
+            "artifact_state.dependency_breakdown.undefined_tls_symbols",
+        ),
+        (
+            "standalone-artifact-report-loader-needed-diagnostic",
+            "artifact_state.dependency_breakdown.loader_needed",
+        ),
+        (
+            "standalone-artifact-report-blocking-reasons-diagnostic",
+            "artifact_state.dependency_breakdown.blocking_reasons",
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let mut seen: BTreeSet<(&str, &str)> = BTreeSet::new();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-artifact-report-") {
+            continue;
+        }
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "forge",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_replacement_artifact.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        let expected_value = as_str(&row["expected_value"], "row.expected_value")?;
+        seen.insert((row_id, expected_value));
+    }
+    ensure_eq(
+        seen,
+        expected_rows,
+        "standalone dependency-breakdown dashboard rows",
+    )
 }
 
 #[test]

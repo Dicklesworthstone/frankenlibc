@@ -81,6 +81,70 @@
       "rationale": "LD_PRELOAD/interpose artifacts cannot substitute for standalone replacement evidence."
     },
     {
+      "row_id": "standalone-artifact-report-needed-libraries-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.0",
+      "expected_value": "artifact_state.dependency_breakdown.needed_libraries",
+      "rationale": "L1 dashboard consumers must see the direct DT_NEEDED dependency blocker field from the standalone forge report."
+    },
+    {
+      "row_id": "standalone-artifact-report-ldd-libraries-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.1",
+      "expected_value": "artifact_state.dependency_breakdown.ldd_libraries",
+      "rationale": "L1 dashboard consumers must see the resolved ldd dependency blocker field from the standalone forge report."
+    },
+    {
+      "row_id": "standalone-artifact-report-host-needed-libraries-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.2",
+      "expected_value": "artifact_state.dependency_breakdown.host_needed_libraries",
+      "rationale": "L1 dashboard consumers must see host runtime library blockers before replacement claims can advance."
+    },
+    {
+      "row_id": "standalone-artifact-report-unwind-symbols-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.3",
+      "expected_value": "artifact_state.dependency_breakdown.undefined_unwind_symbols",
+      "rationale": "L1 dashboard consumers must see undefined unwind symbols as a first-class forge blocker."
+    },
+    {
+      "row_id": "standalone-artifact-report-glibc-symbols-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.4",
+      "expected_value": "artifact_state.dependency_breakdown.undefined_glibc_symbols",
+      "rationale": "L1 dashboard consumers must see undefined GLIBC-versioned symbols as a first-class forge blocker."
+    },
+    {
+      "row_id": "standalone-artifact-report-tls-symbols-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.5",
+      "expected_value": "artifact_state.dependency_breakdown.undefined_tls_symbols",
+      "rationale": "L1 dashboard consumers must see TLS runtime symbols as a first-class forge blocker."
+    },
+    {
+      "row_id": "standalone-artifact-report-loader-needed-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.6",
+      "expected_value": "artifact_state.dependency_breakdown.loader_needed",
+      "rationale": "L1 dashboard consumers must see host loader dependency status before replacement claims can advance."
+    },
+    {
+      "row_id": "standalone-artifact-report-blocking-reasons-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.7",
+      "expected_value": "artifact_state.dependency_breakdown.blocking_reasons",
+      "rationale": "L1 dashboard consumers must see aggregate forge blocking reasons, not only a generic claim_blocked result."
+    },
+    {
       "row_id": "standalone-link-run-smoke-claim-blocked-policy",
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
