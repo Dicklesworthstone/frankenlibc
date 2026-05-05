@@ -75,6 +75,7 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.dependency_breakdown.needed_libraries",
     "artifact_state.dependency_breakdown.ldd_libraries",
     "artifact_state.dependency_breakdown.host_needed_libraries",
+    "artifact_state.dependency_breakdown.undefined_symbols",
     "artifact_state.dependency_breakdown.undefined_unwind_symbols",
     "artifact_state.dependency_breakdown.undefined_glibc_symbols",
     "artifact_state.dependency_breakdown.undefined_tls_symbols",

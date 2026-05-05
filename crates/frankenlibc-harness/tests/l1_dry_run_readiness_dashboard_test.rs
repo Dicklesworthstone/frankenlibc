@@ -355,6 +355,10 @@ fn standalone_dependency_breakdown_rows_are_explicit() -> TestResult {
             "artifact_state.dependency_breakdown.host_needed_libraries",
         ),
         (
+            "standalone-artifact-report-undefined-symbols-diagnostic",
+            "artifact_state.dependency_breakdown.undefined_symbols",
+        ),
+        (
             "standalone-artifact-report-unwind-symbols-diagnostic",
             "artifact_state.dependency_breakdown.undefined_unwind_symbols",
         ),

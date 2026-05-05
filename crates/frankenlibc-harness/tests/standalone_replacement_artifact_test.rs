@@ -26,6 +26,7 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.needed_libraries",
     "artifact_state.dependency_breakdown.ldd_libraries",
     "artifact_state.dependency_breakdown.host_needed_libraries",
+    "artifact_state.dependency_breakdown.undefined_symbols",
     "artifact_state.dependency_breakdown.undefined_unwind_symbols",
     "artifact_state.dependency_breakdown.undefined_glibc_symbols",
     "artifact_state.dependency_breakdown.undefined_tls_symbols",
@@ -439,6 +440,11 @@ fn forge_mode_reports_host_dependency_breakdown() {
     assert!(host_needed.contains("libgcc_s.so.1"));
     assert!(host_needed.contains("libc.so.6"));
     assert!(host_needed.contains("ld-linux-x86-64.so.2"));
+
+    let undefined = string_set(&breakdown["undefined_symbols"]);
+    assert!(undefined.contains("_Unwind_Resume@GCC_3.0"));
+    assert!(undefined.contains("__tls_get_addr@GLIBC_2.3"));
+    assert!(undefined.contains("printf@GLIBC_2.2.5"));
 
     let unwind = string_set(&breakdown["undefined_unwind_symbols"]);
     assert!(unwind.contains("_Unwind_Resume@GCC_3.0"));
