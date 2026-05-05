@@ -95,6 +95,10 @@ fn is_full_git_commit(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+fn source_commit_is_current(value: &str, current_head: &str) -> bool {
+    value == "current" || value == current_head
+}
+
 fn git_head(root: &Path) -> Result<String, String> {
     let output = Command::new("git")
         .arg("-C")
@@ -180,10 +184,25 @@ fn validate_l1_crt_startup_tls_matrix(matrix: &serde_json::Value) -> Result<(), 
     if matrix["claim_policy"]["replacement_level"].as_str() != Some("L1") {
         errors.push("claim_policy.replacement_level must be L1".to_string());
     }
+    let current_head = match git_head(&workspace_root()) {
+        Ok(head) => head,
+        Err(err) => {
+            errors.push(format!(
+                "git HEAD must be readable for source_commit freshness: {err}"
+            ));
+            String::new()
+        }
+    };
     match matrix["source_commit"].as_str() {
-        Some(source_commit) if is_full_git_commit(source_commit) => {}
+        Some("current") => {}
+        Some(source_commit)
+            if is_full_git_commit(source_commit)
+                && source_commit_is_current(source_commit, &current_head) => {}
+        Some(source_commit) if is_full_git_commit(source_commit) => {
+            errors.push("source_commit must be 'current' or match current git HEAD".to_string())
+        }
         Some(source_commit) => errors.push(format!(
-            "source_commit must be a 40-hex git commit, got {source_commit:?}"
+            "source_commit must be 'current' or a 40-hex git commit, got {source_commit:?}"
         )),
         None => errors.push("source_commit must be present".to_string()),
     }
@@ -994,13 +1013,13 @@ fn stale_source_commit_policy_blocks_l1_crt_startup_tls_matrix_evidence() {
         .as_str()
         .expect("source_commit must be present");
     assert!(
-        is_full_git_commit(source_commit),
-        "source_commit must be a 40-hex commit, got {source_commit:?}"
+        source_commit == "current" || is_full_git_commit(source_commit),
+        "source_commit must be current or a 40-hex commit, got {source_commit:?}"
     );
     let current_head = git_head(&workspace_root()).expect("git HEAD should be readable");
     let policy = l1_crt_startup_tls_source_commit_policy(&matrix)
         .expect("source_commit_freshness_policy must be present");
-    if source_commit != current_head {
+    if !source_commit_is_current(source_commit, &current_head) {
         assert_eq!(
             policy["stale_result"].as_str(),
             Some("block_l1_crt_startup_tls_proof_matrix_evidence"),
@@ -1017,6 +1036,54 @@ fn stale_source_commit_policy_blocks_l1_crt_startup_tls_matrix_evidence() {
             "stale source commits must use the stale_source_commit rejection kind",
         );
     }
+}
+
+#[test]
+fn l1_crt_startup_tls_proof_matrix_rejects_stale_recorded_source_commit() {
+    let mut matrix = load_l1_crt_startup_tls_matrix();
+    matrix["source_commit"] = serde_json::json!("0000000000000000000000000000000000000000");
+
+    let errors = validate_l1_crt_startup_tls_matrix(&matrix)
+        .expect_err("stale matrix source_commit must fail validation");
+    assert!(
+        errors.iter().any(|error| {
+            error.contains("source_commit must be 'current' or match current git HEAD")
+        }),
+        "stale source_commit error not found: {errors:?}"
+    );
+}
+
+#[test]
+fn gate_script_rejects_stale_l1_crt_startup_tls_source_commit() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_replacement_levels.sh");
+    let mut matrix = load_l1_crt_startup_tls_matrix();
+    matrix["source_commit"] = serde_json::json!("0000000000000000000000000000000000000000");
+    let matrix_path = unique_temp_path("l1-crt-startup-tls-stale-source", ".json");
+    std::fs::write(
+        &matrix_path,
+        serde_json::to_string_pretty(&matrix).expect("matrix should serialize"),
+    )
+    .expect("stale matrix fixture should be writable");
+    let report_path = unique_temp_path("replacement-levels-stale-source-report", ".json");
+    let log_path = unique_temp_path("replacement-levels-stale-source-log", ".jsonl");
+
+    let output = Command::new(&script)
+        .env("FLC_L1_CRT_MATRIX_PATH", &matrix_path)
+        .env("FLC_REPLACEMENT_LEVELS_REPORT_PATH", &report_path)
+        .env("FLC_REPLACEMENT_LEVELS_LOG_PATH", &log_path)
+        .output()
+        .expect("replacement-level script should run");
+
+    assert!(
+        !output.status.success(),
+        "stale matrix source_commit should fail replacement-level gate"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("source_commit must be 'current' or match current git HEAD"),
+        "stale source_commit failure should be reported in stdout:\n{stdout}"
+    );
 }
 
 #[test]

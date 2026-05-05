@@ -19,7 +19,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LEVELS="${ROOT}/tests/conformance/replacement_levels.json"
 MATRIX="${ROOT}/support_matrix.json"
 README="${ROOT}/README.md"
-L1_CRT_MATRIX="${ROOT}/tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"
+L1_CRT_MATRIX="${FLC_L1_CRT_MATRIX_PATH:-${ROOT}/tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json}"
 DEFAULT_REPORT_PATH="${ROOT}/target/conformance/replacement_levels_l1_gate.report.json"
 DEFAULT_LOG_PATH="${ROOT}/target/conformance/replacement_levels_l1_gate.log.jsonl"
 
@@ -417,12 +417,16 @@ echo ""
 echo "--- Check 7: L1 CRT/startup/TLS proof matrix ---"
 
 l1_crt_check=$(
+ROOT="${ROOT}" \
 L1_CRT_MATRIX="${L1_CRT_MATRIX}" \
 python3 <<'PY'
 import json
+import os
+import subprocess
 from pathlib import Path
 
-matrix_path = Path(__import__("os").environ["L1_CRT_MATRIX"])
+root = Path(os.environ["ROOT"])
+matrix_path = Path(os.environ["L1_CRT_MATRIX"])
 required_log_fields = [
     "trace_id",
     "bead_id",
@@ -451,6 +455,38 @@ required_rows = [
     "secure_mode",
     "failure_diagnostics",
 ]
+expected_source_commit_policy = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_l1_crt_startup_tls_proof_matrix_evidence",
+    "startup_tls_matrix_evidence_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
+}
+
+
+def full_git_commit(value):
+    return isinstance(value, str) and len(value) == 40 and all(
+        byte in "0123456789abcdefABCDEF" for byte in value
+    )
+
+
+def git_head():
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+current_head = git_head()
+
+
+def source_commit_is_current(value):
+    return value == "current" or (current_head != "unknown" and value == current_head)
+
 
 def ordinal(ts):
     try:
@@ -482,6 +518,15 @@ if matrix.get("bead") != "bd-bp8fl.6.3":
 claim_policy = matrix.get("claim_policy", {})
 if claim_policy.get("replacement_level") != "L1":
     errors.append("claim_policy.replacement_level must be L1")
+source_commit = matrix.get("source_commit")
+if not (source_commit == "current" or full_git_commit(source_commit)):
+    errors.append("source_commit must be 'current' or a 40-hex git commit")
+elif not source_commit_is_current(source_commit):
+    errors.append("source_commit must be 'current' or match current git HEAD")
+if matrix.get("source_commit_freshness_policy") != expected_source_commit_policy:
+    errors.append(
+        "source_commit_freshness_policy must match stale L1 CRT/startup/TLS proof matrix contract"
+    )
 if matrix.get("required_log_fields") != required_log_fields:
     errors.append("required_log_fields mismatch")
 if matrix.get("required_proof_row_ids") != required_rows:
@@ -587,6 +632,7 @@ python3 <<'PY'
 import json
 import os
 import re
+import subprocess
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -630,6 +676,37 @@ L1_CRT_REQUIRED_ROWS = [
     "secure_mode",
     "failure_diagnostics",
 ]
+EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_l1_crt_startup_tls_proof_matrix_evidence",
+    "startup_tls_matrix_evidence_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
+}
+
+
+def full_git_commit(value):
+    return isinstance(value, str) and len(value) == 40 and all(
+        byte in "0123456789abcdefABCDEF" for byte in value
+    )
+
+
+def git_source_commit() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+current_git_head = git_source_commit()
+
+
+def source_commit_marker_is_current(value):
+    return value == "current" or (current_git_head != "unknown" and value == current_git_head)
 
 
 def ordinal(timestamp: str) -> int:
@@ -654,6 +731,15 @@ def validate_l1_crt_matrix(matrix: dict) -> list[str]:
     claim_policy = matrix.get("claim_policy", {})
     if claim_policy.get("replacement_level") != "L1":
         failures.append("claim_policy.replacement_level must be L1")
+    matrix_source_commit = matrix.get("source_commit")
+    if not (matrix_source_commit == "current" or full_git_commit(matrix_source_commit)):
+        failures.append("source_commit must be 'current' or a 40-hex git commit")
+    elif not source_commit_marker_is_current(matrix_source_commit):
+        failures.append("source_commit must be 'current' or match current git HEAD")
+    if matrix.get("source_commit_freshness_policy") != EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY:
+        failures.append(
+            "source_commit_freshness_policy must match stale L1 CRT/startup/TLS proof matrix contract"
+        )
     if matrix.get("required_log_fields") != L1_CRT_REQUIRED_LOG_FIELDS:
         failures.append("required_log_fields mismatch")
     if matrix.get("required_proof_row_ids") != L1_CRT_REQUIRED_ROWS:
@@ -1105,7 +1191,7 @@ report = {
     "artifact_refs": artifact_refs,
 }
 
-source_commit = os.environ.get("SOURCE_COMMIT", "unknown")
+source_commit = os.environ.get("SOURCE_COMMIT", current_git_head)
 target_dir = os.environ.get("CARGO_TARGET_DIR", "target")
 
 log_rows = []
