@@ -121,6 +121,16 @@ EXPECTED_HASH_EVIDENCE_POLICY = {
     "evidence_file": "artifact.sha256",
 }
 
+EXPECTED_FAILURE_CLASSIFICATIONS = {
+    "standalone_artifact_missing": "claim_blocked",
+    "standalone_artifact_stale": "claim_blocked",
+    "wrong_artifact_profile": "claim_blocked",
+    "non_elf_artifact": "fail",
+    "host_glibc_dependency": "claim_blocked",
+    "artifact_dependency_inspection_failed": "claim_blocked",
+    "symbol_evidence_missing": "claim_blocked",
+}
+
 INSPECTION_TIMEOUT_ENV = "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS"
 INSPECTION_TIMEOUT_DEFAULT_SECS = 60
 INSPECTION_TIMEOUT_MIN_SECS = 1
@@ -469,6 +479,14 @@ def validate_manifest():
         errors.append("required_tools do not match script contract")
     if manifest.get("hash_evidence_policy") != EXPECTED_HASH_EVIDENCE_POLICY:
         errors.append("hash_evidence_policy does not match script contract")
+    classifications = manifest.get("expected_failure_classifications", [])
+    classification_map = {}
+    if isinstance(classifications, list):
+        for entry in classifications:
+            if isinstance(entry, dict) and isinstance(entry.get("failure_signature"), str):
+                classification_map[entry["failure_signature"]] = entry.get("expected_result")
+    if classification_map != EXPECTED_FAILURE_CLASSIFICATIONS:
+        errors.append("expected_failure_classifications do not match script contract")
     timeout_policy = manifest.get("inspection_timeout_policy", {})
     expected_timeout_policy = {
         "env": INSPECTION_TIMEOUT_ENV,

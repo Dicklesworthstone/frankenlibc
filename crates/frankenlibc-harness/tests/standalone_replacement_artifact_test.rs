@@ -1,6 +1,6 @@
 //! Integration tests for the standalone replacement artifact forge gate.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -714,6 +714,29 @@ fn manifest_matches_forge_contract() {
         .iter()
         .map(|entry| entry["failure_signature"].as_str().unwrap())
         .collect();
+    let classification_results: HashMap<_, _> = manifest["expected_failure_classifications"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["failure_signature"].as_str().unwrap(),
+                entry["expected_result"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        classification_results,
+        HashMap::from([
+            ("standalone_artifact_missing", "claim_blocked"),
+            ("standalone_artifact_stale", "claim_blocked"),
+            ("wrong_artifact_profile", "claim_blocked"),
+            ("non_elf_artifact", "fail"),
+            ("host_glibc_dependency", "claim_blocked"),
+            ("artifact_dependency_inspection_failed", "claim_blocked"),
+            ("symbol_evidence_missing", "claim_blocked"),
+        ])
+    );
     for signature in [
         "standalone_artifact_missing",
         "standalone_artifact_stale",
@@ -831,6 +854,57 @@ fn validate_only_rejects_required_evidence_files_contract_drift() {
             error.as_str() == Some("required_evidence_files do not match script contract")
         }),
         "expected required_evidence_files contract error: {errors:?}"
+    );
+}
+
+#[test]
+fn validate_only_rejects_failure_classification_contract_drift() {
+    let manifest_path = write_manifest_variant(
+        "standalone-artifact-failure-classification-drift-manifest",
+        |manifest| {
+            let classifications = manifest["expected_failure_classifications"]
+                .as_array_mut()
+                .expect("expected_failure_classifications should be an array");
+            classifications.retain(|entry| {
+                let Some(name) = entry["failure_signature"].as_str() else {
+                    return true;
+                };
+                !matches!(name, "symbol_evidence_missing")
+            });
+            for entry in classifications {
+                let Some(name) = entry["failure_signature"].as_str() else {
+                    continue;
+                };
+                if matches!(name, "non_elf_artifact") {
+                    entry["expected_result"] =
+                        serde_json::Value::String("claim_blocked".to_owned());
+                }
+            }
+        },
+    );
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) = run_gate_with_env(
+        "--validate-only",
+        "standalone-artifact-failure-classification-drift",
+        &envs,
+    );
+    assert!(
+        !output.status.success(),
+        "failure classification drift should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors.iter().any(|error| {
+            error.as_str() == Some("expected_failure_classifications do not match script contract")
+        }),
+        "expected expected_failure_classifications contract error: {errors:?}"
     );
 }
 
