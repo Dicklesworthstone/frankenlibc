@@ -2,6 +2,14 @@
   "schema_version": "v1",
   "manifest_id": "standalone-link-run-smoke",
   "bead": "bd-bp8fl.6.2",
+  "source_commit": "2049bf56bbfe56f5ec7475eb28a9e9a88913d5b3",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_link_run_smoke_evidence",
+    "standalone_smoke_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "generated_utc": "2026-05-02T16:45:00Z",
   "description": "Standalone direct-link smoke manifest for replacement-level evidence. These rows are intentionally distinct from LD_PRELOAD interpose smoke and fail closed when the standalone replacement artifact is absent, stale, or missing loader/startup obligations.",
   "freshness": {
