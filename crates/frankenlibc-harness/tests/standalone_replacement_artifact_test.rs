@@ -38,6 +38,8 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "tool_evidence.*.timed_out",
     "tool_evidence.*.timeout_secs",
     "tool_evidence.*.path",
+    "artifact_state.dependency_breakdown.host_direct_needed_libraries",
+    "artifact_state.dependency_breakdown.host_resolved_libraries",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -882,6 +884,16 @@ fn forge_mode_reports_host_dependency_breakdown() {
     assert!(host_needed.contains("libgcc_s.so.1"));
     assert!(host_needed.contains("libc.so.6"));
     assert!(host_needed.contains("ld-linux-x86-64.so.2"));
+
+    let host_direct_needed = string_set(&breakdown["host_direct_needed_libraries"]);
+    assert!(host_direct_needed.contains("libgcc_s.so.1"));
+    assert!(host_direct_needed.contains("ld-linux-x86-64.so.2"));
+    assert!(!host_direct_needed.contains("libc.so.6"));
+
+    let host_resolved = string_set(&breakdown["host_resolved_libraries"]);
+    assert!(host_resolved.contains("libgcc_s.so.1"));
+    assert!(host_resolved.contains("libc.so.6"));
+    assert!(host_resolved.contains("/lib64/ld-linux-x86-64.so.2"));
 
     let undefined = string_set(&breakdown["undefined_symbols"]);
     assert!(undefined.contains("_Unwind_Resume@GCC_3.0"));

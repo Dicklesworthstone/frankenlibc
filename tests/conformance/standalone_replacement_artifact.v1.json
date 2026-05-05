@@ -63,7 +63,9 @@
     "tool_evidence.*.exit_code",
     "tool_evidence.*.timed_out",
     "tool_evidence.*.timeout_secs",
-    "tool_evidence.*.path"
+    "tool_evidence.*.path",
+    "artifact_state.dependency_breakdown.host_direct_needed_libraries",
+    "artifact_state.dependency_breakdown.host_resolved_libraries"
   ],
   "required_evidence_files": [
     "build.stdout.txt",

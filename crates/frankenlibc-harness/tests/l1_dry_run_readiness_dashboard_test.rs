@@ -355,6 +355,14 @@ fn standalone_artifact_report_rows_are_explicit() -> TestResult {
             "artifact_state.dependency_breakdown.host_needed_libraries",
         ),
         (
+            "standalone-artifact-report-host-direct-needed-libraries-diagnostic",
+            "artifact_state.dependency_breakdown.host_direct_needed_libraries",
+        ),
+        (
+            "standalone-artifact-report-host-resolved-libraries-diagnostic",
+            "artifact_state.dependency_breakdown.host_resolved_libraries",
+        ),
+        (
             "standalone-artifact-report-undefined-symbols-diagnostic",
             "artifact_state.dependency_breakdown.undefined_symbols",
         ),

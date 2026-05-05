@@ -87,6 +87,8 @@ REQUIRED_REPORT_FIELDS = [
     "tool_evidence.*.timed_out",
     "tool_evidence.*.timeout_secs",
     "tool_evidence.*.path",
+    "artifact_state.dependency_breakdown.host_direct_needed_libraries",
+    "artifact_state.dependency_breakdown.host_resolved_libraries",
 ]
 
 INSPECTION_TIMEOUT_ENV = "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS"
@@ -182,6 +184,8 @@ def empty_dependency_breakdown():
         "needed_libraries": [],
         "ldd_libraries": [],
         "host_needed_libraries": [],
+        "host_direct_needed_libraries": [],
+        "host_resolved_libraries": [],
         "undefined_symbols": [],
         "undefined_unwind_symbols": [],
         "undefined_glibc_symbols": [],
@@ -297,6 +301,12 @@ def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd
     libc_needed = any(library.startswith("libc.so") for library in all_libraries)
     libgcc_needed = any(library.startswith("libgcc_s.so") for library in all_libraries)
     host_needed_libraries = [library for library in all_libraries if is_host_runtime_library(library)]
+    host_direct_needed_libraries = [
+        library for library in needed_libraries if is_host_runtime_library(library)
+    ]
+    host_resolved_libraries = [
+        library for library in ldd_libraries if is_host_runtime_library(library)
+    ]
     host_version_requirements = [
         f"{provider}:{version}"
         for provider, versions in version_needs.items()
@@ -326,6 +336,8 @@ def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd
             "needed_libraries": needed_libraries,
             "ldd_libraries": ldd_libraries,
             "host_needed_libraries": host_needed_libraries,
+            "host_direct_needed_libraries": host_direct_needed_libraries,
+            "host_resolved_libraries": host_resolved_libraries,
             "undefined_symbols": undefined_symbols,
             "undefined_unwind_symbols": unique_sorted(undefined_unwind_symbols),
             "undefined_glibc_symbols": unique_sorted(undefined_glibc_symbols),

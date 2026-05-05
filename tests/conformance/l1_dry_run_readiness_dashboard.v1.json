@@ -105,6 +105,22 @@
       "rationale": "L1 dashboard consumers must see host runtime library blockers before replacement claims can advance."
     },
     {
+      "row_id": "standalone-artifact-report-host-direct-needed-libraries-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.15",
+      "expected_value": "artifact_state.dependency_breakdown.host_direct_needed_libraries",
+      "rationale": "L1 dashboard consumers must distinguish direct DT_NEEDED host libraries from transitive loader resolution."
+    },
+    {
+      "row_id": "standalone-artifact-report-host-resolved-libraries-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.16",
+      "expected_value": "artifact_state.dependency_breakdown.host_resolved_libraries",
+      "rationale": "L1 dashboard consumers must distinguish ldd-resolved host libraries from direct DT_NEEDED entries."
+    },
+    {
       "row_id": "standalone-artifact-report-undefined-symbols-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
