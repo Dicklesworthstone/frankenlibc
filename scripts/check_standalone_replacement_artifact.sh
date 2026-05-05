@@ -534,6 +534,7 @@ def inspect_artifact(artifact):
         tool_evidence[filename] = {
             "exit_code": result["returncode"],
             "timed_out": result["timed_out"],
+            "timeout_secs": inspection_timeout,
             "path": rel(path),
         }
 

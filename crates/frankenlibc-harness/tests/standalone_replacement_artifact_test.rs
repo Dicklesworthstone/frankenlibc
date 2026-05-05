@@ -658,6 +658,20 @@ fn forge_mode_can_materialize_a_supplied_shared_object_for_fast_tests() {
         ),
         "sample artifact may block claims, but the forge itself should classify it"
     );
+    let tool_evidence = report["tool_evidence"]
+        .as_object()
+        .expect("tool evidence should be an object");
+    assert!(
+        !tool_evidence.is_empty(),
+        "forge should emit inspection tool evidence"
+    );
+    for (filename, evidence) in tool_evidence {
+        assert_eq!(
+            evidence["timeout_secs"].as_i64(),
+            Some(60),
+            "{filename}: default inspection timeout should be recorded"
+        );
+    }
 }
 
 #[test]
@@ -1122,6 +1136,11 @@ fn forge_mode_blocks_artifact_when_required_inspection_probe_times_out() {
             report_json["tool_evidence"][evidence_file]["timed_out"].as_bool(),
             Some(true),
             "{probe}: expected timed_out=true"
+        );
+        assert_eq!(
+            report_json["tool_evidence"][evidence_file]["timeout_secs"].as_i64(),
+            Some(1),
+            "{probe}: expected override timeout budget to be recorded"
         );
         assert!(log.exists(), "{probe}: log should be written");
     }
