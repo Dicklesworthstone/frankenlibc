@@ -285,26 +285,126 @@ pub fn cfmakeraw(t: &mut Termios) {
 }
 
 // ---------------------------------------------------------------------------
-// Stub syscall wrappers (kept for ABI compatibility, implementations pending)
+// Linux ioctl transport
 // ---------------------------------------------------------------------------
+
+const LINUX_NCCS: usize = 19;
+const TCGETS2: usize = 0x802c_542a;
+const TCSETS2: usize = 0x402c_542b;
+const TCSETSW2: usize = 0x402c_542c;
+const TCSETSF2: usize = 0x402c_542d;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LinuxTermios2 {
+    c_iflag: u32,
+    c_oflag: u32,
+    c_cflag: u32,
+    c_lflag: u32,
+    c_line: u8,
+    c_cc: [u8; LINUX_NCCS],
+    c_ispeed: u32,
+    c_ospeed: u32,
+}
+
+impl LinuxTermios2 {
+    const fn zeroed() -> Self {
+        Self {
+            c_iflag: 0,
+            c_oflag: 0,
+            c_cflag: 0,
+            c_lflag: 0,
+            c_line: 0,
+            c_cc: [0; LINUX_NCCS],
+            c_ispeed: 0,
+            c_ospeed: 0,
+        }
+    }
+}
+
+fn linux_to_core(src: &LinuxTermios2) -> Termios {
+    let mut dst = Termios {
+        c_iflag: src.c_iflag,
+        c_oflag: src.c_oflag,
+        c_cflag: src.c_cflag,
+        c_lflag: src.c_lflag,
+        c_cc: [0; NCCS],
+    };
+    dst.c_cc[..LINUX_NCCS].copy_from_slice(&src.c_cc);
+    dst
+}
+
+fn core_to_linux(src: &Termios) -> LinuxTermios2 {
+    let speed = src.c_cflag & CBAUD;
+    let mut dst = LinuxTermios2 {
+        c_iflag: src.c_iflag,
+        c_oflag: src.c_oflag,
+        c_cflag: src.c_cflag,
+        c_lflag: src.c_lflag,
+        c_line: 0,
+        c_cc: [0; LINUX_NCCS],
+        c_ispeed: speed,
+        c_ospeed: speed,
+    };
+    dst.c_cc.copy_from_slice(&src.c_cc[..LINUX_NCCS]);
+    dst
+}
+
+const fn tcsets2_request(optional_actions: i32) -> usize {
+    match optional_actions {
+        TCSANOW => TCSETS2,
+        TCSADRAIN => TCSETSW2,
+        TCSAFLUSH => TCSETSF2,
+        _ => TCSETS2,
+    }
+}
 
 /// Gets terminal attributes for the file descriptor.
 ///
-/// Phase-1 deterministic placeholder: backend syscall transport lives in the
-/// ABI layer today, so core returns `-1` without mutating the provided struct.
-pub fn tcgetattr(_fd: i32, _termios: &mut Termios) -> i32 {
-    -1
+/// Returns 0 on success and fills `termios`. Returns -1 on bad file
+/// descriptors, non-terminal descriptors, or kernel ioctl failure.
+#[allow(unsafe_code)]
+pub fn tcgetattr(fd: i32, termios: &mut Termios) -> i32 {
+    let mut kernel_termios = LinuxTermios2::zeroed();
+    // SAFETY: `kernel_termios` is a valid writable Linux termios2 record for
+    // the TCGETS2 request. The kernel returns an errno on bad/non-tty fds.
+    match unsafe {
+        crate::syscall::sys_ioctl(
+            fd,
+            TCGETS2,
+            (&mut kernel_termios as *mut LinuxTermios2) as usize,
+        )
+    } {
+        Ok(_) => {
+            *termios = linux_to_core(&kernel_termios);
+            0
+        }
+        Err(_) => -1,
+    }
 }
 
 /// Sets terminal attributes for the file descriptor.
 ///
-/// Phase-1 deterministic placeholder: validates the action selector and
-/// returns `-1` while the backend syscall transport remains in ABI.
-pub fn tcsetattr(_fd: i32, optional_actions: i32, _termios: &Termios) -> i32 {
+/// Returns 0 on success. Returns -1 for invalid `optional_actions`, bad file
+/// descriptors, non-terminal descriptors, or kernel ioctl failure.
+#[allow(unsafe_code)]
+pub fn tcsetattr(fd: i32, optional_actions: i32, termios: &Termios) -> i32 {
     if !valid_optional_actions(optional_actions) {
         return -1;
     }
-    -1
+    let mut kernel_termios = core_to_linux(termios);
+    // SAFETY: `kernel_termios` is a valid readable Linux termios2 record for
+    // the selected TCSETS2 request. The kernel returns an errno on bad inputs.
+    match unsafe {
+        crate::syscall::sys_ioctl(
+            fd,
+            tcsets2_request(optional_actions),
+            (&mut kernel_termios as *mut LinuxTermios2) as usize,
+        )
+    } {
+        Ok(_) => 0,
+        Err(_) => -1,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -568,11 +668,11 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // tcgetattr / tcsetattr placeholders
+    // tcgetattr / tcsetattr syscall wrappers
     // -----------------------------------------------------------------------
 
     #[test]
-    fn test_tcgetattr_placeholder_returns_minus_one_without_mutation() {
+    fn test_tcgetattr_bad_fd_returns_minus_one_without_mutation() {
         let mut t = Termios {
             c_iflag: ICRNL,
             c_oflag: OPOST,
@@ -591,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tcsetattr_placeholder_returns_minus_one_for_valid_actions() {
+    fn test_tcsetattr_bad_fd_returns_minus_one_for_valid_actions() {
         let t = Termios::default();
         for &act in &[TCSANOW, TCSADRAIN, TCSAFLUSH] {
             assert_eq!(tcsetattr(-1, act, &t), -1);
@@ -599,11 +699,49 @@ mod tests {
     }
 
     #[test]
-    fn test_tcsetattr_placeholder_rejects_invalid_action_values() {
+    fn test_tcsetattr_rejects_invalid_action_values_before_ioctl() {
         let t = Termios::default();
         for &act in &[-1, 3, 99, i32::MIN, i32::MAX] {
             assert_eq!(tcsetattr(-1, act, &t), -1);
         }
+    }
+
+    #[test]
+    fn test_termios2_mapping_preserves_core_fields() {
+        let mut t = Termios {
+            c_iflag: ICRNL | IXON,
+            c_oflag: OPOST | ONLCR,
+            c_cflag: B115200 | CREAD | CS8,
+            c_lflag: ICANON | ECHO | ISIG,
+            c_cc: [0u8; NCCS],
+        };
+        t.c_cc[VINTR] = 3;
+        t.c_cc[VEOF] = 4;
+        t.c_cc[VMIN] = 1;
+        t.c_cc[VTIME] = 2;
+        t.c_cc[VEOL2] = b'\n';
+        t.c_cc[31] = 0xa5;
+
+        let kernel = core_to_linux(&t);
+        assert_eq!(kernel.c_iflag, t.c_iflag);
+        assert_eq!(kernel.c_oflag, t.c_oflag);
+        assert_eq!(kernel.c_cflag, t.c_cflag);
+        assert_eq!(kernel.c_lflag, t.c_lflag);
+        assert_eq!(kernel.c_ispeed, B115200);
+        assert_eq!(kernel.c_ospeed, B115200);
+        assert_eq!(kernel.c_cc[VINTR], 3);
+        assert_eq!(kernel.c_cc[VEOF], 4);
+        assert_eq!(kernel.c_cc[VMIN], 1);
+        assert_eq!(kernel.c_cc[VTIME], 2);
+        assert_eq!(kernel.c_cc[VEOL2], b'\n');
+
+        let roundtrip = linux_to_core(&kernel);
+        assert_eq!(roundtrip.c_iflag, t.c_iflag);
+        assert_eq!(roundtrip.c_oflag, t.c_oflag);
+        assert_eq!(roundtrip.c_cflag, t.c_cflag);
+        assert_eq!(roundtrip.c_lflag, t.c_lflag);
+        assert_eq!(&roundtrip.c_cc[..LINUX_NCCS], &t.c_cc[..LINUX_NCCS]);
+        assert_eq!(roundtrip.c_cc[31], 0);
     }
 
     // -----------------------------------------------------------------------
