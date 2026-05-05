@@ -34,6 +34,7 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
+    "artifact_state.dependency_breakdown.blocker_catalog",
     "tool_evidence.*.exit_code",
     "tool_evidence.*.timed_out",
     "tool_evidence.*.timeout_secs",
@@ -1561,6 +1562,8 @@ fn forge_mode_reports_host_dependency_breakdown() {
     let reasons = string_set(&breakdown["blocking_reasons"]);
     for reason in [
         "host_needed_libraries_present",
+        "host_direct_needed_libraries_present",
+        "host_resolved_libraries_present",
         "host_loader_dependency",
         "host_libc_dependency",
         "libgcc_runtime_dependency",
@@ -1571,6 +1574,52 @@ fn forge_mode_reports_host_dependency_breakdown() {
     ] {
         assert!(reasons.contains(reason), "missing {reason}");
     }
+
+    let catalog = breakdown["blocker_catalog"]
+        .as_object()
+        .expect("blocker_catalog should be an object");
+    for reason in &reasons {
+        assert!(
+            catalog.contains_key(reason),
+            "missing blocker_catalog row for {reason}"
+        );
+        let row = &catalog[reason];
+        assert_eq!(row["severity"].as_str(), Some("claim_blocking"));
+        assert!(
+            row["owner_surface"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "catalog row {reason} should name an owner surface"
+        );
+        assert!(
+            row["next_action"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "catalog row {reason} should include next action"
+        );
+        assert!(
+            row["evidence_fields"]
+                .as_array()
+                .is_some_and(|fields| !fields.is_empty()),
+            "catalog row {reason} should cite evidence fields"
+        );
+    }
+    assert_eq!(
+        catalog["host_loader_dependency"]["owner_surface"].as_str(),
+        Some("loader_startup")
+    );
+    assert_eq!(
+        catalog["host_direct_needed_libraries_present"]["owner_surface"].as_str(),
+        Some("direct_dynamic_dependencies")
+    );
+    assert_eq!(
+        catalog["undefined_tls_symbols"]["owner_surface"].as_str(),
+        Some("tls_startup")
+    );
+    assert_eq!(
+        catalog["host_version_requirements"]["owner_surface"].as_str(),
+        Some("symbol_versioning")
+    );
 }
 
 #[test]

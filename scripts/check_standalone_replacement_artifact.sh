@@ -83,6 +83,7 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
+    "artifact_state.dependency_breakdown.blocker_catalog",
     "tool_evidence.*.exit_code",
     "tool_evidence.*.timed_out",
     "tool_evidence.*.timeout_secs",
@@ -186,6 +187,69 @@ EXPECTED_CLAIM_POLICY = {
         "sampled_symbols_present=true",
         "source_commit matches HEAD",
     ],
+}
+
+BLOCKER_CATALOG_DEFINITIONS = {
+    "host_needed_libraries_present": {
+        "owner_surface": "runtime_linkage",
+        "severity": "claim_blocking",
+        "evidence_fields": ["host_needed_libraries"],
+        "next_action": "Remove every host runtime library from NEEDED and ldd evidence before treating the artifact as standalone.",
+    },
+    "host_direct_needed_libraries_present": {
+        "owner_surface": "direct_dynamic_dependencies",
+        "severity": "claim_blocking",
+        "evidence_fields": ["host_direct_needed_libraries", "needed_libraries"],
+        "next_action": "Eliminate direct NEEDED edges to host runtime libraries from the replacement cdylib link.",
+    },
+    "host_resolved_libraries_present": {
+        "owner_surface": "loader_resolution",
+        "severity": "claim_blocking",
+        "evidence_fields": ["host_resolved_libraries", "ldd_libraries"],
+        "next_action": "Make the loader resolve no host runtime libraries for the candidate replacement artifact.",
+    },
+    "host_loader_dependency": {
+        "owner_surface": "loader_startup",
+        "severity": "claim_blocking",
+        "evidence_fields": ["loader_needed", "needed_libraries", "ldd_libraries"],
+        "next_action": "Replace host loader/startup dependency with owned CRT, dynamic loader, and init/fini evidence.",
+    },
+    "host_libc_dependency": {
+        "owner_surface": "libc_surface",
+        "severity": "claim_blocking",
+        "evidence_fields": ["host_needed_libraries", "host_resolved_libraries"],
+        "next_action": "Remove host libc resolution from the replacement artifact and rerun direct-link smoke evidence.",
+    },
+    "libgcc_runtime_dependency": {
+        "owner_surface": "compiler_runtime",
+        "severity": "claim_blocking",
+        "evidence_fields": ["needed_libraries", "host_needed_libraries", "version_needs"],
+        "next_action": "Burn down libgcc runtime dependence or document an owned compiler-runtime substitute for replacement mode.",
+    },
+    "undefined_unwind_symbols": {
+        "owner_surface": "unwind_runtime",
+        "severity": "claim_blocking",
+        "evidence_fields": ["undefined_unwind_symbols", "undefined_symbols"],
+        "next_action": "Provide owned unwinder/personality symbols or prove the standalone artifact has no unresolved unwind edges.",
+    },
+    "undefined_glibc_symbols": {
+        "owner_surface": "glibc_symbol_surface",
+        "severity": "claim_blocking",
+        "evidence_fields": ["undefined_glibc_symbols", "undefined_symbols"],
+        "next_action": "Implement or eliminate unresolved GLIBC-versioned symbols before accepting standalone replacement evidence.",
+    },
+    "undefined_tls_symbols": {
+        "owner_surface": "tls_startup",
+        "severity": "claim_blocking",
+        "evidence_fields": ["undefined_tls_symbols", "undefined_symbols"],
+        "next_action": "Provide owned TLS access/startup support or prove no __tls_get_addr dependency remains.",
+    },
+    "host_version_requirements": {
+        "owner_surface": "symbol_versioning",
+        "severity": "claim_blocking",
+        "evidence_fields": ["host_version_requirements", "version_needs"],
+        "next_action": "Remove host-provided version needs or bind them to owned version nodes in the replacement artifact.",
+    },
 }
 
 INSPECTION_TIMEOUT_ENV = "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS"
@@ -300,6 +364,7 @@ def empty_dependency_breakdown():
         "libc_needed": False,
         "libgcc_needed": False,
         "blocking_reasons": [],
+        "blocker_catalog": {},
     }
 
 
@@ -420,6 +485,10 @@ def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd
     blocking_reasons = []
     if host_needed_libraries:
         blocking_reasons.append("host_needed_libraries_present")
+    if host_direct_needed_libraries:
+        blocking_reasons.append("host_direct_needed_libraries_present")
+    if host_resolved_libraries:
+        blocking_reasons.append("host_resolved_libraries_present")
     if loader_needed:
         blocking_reasons.append("host_loader_dependency")
     if libc_needed:
@@ -452,9 +521,26 @@ def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd
             "libc_needed": libc_needed,
             "libgcc_needed": libgcc_needed,
             "blocking_reasons": blocking_reasons,
+            "blocker_catalog": build_blocker_catalog(blocking_reasons),
         }
     )
     return breakdown
+
+
+def build_blocker_catalog(blocking_reasons):
+    catalog = {}
+    for reason in blocking_reasons:
+        definition = BLOCKER_CATALOG_DEFINITIONS.get(reason)
+        if definition is None:
+            catalog[reason] = {
+                "owner_surface": "unknown",
+                "severity": "claim_blocking",
+                "evidence_fields": [],
+                "next_action": "Classify this blocker before using it as replacement claim evidence.",
+            }
+        else:
+            catalog[reason] = dict(definition)
+    return catalog
 
 
 def write_text(path, content):
