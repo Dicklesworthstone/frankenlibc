@@ -1,0 +1,267 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "locale-iconv-breadth-scope-ledger",
+  "bead": "bd-b92jd.5.4",
+  "owner_bead": "bd-b92jd.5",
+  "generated_utc": "2026-05-05T01:00:00Z",
+  "source_commit": "2349e608b9a71970c4c79632dfa943d9d282db2c",
+  "purpose": "Table-driven ledger that separates the IMPLEMENTED phase-1 iconv/locale bootstrap surface (already covered by tests/conformance/iconv_codec_scope_ledger.v1.json) from the next-wave PLANNED codec breadth and the explicit UNSUPPORTED codec/locale families. Each row carries a fixture obligation that must land before docs/support_matrix/release surfaces can advertise the row, and every row must carry an explicit skip_reason or fixture_obligation so docs/support promotion cannot bypass the gate by silence.",
+  "phase": "phase2-breadth-survey",
+  "inputs": {
+    "iconv_codec_scope_ledger": "tests/conformance/iconv_codec_scope_ledger.v1.json",
+    "iconv_table_pack": "tests/conformance/iconv_table_pack.v1.json",
+    "iconv_table_checksums": "tests/conformance/iconv_table_checksums.v1.json",
+    "iconv_stateful_codec_fixture_pack": "tests/conformance/iconv_stateful_codec_fixture_pack.v1.json",
+    "locale_catalog_transliteration_fixture_pack": "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json",
+    "feature_parity": "FEATURE_PARITY.md",
+    "support_matrix": "support_matrix.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "ledger_row_id",
+    "row_kind",
+    "canonical_name",
+    "alias",
+    "phase",
+    "support_status",
+    "fixture_obligation",
+    "skip_reason",
+    "expected_iconv_open_decision",
+    "evidence_artifact",
+    "claim_decision",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_until_breadth_evidence_current",
+    "block_status_without_evidence": ["DONE"],
+    "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
+    "rejected_evidence_kinds": [
+      "duplicate_canonical_name",
+      "duplicate_alias",
+      "missing_fixture_obligation",
+      "missing_skip_reason",
+      "stale_table_checksum",
+      "phase1_phase2_collision",
+      "ledger_drift"
+    ]
+  },
+  "implemented_bootstrap_codecs": [
+    {
+      "row_id": "phase1-utf-8",
+      "canonical": "UTF-8",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[UTF-8]",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "Phase-1 baseline; cross-referenced from canonical scope ledger so phase-2 cannot regress."
+    },
+    {
+      "row_id": "phase1-iso-8859-1",
+      "canonical": "ISO-8859-1",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[ISO-8859-1]",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "Phase-1 single-byte baseline."
+    },
+    {
+      "row_id": "phase1-utf-16le",
+      "canonical": "UTF-16LE",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[UTF-16LE]",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "Phase-1 wide-char baseline."
+    },
+    {
+      "row_id": "phase1-utf-32",
+      "canonical": "UTF-32",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[UTF-32]",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "Phase-1 32-bit wide-char baseline."
+    }
+  ],
+  "planned_breadth_codecs": [
+    {
+      "row_id": "phase2-utf-16be",
+      "canonical": "UTF-16BE",
+      "phase": "phase2",
+      "support_status": "planned",
+      "fixture_obligation": "Add big-endian wide-char fixture pair against host glibc with ASCII + non-BMP code points; reuse the phase-1 UTF-16LE byte-swap path.",
+      "expected_iconv_open_decision": "ok_after_phase2",
+      "rationale": "Mirror of UTF-16LE with byte order swapped; minimal new state machine."
+    },
+    {
+      "row_id": "phase2-utf-32le",
+      "canonical": "UTF-32LE",
+      "phase": "phase2",
+      "support_status": "planned",
+      "fixture_obligation": "Endianness-explicit UTF-32 fixture pair; verify that the existing UTF-32 path produces the same bytes when the BOM is omitted.",
+      "expected_iconv_open_decision": "ok_after_phase2",
+      "rationale": "Disambiguates BOM-less UTF-32."
+    },
+    {
+      "row_id": "phase2-utf-32be",
+      "canonical": "UTF-32BE",
+      "phase": "phase2",
+      "support_status": "planned",
+      "fixture_obligation": "Endianness-explicit UTF-32 big-endian fixture pair.",
+      "expected_iconv_open_decision": "ok_after_phase2",
+      "rationale": "Disambiguates BOM-less UTF-32."
+    },
+    {
+      "row_id": "phase2-ascii",
+      "canonical": "ASCII",
+      "phase": "phase2",
+      "support_status": "planned",
+      "fixture_obligation": "ASCII -> UTF-8 round-trip plus high-bit rejection cases; share the ISO-8859-1 single-byte engine.",
+      "expected_iconv_open_decision": "ok_after_phase2",
+      "rationale": "Strict 7-bit subset; trivial extension of single-byte baseline."
+    },
+    {
+      "row_id": "phase2-iso-8859-2",
+      "canonical": "ISO-8859-2",
+      "phase": "phase2",
+      "support_status": "planned",
+      "fixture_obligation": "Latin-2 -> UTF-8 fixture against host glibc covering all 256 code points; produce iconv_table_pack row with checksum.",
+      "expected_iconv_open_decision": "ok_after_phase2",
+      "rationale": "Single-byte extension; first non-Latin-1 single-byte family."
+    },
+    {
+      "row_id": "phase2-iso-8859-15",
+      "canonical": "ISO-8859-15",
+      "phase": "phase2",
+      "support_status": "planned",
+      "fixture_obligation": "Latin-9 (Euro) -> UTF-8 fixture; differs from Latin-1 in 8 code points only.",
+      "expected_iconv_open_decision": "ok_after_phase2",
+      "rationale": "Common Western European modern encoding."
+    },
+    {
+      "row_id": "phase2-koi8-r",
+      "canonical": "KOI8-R",
+      "phase": "phase2",
+      "support_status": "planned",
+      "fixture_obligation": "KOI8-R -> UTF-8 single-byte table fixture against host glibc; provenance via iconv_table_checksums.v1.json.",
+      "expected_iconv_open_decision": "ok_after_phase2",
+      "rationale": "Cyrillic single-byte coverage."
+    },
+    {
+      "row_id": "phase2-windows-1252",
+      "canonical": "WINDOWS-1252",
+      "phase": "phase2",
+      "support_status": "planned",
+      "fixture_obligation": "CP1252 -> UTF-8 fixture; supersedes Latin-1 for many Windows-origin texts.",
+      "expected_iconv_open_decision": "ok_after_phase2",
+      "rationale": "Most-deployed superset of Latin-1 in legacy Windows files."
+    }
+  ],
+  "unsupported_breadth_codecs": [
+    {
+      "row_id": "unsupported-iso-2022-cn-ext",
+      "canonical": "ISO-2022-CN-EXT",
+      "phase": "phase1",
+      "support_status": "unsupported",
+      "skip_reason": "Stateful escape-sequence family; deterministic table generation deferred (cross-ref bd-13ya).",
+      "expected_iconv_open_decision": "einval",
+      "rationale": "Mirrors iconv_codec_scope_ledger.v1.json#excluded_codec_families."
+    },
+    {
+      "row_id": "unsupported-iso-2022-jp",
+      "canonical": "ISO-2022-JP",
+      "phase": "phase1",
+      "support_status": "unsupported",
+      "skip_reason": "Shift-state machine + table corpus deferred until phase-3.",
+      "expected_iconv_open_decision": "einval",
+      "rationale": "Mirrors iconv_codec_scope_ledger.v1.json#excluded_codec_families."
+    },
+    {
+      "row_id": "unsupported-euc-jp",
+      "canonical": "EUC-JP",
+      "phase": "phase1",
+      "support_status": "unsupported",
+      "skip_reason": "Multibyte table pipeline deferred.",
+      "expected_iconv_open_decision": "einval",
+      "rationale": "Mirrors iconv_codec_scope_ledger.v1.json#excluded_codec_families."
+    },
+    {
+      "row_id": "unsupported-shift-jis",
+      "canonical": "SHIFT_JIS",
+      "phase": "phase1",
+      "support_status": "unsupported",
+      "skip_reason": "Multibyte table pipeline deferred.",
+      "expected_iconv_open_decision": "einval",
+      "rationale": "Mirrors iconv_codec_scope_ledger.v1.json#excluded_codec_families."
+    },
+    {
+      "row_id": "unsupported-gb18030",
+      "canonical": "GB18030",
+      "phase": "phase1",
+      "support_status": "unsupported",
+      "skip_reason": "Four-byte multibyte table family deferred.",
+      "expected_iconv_open_decision": "einval",
+      "rationale": "Mirrors iconv_codec_scope_ledger.v1.json#excluded_codec_families."
+    },
+    {
+      "row_id": "unsupported-big5-hkscs",
+      "canonical": "BIG5-HKSCS",
+      "phase": "phase1",
+      "support_status": "unsupported",
+      "skip_reason": "Multibyte HKSCS extension table deferred.",
+      "expected_iconv_open_decision": "einval",
+      "rationale": "Mirrors iconv_codec_scope_ledger.v1.json#excluded_codec_families."
+    }
+  ],
+  "locale_breadth_rows": [
+    {
+      "row_id": "locale-collation-en-us-utf8",
+      "kind": "collation",
+      "locale": "en_US.UTF-8",
+      "phase": "phase2",
+      "support_status": "planned",
+      "fixture_obligation": "strcoll/wcscoll fixture against host glibc en_US.UTF-8 (sortkey + tertiary-weight comparisons).",
+      "expected_setlocale_decision": "ok_after_phase2",
+      "rationale": "Most common English collation reference."
+    },
+    {
+      "row_id": "locale-collation-de-de-utf8",
+      "kind": "collation",
+      "locale": "de_DE.UTF-8",
+      "phase": "phase3",
+      "support_status": "planned",
+      "fixture_obligation": "strcoll fixture covering ä/ö/ü/ß sortkey ordering.",
+      "expected_setlocale_decision": "planned_phase3",
+      "rationale": "First non-English collation breadth target."
+    },
+    {
+      "row_id": "locale-transliteration-iconv-translit",
+      "kind": "transliteration",
+      "locale": "//TRANSLIT-suffix",
+      "phase": "phase3",
+      "support_status": "planned",
+      "fixture_obligation": "iconv with //TRANSLIT suffix: verify ASCII fallback for non-mappable code points using host glibc as oracle.",
+      "expected_iconv_open_decision": "planned_phase3",
+      "rationale": "Largest user-visible iconv extension beyond strict conversion."
+    },
+    {
+      "row_id": "locale-catalog-c-posix",
+      "kind": "message_catalog",
+      "locale": "C/POSIX",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json",
+      "expected_setlocale_decision": "ok",
+      "rationale": "Phase-1 baseline message-catalog path."
+    }
+  ],
+  "minimum_row_counts": {
+    "implemented_bootstrap_codecs": 4,
+    "planned_breadth_codecs": 6,
+    "unsupported_breadth_codecs": 6,
+    "locale_breadth_rows": 4
+  }
+}
