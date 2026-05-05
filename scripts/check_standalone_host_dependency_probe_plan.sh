@@ -231,6 +231,22 @@ standalone_failure_signatures = set(
     for entry in standalone_artifact_manifest.get("expected_failure_classifications", [])
     if isinstance(entry, dict)
 )
+standalone_blocker_catalog_contract = standalone_artifact_manifest.get("blocker_catalog_contract", {})
+standalone_blocker_catalog_definitions = {}
+if not isinstance(standalone_blocker_catalog_contract, dict):
+    errors.append("standalone artifact blocker_catalog_contract must be an object")
+else:
+    required_catalog_fields = standalone_blocker_catalog_contract.get("required_row_fields")
+    if (
+        not isinstance(required_catalog_fields, list)
+        or set(required_catalog_fields) != REQUIRED_BLOCKER_CATALOG_ROW_FIELDS
+    ):
+        errors.append("standalone artifact blocker_catalog_contract.required_row_fields mismatch")
+    definitions = standalone_blocker_catalog_contract.get("definitions", {})
+    if not isinstance(definitions, dict) or not definitions:
+        errors.append("standalone artifact blocker_catalog_contract.definitions must be a non-empty object")
+    else:
+        standalone_blocker_catalog_definitions = definitions
 
 negative_tests = plan.get("negative_claim_tests", [])
 negative_signatures = set()
@@ -472,6 +488,15 @@ else:
         if not isinstance(next_action, str) or not next_action:
             errors.append(
                 f"current_forge_blocker_projection.blocker_catalog_required_rows.{reason}.next_action must be non-empty"
+            )
+        expected_row = standalone_blocker_catalog_definitions.get(reason)
+        if not isinstance(expected_row, dict):
+            errors.append(
+                f"standalone artifact blocker_catalog_contract.definitions missing {reason}"
+            )
+        elif row != expected_row:
+            errors.append(
+                f"current_forge_blocker_projection.blocker_catalog_required_rows.{reason} does not match standalone manifest contract"
             )
     for reason in catalog_rows:
         if reason not in reason_map:

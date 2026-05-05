@@ -251,6 +251,15 @@ BLOCKER_CATALOG_DEFINITIONS = {
         "next_action": "Remove host-provided version needs or bind them to owned version nodes in the replacement artifact.",
     },
 }
+EXPECTED_BLOCKER_CATALOG_CONTRACT = {
+    "required_row_fields": [
+        "owner_surface",
+        "severity",
+        "evidence_fields",
+        "next_action",
+    ],
+    "definitions": BLOCKER_CATALOG_DEFINITIONS,
+}
 
 INSPECTION_TIMEOUT_ENV = "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS"
 INSPECTION_TIMEOUT_DEFAULT_SECS = 60
@@ -640,6 +649,8 @@ def validate_manifest():
         errors.append("expected_failure_classifications do not match script contract")
     if manifest.get("claim_policy") != EXPECTED_CLAIM_POLICY:
         errors.append("claim_policy does not match script contract")
+    if manifest.get("blocker_catalog_contract") != EXPECTED_BLOCKER_CATALOG_CONTRACT:
+        errors.append("blocker_catalog_contract does not match script contract")
     timeout_policy = manifest.get("inspection_timeout_policy", {})
     expected_timeout_policy = {
         "env": INSPECTION_TIMEOUT_ENV,

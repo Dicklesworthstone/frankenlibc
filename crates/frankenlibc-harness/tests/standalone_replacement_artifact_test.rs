@@ -834,6 +834,69 @@ fn manifest_matches_forge_contract() {
             "source_commit matches HEAD",
         ]
     );
+
+    let blocker_catalog_contract = manifest
+        .get("blocker_catalog_contract")
+        .and_then(serde_json::Value::as_object)
+        .expect("blocker_catalog_contract should be an object");
+    assert_eq!(
+        blocker_catalog_contract["required_row_fields"],
+        serde_json::json!([
+            "owner_surface",
+            "severity",
+            "evidence_fields",
+            "next_action"
+        ])
+    );
+    let definitions = blocker_catalog_contract["definitions"]
+        .as_object()
+        .expect("blocker catalog definitions should be an object");
+    assert_eq!(definitions.len(), 10);
+    for reason in [
+        "host_needed_libraries_present",
+        "host_direct_needed_libraries_present",
+        "host_resolved_libraries_present",
+        "host_loader_dependency",
+        "host_libc_dependency",
+        "libgcc_runtime_dependency",
+        "undefined_unwind_symbols",
+        "undefined_glibc_symbols",
+        "undefined_tls_symbols",
+        "host_version_requirements",
+    ] {
+        assert!(
+            definitions.contains_key(reason),
+            "missing blocker catalog definition for {reason}"
+        );
+        let row = &definitions[reason];
+        assert_eq!(row["severity"].as_str(), Some("claim_blocking"));
+        assert!(
+            row["owner_surface"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "catalog definition {reason} should name owner_surface"
+        );
+        assert!(
+            row["evidence_fields"]
+                .as_array()
+                .is_some_and(|fields| !fields.is_empty()),
+            "catalog definition {reason} should cite evidence_fields"
+        );
+        assert!(
+            row["next_action"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "catalog definition {reason} should include next_action"
+        );
+    }
+    assert_eq!(
+        definitions["undefined_tls_symbols"]["owner_surface"].as_str(),
+        Some("tls_startup")
+    );
+    assert_eq!(
+        definitions["host_version_requirements"]["owner_surface"].as_str(),
+        Some("symbol_versioning")
+    );
 }
 
 #[test]
@@ -1150,6 +1213,45 @@ fn validate_only_rejects_claim_policy_contract_drift() {
             .iter()
             .any(|error| error.as_str() == Some("claim_policy does not match script contract")),
         "expected claim_policy contract error: {errors:?}"
+    );
+}
+
+#[test]
+fn validate_only_rejects_blocker_catalog_contract_drift() {
+    let manifest_path = write_manifest_variant(
+        "standalone-artifact-blocker-catalog-drift-manifest",
+        |manifest| {
+            manifest["blocker_catalog_contract"]["definitions"]["undefined_tls_symbols"]["owner_surface"] =
+                serde_json::Value::String("generic_tls".to_owned());
+            let required = manifest["blocker_catalog_contract"]["required_row_fields"]
+                .as_array_mut()
+                .expect("required_row_fields should be an array");
+            required.retain(|field| field.as_str() != Some("next_action"));
+        },
+    );
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) = run_gate_with_env(
+        "--validate-only",
+        "standalone-artifact-blocker-catalog-drift",
+        &envs,
+    );
+    assert!(
+        !output.status.success(),
+        "blocker_catalog_contract drift should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors.iter().any(|error| {
+            error.as_str() == Some("blocker_catalog_contract does not match script contract")
+        }),
+        "expected blocker_catalog_contract error: {errors:?}"
     );
 }
 

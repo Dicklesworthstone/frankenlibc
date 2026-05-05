@@ -348,6 +348,12 @@ fn plan_has_required_shape_and_probe_coverage() -> TestResult {
             .iter()
             .map(|entry| json_string(entry, "failure_signature").map(str::to_owned))
             .collect::<TestResult<_>>()?;
+    let standalone_catalog_definitions = json_field(
+        json_field(&standalone_manifest, "blocker_catalog_contract")?,
+        "definitions",
+    )?
+    .as_object()
+    .ok_or_else(|| "standalone blocker catalog definitions must be object".to_string())?;
     let probe_ids: HashSet<_> = json_array(&plan, "probe_rows")?
         .iter()
         .map(|row| json_string(row, "probe_id").map(str::to_owned))
@@ -422,6 +428,13 @@ fn plan_has_required_shape_and_probe_coverage() -> TestResult {
         require(
             !json_array(row, "evidence_fields")?.is_empty(),
             format!("blocker catalog row {reason} must cite evidence_fields"),
+        )?;
+        let expected_row = standalone_catalog_definitions
+            .get(*reason)
+            .ok_or_else(|| format!("standalone manifest missing catalog row {reason}"))?;
+        require(
+            row == expected_row,
+            format!("blocker catalog row {reason} must match standalone manifest contract"),
         )?;
     }
 
@@ -650,5 +663,33 @@ fn checker_rejects_missing_forge_blocker_catalog_row() -> TestResult {
         &mutated,
         "standalone-host-probe-plan-missing-catalog-row",
         "blocker_catalog_required_rows missing undefined_tls_symbols",
+    )
+}
+
+#[test]
+fn checker_rejects_forge_blocker_catalog_contract_drift() -> TestResult {
+    let mutated = write_mutated_plan("standalone-host-probe-plan-catalog-drift", |plan| {
+        let projection = plan
+            .get_mut("current_forge_blocker_projection")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing current_forge_blocker_projection".to_string())?;
+        let catalog = projection
+            .get_mut("blocker_catalog_required_rows")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing blocker_catalog_required_rows".to_string())?;
+        let row = catalog
+            .get_mut("undefined_tls_symbols")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing undefined_tls_symbols catalog row".to_string())?;
+        row.insert(
+            "owner_surface".to_string(),
+            Value::String("generic_tls".to_string()),
+        );
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "standalone-host-probe-plan-catalog-drift",
+        "blocker_catalog_required_rows.undefined_tls_symbols does not match standalone manifest contract",
     )
 }

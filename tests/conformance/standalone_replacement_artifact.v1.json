@@ -152,6 +152,107 @@
       "source_commit matches HEAD"
     ]
   },
+  "blocker_catalog_contract": {
+    "required_row_fields": [
+      "owner_surface",
+      "severity",
+      "evidence_fields",
+      "next_action"
+    ],
+    "definitions": {
+      "host_needed_libraries_present": {
+        "owner_surface": "runtime_linkage",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "host_needed_libraries"
+        ],
+        "next_action": "Remove every host runtime library from NEEDED and ldd evidence before treating the artifact as standalone."
+      },
+      "host_direct_needed_libraries_present": {
+        "owner_surface": "direct_dynamic_dependencies",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "host_direct_needed_libraries",
+          "needed_libraries"
+        ],
+        "next_action": "Eliminate direct NEEDED edges to host runtime libraries from the replacement cdylib link."
+      },
+      "host_resolved_libraries_present": {
+        "owner_surface": "loader_resolution",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "host_resolved_libraries",
+          "ldd_libraries"
+        ],
+        "next_action": "Make the loader resolve no host runtime libraries for the candidate replacement artifact."
+      },
+      "host_loader_dependency": {
+        "owner_surface": "loader_startup",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "loader_needed",
+          "needed_libraries",
+          "ldd_libraries"
+        ],
+        "next_action": "Replace host loader/startup dependency with owned CRT, dynamic loader, and init/fini evidence."
+      },
+      "host_libc_dependency": {
+        "owner_surface": "libc_surface",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "host_needed_libraries",
+          "host_resolved_libraries"
+        ],
+        "next_action": "Remove host libc resolution from the replacement artifact and rerun direct-link smoke evidence."
+      },
+      "libgcc_runtime_dependency": {
+        "owner_surface": "compiler_runtime",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "needed_libraries",
+          "host_needed_libraries",
+          "version_needs"
+        ],
+        "next_action": "Burn down libgcc runtime dependence or document an owned compiler-runtime substitute for replacement mode."
+      },
+      "undefined_unwind_symbols": {
+        "owner_surface": "unwind_runtime",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "undefined_unwind_symbols",
+          "undefined_symbols"
+        ],
+        "next_action": "Provide owned unwinder/personality symbols or prove the standalone artifact has no unresolved unwind edges."
+      },
+      "undefined_glibc_symbols": {
+        "owner_surface": "glibc_symbol_surface",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "undefined_glibc_symbols",
+          "undefined_symbols"
+        ],
+        "next_action": "Implement or eliminate unresolved GLIBC-versioned symbols before accepting standalone replacement evidence."
+      },
+      "undefined_tls_symbols": {
+        "owner_surface": "tls_startup",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "undefined_tls_symbols",
+          "undefined_symbols"
+        ],
+        "next_action": "Provide owned TLS access/startup support or prove no __tls_get_addr dependency remains."
+      },
+      "host_version_requirements": {
+        "owner_surface": "symbol_versioning",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "host_version_requirements",
+          "version_needs"
+        ],
+        "next_action": "Remove host-provided version needs or bind them to owned version nodes in the replacement artifact."
+      }
+    }
+  },
   "summary": {
     "bead": "bd-srtkq",
     "row_count": 1,
