@@ -1,0 +1,143 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-b92jd.3.3",
+  "source_bead": "bd-b92jd.3.2",
+  "trace_id": "bd-b92jd-3-3-workload-failure-dashboard-v1",
+  "generated_at_utc": "2026-05-05T01:50:00Z",
+  "purpose": "Group user workload replay failures into stable classes, preserve optional skips as explicit evidence, and fail closed when skips or blocked rows would otherwise be hidden.",
+  "inputs": {
+    "trace_report": "target/conformance/user_workload_replay_traces.report.json",
+    "trace_log": "target/conformance/user_workload_replay_traces.log.jsonl",
+    "trace_runner": "scripts/run_user_workload_replay_traces.sh",
+    "workload_manifest": "tests/conformance/user_workload_replay_manifest.v1.json"
+  },
+  "required_failure_classes": [
+    "startup_timeout",
+    "startup_segv",
+    "symbol_lookup",
+    "loader_missing_library",
+    "parity_mismatch",
+    "perf_regression",
+    "optional_skip",
+    "environment_error"
+  ],
+  "real_regression_classes": [
+    "startup_timeout",
+    "startup_segv",
+    "symbol_lookup",
+    "loader_missing_library",
+    "parity_mismatch",
+    "perf_regression"
+  ],
+  "required_row_fields": [
+    "trace_id",
+    "bead_id",
+    "workload_id",
+    "mode",
+    "status",
+    "failure_signature",
+    "source_commit",
+    "target_dir",
+    "artifact_refs"
+  ],
+  "required_dashboard_fields": [
+    "schema_version",
+    "bead",
+    "source_bead",
+    "trace_id",
+    "generated_at_utc",
+    "source_commit",
+    "status",
+    "summary",
+    "failure_groups",
+    "next_beads",
+    "errors",
+    "artifact_refs"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "event",
+    "status",
+    "failure_class",
+    "failure_signature",
+    "count",
+    "representative_workload_id",
+    "representative_mode",
+    "artifact_refs",
+    "source_commit",
+    "target_dir"
+  ],
+  "hidden_skip_policy": {
+    "skipped_requires_optional_signature": true,
+    "claim_blocked_requires_failure_signature": true,
+    "not_run_requires_failure_signature": true,
+    "pass_requires_none_or_ok_signature": true
+  },
+  "signature_classification": {
+    "exact": {
+      "startup_timeout": "startup_timeout",
+      "timeout": "startup_timeout",
+      "startup_segv": "startup_segv",
+      "signal_11": "startup_segv",
+      "segmentation_fault": "startup_segv",
+      "symbol_lookup": "symbol_lookup",
+      "undefined_symbol": "symbol_lookup",
+      "symbol_not_found": "symbol_lookup",
+      "loader_missing_library": "loader_missing_library",
+      "interpose_artifact_missing": "loader_missing_library",
+      "interpose_artifact_stale": "loader_missing_library",
+      "interpose_artifact_wrong_name": "loader_missing_library",
+      "interpose_artifact_unreadable": "loader_missing_library",
+      "stdout_digest_mismatch": "parity_mismatch",
+      "exit_mismatch": "parity_mismatch",
+      "baseline_unavailable": "parity_mismatch",
+      "parity_mismatch": "parity_mismatch",
+      "perf_regression": "perf_regression",
+      "latency_budget_exceeded": "perf_regression",
+      "command_unavailable": "environment_error",
+      "invalid_command_argv": "environment_error",
+      "invalid_environment": "environment_error",
+      "environment_error": "environment_error",
+      "workload_replay_stale_source_commit": "environment_error",
+      "workload_replay_artifact_ref_missing": "environment_error",
+      "workload_replay_log_contract_missing": "environment_error"
+    },
+    "prefixes": {
+      "optional_tool_missing:": "optional_skip",
+      "stderr_loader": "loader_missing_library",
+      "stderr_no_such_file": "environment_error",
+      "workload_replay_": "environment_error"
+    }
+  },
+  "fixture_scenarios": [
+    {
+      "scenario_id": "clean_pass_rows",
+      "expected_status": "pass",
+      "expected_failure_class": "none",
+      "expected_hidden_skip_count": 0
+    },
+    {
+      "scenario_id": "optional_skip_is_visible",
+      "expected_status": "pass",
+      "expected_failure_class": "optional_skip",
+      "expected_hidden_skip_count": 0
+    },
+    {
+      "scenario_id": "hidden_skip_fails_closed",
+      "expected_status": "fail",
+      "expected_failure_signature": "workload_failure_dashboard_invalid"
+    },
+    {
+      "scenario_id": "unknown_failure_signature_fails_closed",
+      "expected_status": "fail",
+      "expected_failure_signature": "workload_failure_dashboard_invalid"
+    }
+  ],
+  "artifact_refs": [
+    "scripts/check_workload_failure_dashboard.sh",
+    "scripts/run_user_workload_replay_traces.sh",
+    "tests/conformance/user_workload_replay_manifest.v1.json",
+    "crates/frankenlibc-harness/tests/workload_failure_dashboard_test.rs"
+  ]
+}
