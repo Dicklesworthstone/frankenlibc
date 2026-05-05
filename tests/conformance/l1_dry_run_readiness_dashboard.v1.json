@@ -89,6 +89,46 @@
       "rationale": "LD_PRELOAD/interpose artifacts cannot substitute for standalone replacement evidence."
     },
     {
+      "row_id": "standalone-artifact-source-commit-field",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "L1 dashboard consumers must see that standalone artifact freshness is bound to the artifact manifest source_commit."
+    },
+    {
+      "row_id": "standalone-artifact-source-commit-comparison-target",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "L1 dashboard consumers must see that standalone artifact freshness compares against the current source checkout."
+    },
+    {
+      "row_id": "standalone-artifact-source-commit-stale-result",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_standalone_replacement_artifact_evidence",
+      "rationale": "A stale standalone artifact manifest source commit must block artifact evidence."
+    },
+    {
+      "row_id": "standalone-artifact-source-commit-no-evidence",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "source_commit_freshness_policy.standalone_artifact_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Stale standalone artifact evidence cannot support L1 readiness rows."
+    },
+    {
+      "row_id": "standalone-artifact-source-commit-rejection-kind",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_source_commit",
+      "rationale": "Dashboard consumers must see stale standalone artifact source drift as stale_source_commit evidence."
+    },
+    {
       "row_id": "standalone-host-probe-projection-decision-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
