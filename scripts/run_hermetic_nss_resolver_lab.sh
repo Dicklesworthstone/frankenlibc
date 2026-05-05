@@ -193,6 +193,20 @@ def validate_freshness(manifest):
     if not isinstance(freshness, dict):
         fail(FAILURES["stale_commit"], "freshness must be an object")
         return
+    freshness_policy = manifest.get("source_commit_freshness_policy", {})
+    expected_freshness_policy = {
+        "recorded_source_commit_field": "source_commit",
+        "comparison_target": "current git HEAD",
+        "stale_result": "block_nss_lab_evidence",
+        "nss_lab_evidence_allowed_when_stale": False,
+        "rejected_evidence_kind": FAILURES["stale_commit"],
+    }
+    if freshness_policy != expected_freshness_policy:
+        fail(
+            FAILURES["stale_commit"],
+            "source_commit_freshness_policy must match the stale NSS lab block contract",
+        )
+        return
     required = freshness.get("required_source_commit", "")
     if not isinstance(required, str) or not source_commit_ok(required):
         fail(

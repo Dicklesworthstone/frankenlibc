@@ -5,6 +5,13 @@
   "owner_bead": "bd-b92jd.5",
   "generated_utc": "2026-05-05T03:30:00Z",
   "source_commit": "a75bb9c55e6373099e27552b2f3d05dbe569fc0b",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_nss_lab_evidence",
+    "nss_lab_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "nss_lab_stale_source_commit"
+  },
   "purpose": "Hermetic resolver/NSS lab manifest. Declares the synthetic fake-root layout (hosts, services, passwd, group, resolv.conf, optional fake UDP DNS endpoint), the semantic kernels that parse and replay those files, the test scenarios that exercise them, and the fail-closed contract that no scenario may issue a real-network call. Each scenario carries strict/hardened mode coverage, an oracle, structured-log fields, host-glibc fixture anchors, and a fixture obligation pointing at the synthetic root entry that drives it. The execution runner materializes fake roots, runs only the declared semantic kernels, binds only loopback fake DNS endpoints, and emits current-commit JSONL evidence under target/conformance/nss_lab/.",
   "execution_runner": "scripts/run_hermetic_nss_resolver_lab.sh",
   "freshness": {

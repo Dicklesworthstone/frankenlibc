@@ -25,6 +25,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -98,6 +99,26 @@ fn manifest_path() -> PathBuf {
     workspace_root().join("tests/conformance/hermetic_nss_resolver_lab.v1.json")
 }
 
+fn git_head(root: &Path) -> Result<String, Box<dyn Error>> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(root)
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+    Ok(String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
+        .trim()
+        .to_owned())
+}
+
 const REQUIRED_LOG_FIELDS: &[&str] = &[
     "trace_id",
     "bead_id",
@@ -169,6 +190,32 @@ fn manifest_is_well_formed() -> TestResult {
             .is_empty(),
         "source_commit must be set",
     )?;
+    let freshness_policy = &manifest["source_commit_freshness_policy"];
+    ensure_eq(
+        freshness_policy["recorded_source_commit_field"].as_str(),
+        Some("source_commit"),
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        freshness_policy["comparison_target"].as_str(),
+        Some("current git HEAD"),
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    ensure_eq(
+        freshness_policy["stale_result"].as_str(),
+        Some("block_nss_lab_evidence"),
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    ensure_eq(
+        freshness_policy["nss_lab_evidence_allowed_when_stale"].as_bool(),
+        Some(false),
+        "source_commit_freshness_policy.nss_lab_evidence_allowed_when_stale",
+    )?;
+    ensure_eq(
+        freshness_policy["rejected_evidence_kind"].as_str(),
+        Some("nss_lab_stale_source_commit"),
+        "source_commit_freshness_policy.rejected_evidence_kind",
+    )?;
 
     let log_fields: Vec<&str> = as_array(&manifest["required_log_fields"], "required_log_fields")?
         .iter()
@@ -179,6 +226,39 @@ fn manifest_is_well_formed() -> TestResult {
         REQUIRED_LOG_FIELDS.to_vec(),
         "required_log_fields",
     )?;
+    Ok(())
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_nss_lab_evidence() -> TestResult {
+    let root = workspace_root();
+    let manifest = load_json(&manifest_path())?;
+    let manifest_commit = as_str(&manifest["source_commit"], "source_commit")?;
+    ensure(
+        manifest_commit.len() == 40 && manifest_commit.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "source_commit must be a 40-character git SHA",
+    )?;
+
+    let current_head = git_head(&root)?;
+    if manifest_commit != current_head {
+        let policy = &manifest["source_commit_freshness_policy"];
+        ensure_eq(
+            policy["stale_result"].as_str(),
+            Some("block_nss_lab_evidence"),
+            "stale NSS lab source_commit must block lab evidence",
+        )?;
+        ensure_eq(
+            policy["nss_lab_evidence_allowed_when_stale"].as_bool(),
+            Some(false),
+            "stale NSS lab source_commit must not allow lab evidence",
+        )?;
+        ensure_eq(
+            policy["rejected_evidence_kind"].as_str(),
+            Some("nss_lab_stale_source_commit"),
+            "stale NSS lab source_commit must use nss_lab_stale_source_commit",
+        )?;
+    }
+
     Ok(())
 }
 
