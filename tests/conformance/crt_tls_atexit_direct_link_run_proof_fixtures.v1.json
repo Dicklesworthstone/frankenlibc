@@ -210,6 +210,12 @@
       "failure_signature": "host_glibc_dependency"
     },
     {
+      "id": "neg-artifact-dependency-inspection-failed",
+      "mutation": "make a declared host-dependency probe fail while inspecting a fresh libfrankenlibc_replace.so artifact",
+      "expected_result": "claim_blocked",
+      "failure_signature": "artifact_dependency_inspection_failed"
+    },
+    {
       "id": "neg-missing-artifact-refs",
       "mutation": "remove artifact_refs from a fixture row",
       "expected_result": "claim_blocked",

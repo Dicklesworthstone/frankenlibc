@@ -164,6 +164,13 @@ def run_command(command, *, cwd, env=None, timeout=20):
             "stderr": exc.stderr or "timeout",
             "timed_out": True,
         }
+    except OSError as exc:
+        return {
+            "returncode": 127,
+            "stdout": "",
+            "stderr": str(exc),
+            "timed_out": False,
+        }
 
 
 def load_json(path, label):
@@ -281,7 +288,7 @@ def classify_standalone_artifact(default_text):
             if artifact_status == "current":
                 readelf_dynamic = run_command(["readelf", "-d", str(candidate)], cwd=root, timeout=60)
                 ldd = run_command(["ldd", str(candidate)], cwd=root, timeout=60)
-                if readelf_dynamic["returncode"] != 0:
+                if readelf_dynamic["returncode"] != 0 or ldd["returncode"] != 0:
                     artifact_status = "inspection_failed"
                     failure_signature = "artifact_dependency_inspection_failed"
                 else:

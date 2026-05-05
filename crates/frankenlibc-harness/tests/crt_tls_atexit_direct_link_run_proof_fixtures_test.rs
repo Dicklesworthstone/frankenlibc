@@ -3,6 +3,7 @@
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::error::Error;
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -308,6 +309,30 @@ fn build_host_dependent_shared_object(path: &Path) -> TestResult {
     )
 }
 
+fn fake_ldd_failure_path(out_dir: &Path) -> TestResult<OsString> {
+    let fake_bin = out_dir.join("fake-bin");
+    std::fs::create_dir_all(&fake_bin)?;
+    let fake_ldd = fake_bin.join("ldd");
+    std::fs::write(&fake_ldd, "#!/bin/sh\necho ldd probe failed >&2\nexit 42\n")?;
+    let chmod = Command::new("chmod")
+        .arg("+x")
+        .arg(&fake_ldd)
+        .output()
+        .map_err(|err| test_error(format!("failed to run chmod: {err}")))?;
+    ensure(
+        chmod.status.success(),
+        format!(
+            "chmod failed\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&chmod.stdout),
+            String::from_utf8_lossy(&chmod.stderr)
+        ),
+    )?;
+    let mut path = OsString::from(fake_bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    Ok(path)
+}
+
 fn run_default_gate(root: &Path) -> TestResult<(Value, PathBuf)> {
     let out_dir = unique_temp_dir("crt-tls-proof-pass")?;
     let report_path = out_dir.join("crt-tls-proof.report.json");
@@ -457,8 +482,9 @@ fn manifest_defines_required_crt_tls_atexit_fixture_scope() -> TestResult {
         .filter_map(|entry| entry.get("failure_signature").and_then(Value::as_str))
         .collect::<HashSet<_>>();
     ensure(
-        negative_signatures.contains("host_glibc_dependency"),
-        "negative claim tests should include host_glibc_dependency",
+        negative_signatures.contains("host_glibc_dependency")
+            && negative_signatures.contains("artifact_dependency_inspection_failed"),
+        "negative claim tests should include host dependency failure cases",
     )?;
     ensure(
         string_set(&manifest, "required_scenario_kinds", "manifest")?
@@ -790,6 +816,59 @@ fn checker_blocks_host_libc_dependent_standalone_artifact() -> TestResult {
     ensure(
         counts.get("claim_blocked").and_then(Value::as_u64) == Some(10),
         "strict+hardened direct-link probes should remain claim_blocked",
+    )
+}
+
+#[test]
+fn checker_blocks_standalone_artifact_when_ldd_probe_fails() -> TestResult {
+    let root = workspace_root();
+    if Command::new("cc").arg("--version").output().is_err() {
+        return Ok(());
+    }
+    let out_dir = unique_temp_dir("crt-tls-proof-ldd-probe-failed")?;
+    let artifact = out_dir.join("libfrankenlibc_replace.so");
+    build_sample_shared_object(&artifact)?;
+    let fake_path = fake_ldd_failure_path(&out_dir)?;
+    let report_path = out_dir.join("crt-tls-proof.report.json");
+    let output = Command::new("bash")
+        .arg(script_path(&root))
+        .current_dir(&root)
+        .env("PATH", fake_path)
+        .env("FLC_CRT_TLS_PROOF_OUT_DIR", &out_dir)
+        .env("FLC_CRT_TLS_PROOF_REPORT", &report_path)
+        .env(
+            "FLC_CRT_TLS_PROOF_LOG",
+            out_dir.join("crt-tls-proof.log.jsonl"),
+        )
+        .env("FLC_CRT_TLS_PROOF_TARGET_DIR", &out_dir)
+        .env("FLC_CRT_TLS_PROOF_REPLACE_ARTIFACT", &artifact)
+        .output()
+        .map_err(|err| test_error(format!("failed to run CRT/TLS proof gate: {err}")))?;
+    ensure(
+        output.status.success(),
+        "dependency probe failure should block claims without failing the gate",
+    )?;
+    let report = load_json(&report_path)?;
+    let artifact_state = field(&report, "standalone_artifact", "report")?;
+    ensure(
+        string_field(artifact_state, "status", "standalone_artifact")? == "inspection_failed",
+        "failed dependency inspection should not be current proof evidence",
+    )?;
+    ensure(
+        matches!(
+            string_field(artifact_state, "failure_signature", "standalone_artifact")?,
+            "artifact_dependency_inspection_failed"
+        ),
+        "failed dependency inspection should be classified explicitly",
+    )?;
+    let counts = field(
+        field(&report, "summary", "report")?,
+        "direct_link_execution_status_counts",
+        "summary",
+    )?;
+    ensure(
+        counts.get("claim_blocked").and_then(Value::as_u64) == Some(10),
+        "dependency inspection failures should keep direct-link probes claim_blocked",
     )
 }
 
