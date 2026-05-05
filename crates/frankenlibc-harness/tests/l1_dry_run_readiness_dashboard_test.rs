@@ -515,6 +515,10 @@ fn standalone_artifact_report_rows_are_explicit() -> TestResult {
             "artifact_state.dependency_breakdown.blocking_reasons",
         ),
         (
+            "standalone-artifact-report-top-level-blocking-reasons-diagnostic",
+            "blocking_reasons",
+        ),
+        (
             "standalone-artifact-report-blocker-catalog-diagnostic",
             "artifact_state.dependency_breakdown.blocker_catalog",
         ),

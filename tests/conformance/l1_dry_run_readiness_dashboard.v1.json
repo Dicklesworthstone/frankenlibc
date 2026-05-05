@@ -276,7 +276,7 @@
       "row_id": "standalone-artifact-report-host-direct-needed-libraries-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.16",
+      "field": "required_report_fields.17",
       "expected_value": "artifact_state.dependency_breakdown.host_direct_needed_libraries",
       "rationale": "L1 dashboard consumers must distinguish direct DT_NEEDED host libraries from transitive loader resolution."
     },
@@ -284,7 +284,7 @@
       "row_id": "standalone-artifact-report-host-resolved-libraries-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.17",
+      "field": "required_report_fields.18",
       "expected_value": "artifact_state.dependency_breakdown.host_resolved_libraries",
       "rationale": "L1 dashboard consumers must distinguish ldd-resolved host libraries from direct DT_NEEDED entries."
     },
@@ -292,7 +292,7 @@
       "row_id": "standalone-artifact-report-sampled-symbols-present-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.18",
+      "field": "required_report_fields.19",
       "expected_value": "artifact_state.sampled_symbols_present",
       "rationale": "L1 dashboard consumers must see whether the forge observed every required sampled replacement symbol."
     },
@@ -300,7 +300,7 @@
       "row_id": "standalone-artifact-report-symbol-samples-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.19",
+      "field": "required_report_fields.20",
       "expected_value": "artifact_state.symbol_samples",
       "rationale": "L1 dashboard consumers must see the per-symbol sampled export map behind sampled_symbols_present."
     },
@@ -308,7 +308,7 @@
       "row_id": "standalone-artifact-report-claim-status-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.20",
+      "field": "required_report_fields.21",
       "expected_value": "claim_status",
       "rationale": "L1 dashboard consumers must see the top-level forge claim status before replacement claims can advance."
     },
@@ -316,7 +316,7 @@
       "row_id": "standalone-artifact-report-source-commit-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.21",
+      "field": "required_report_fields.22",
       "expected_value": "source_commit",
       "rationale": "L1 dashboard consumers must see the source commit attached to standalone forge evidence."
     },
@@ -324,7 +324,7 @@
       "row_id": "standalone-artifact-report-status-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.22",
+      "field": "required_report_fields.23",
       "expected_value": "artifact_state.status",
       "rationale": "L1 dashboard consumers must see whether the inspected artifact is current, stale, missing, or otherwise blocked."
     },
@@ -332,7 +332,7 @@
       "row_id": "standalone-artifact-report-failure-signature-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.23",
+      "field": "required_report_fields.24",
       "expected_value": "artifact_state.failure_signature",
       "rationale": "L1 dashboard consumers must see the exact forge failure signature behind claim-blocked evidence."
     },
@@ -340,7 +340,7 @@
       "row_id": "standalone-artifact-report-host-glibc-dependency-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.24",
+      "field": "required_report_fields.25",
       "expected_value": "artifact_state.host_glibc_dependency",
       "rationale": "L1 dashboard consumers must see the aggregate host-glibc dependency status beside detailed dependency lists."
     },
@@ -348,7 +348,7 @@
       "row_id": "standalone-artifact-report-path-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.25",
+      "field": "required_report_fields.26",
       "expected_value": "artifact_state.path",
       "rationale": "L1 dashboard consumers must see the concrete replacement artifact path used for forge evidence."
     },
@@ -356,7 +356,7 @@
       "row_id": "standalone-artifact-report-sha256-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.26",
+      "field": "required_report_fields.27",
       "expected_value": "artifact_state.sha256",
       "rationale": "L1 dashboard consumers must see the replacement artifact hash used for identity checks."
     },
@@ -364,7 +364,7 @@
       "row_id": "standalone-artifact-report-mtime-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.27",
+      "field": "required_report_fields.28",
       "expected_value": "artifact_state.mtime",
       "rationale": "L1 dashboard consumers must see the artifact mtime used for freshness checks."
     },
@@ -417,10 +417,18 @@
       "rationale": "L1 dashboard consumers must see aggregate forge blocking reasons, not only a generic claim_blocked result."
     },
     {
-      "row_id": "standalone-artifact-report-blocker-catalog-diagnostic",
+      "row_id": "standalone-artifact-report-top-level-blocking-reasons-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
       "field": "required_report_fields.11",
+      "expected_value": "blocking_reasons",
+      "rationale": "L1 dashboard consumers must see top-level forge blocking reasons directly, not only through the nested dependency breakdown."
+    },
+    {
+      "row_id": "standalone-artifact-report-blocker-catalog-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.12",
       "expected_value": "artifact_state.dependency_breakdown.blocker_catalog",
       "rationale": "L1 dashboard consumers must see blocker owner surfaces, severity, evidence fields, and next actions alongside raw forge reasons."
     },
@@ -444,7 +452,7 @@
       "row_id": "standalone-artifact-report-tool-exit-code-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.12",
+      "field": "required_report_fields.13",
       "expected_value": "tool_evidence.*.exit_code",
       "rationale": "L1 dashboard consumers must see per-probe inspection exit codes instead of only aggregate claim_blocked state."
     },
@@ -452,7 +460,7 @@
       "row_id": "standalone-artifact-report-tool-timeout-flag-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.13",
+      "field": "required_report_fields.14",
       "expected_value": "tool_evidence.*.timed_out",
       "rationale": "L1 dashboard consumers must distinguish failed inspection tools from timed-out inspection tools."
     },
@@ -460,7 +468,7 @@
       "row_id": "standalone-artifact-report-tool-timeout-budget-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.14",
+      "field": "required_report_fields.15",
       "expected_value": "tool_evidence.*.timeout_secs",
       "rationale": "L1 dashboard consumers must see the effective timeout budget used by each standalone forge inspection probe."
     },
@@ -468,7 +476,7 @@
       "row_id": "standalone-artifact-report-tool-path-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.15",
+      "field": "required_report_fields.16",
       "expected_value": "tool_evidence.*.path",
       "rationale": "L1 dashboard consumers must see the evidence artifact path for each standalone forge inspection probe."
     },
