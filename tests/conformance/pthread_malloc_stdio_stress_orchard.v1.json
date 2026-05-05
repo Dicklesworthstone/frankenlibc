@@ -1,0 +1,173 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "pthread-malloc-stdio-stress-orchard",
+  "bead": "bd-b92jd.5.3",
+  "owner_bead": "bd-b92jd.5",
+  "generated_utc": "2026-05-05T01:30:00Z",
+  "source_commit": "9a45e43c909dc462369df55aba712595c523ff09",
+  "purpose": "Hermetic stress orchard for pthread/malloc/stdio interleavings. Each scenario is a deterministic, bounded-iteration replay with a fixed PCG32 seed; the manifest is the source of truth for which scenarios exist, what oracles they assert, which iteration tiers they ship, and where their structured-log evidence lands. The harness gate verifies the manifest's structural invariants and refuses to advertise stress coverage in support_matrix/release surfaces unless every cited scenario row is currently sealed.",
+  "execution_policy": {
+    "default_runner": "rch_only",
+    "rationale": "Heavy stress runs perturb shared local CI capacity and confound failure attribution; rch isolates worker target_dirs and preserves source_commit + run_id. Local runs are explicitly opt-in via FRANKENLIBC_STRESS_LOCAL=1.",
+    "cargo_invocation_template": "rch exec -- cargo test -p frankenlibc-harness --test <scenario_test_name>",
+    "iteration_tier_envvar": "FRANKENLIBC_STRESS_TIER",
+    "default_tier": "smoke"
+  },
+  "iteration_tiers": [
+    {
+      "tier": "smoke",
+      "iterations": 256,
+      "thread_count": 4,
+      "intent": "Default CI tier. Each scenario must complete inside ~5s wall time on rch under load."
+    },
+    {
+      "tier": "normal",
+      "iterations": 4096,
+      "thread_count": 8,
+      "intent": "Pre-merge review tier; ~30s wall time."
+    },
+    {
+      "tier": "deep",
+      "iterations": 65536,
+      "thread_count": 16,
+      "intent": "Pre-release tier; ~5min wall time. Opt-in only."
+    }
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "scenario_kind",
+    "tier",
+    "iterations",
+    "thread_count",
+    "seed",
+    "runtime_mode",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "decision_path",
+    "healing_action",
+    "duration_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_until_orchard_evidence_current",
+    "block_status_without_evidence": ["DONE"],
+    "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
+    "rejected_evidence_kinds": [
+      "missing_scenario_seed",
+      "missing_oracle_kind",
+      "non_deterministic_input",
+      "unbounded_iteration_count",
+      "local_only_runner",
+      "stale_source_commit",
+      "missing_runtime_mode_coverage"
+    ]
+  },
+  "scenarios": [
+    {
+      "scenario_id": "malloc-concurrent-alloc-free",
+      "scenario_kind": "malloc",
+      "description": "N threads loop bounded_iter times allocating + freeing varying sizes (8B..64KB) drawn from a deterministic PCG32 stream. Asserts: no double-free, no leak (bytes_in_use returns to zero at scenario end), no fingerprint/canary corruption.",
+      "harness_test_name": "stress_malloc_concurrent_alloc_free",
+      "seed": "0x4d61_6c6c_6f63_5354",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "fingerprint_canary_invariant",
+      "expected_failure_signatures": [],
+      "evidence_artifact": "target/conformance/stress_orchard/malloc_concurrent_alloc_free.jsonl"
+    },
+    {
+      "scenario_id": "stdio-file-buffering-contention",
+      "scenario_kind": "stdio",
+      "description": "N threads share one FILE* under different buffering modes (unbuffered / line-buffered / fully-buffered) writing deterministic fixed-length records; reader thread reassembles. Asserts: no torn writes (record boundaries preserved), no buffer overflow under contention.",
+      "harness_test_name": "stress_stdio_file_buffering_contention",
+      "seed": "0x5374_6469_6f43_4e54",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "record_boundary_replay",
+      "expected_failure_signatures": [],
+      "evidence_artifact": "target/conformance/stress_orchard/stdio_file_buffering_contention.jsonl"
+    },
+    {
+      "scenario_id": "pthread-mutex-lifecycle",
+      "scenario_kind": "pthread",
+      "description": "init -> lock/unlock cycles -> destroy with recursive and error-checking attributes. Asserts: pthread_mutex_destroy on a held mutex returns EBUSY (POSIX); double-init detected when policy table indicates strict.",
+      "harness_test_name": "stress_pthread_mutex_lifecycle",
+      "seed": "0x4d75_7465_7858_4c43",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "posix_mutex_state_machine",
+      "expected_failure_signatures": [],
+      "evidence_artifact": "target/conformance/stress_orchard/pthread_mutex_lifecycle.jsonl"
+    },
+    {
+      "scenario_id": "pthread-condvar-broadcast-signal",
+      "scenario_kind": "pthread",
+      "description": "Producer/consumer with bounded queue under condvar broadcast + signal mixed wakeups. Asserts: no missed wakeups, no spurious unblock failures, FIFO-by-arrival ordering preserved on signal-only wake.",
+      "harness_test_name": "stress_pthread_condvar_broadcast_signal",
+      "seed": "0x436f_6e64_4256_4e57",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "queue_invariant_replay",
+      "expected_failure_signatures": [],
+      "evidence_artifact": "target/conformance/stress_orchard/pthread_condvar_broadcast_signal.jsonl"
+    },
+    {
+      "scenario_id": "pthread-rwlock-writer-priority",
+      "scenario_kind": "pthread",
+      "description": "Mixed reader/writer rwlock workload with deterministic interleavings. Asserts: writer-starvation bound (writers complete within K reader cycles under hardened mode), tryrdlock/trywrlock return values match POSIX state.",
+      "harness_test_name": "stress_pthread_rwlock_writer_priority",
+      "seed": "0x5277_4c6f_636b_5750",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "writer_starvation_bound",
+      "expected_failure_signatures": [],
+      "evidence_artifact": "target/conformance/stress_orchard/pthread_rwlock_writer_priority.jsonl"
+    },
+    {
+      "scenario_id": "pthread-cancellation-adjacent-state",
+      "scenario_kind": "pthread",
+      "description": "Threads register cleanup handlers, transition through deferred/async cancellation states, exit by pthread_cancel. Asserts: cleanup handlers run in LIFO order, cancellation point semantics preserved, no leaked mutex on cancel.",
+      "harness_test_name": "stress_pthread_cancellation_adjacent_state",
+      "seed": "0x4361_6e63_4150_4a4f",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "cleanup_handler_lifo_replay",
+      "expected_failure_signatures": [],
+      "evidence_artifact": "target/conformance/stress_orchard/pthread_cancellation_adjacent_state.jsonl"
+    },
+    {
+      "scenario_id": "hardened-repair-malloc-overflow",
+      "scenario_kind": "hardened_repair",
+      "description": "Issue oversize / wraparound malloc requests under hardened mode; assert deterministic Repair=ClampSize action with bounded clamp and ENOMEM on too-large.",
+      "harness_test_name": "stress_hardened_repair_malloc_overflow",
+      "seed": "0x4861_7264_4d61_6c6c",
+      "runtime_modes": ["hardened"],
+      "oracle_kind": "healing_action_decision_table",
+      "expected_failure_signatures": [],
+      "evidence_artifact": "target/conformance/stress_orchard/hardened_repair_malloc_overflow.jsonl"
+    },
+    {
+      "scenario_id": "hardened-repair-stdio-format-truncation",
+      "scenario_kind": "hardened_repair",
+      "description": "snprintf/fprintf with deliberate format-overflow inputs under hardened mode; assert deterministic Repair=Truncate action and matching errno/return-value contract.",
+      "harness_test_name": "stress_hardened_repair_stdio_format_truncation",
+      "seed": "0x4861_7264_5374_6469",
+      "runtime_modes": ["hardened"],
+      "oracle_kind": "healing_action_decision_table",
+      "expected_failure_signatures": [],
+      "evidence_artifact": "target/conformance/stress_orchard/hardened_repair_stdio_format_truncation.jsonl"
+    }
+  ],
+  "minimum_scenario_counts": {
+    "malloc": 1,
+    "stdio": 1,
+    "pthread": 4,
+    "hardened_repair": 2
+  },
+  "consuming_gates": [
+    "tests/conformance/replacement_levels.json",
+    "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "tests/conformance/perf_baseline_spec.json"
+  ]
+}
