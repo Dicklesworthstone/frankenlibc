@@ -1,6 +1,14 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.6.6",
+  "source_commit": "ddbd50d0847de11470e0d18cb5d3ab603a77d9b5",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_readiness_matrix_evidence",
+    "standalone_readiness_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "generated_at_utc": "2026-05-01T17:55:00Z",
   "purpose": "Define the L2 and L3 standalone replacement readiness proof matrix so standalone claims require artifact-level evidence, not symbol-count evidence alone.",
   "inputs": {

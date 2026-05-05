@@ -7,11 +7,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MATRIX="${ROOT}/tests/conformance/standalone_readiness_proof_matrix.v1.json"
-LEVELS="${ROOT}/tests/conformance/replacement_levels.json"
-OUT_DIR="${ROOT}/target/conformance"
-REPORT="${OUT_DIR}/standalone_readiness_proof_matrix.report.json"
-LOG="${OUT_DIR}/standalone_readiness_proof_matrix.log.jsonl"
+MATRIX="${FLC_STANDALONE_READINESS_MATRIX:-${ROOT}/tests/conformance/standalone_readiness_proof_matrix.v1.json}"
+LEVELS="${FLC_STANDALONE_READINESS_LEVELS:-${ROOT}/tests/conformance/replacement_levels.json}"
+OUT_DIR="${FLC_STANDALONE_READINESS_OUT_DIR:-${ROOT}/target/conformance}"
+REPORT="${FLC_STANDALONE_READINESS_REPORT:-${OUT_DIR}/standalone_readiness_proof_matrix.report.json}"
+LOG="${FLC_STANDALONE_READINESS_LOG:-${OUT_DIR}/standalone_readiness_proof_matrix.log.jsonl}"
 
 mkdir -p "${OUT_DIR}"
 
@@ -115,6 +115,13 @@ def repo_relative_path(ref, context):
         return None
     return root / rel
 
+def full_git_commit(value):
+    return (
+        isinstance(value, str)
+        and len(value) == 40
+        and all(byte in "0123456789abcdefABCDEF" for byte in value)
+    )
+
 matrix = load_json(matrix_path)
 levels = load_json(levels_path)
 checks["json_parse"] = "pass" if isinstance(matrix, dict) and isinstance(levels, dict) else "fail"
@@ -128,6 +135,23 @@ if matrix.get("schema_version") == "v1" and matrix.get("bead") == "bd-bp8fl.6.6"
 else:
     checks["top_level_shape"] = "fail"
     errors.append("matrix must declare schema_version=v1 and bead=bd-bp8fl.6.6")
+
+expected_freshness_policy = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_readiness_matrix_evidence",
+    "standalone_readiness_evidence_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
+}
+source_commit_policy_ok = (
+    full_git_commit(matrix.get("source_commit"))
+    and matrix.get("source_commit_freshness_policy") == expected_freshness_policy
+)
+checks["source_commit_freshness_policy"] = "pass" if source_commit_policy_ok else "fail"
+if not source_commit_policy_ok:
+    errors.append(
+        "source_commit_freshness_policy must match the stale standalone readiness matrix block contract"
+    )
 
 if matrix.get("required_log_fields") == REQUIRED_LOG_FIELDS:
     checks["required_log_fields"] = "pass"

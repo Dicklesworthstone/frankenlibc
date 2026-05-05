@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const REQUIRED_DIMENSIONS: &[&str] = &[
     "loader_startup_crt_tls_init_fini_secure",
@@ -56,6 +57,32 @@ const REQUIRED_PROOF_SURFACES: &[&str] = &[
 
 const STANDALONE_ARTIFACT_REF: &str = "tests/conformance/standalone_replacement_artifact.v1.json";
 
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn git_head(root: &Path) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .expect("git rev-parse HEAD should run");
+    assert!(
+        output.status.success(),
+        "git rev-parse HEAD failed with status {}",
+        output.status,
+    );
+    let stdout = String::from_utf8(output.stdout).expect("git rev-parse HEAD should emit UTF-8");
+    let head = stdout.trim().to_owned();
+    assert!(
+        is_hex_commit(&head),
+        "git HEAD must be a 40-hex commit, got {head:?}",
+    );
+    head
+}
+
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest)
@@ -73,6 +100,25 @@ fn load_json(path: &Path) -> serde_json::Value {
 
 fn load_matrix() -> serde_json::Value {
     load_json(&workspace_root().join("tests/conformance/standalone_readiness_proof_matrix.v1.json"))
+}
+
+fn unique_target_path(root: &Path, label: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after UNIX_EPOCH")
+        .as_nanos();
+    root.join(format!(
+        "target/standalone_readiness_matrix_test/{label}-{}-{nanos}.json",
+        std::process::id()
+    ))
+}
+
+fn write_json(path: &Path, value: &serde_json::Value) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("target parent should be creatable");
+    }
+    let content = serde_json::to_string_pretty(value).expect("json should serialize");
+    std::fs::write(path, format!("{content}\n")).expect("json should be writable");
 }
 
 fn json_array_contains(value: &serde_json::Value, needle: &str) -> bool {
@@ -106,6 +152,30 @@ fn assert_repo_relative_existing_path(root: &Path, rel: &str, context: &str) {
     );
 }
 
+fn assert_source_commit_freshness_policy(matrix: &serde_json::Value) {
+    let policy = &matrix["source_commit_freshness_policy"];
+    assert_eq!(
+        policy["recorded_source_commit_field"].as_str(),
+        Some("source_commit"),
+    );
+    assert_eq!(
+        policy["comparison_target"].as_str(),
+        Some("current git HEAD")
+    );
+    assert_eq!(
+        policy["stale_result"].as_str(),
+        Some("block_standalone_readiness_matrix_evidence"),
+    );
+    assert_eq!(
+        policy["standalone_readiness_evidence_allowed_when_stale"].as_bool(),
+        Some(false),
+    );
+    assert_eq!(
+        policy["rejected_evidence_kind"].as_str(),
+        Some("stale_source_commit"),
+    );
+}
+
 #[test]
 fn artifact_exists_and_has_required_shape() {
     let matrix = load_matrix();
@@ -125,6 +195,14 @@ fn artifact_exists_and_has_required_shape() {
         "obligations must be array"
     );
     assert!(matrix["summary"].is_object(), "summary must be object");
+    let source_commit = matrix["source_commit"]
+        .as_str()
+        .expect("source_commit must be present");
+    assert!(
+        is_hex_commit(source_commit),
+        "source_commit must be a 40-hex commit, got {source_commit:?}",
+    );
+    assert_source_commit_freshness_policy(&matrix);
 
     let log_fields: Vec<_> = matrix["required_log_fields"]
         .as_array()
@@ -133,6 +211,39 @@ fn artifact_exists_and_has_required_shape() {
         .map(|field| field.as_str().unwrap())
         .collect();
     assert_eq!(log_fields, REQUIRED_LOG_FIELDS);
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_standalone_readiness_evidence() {
+    let root = workspace_root();
+    let matrix = load_matrix();
+    let source_commit = matrix["source_commit"]
+        .as_str()
+        .expect("source_commit must be present");
+    assert!(
+        is_hex_commit(source_commit),
+        "source_commit must be a 40-hex commit, got {source_commit:?}",
+    );
+    let current_head = git_head(&root);
+    assert_source_commit_freshness_policy(&matrix);
+    if source_commit != current_head {
+        let policy = &matrix["source_commit_freshness_policy"];
+        assert_eq!(
+            policy["stale_result"].as_str(),
+            Some("block_standalone_readiness_matrix_evidence"),
+            "stale source commits must block standalone readiness evidence",
+        );
+        assert_eq!(
+            policy["standalone_readiness_evidence_allowed_when_stale"].as_bool(),
+            Some(false),
+            "stale source commits must not allow standalone readiness evidence",
+        );
+        assert_eq!(
+            policy["rejected_evidence_kind"].as_str(),
+            Some("stale_source_commit"),
+            "stale source commits must use stale_source_commit",
+        );
+    }
 }
 
 #[test]
@@ -506,6 +617,7 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         "obligations",
         "standalone_artifact_refs",
         "standalone_forge_evidence_semantics",
+        "source_commit_freshness_policy",
         "dimension_coverage",
         "claim_policy",
         "summary_counts",
@@ -530,4 +642,47 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
             "structured log row missing {key}"
         );
     }
+}
+
+#[test]
+fn gate_rejects_missing_source_commit_freshness_policy() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_standalone_readiness_matrix.sh");
+    let mut matrix = load_matrix();
+    matrix
+        .as_object_mut()
+        .expect("matrix must be object")
+        .remove("source_commit_freshness_policy");
+    let matrix_path = unique_target_path(&root, "missing-source-policy-matrix");
+    let report_path = unique_target_path(&root, "missing-source-policy-report");
+    let log_path = unique_target_path(&root, "missing-source-policy-log");
+    write_json(&matrix_path, &matrix);
+
+    let output = Command::new(&script)
+        .current_dir(&root)
+        .env("FLC_STANDALONE_READINESS_MATRIX", &matrix_path)
+        .env("FLC_STANDALONE_READINESS_REPORT", &report_path)
+        .env("FLC_STANDALONE_READINESS_LOG", &log_path)
+        .output()
+        .expect("failed to run standalone readiness matrix gate");
+    assert!(
+        !output.status.success(),
+        "missing source_commit_freshness_policy must fail the gate"
+    );
+    let report = load_json(&report_path);
+    assert_eq!(
+        report["checks"]["source_commit_freshness_policy"].as_str(),
+        Some("fail"),
+    );
+    assert!(
+        report["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|error| error
+                .as_str()
+                .unwrap_or_default()
+                .contains("source_commit_freshness_policy")),
+        "report should identify source_commit_freshness_policy failure: {report:#?}",
+    );
 }
