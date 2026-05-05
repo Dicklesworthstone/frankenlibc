@@ -624,6 +624,14 @@ def append_log(event, *, artifact_path, artifact_status, claim_status, artifact_
     log_rows.append(row)
 
 
+def full_git_commit(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{40}", value) is not None
+
+
+def source_commit_marker_is_current(value):
+    return value == "current" or (source_commit != "unknown" and value == source_commit)
+
+
 def validate_manifest():
     checks["json_parse"] = "pass" if isinstance(manifest, dict) and isinstance(packaging, dict) else "fail"
     if manifest.get("schema_version") != "v1":
@@ -632,15 +640,20 @@ def validate_manifest():
         errors.append("manifest must be linked to bd-srtkq")
     if manifest.get("manifest_id") != EXPECTED_MANIFEST_ID:
         errors.append("manifest_id does not match script contract")
-    source_commit = manifest.get("source_commit")
+    manifest_source_commit = manifest.get("source_commit")
+    recorded_source_commit_current = source_commit_marker_is_current(manifest_source_commit)
     source_commit_policy_ok = (
-        isinstance(source_commit, str)
-        and re.fullmatch(r"[0-9a-fA-F]{40}", source_commit) is not None
+        (manifest_source_commit == "current" or full_git_commit(manifest_source_commit))
         and manifest.get("source_commit_freshness_policy") == EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY
     )
     checks["source_commit_freshness_policy"] = "pass" if source_commit_policy_ok else "fail"
+    checks["recorded_source_commit_freshness"] = (
+        "pass" if source_commit_policy_ok and recorded_source_commit_current else "fail"
+    )
     if not source_commit_policy_ok:
         errors.append("source_commit_freshness_policy does not match script contract")
+    elif not recorded_source_commit_current:
+        errors.append("source_commit must be 'current' or match current git HEAD")
     if manifest.get("inputs") != EXPECTED_INPUTS:
         errors.append("inputs do not match script contract")
     if manifest.get("summary") != EXPECTED_SUMMARY:

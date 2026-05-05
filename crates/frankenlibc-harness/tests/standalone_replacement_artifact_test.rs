@@ -664,10 +664,7 @@ fn manifest_matches_forge_contract() {
     let source_commit = manifest["source_commit"]
         .as_str()
         .expect("source_commit should be present");
-    assert!(
-        is_hex_commit(source_commit),
-        "source_commit should be a 40-hex commit, got {source_commit:?}"
-    );
+    assert_eq!(source_commit, "current");
     assert_source_commit_freshness_policy(&manifest);
     assert_eq!(
         manifest["manifest_id"].as_str(),
@@ -955,12 +952,12 @@ fn stale_source_commit_policy_blocks_artifact_evidence() {
         .as_str()
         .expect("source_commit should be present");
     assert!(
-        is_hex_commit(source_commit),
-        "source_commit should be a 40-hex commit, got {source_commit:?}"
+        source_commit == "current" || is_hex_commit(source_commit),
+        "source_commit should be 'current' or a 40-hex commit, got {source_commit:?}"
     );
     let current_head = git_head(&root);
     assert_source_commit_freshness_policy(&manifest);
-    if source_commit != current_head {
+    if source_commit != "current" && source_commit != current_head {
         let policy = &manifest["source_commit_freshness_policy"];
         assert_eq!(
             policy["stale_result"].as_str(),
@@ -978,6 +975,44 @@ fn stale_source_commit_policy_blocks_artifact_evidence() {
             "stale source commits must use stale_source_commit"
         );
     }
+}
+
+#[test]
+fn validate_only_rejects_stale_recorded_source_commit() {
+    let manifest_path = write_manifest_variant(
+        "standalone-artifact-stale-recorded-source-manifest",
+        |manifest| {
+            manifest["source_commit"] =
+                serde_json::Value::String("0000000000000000000000000000000000000000".to_owned());
+        },
+    );
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) = run_gate_with_env(
+        "--validate-only",
+        "standalone-artifact-stale-recorded-source",
+        &envs,
+    );
+    assert!(
+        !output.status.success(),
+        "stale recorded source_commit should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    assert_eq!(
+        report_json["checks"]["recorded_source_commit_freshness"].as_str(),
+        Some("fail")
+    );
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors.iter().any(|error| error.as_str()
+            == Some("source_commit must be 'current' or match current git HEAD")),
+        "expected recorded source_commit freshness error: {errors:?}"
+    );
 }
 
 #[test]
@@ -1416,6 +1451,10 @@ fn validate_only_writes_report_and_required_log_fields() {
     assert_eq!(report["claim_status"].as_str(), Some("schema_validated"));
     assert_eq!(
         report["checks"]["source_commit_freshness_policy"].as_str(),
+        Some("pass")
+    );
+    assert_eq!(
+        report["checks"]["recorded_source_commit_freshness"].as_str(),
         Some("pass")
     );
     assert_eq!(
