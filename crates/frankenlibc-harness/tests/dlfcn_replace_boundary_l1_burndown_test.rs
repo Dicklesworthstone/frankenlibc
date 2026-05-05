@@ -24,6 +24,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -95,6 +96,26 @@ fn dlfcn_source_path() -> PathBuf {
     workspace_root().join("crates/frankenlibc-abi/src/dlfcn_abi.rs")
 }
 
+fn git_head(root: &Path) -> Result<String, Box<dyn Error>> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(root)
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+    Ok(String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
+        .trim()
+        .to_owned())
+}
+
 const REQUIRED_LOG_FIELDS: &[&str] = &[
     "trace_id",
     "bead_id",
@@ -140,6 +161,32 @@ fn burndown_artifact_is_well_formed() -> TestResult {
             .unwrap_or_default()
             .is_empty(),
         "source_commit must be set",
+    )?;
+    let freshness_policy = &burndown["source_commit_freshness_policy"];
+    ensure_eq(
+        freshness_policy["recorded_source_commit_field"].as_str(),
+        Some("source_commit"),
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        freshness_policy["comparison_target"].as_str(),
+        Some("current git HEAD"),
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    ensure_eq(
+        freshness_policy["stale_result"].as_str(),
+        Some("block_l1_burndown_classification"),
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    ensure_eq(
+        freshness_policy["classification_allowed_when_stale"].as_bool(),
+        Some(false),
+        "source_commit_freshness_policy.classification_allowed_when_stale",
+    )?;
+    ensure_eq(
+        freshness_policy["rejected_evidence_kind"].as_str(),
+        Some("stale_source_commit"),
+        "source_commit_freshness_policy.rejected_evidence_kind",
     )?;
 
     let inputs = burndown["inputs"]
@@ -202,6 +249,39 @@ fn burndown_artifact_is_well_formed() -> TestResult {
             format!("rejected_evidence_kinds must include {kind}"),
         )?;
     }
+    Ok(())
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_l1_burndown_classification() -> TestResult {
+    let root = workspace_root();
+    let burndown = load_json(&burndown_path())?;
+    let burndown_commit = as_str(&burndown["source_commit"], "source_commit")?;
+    ensure(
+        burndown_commit.len() == 40 && burndown_commit.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "source_commit must be a 40-character git SHA",
+    )?;
+
+    let current_head = git_head(&root)?;
+    if burndown_commit != current_head {
+        let policy = &burndown["source_commit_freshness_policy"];
+        ensure_eq(
+            policy["stale_result"].as_str(),
+            Some("block_l1_burndown_classification"),
+            "stale dlfcn burndown source_commit must block L1 burndown classification",
+        )?;
+        ensure_eq(
+            policy["classification_allowed_when_stale"].as_bool(),
+            Some(false),
+            "stale dlfcn burndown source_commit must not allow classification evidence",
+        )?;
+        ensure_eq(
+            policy["rejected_evidence_kind"].as_str(),
+            Some("stale_source_commit"),
+            "stale dlfcn burndown source_commit must use stale_source_commit",
+        )?;
+    }
+
     Ok(())
 }
 
