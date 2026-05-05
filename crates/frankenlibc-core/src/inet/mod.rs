@@ -195,16 +195,24 @@ pub fn parse_ipv4_bsd(src: &[u8]) -> Option<[u8; 4]> {
         return None;
     }
 
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.is_empty() || parts.len() > 4 {
+    // Avoid the per-call heap allocation a `Vec<&str>` would impose; the
+    // BSD numbers-and-dots grammar caps the part count at 4, so a five-slot
+    // stack buffer is enough to count parts and reject 5+ in one pass.
+    // (bd-xh0av)
+    let mut nums = [0u32; 4];
+    let mut nparts = 0usize;
+    for part in s.split('.') {
+        if nparts >= 4 {
+            return None;
+        }
+        nums[nparts] = parse_bsd_part(part)?;
+        nparts += 1;
+    }
+    if nparts == 0 {
         return None;
     }
-    let mut nums = [0u32; 4];
-    for (i, part) in parts.iter().enumerate() {
-        nums[i] = parse_bsd_part(part)?;
-    }
     let mut octets = [0u8; 4];
-    match parts.len() {
+    match nparts {
         1 => {
             // Single 32-bit value, network byte order means high byte is octet 0.
             let v = nums[0];
