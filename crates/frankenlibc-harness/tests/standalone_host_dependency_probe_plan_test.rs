@@ -64,6 +64,7 @@ const FORGE_PROJECTION_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.version_needs",
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.blocking_reasons",
+    "artifact_state.dependency_breakdown.blocker_catalog",
 ];
 
 const FORGE_BLOCKING_REASON_MAPPINGS: &[(&str, &str)] = &[
@@ -71,6 +72,11 @@ const FORGE_BLOCKING_REASON_MAPPINGS: &[(&str, &str)] = &[
         "host_needed_libraries_present",
         "readelf_dynamic_dependencies",
     ),
+    (
+        "host_direct_needed_libraries_present",
+        "readelf_dynamic_dependencies",
+    ),
+    ("host_resolved_libraries_present", "ldd_host_glibc_scan"),
     ("host_loader_dependency", "ldd_host_glibc_scan"),
     ("host_libc_dependency", "ldd_host_glibc_scan"),
     ("libgcc_runtime_dependency", "readelf_dynamic_dependencies"),
@@ -385,6 +391,39 @@ fn plan_has_required_shape_and_probe_coverage() -> TestResult {
             format!("mapped probe id missing: {probe_id}"),
         )?;
     }
+    require(
+        reason_map.len() == FORGE_BLOCKING_REASON_MAPPINGS.len(),
+        "blocking reason map must not omit or add projected forge reasons",
+    )?;
+
+    let catalog_rows = json_field(projection, "blocker_catalog_required_rows")?
+        .as_object()
+        .ok_or_else(|| "blocker_catalog_required_rows must be object".to_string())?;
+    require(
+        catalog_rows.len() == FORGE_BLOCKING_REASON_MAPPINGS.len(),
+        "blocker catalog must have one row per projected blocking reason",
+    )?;
+    for (reason, _) in FORGE_BLOCKING_REASON_MAPPINGS {
+        let row = catalog_rows
+            .get(*reason)
+            .ok_or_else(|| format!("blocker catalog missing {reason}"))?;
+        require(
+            json_string(row, "severity")? == "claim_blocking",
+            format!("blocker catalog row {reason} must be claim_blocking"),
+        )?;
+        require(
+            !json_string(row, "owner_surface")?.is_empty(),
+            format!("blocker catalog row {reason} must name owner_surface"),
+        )?;
+        require(
+            !json_string(row, "next_action")?.is_empty(),
+            format!("blocker catalog row {reason} must include next_action"),
+        )?;
+        require(
+            !json_array(row, "evidence_fields")?.is_empty(),
+            format!("blocker catalog row {reason} must cite evidence_fields"),
+        )?;
+    }
 
     let failure_map = json_field(projection, "failure_signature_to_negative_test")?
         .as_object()
@@ -485,6 +524,18 @@ fn checker_emits_report_and_required_jsonl_rows() -> TestResult {
         "l2_l3 blocker count must be 13",
     )?;
     require(
+        json_u64(summary, "forge_projection_field_count")? == 18,
+        "forge projection field count must be 18",
+    )?;
+    require(
+        json_u64(summary, "forge_projection_blocking_reason_count")? == 10,
+        "forge projection blocking reason count must be 10",
+    )?;
+    require(
+        json_u64(summary, "forge_projection_blocker_catalog_row_count")? == 10,
+        "forge projection blocker catalog count must be 10",
+    )?;
+    require(
         json_string(&report, "source_commit")?.len() == 40,
         "report source_commit must be current git SHA",
     )?;
@@ -578,5 +629,26 @@ fn checker_rejects_missing_forge_projection_mapping() -> TestResult {
         &mutated,
         "standalone-host-probe-plan-missing-projection",
         "blocking_reason_to_probe_id missing host_libc_dependency",
+    )
+}
+
+#[test]
+fn checker_rejects_missing_forge_blocker_catalog_row() -> TestResult {
+    let mutated = write_mutated_plan("standalone-host-probe-plan-missing-catalog-row", |plan| {
+        let projection = plan
+            .get_mut("current_forge_blocker_projection")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing current_forge_blocker_projection".to_string())?;
+        let catalog = projection
+            .get_mut("blocker_catalog_required_rows")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing blocker_catalog_required_rows".to_string())?;
+        catalog.remove("undefined_tls_symbols");
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "standalone-host-probe-plan-missing-catalog-row",
+        "blocker_catalog_required_rows missing undefined_tls_symbols",
     )
 }

@@ -102,10 +102,13 @@
       "artifact_state.dependency_breakdown.undefined_tls_symbols",
       "artifact_state.dependency_breakdown.version_needs",
       "artifact_state.dependency_breakdown.host_version_requirements",
-      "artifact_state.dependency_breakdown.blocking_reasons"
+      "artifact_state.dependency_breakdown.blocking_reasons",
+      "artifact_state.dependency_breakdown.blocker_catalog"
     ],
     "blocking_reason_to_probe_id": {
       "host_needed_libraries_present": "readelf_dynamic_dependencies",
+      "host_direct_needed_libraries_present": "readelf_dynamic_dependencies",
+      "host_resolved_libraries_present": "ldd_host_glibc_scan",
       "host_loader_dependency": "ldd_host_glibc_scan",
       "host_libc_dependency": "ldd_host_glibc_scan",
       "libgcc_runtime_dependency": "readelf_dynamic_dependencies",
@@ -113,6 +116,99 @@
       "undefined_glibc_symbols": "nm_undefined_host_symbols",
       "undefined_tls_symbols": "nm_undefined_host_symbols",
       "host_version_requirements": "version_script_export_nodes"
+    },
+    "blocker_catalog_required_rows": {
+      "host_needed_libraries_present": {
+        "owner_surface": "runtime_linkage",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "host_needed_libraries"
+        ],
+        "next_action": "Remove every host runtime library from NEEDED and ldd evidence before treating the artifact as standalone."
+      },
+      "host_direct_needed_libraries_present": {
+        "owner_surface": "direct_dynamic_dependencies",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "host_direct_needed_libraries",
+          "needed_libraries"
+        ],
+        "next_action": "Eliminate direct NEEDED edges to host runtime libraries from the replacement cdylib link."
+      },
+      "host_resolved_libraries_present": {
+        "owner_surface": "loader_resolution",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "host_resolved_libraries",
+          "ldd_libraries"
+        ],
+        "next_action": "Make the loader resolve no host runtime libraries for the candidate replacement artifact."
+      },
+      "host_loader_dependency": {
+        "owner_surface": "loader_startup",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "loader_needed",
+          "needed_libraries",
+          "ldd_libraries"
+        ],
+        "next_action": "Replace host loader/startup dependency with owned CRT, dynamic loader, and init/fini evidence."
+      },
+      "host_libc_dependency": {
+        "owner_surface": "libc_surface",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "host_needed_libraries",
+          "host_resolved_libraries"
+        ],
+        "next_action": "Remove host libc resolution from the replacement artifact and rerun direct-link smoke evidence."
+      },
+      "libgcc_runtime_dependency": {
+        "owner_surface": "compiler_runtime",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "needed_libraries",
+          "host_needed_libraries",
+          "version_needs"
+        ],
+        "next_action": "Burn down libgcc runtime dependence or document an owned compiler-runtime substitute for replacement mode."
+      },
+      "undefined_unwind_symbols": {
+        "owner_surface": "unwind_runtime",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "undefined_unwind_symbols",
+          "undefined_symbols"
+        ],
+        "next_action": "Provide owned unwinder/personality symbols or prove the standalone artifact has no unresolved unwind edges."
+      },
+      "undefined_glibc_symbols": {
+        "owner_surface": "glibc_symbol_surface",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "undefined_glibc_symbols",
+          "undefined_symbols"
+        ],
+        "next_action": "Implement or eliminate unresolved GLIBC-versioned symbols before accepting standalone replacement evidence."
+      },
+      "undefined_tls_symbols": {
+        "owner_surface": "tls_startup",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "undefined_tls_symbols",
+          "undefined_symbols"
+        ],
+        "next_action": "Provide owned TLS access/startup support or prove no __tls_get_addr dependency remains."
+      },
+      "host_version_requirements": {
+        "owner_surface": "symbol_versioning",
+        "severity": "claim_blocking",
+        "evidence_fields": [
+          "host_version_requirements",
+          "version_needs"
+        ],
+        "next_action": "Remove host-provided version needs or bind them to owned version nodes in the replacement artifact."
+      }
     },
     "failure_signature_to_negative_test": {
       "standalone_artifact_missing": "missing_replace_artifact",
@@ -610,8 +706,9 @@
     "claim_blocked_count": 13,
     "l2_l3_blocker_count": 13,
     "negative_claim_test_count": 5,
-    "forge_projection_field_count": 17,
-    "forge_projection_blocking_reason_count": 8,
+    "forge_projection_field_count": 18,
+    "forge_projection_blocking_reason_count": 10,
+    "forge_projection_blocker_catalog_row_count": 10,
     "forge_projection_failure_signature_count": 3,
     "tool_count": 10
   }

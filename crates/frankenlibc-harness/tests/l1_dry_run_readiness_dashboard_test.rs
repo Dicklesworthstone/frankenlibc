@@ -435,6 +435,10 @@ fn standalone_artifact_report_rows_are_explicit() -> TestResult {
             "artifact_state.dependency_breakdown.blocking_reasons",
         ),
         (
+            "standalone-artifact-report-blocker-catalog-diagnostic",
+            "artifact_state.dependency_breakdown.blocker_catalog",
+        ),
+        (
             "standalone-artifact-report-tool-exit-code-diagnostic",
             "tool_evidence.*.exit_code",
         ),
@@ -491,12 +495,17 @@ fn host_probe_projection_rows_are_explicit() -> TestResult {
         (
             "standalone-host-probe-projection-field-count-diagnostic",
             "summary.forge_projection_field_count",
-            json!(17),
+            json!(18),
         ),
         (
             "standalone-host-probe-projection-blocking-reason-count-diagnostic",
             "summary.forge_projection_blocking_reason_count",
-            json!(8),
+            json!(10),
+        ),
+        (
+            "standalone-host-probe-projection-blocker-catalog-count-diagnostic",
+            "summary.forge_projection_blocker_catalog_row_count",
+            json!(10),
         ),
         (
             "standalone-host-probe-projection-failure-signature-count-diagnostic",

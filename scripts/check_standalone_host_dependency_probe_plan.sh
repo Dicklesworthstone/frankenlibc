@@ -102,9 +102,12 @@ REQUIRED_FORGE_PROJECTION_FIELDS = {
     "artifact_state.dependency_breakdown.version_needs",
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.blocking_reasons",
+    "artifact_state.dependency_breakdown.blocker_catalog",
 }
 REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE = {
     "host_needed_libraries_present": "readelf_dynamic_dependencies",
+    "host_direct_needed_libraries_present": "readelf_dynamic_dependencies",
+    "host_resolved_libraries_present": "ldd_host_glibc_scan",
     "host_loader_dependency": "ldd_host_glibc_scan",
     "host_libc_dependency": "ldd_host_glibc_scan",
     "libgcc_runtime_dependency": "readelf_dynamic_dependencies",
@@ -117,6 +120,12 @@ REQUIRED_FORGE_FAILURE_SIGNATURE_TO_NEGATIVE_TEST = {
     "standalone_artifact_missing": "missing_replace_artifact",
     "standalone_artifact_stale": "stale_source_commit",
     "host_glibc_dependency": "residual_host_glibc_dependency",
+}
+REQUIRED_BLOCKER_CATALOG_ROW_FIELDS = {
+    "owner_surface",
+    "severity",
+    "evidence_fields",
+    "next_action",
 }
 ALLOWED_LEVELS = {"L0", "L1", "L2", "L3"}
 errors = []
@@ -368,6 +377,7 @@ if missing_probe_types:
 projection = plan.get("current_forge_blocker_projection")
 forge_projection_field_count = 0
 forge_projection_blocking_reason_count = 0
+forge_projection_blocker_catalog_row_count = 0
 forge_projection_failure_signature_count = 0
 if not isinstance(projection, dict):
     errors.append("current_forge_blocker_projection must be an object")
@@ -422,6 +432,54 @@ else:
             )
     forge_projection_blocking_reason_count = len(reason_map)
 
+    catalog_rows = projection.get("blocker_catalog_required_rows", {})
+    if not isinstance(catalog_rows, dict) or not catalog_rows:
+        errors.append("current_forge_blocker_projection.blocker_catalog_required_rows must be a non-empty object")
+        catalog_rows = {}
+    for reason in REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE:
+        row = catalog_rows.get(reason)
+        if row is None:
+            errors.append(f"current_forge_blocker_projection.blocker_catalog_required_rows missing {reason}")
+            continue
+        if not isinstance(row, dict):
+            errors.append(f"current_forge_blocker_projection.blocker_catalog_required_rows.{reason} must be an object")
+            continue
+        missing_fields = sorted(REQUIRED_BLOCKER_CATALOG_ROW_FIELDS - set(row))
+        if missing_fields:
+            errors.append(
+                f"current_forge_blocker_projection.blocker_catalog_required_rows.{reason} missing "
+                + ",".join(missing_fields)
+            )
+        owner_surface = row.get("owner_surface")
+        if not isinstance(owner_surface, str) or not owner_surface:
+            errors.append(
+                f"current_forge_blocker_projection.blocker_catalog_required_rows.{reason}.owner_surface must be non-empty"
+            )
+        if row.get("severity") != "claim_blocking":
+            errors.append(
+                f"current_forge_blocker_projection.blocker_catalog_required_rows.{reason}.severity must be claim_blocking"
+            )
+        evidence_fields = row.get("evidence_fields")
+        if (
+            not isinstance(evidence_fields, list)
+            or not evidence_fields
+            or not all(isinstance(field, str) and field for field in evidence_fields)
+        ):
+            errors.append(
+                f"current_forge_blocker_projection.blocker_catalog_required_rows.{reason}.evidence_fields must be non-empty strings"
+            )
+        next_action = row.get("next_action")
+        if not isinstance(next_action, str) or not next_action:
+            errors.append(
+                f"current_forge_blocker_projection.blocker_catalog_required_rows.{reason}.next_action must be non-empty"
+            )
+    for reason in catalog_rows:
+        if reason not in reason_map:
+            errors.append(
+                f"current_forge_blocker_projection.blocker_catalog_required_rows has unexpected reason {reason}"
+            )
+    forge_projection_blocker_catalog_row_count = len(catalog_rows)
+
     failure_map = projection.get("failure_signature_to_negative_test", {})
     if not isinstance(failure_map, dict) or not failure_map:
         errors.append("current_forge_blocker_projection.failure_signature_to_negative_test must be a non-empty object")
@@ -455,6 +513,7 @@ summary = {
     "negative_claim_test_count": len(negative_tests) if isinstance(negative_tests, list) else 0,
     "forge_projection_field_count": forge_projection_field_count,
     "forge_projection_blocking_reason_count": forge_projection_blocking_reason_count,
+    "forge_projection_blocker_catalog_row_count": forge_projection_blocker_catalog_row_count,
     "forge_projection_failure_signature_count": forge_projection_failure_signature_count,
     "tool_count": len(tool_counts),
     "probe_counts_by_type": dict(sorted(probe_types_seen.items())),
@@ -471,6 +530,7 @@ for key in [
     "negative_claim_test_count",
     "forge_projection_field_count",
     "forge_projection_blocking_reason_count",
+    "forge_projection_blocker_catalog_row_count",
     "forge_projection_failure_signature_count",
     "tool_count",
 ]:
