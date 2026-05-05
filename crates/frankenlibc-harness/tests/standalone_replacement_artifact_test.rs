@@ -179,6 +179,97 @@ EOF
     path
 }
 
+fn fake_inspection_probe_failure_path(temp: &Path, failing_probe: &str) -> OsString {
+    let fake_bin = temp.join(format!("fake-{failing_probe}-probe-bin"));
+    std::fs::create_dir_all(&fake_bin).expect("create fake probe bin dir");
+    std::fs::write(
+        fake_bin.join("readelf"),
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = "-d" ]; then
+  cat <<'EOF'
+Dynamic section at offset 0x1000 contains 1 entry:
+ 0x000000000000000e (SONAME)             Library soname: [libfrankenlibc_replace.so]
+EOF
+  exit 0
+fi
+if [ "$1" = "-Ws" ]; then
+  if [ "{failing_probe}" = "readelf-symbols" ]; then
+    echo readelf symbols probe failed >&2
+    exit 43
+  fi
+  cat <<'EOF'
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     1: 0000000000001000     1 FUNC    GLOBAL DEFAULT   10 __libc_start_main
+     2: 0000000000001001     1 FUNC    GLOBAL DEFAULT   10 malloc
+     3: 0000000000001002     1 FUNC    GLOBAL DEFAULT   10 free
+     4: 0000000000001003     1 FUNC    GLOBAL DEFAULT   10 printf
+     5: 0000000000001004     1 FUNC    GLOBAL DEFAULT   10 pthread_create
+     6: 0000000000001005     1 FUNC    GLOBAL DEFAULT   10 getaddrinfo
+EOF
+  exit 0
+fi
+if [ "$1" = "--version-info" ]; then
+  if [ "{failing_probe}" = "readelf-version" ]; then
+    echo readelf version probe failed >&2
+    exit 44
+  fi
+  echo 'No version information found in this file.'
+  exit 0
+fi
+echo unexpected readelf invocation "$@" >&2
+exit 2
+"#
+        ),
+    )
+    .expect("write fake readelf");
+    std::fs::write(
+        fake_bin.join("nm"),
+        format!(
+            r#"#!/bin/sh
+if [ "{failing_probe}" = "nm" ]; then
+  echo nm probe failed >&2
+  exit 45
+fi
+cat <<'EOF'
+0000000000001000 T __libc_start_main
+0000000000001001 T malloc
+0000000000001002 T free
+0000000000001003 T printf
+0000000000001004 T pthread_create
+0000000000001005 T getaddrinfo
+EOF
+"#
+        ),
+    )
+    .expect("write fake nm");
+    std::fs::write(
+        fake_bin.join("ldd"),
+        r#"#!/bin/sh
+echo '	statically linked'
+exit 0
+"#,
+    )
+    .expect("write fake ldd");
+    for tool in ["readelf", "nm", "ldd"] {
+        let chmod = Command::new("chmod")
+            .arg("+x")
+            .arg(fake_bin.join(tool))
+            .output()
+            .expect("chmod should run");
+        assert!(
+            chmod.status.success(),
+            "chmod failed for {tool}:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&chmod.stdout),
+            String::from_utf8_lossy(&chmod.stderr)
+        );
+    }
+    let mut path = OsString::from(fake_bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    path
+}
+
 fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
     let root = workspace_root();
     let temp = unique_temp_dir(prefix);
@@ -556,6 +647,88 @@ fn forge_mode_reports_host_dependency_breakdown() {
         "host_version_requirements",
     ] {
         assert!(reasons.contains(reason), "missing {reason}");
+    }
+}
+
+#[test]
+fn forge_mode_blocks_artifact_when_required_symbol_probe_fails() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-artifact-symbol-probe-failed");
+    let source_c = temp.join("sample.c");
+    let source_so = temp.join("libfrankenlibc_abi.so");
+    std::fs::write(
+        &source_c,
+        "int frankenlibc_sample_symbol(void) { return 7; }\n",
+    )
+    .expect("write sample source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source_c)
+        .arg("-o")
+        .arg(&source_so)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+
+    for (probe, evidence_file) in [
+        ("readelf-symbols", "artifact.readelf.symbols.txt"),
+        ("readelf-version", "artifact.readelf.version.txt"),
+        ("nm", "artifact.nm.dynamic.txt"),
+    ] {
+        let out_dir = temp.join(format!("{probe}-out"));
+        let cargo_target = temp.join(format!("{probe}-cargo-target"));
+        let report = temp.join(format!("{probe}.report.json"));
+        let log = temp.join(format!("{probe}.log.jsonl"));
+        let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+            .arg("--forge")
+            .current_dir(&root)
+            .env("PATH", fake_inspection_probe_failure_path(&temp, probe))
+            .env("STANDALONE_REPLACEMENT_OUT_DIR", &out_dir)
+            .env("STANDALONE_REPLACEMENT_CARGO_TARGET_DIR", &cargo_target)
+            .env("STANDALONE_REPLACEMENT_REPORT", &report)
+            .env("STANDALONE_REPLACEMENT_LOG", &log)
+            .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
+            .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
+            .env_remove("LD_PRELOAD")
+            .output()
+            .expect("forge mode should run");
+        assert!(
+            output.status.success(),
+            "forge mode should keep gate pass/claim blocked for {probe} failure:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let report_json = load_json(&report);
+        assert_eq!(report_json["status"].as_str(), Some("pass"), "{probe}");
+        assert_eq!(
+            report_json["claim_status"].as_str(),
+            Some("claim_blocked"),
+            "{probe}"
+        );
+        assert_eq!(
+            report_json["artifact_state"]["status"].as_str(),
+            Some("inspection_failed"),
+            "{probe}"
+        );
+        assert_eq!(
+            report_json["artifact_state"]["failure_signature"].as_str(),
+            Some("artifact_dependency_inspection_failed"),
+            "{probe}"
+        );
+        assert!(
+            report_json["tool_evidence"][evidence_file]["exit_code"]
+                .as_i64()
+                .is_some_and(|code| code != 0),
+            "{probe}: expected failing tool_evidence exit code"
+        );
     }
 }
 

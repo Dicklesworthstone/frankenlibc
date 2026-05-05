@@ -513,6 +513,11 @@ def inspect_artifact(artifact):
 
     mtime = int(artifact.stat().st_mtime)
     dependency_breakdown = build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd)
+    inspection_failed = any(
+        result["returncode"] != 0 or result["timed_out"]
+        for filename, result in evidence_commands.items()
+        if filename != "artifact.readelf.dynamic.txt"
+    )
     if head_epoch and mtime < head_epoch:
         return {
             "status": "stale",
@@ -537,7 +542,7 @@ def inspect_artifact(artifact):
             "dependency_breakdown": dependency_breakdown,
             "refs": refs,
         }
-    if ldd["returncode"] != 0 or ldd["timed_out"]:
+    if inspection_failed:
         return {
             "status": "inspection_failed",
             "path": str(artifact),
