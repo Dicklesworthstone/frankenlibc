@@ -64,6 +64,7 @@ const FORGE_PROJECTION_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.version_needs",
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.blocking_reasons",
+    "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
 ];
 
@@ -630,8 +631,8 @@ fn checker_emits_report_and_required_jsonl_rows() -> TestResult {
         "l2_l3 blocker count must be 13",
     )?;
     require(
-        json_u64(summary, "forge_projection_field_count")? == 18,
-        "forge projection field count must be 18",
+        json_u64(summary, "forge_projection_field_count")? == 19,
+        "forge projection field count must be 19",
     )?;
     require(
         json_u64(summary, "forge_projection_blocking_reason_count")? == 10,

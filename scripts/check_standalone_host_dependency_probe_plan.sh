@@ -102,6 +102,7 @@ REQUIRED_FORGE_PROJECTION_FIELDS = {
     "artifact_state.dependency_breakdown.version_needs",
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.blocking_reasons",
+    "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
 }
 REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE = {

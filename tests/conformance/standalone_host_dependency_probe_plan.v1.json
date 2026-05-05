@@ -111,6 +111,7 @@
       "artifact_state.dependency_breakdown.version_needs",
       "artifact_state.dependency_breakdown.host_version_requirements",
       "artifact_state.dependency_breakdown.blocking_reasons",
+      "blocking_reasons",
       "artifact_state.dependency_breakdown.blocker_catalog"
     ],
     "blocking_reason_to_probe_id": {
@@ -714,7 +715,7 @@
     "claim_blocked_count": 13,
     "l2_l3_blocker_count": 13,
     "negative_claim_test_count": 5,
-    "forge_projection_field_count": 18,
+    "forge_projection_field_count": 19,
     "forge_projection_blocking_reason_count": 10,
     "forge_projection_blocker_catalog_row_count": 10,
     "forge_projection_failure_signature_count": 3,
