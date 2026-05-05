@@ -220,6 +220,30 @@ def standalone_library_candidates():
     return candidates
 
 
+def run_probe_command(command):
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            check=False,
+        )
+        return {
+            "returncode": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "returncode": 124,
+            "stdout": exc.stdout or "",
+            "stderr": exc.stderr or "timeout",
+        }
+
+
 def classify_artifact():
     for candidate in standalone_library_candidates():
         if not candidate.exists():
@@ -243,6 +267,34 @@ def classify_artifact():
                 "head_epoch": head_epoch,
                 "failure_signature": "standalone_artifact_stale",
                 "loader_error": "standalone artifact predates source HEAD",
+            }
+        readelf_dynamic = run_probe_command(["readelf", "-d", str(candidate)])
+        ldd = run_probe_command(["ldd", str(candidate)])
+        if readelf_dynamic["returncode"] != 0:
+            return {
+                "status": "inspection_failed",
+                "path": str(candidate),
+                "mtime": mtime,
+                "head_epoch": head_epoch,
+                "failure_signature": "artifact_dependency_inspection_failed",
+                "loader_error": "readelf -d failed for standalone artifact",
+            }
+        dep_text = "\n".join(
+            [
+                readelf_dynamic["stdout"],
+                readelf_dynamic["stderr"],
+                ldd["stdout"],
+                ldd["stderr"],
+            ]
+        )
+        if "libc.so" in dep_text or "ld-linux" in dep_text:
+            return {
+                "status": "host_dependent",
+                "path": str(candidate),
+                "mtime": mtime,
+                "head_epoch": head_epoch,
+                "failure_signature": "host_glibc_dependency",
+                "loader_error": "standalone artifact still depends on host libc or loader",
             }
         return {
             "status": "current",
@@ -281,12 +333,13 @@ def validate_manifest():
     policy_ok = (
         policy.get("ld_preload_evidence_accepted") is False
         and policy.get("missing_or_stale_candidate_result") == "claim_blocked"
+        and policy.get("host_glibc_dependency_result") == "claim_blocked"
         and policy.get("standalone_evidence_starts_at") == "L2"
         and policy.get("current_level_must_remain") == "L0"
     )
     checks["claim_policy"] = "pass" if policy_ok else "fail"
     if not policy_ok:
-        errors.append("current_claim_policy must reject LD_PRELOAD substitution and fail closed")
+        errors.append("current_claim_policy must reject LD_PRELOAD/host-libc substitution and fail closed")
 
     current_level_ok = (
         levels.get("current_level") == "L0"

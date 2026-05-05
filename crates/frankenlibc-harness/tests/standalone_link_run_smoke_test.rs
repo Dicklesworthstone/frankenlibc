@@ -89,6 +89,10 @@ fn manifest_defines_required_rows_and_log_contract() {
         manifest["current_claim_policy"]["missing_or_stale_candidate_result"].as_str(),
         Some("claim_blocked")
     );
+    assert_eq!(
+        manifest["current_claim_policy"]["host_glibc_dependency_result"].as_str(),
+        Some("claim_blocked")
+    );
 
     let log_fields: Vec<_> = manifest["required_log_fields"]
         .as_array()
@@ -258,6 +262,7 @@ fn failure_classification_and_stale_rejection_are_declared() {
         "standalone_artifact_missing",
         "standalone_artifact_stale",
         "wrong_artifact_profile",
+        "host_glibc_dependency",
         "missing_obligation",
         "loader_startup_failure",
         "symbol_version_mismatch",
@@ -275,6 +280,14 @@ fn failure_classification_and_stale_rejection_are_declared() {
         manifest["artifact_policy"]["required_artifact_name"].as_str(),
         Some("libfrankenlibc_replace.so")
     );
+    let probe_tools: HashSet<_> = manifest["artifact_policy"]["host_dependency_probe_tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry.as_str().unwrap())
+        .collect();
+    assert!(probe_tools.contains("readelf -d"));
+    assert!(probe_tools.contains("ldd"));
 }
 
 #[test]
@@ -323,6 +336,87 @@ fn dry_run_blocks_l2_claim_without_candidate_artifact() {
         }
     }
     assert_eq!(candidate_rows, expected_candidate_rows);
+}
+
+#[test]
+fn dry_run_blocks_host_libc_dependent_candidate_artifact() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-host-dependent-artifact");
+    let source = temp.join("host_dependent.c");
+    let artifact = temp.join("libfrankenlibc_replace.so");
+    std::fs::write(
+        &source,
+        "#include <stdio.h>\nint frankenlibc_host_dep_sample(void) { puts(\"host-libc\"); return 0; }\n",
+    )
+    .expect("write host-dependent source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source)
+        .arg("-o")
+        .arg(&artifact)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+
+    let out_dir = temp.join("target");
+    let report = temp.join("standalone_link_run_smoke.report.json");
+    let log = temp.join("standalone_link_run_smoke.log.jsonl");
+    let output = Command::new(root.join("scripts/check_standalone_link_run_smoke.sh"))
+        .arg("--dry-run")
+        .current_dir(&root)
+        .env("STANDALONE_SMOKE_TARGET_DIR", &out_dir)
+        .env("STANDALONE_SMOKE_REPORT", &report)
+        .env("STANDALONE_SMOKE_LOG", &log)
+        .env("STANDALONE_SMOKE_RUN_ID", "standalone-host-dependent")
+        .env("FRANKENLIBC_STANDALONE_LIB", &artifact)
+        .env_remove("LD_PRELOAD")
+        .output()
+        .expect("standalone link-run smoke gate should execute");
+    assert!(
+        output.status.success(),
+        "dry-run gate failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_json = load_json(&report);
+    let expected_candidate_rows = load_manifest()["smoke_rows"].as_array().unwrap().len() * 2;
+    assert_eq!(report_json["status"].as_str(), Some("pass"));
+    assert_eq!(report_json["claim_status"].as_str(), Some("claim_blocked"));
+    assert_eq!(
+        report_json["artifact_state"]["status"].as_str(),
+        Some("host_dependent")
+    );
+    assert_eq!(
+        report_json["artifact_state"]["failure_signature"].as_str(),
+        Some("host_glibc_dependency")
+    );
+    assert_eq!(
+        report_json["summary"]["candidate_blocked"].as_u64(),
+        Some(expected_candidate_rows as u64)
+    );
+
+    let log = std::fs::read_to_string(&log).expect("log should be readable");
+    let rows: Vec<serde_json::Value> = log
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("log line should parse"))
+        .collect();
+    assert!(rows.iter().any(|row| {
+        row["event"].as_str() == Some("candidate_direct_link")
+            && row["actual_status"].as_str() == Some("claim_blocked")
+            && matches!(
+                row["failure_signature"].as_str(),
+                Some("host_glibc_dependency")
+            )
+    }));
 }
 
 #[test]

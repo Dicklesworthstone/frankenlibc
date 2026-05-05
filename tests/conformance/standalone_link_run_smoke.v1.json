@@ -73,6 +73,7 @@
     "standalone_evidence_starts_at": "L2",
     "ld_preload_evidence_accepted": false,
     "missing_or_stale_candidate_result": "claim_blocked",
+    "host_glibc_dependency_result": "claim_blocked",
     "positive_rows_required_for_l2_claim": "all strict and hardened candidate runs must pass with a current standalone artifact",
     "negative_rows_required_for_l2_claim": "all negative missing-obligation rows must remain claim_blocked"
   },
@@ -83,6 +84,10 @@
     "log_env": "STANDALONE_SMOKE_LOG",
     "required_artifact_name": "libfrankenlibc_replace.so",
     "stale_if_older_than_head": true,
+    "host_dependency_probe_tools": [
+      "readelf -d",
+      "ldd"
+    ],
     "case_dir_template": "target/standalone_link_run_smoke/${run_id}/${smoke_id}",
     "required_artifacts": [
       "source.c",
@@ -111,6 +116,11 @@
       "failure_signature": "wrong_artifact_profile",
       "expected_result": "claim_blocked",
       "description": "The supplied artifact is an interpose library or otherwise not named libfrankenlibc_replace.so."
+    },
+    {
+      "failure_signature": "host_glibc_dependency",
+      "expected_result": "claim_blocked",
+      "description": "The supplied artifact is current and correctly named but still advertises host libc or loader dependencies."
     },
     {
       "failure_signature": "missing_obligation",
