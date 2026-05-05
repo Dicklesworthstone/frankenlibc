@@ -28,6 +28,11 @@
     "missing_artifact_result": "claim_blocked",
     "missing_row_source_commit_result": "claim_blocked",
     "missing_row_artifact_refs_result": "claim_blocked",
+    "host_glibc_dependency_result": "claim_blocked",
+    "host_dependency_probe_tools": [
+      "readelf -d",
+      "ldd"
+    ],
     "current_claim_status": "claim_blocked",
     "direct_link_evidence_cannot_be_inferred_from_ld_preload": true
   },
@@ -131,6 +136,14 @@
       "trigger": "a current replacement artifact compiles or starts a direct-link probe but exits with the wrong status or output"
     },
     {
+      "id": "host_glibc_dependency",
+      "trigger": "a current, correctly named replacement artifact still advertises host libc or loader dependencies"
+    },
+    {
+      "id": "artifact_dependency_inspection_failed",
+      "trigger": "dependency inspection of a current, correctly named replacement artifact fails"
+    },
+    {
       "id": "missing_source_commit",
       "trigger": "a fixture row omits source_commit"
     },
@@ -189,6 +202,12 @@
       "mutation": "supply libfrankenlibc_abi.so as the direct-link replacement artifact",
       "expected_result": "claim_blocked",
       "failure_signature": "interpose_only_artifact"
+    },
+    {
+      "id": "neg-host-glibc-dependent-artifact",
+      "mutation": "supply a fresh libfrankenlibc_replace.so artifact that still depends on host libc or the host loader",
+      "expected_result": "claim_blocked",
+      "failure_signature": "host_glibc_dependency"
     },
     {
       "id": "neg-missing-artifact-refs",

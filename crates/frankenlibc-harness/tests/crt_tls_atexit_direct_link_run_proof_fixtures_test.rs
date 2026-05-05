@@ -284,6 +284,30 @@ fn build_sample_shared_object(path: &Path) -> TestResult {
     )
 }
 
+fn build_host_dependent_shared_object(path: &Path) -> TestResult {
+    let source = path.with_extension("c");
+    std::fs::write(
+        &source,
+        "#include <stdio.h>\nint frankenlibc_crt_tls_host_dep_probe(void) { puts(\"host-libc\"); return 7; }\n",
+    )?;
+    let output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source)
+        .arg("-o")
+        .arg(path)
+        .output()
+        .map_err(|err| test_error(format!("failed to run cc: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "cc failed\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
+}
+
 fn run_default_gate(root: &Path) -> TestResult<(Value, PathBuf)> {
     let out_dir = unique_temp_dir("crt-tls-proof-pass")?;
     let report_path = out_dir.join("crt-tls-proof.report.json");
@@ -399,6 +423,42 @@ fn manifest_defines_required_crt_tls_atexit_fixture_scope() -> TestResult {
         .as_u64()
             == Some(5),
         "execution runner should declare five direct-link proof cases",
+    )?;
+    let policy = object_field(&manifest, "replacement_artifact_policy", "manifest")?;
+    ensure(
+        policy
+            .get("host_glibc_dependency_result")
+            .and_then(Value::as_str)
+            == Some("claim_blocked"),
+        "host-glibc-dependent artifacts must block claims",
+    )?;
+    let probe_tools = policy
+        .get("host_dependency_probe_tools")
+        .and_then(Value::as_array)
+        .ok_or_else(|| test_error("host_dependency_probe_tools must be an array"))?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<HashSet<_>>();
+    ensure(
+        probe_tools.contains("readelf -d") && probe_tools.contains("ldd"),
+        "host dependency probes should use readelf and ldd",
+    )?;
+    let diagnostic_signatures = array_field(&manifest, "diagnostic_signatures", "manifest")?
+        .iter()
+        .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+        .collect::<HashSet<_>>();
+    ensure(
+        diagnostic_signatures.contains("host_glibc_dependency")
+            && diagnostic_signatures.contains("artifact_dependency_inspection_failed"),
+        "diagnostics should include host dependency inspection failures",
+    )?;
+    let negative_signatures = array_field(&manifest, "negative_claim_tests", "manifest")?
+        .iter()
+        .filter_map(|entry| entry.get("failure_signature").and_then(Value::as_str))
+        .collect::<HashSet<_>>();
+    ensure(
+        negative_signatures.contains("host_glibc_dependency"),
+        "negative claim tests should include host_glibc_dependency",
     )?;
     ensure(
         string_set(&manifest, "required_scenario_kinds", "manifest")?
@@ -679,6 +739,57 @@ fn checker_blocks_interpose_only_artifact_profile() -> TestResult {
             "standalone_artifact",
         )? == "interpose_only_artifact",
         "interpose-only artifact should be classified explicitly",
+    )
+}
+
+#[test]
+fn checker_blocks_host_libc_dependent_standalone_artifact() -> TestResult {
+    let root = workspace_root();
+    if Command::new("cc").arg("--version").output().is_err() {
+        return Ok(());
+    }
+    let out_dir = unique_temp_dir("crt-tls-proof-host-dependent-artifact")?;
+    let artifact = out_dir.join("libfrankenlibc_replace.so");
+    build_host_dependent_shared_object(&artifact)?;
+    let report_path = out_dir.join("crt-tls-proof.report.json");
+    let output = Command::new("bash")
+        .arg(script_path(&root))
+        .current_dir(&root)
+        .env("FLC_CRT_TLS_PROOF_OUT_DIR", &out_dir)
+        .env("FLC_CRT_TLS_PROOF_REPORT", &report_path)
+        .env(
+            "FLC_CRT_TLS_PROOF_LOG",
+            out_dir.join("crt-tls-proof.log.jsonl"),
+        )
+        .env("FLC_CRT_TLS_PROOF_TARGET_DIR", &out_dir)
+        .env("FLC_CRT_TLS_PROOF_REPLACE_ARTIFACT", &artifact)
+        .output()
+        .map_err(|err| test_error(format!("failed to run CRT/TLS proof gate: {err}")))?;
+    ensure(
+        output.status.success(),
+        "host-dependent artifact should block claims without failing the gate",
+    )?;
+    let report = load_json(&report_path)?;
+    let artifact_state = field(&report, "standalone_artifact", "report")?;
+    ensure(
+        string_field(artifact_state, "status", "standalone_artifact")? == "host_dependent",
+        "host-dependent artifact should not be current proof evidence",
+    )?;
+    ensure(
+        matches!(
+            string_field(artifact_state, "failure_signature", "standalone_artifact")?,
+            "host_glibc_dependency"
+        ),
+        "host-dependent artifact should be classified explicitly",
+    )?;
+    let counts = field(
+        field(&report, "summary", "report")?,
+        "direct_link_execution_status_counts",
+        "summary",
+    )?;
+    ensure(
+        counts.get("claim_blocked").and_then(Value::as_u64) == Some(10),
+        "strict+hardened direct-link probes should remain claim_blocked",
     )
 }
 

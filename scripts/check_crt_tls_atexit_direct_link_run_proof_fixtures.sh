@@ -105,6 +105,8 @@ DIAGNOSTIC_SIGNATURES = {
     "missing_fixture_row",
     "strict_hardened_expectation_missing",
     "direct_link_claim_conflict",
+    "host_glibc_dependency",
+    "artifact_dependency_inspection_failed",
 }
 errors = []
 log_rows = []
@@ -276,6 +278,24 @@ def classify_standalone_artifact(default_text):
             except OSError:
                 artifact_status = "missing"
                 failure_signature = "replace_artifact_missing"
+            if artifact_status == "current":
+                readelf_dynamic = run_command(["readelf", "-d", str(candidate)], cwd=root, timeout=60)
+                ldd = run_command(["ldd", str(candidate)], cwd=root, timeout=60)
+                if readelf_dynamic["returncode"] != 0:
+                    artifact_status = "inspection_failed"
+                    failure_signature = "artifact_dependency_inspection_failed"
+                else:
+                    dep_text = "\n".join(
+                        [
+                            readelf_dynamic["stdout"],
+                            readelf_dynamic["stderr"],
+                            ldd["stdout"],
+                            ldd["stderr"],
+                        ]
+                    )
+                    if "libc.so" in dep_text or "ld-linux" in dep_text:
+                        artifact_status = "host_dependent"
+                        failure_signature = "host_glibc_dependency"
         return {
             "path": candidate,
             "status": artifact_status,
@@ -467,6 +487,8 @@ if policy.get("missing_row_source_commit_result") != "claim_blocked":
     fail("missing_field", "missing_row_source_commit_result must be claim_blocked")
 if policy.get("missing_row_artifact_refs_result") != "claim_blocked":
     fail("missing_field", "missing_row_artifact_refs_result must be claim_blocked")
+if policy.get("host_glibc_dependency_result") != "claim_blocked":
+    fail("missing_field", "host_glibc_dependency_result must be claim_blocked")
 if not policy.get("direct_link_evidence_cannot_be_inferred_from_ld_preload"):
     fail("direct_link_claim_conflict", "direct link evidence must not be inferred from LD_PRELOAD")
 
@@ -501,6 +523,7 @@ for signature in [
     "missing_artifact_refs",
     "missing_fixture_row",
     "strict_hardened_expectation_missing",
+    "host_glibc_dependency",
 ]:
     if signature not in negative_signatures:
         fail("missing_field", f"negative_claim_tests missing {signature}")
