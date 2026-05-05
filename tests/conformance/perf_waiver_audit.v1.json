@@ -1,0 +1,73 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "perf-waiver-audit",
+  "bead": "bd-b92jd.2.3",
+  "owner_bead": "bd-b92jd.2",
+  "generated_utc": "2026-05-05T02:50:00Z",
+  "source_commit": "56fdbbe6914cb0e4b5d4c3a0e0b5d44f0b87e5fa",
+  "purpose": "Fail-closed audit binder for tests/conformance/perf_budget_policy.json#active_waivers. Refuses to advertise perf parity unless every active waiver carries (a) a non-broad suite_ids list (no [\"*\"], no [\"all\"]), (b) a non-empty owner bead, (c) a non-empty failure_signature, and (d) an expires_at date that is still in the future as of the harness run. Drift in any of these landings — broad waiver, missing owner, expired waiver, or missing failure_signature — blocks claim advancement at every replacement level.",
+  "subject": {
+    "policy_artifact": "tests/conformance/perf_budget_policy.json",
+    "regression_prevention_artifact": "tests/conformance/perf_regression_prevention.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "waiver_id",
+    "owner",
+    "suite_ids",
+    "expires_at",
+    "audit_decision",
+    "rejection_reason",
+    "failure_signature",
+    "artifact_refs",
+    "source_commit"
+  ],
+  "policy": {
+    "default_decision": "block_until_waivers_narrow_and_unexpired",
+    "max_total_waivers": 3,
+    "broad_symbol_patterns": [
+      "*",
+      "all",
+      "any"
+    ],
+    "required_waiver_fields": [
+      "bead_id",
+      "owner",
+      "suite_ids",
+      "expires_at",
+      "failure_signature",
+      "justification"
+    ],
+    "rejected_evidence_kinds": [
+      "broad_symbol_wildcard",
+      "missing_owner",
+      "missing_failure_signature",
+      "missing_suite_ids",
+      "expired_waiver",
+      "expires_at_too_far",
+      "duplicate_bead_id"
+    ]
+  },
+  "expected_active_waivers": [
+    {
+      "bead_id": "bd-242",
+      "owner": "bd-b92jd.5",
+      "suite_ids": [
+        "string",
+        "malloc"
+      ],
+      "expires_at": "2026-05-11",
+      "scope": "target_violation_only",
+      "failure_signature": "perf_gate::target_violation_within_threshold",
+      "rationale": "Narrowed from symbols=[*] to the two enforced_in_gate=false suites in perf_regression_prevention; runtime_math and membrane are already enforced and need no waiver."
+    }
+  ],
+  "max_expires_at_horizon_days": 90,
+  "consuming_gates": [
+    "tests/conformance/perf_budget_policy.json",
+    "tests/conformance/perf_regression_prevention.v1.json",
+    "tests/conformance/perf_baseline_spec.json",
+    "tests/conformance/replacement_levels.json"
+  ]
+}
