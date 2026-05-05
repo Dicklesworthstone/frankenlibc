@@ -22,6 +22,17 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "artifact_refs",
 ];
 
+const REQUIRED_REPORT_FIELDS: &[&str] = &[
+    "artifact_state.dependency_breakdown.needed_libraries",
+    "artifact_state.dependency_breakdown.ldd_libraries",
+    "artifact_state.dependency_breakdown.host_needed_libraries",
+    "artifact_state.dependency_breakdown.undefined_unwind_symbols",
+    "artifact_state.dependency_breakdown.undefined_glibc_symbols",
+    "artifact_state.dependency_breakdown.undefined_tls_symbols",
+    "artifact_state.dependency_breakdown.loader_needed",
+    "artifact_state.dependency_breakdown.blocking_reasons",
+];
+
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest)
@@ -35,6 +46,15 @@ fn workspace_root() -> PathBuf {
 fn load_json(path: &Path) -> serde_json::Value {
     let content = std::fs::read_to_string(path).expect("json should be readable");
     serde_json::from_str(&content).expect("json should parse")
+}
+
+fn string_set(value: &serde_json::Value) -> HashSet<String> {
+    value
+        .as_array()
+        .expect("value should be an array")
+        .iter()
+        .map(|entry| entry.as_str().expect("entry should be string").to_owned())
+        .collect()
 }
 
 fn manifest() -> serde_json::Value {
@@ -68,6 +88,76 @@ fn fake_ldd_failure_path(temp: &Path) -> OsString {
         String::from_utf8_lossy(&chmod.stdout),
         String::from_utf8_lossy(&chmod.stderr)
     );
+    let mut path = OsString::from(fake_bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    path
+}
+
+fn fake_dependency_probe_path(temp: &Path) -> OsString {
+    let fake_bin = temp.join("fake-probe-bin");
+    std::fs::create_dir_all(&fake_bin).expect("create fake probe bin dir");
+    std::fs::write(
+        fake_bin.join("readelf"),
+        r#"#!/bin/sh
+if [ "$1" = "-d" ]; then
+  cat <<'EOF'
+Dynamic section at offset 0x1000 contains 3 entries:
+ 0x0000000000000001 (NEEDED)             Shared library: [libgcc_s.so.1]
+ 0x0000000000000001 (NEEDED)             Shared library: [ld-linux-x86-64.so.2]
+EOF
+  exit 0
+fi
+if [ "$1" = "-Ws" ]; then
+  cat <<'EOF'
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     1: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND printf@GLIBC_2.2.5
+     2: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND __tls_get_addr@GLIBC_2.3
+     3: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_Resume@GCC_3.0
+EOF
+  exit 0
+fi
+echo unexpected readelf invocation "$@" >&2
+exit 2
+"#,
+    )
+    .expect("write fake readelf");
+    std::fs::write(
+        fake_bin.join("nm"),
+        r#"#!/bin/sh
+cat <<'EOF'
+                 U _Unwind_Resume@GCC_3.0
+                 U __tls_get_addr@GLIBC_2.3
+                 U printf@GLIBC_2.2.5
+EOF
+"#,
+    )
+    .expect("write fake nm");
+    std::fs::write(
+        fake_bin.join("ldd"),
+        r#"#!/bin/sh
+cat <<'EOF'
+	linux-vdso.so.1 (0x00007fff00000000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007f0000000000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f0000000000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f0000000000)
+EOF
+"#,
+    )
+    .expect("write fake ldd");
+    for tool in ["readelf", "nm", "ldd"] {
+        let chmod = Command::new("chmod")
+            .arg("+x")
+            .arg(fake_bin.join(tool))
+            .output()
+            .expect("chmod should run");
+        assert!(
+            chmod.status.success(),
+            "chmod failed for {tool}:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&chmod.stdout),
+            String::from_utf8_lossy(&chmod.stderr)
+        );
+    }
     let mut path = OsString::from(fake_bin);
     path.push(":");
     path.push(std::env::var_os("PATH").unwrap_or_default());
@@ -120,6 +210,14 @@ fn manifest_matches_forge_contract() {
         .map(|value| value.as_str().unwrap())
         .collect();
     assert_eq!(fields, REQUIRED_LOG_FIELDS);
+
+    let report_fields: Vec<_> = manifest["required_report_fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert_eq!(report_fields, REQUIRED_REPORT_FIELDS);
 
     let classifications: HashSet<_> = manifest["expected_failure_classifications"]
         .as_array()
@@ -253,6 +351,102 @@ fn forge_mode_can_materialize_a_supplied_shared_object_for_fast_tests() {
         ),
         "sample artifact may block claims, but the forge itself should classify it"
     );
+}
+
+#[test]
+fn forge_mode_reports_host_dependency_breakdown() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-artifact-dependency-breakdown");
+    let source_c = temp.join("sample.c");
+    let source_so = temp.join("libfrankenlibc_abi.so");
+    std::fs::write(
+        &source_c,
+        "int frankenlibc_sample_symbol(void) { return 7; }\n",
+    )
+    .expect("write sample source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source_c)
+        .arg("-o")
+        .arg(&source_so)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+
+    let out_dir = temp.join("out");
+    let cargo_target = temp.join("cargo-target");
+    let report = temp.join("standalone_replacement_artifact.report.json");
+    let log = temp.join("standalone_replacement_artifact.log.jsonl");
+    let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+        .arg("--forge")
+        .current_dir(&root)
+        .env("PATH", fake_dependency_probe_path(&temp))
+        .env("STANDALONE_REPLACEMENT_OUT_DIR", &out_dir)
+        .env("STANDALONE_REPLACEMENT_CARGO_TARGET_DIR", &cargo_target)
+        .env("STANDALONE_REPLACEMENT_REPORT", &report)
+        .env("STANDALONE_REPLACEMENT_LOG", &log)
+        .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
+        .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
+        .env_remove("LD_PRELOAD")
+        .output()
+        .expect("forge mode should run");
+    assert!(
+        output.status.success(),
+        "forge mode should keep the gate pass/claim blocked for host dependencies:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("pass"));
+    assert_eq!(report_json["claim_status"].as_str(), Some("claim_blocked"));
+    assert_eq!(
+        report_json["artifact_state"]["failure_signature"].as_str(),
+        Some("host_glibc_dependency")
+    );
+    assert_eq!(
+        report_json["artifact_state"]["host_glibc_dependency"].as_bool(),
+        Some(true)
+    );
+
+    let breakdown = &report_json["artifact_state"]["dependency_breakdown"];
+    let needed = string_set(&breakdown["needed_libraries"]);
+    assert!(needed.contains("libgcc_s.so.1"));
+    assert!(needed.contains("ld-linux-x86-64.so.2"));
+
+    let host_needed = string_set(&breakdown["host_needed_libraries"]);
+    assert!(host_needed.contains("libgcc_s.so.1"));
+    assert!(host_needed.contains("libc.so.6"));
+    assert!(host_needed.contains("ld-linux-x86-64.so.2"));
+
+    let unwind = string_set(&breakdown["undefined_unwind_symbols"]);
+    assert!(unwind.contains("_Unwind_Resume@GCC_3.0"));
+    let glibc = string_set(&breakdown["undefined_glibc_symbols"]);
+    assert!(glibc.contains("__tls_get_addr@GLIBC_2.3"));
+    assert!(glibc.contains("printf@GLIBC_2.2.5"));
+    let tls = string_set(&breakdown["undefined_tls_symbols"]);
+    assert!(tls.contains("__tls_get_addr@GLIBC_2.3"));
+    assert_eq!(breakdown["loader_needed"].as_bool(), Some(true));
+
+    let reasons = string_set(&breakdown["blocking_reasons"]);
+    for reason in [
+        "host_needed_libraries_present",
+        "host_loader_dependency",
+        "host_libc_dependency",
+        "libgcc_runtime_dependency",
+        "undefined_unwind_symbols",
+        "undefined_glibc_symbols",
+        "undefined_tls_symbols",
+    ] {
+        assert!(reasons.contains(reason), "missing {reason}");
+    }
 }
 
 #[test]

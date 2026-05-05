@@ -40,6 +40,16 @@
     "failure_signature",
     "artifact_refs"
   ],
+  "required_report_fields": [
+    "artifact_state.dependency_breakdown.needed_libraries",
+    "artifact_state.dependency_breakdown.ldd_libraries",
+    "artifact_state.dependency_breakdown.host_needed_libraries",
+    "artifact_state.dependency_breakdown.undefined_unwind_symbols",
+    "artifact_state.dependency_breakdown.undefined_glibc_symbols",
+    "artifact_state.dependency_breakdown.undefined_tls_symbols",
+    "artifact_state.dependency_breakdown.loader_needed",
+    "artifact_state.dependency_breakdown.blocking_reasons"
+  ],
   "required_evidence_files": [
     "build.stdout.txt",
     "build.stderr.txt",

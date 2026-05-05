@@ -37,6 +37,7 @@ python3 - "${ROOT}" "${MANIFEST}" "${PACKAGING}" "${LEVELS}" "${OUT_DIR}" "${CAR
 import hashlib
 import json
 import os
+import re
 import shutil
 import shlex
 import subprocess
@@ -68,6 +69,17 @@ REQUIRED_LOG_FIELDS = [
     "exit_code",
     "failure_signature",
     "artifact_refs",
+]
+
+REQUIRED_REPORT_FIELDS = [
+    "artifact_state.dependency_breakdown.needed_libraries",
+    "artifact_state.dependency_breakdown.ldd_libraries",
+    "artifact_state.dependency_breakdown.host_needed_libraries",
+    "artifact_state.dependency_breakdown.undefined_unwind_symbols",
+    "artifact_state.dependency_breakdown.undefined_glibc_symbols",
+    "artifact_state.dependency_breakdown.undefined_tls_symbols",
+    "artifact_state.dependency_breakdown.loader_needed",
+    "artifact_state.dependency_breakdown.blocking_reasons",
 ]
 
 errors = []
@@ -117,6 +129,134 @@ def sha256(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def unique_sorted(values):
+    return sorted({value for value in values if value})
+
+
+def empty_dependency_breakdown():
+    return {
+        "needed_libraries": [],
+        "ldd_libraries": [],
+        "host_needed_libraries": [],
+        "undefined_symbols": [],
+        "undefined_unwind_symbols": [],
+        "undefined_glibc_symbols": [],
+        "undefined_tls_symbols": [],
+        "loader_needed": False,
+        "libc_needed": False,
+        "libgcc_needed": False,
+        "blocking_reasons": [],
+    }
+
+
+def parse_needed_libraries(readelf_dynamic_text):
+    return unique_sorted(
+        match.group(1)
+        for match in re.finditer(r"Shared library:\s*\[([^\]]+)\]", readelf_dynamic_text)
+    )
+
+
+def parse_ldd_libraries(ldd_text):
+    libraries = []
+    for line in ldd_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("linux-vdso.so"):
+            continue
+        if "=>" in stripped:
+            name = stripped.split("=>", 1)[0].strip()
+        else:
+            name = stripped.split()[0]
+        if name and name not in {"statically", "not"}:
+            libraries.append(name)
+    return unique_sorted(libraries)
+
+
+def parse_undefined_symbols(nm_text):
+    symbols = []
+    for line in nm_text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[-2] == "U":
+            symbols.append(parts[-1])
+    return unique_sorted(symbols)
+
+
+def symbol_base(symbol):
+    return symbol.split("@", 1)[0]
+
+
+def is_host_runtime_library(name):
+    return (
+        name.startswith("libc.so")
+        or name.startswith("libgcc_s.so")
+        or name.startswith("libpthread.so")
+        or name.startswith("libdl.so")
+        or name.startswith("libm.so")
+        or name.startswith("librt.so")
+        or "ld-linux" in name
+    )
+
+
+def build_dependency_breakdown(readelf_dynamic, nm_dynamic, ldd):
+    breakdown = empty_dependency_breakdown()
+    needed_libraries = parse_needed_libraries(readelf_dynamic["stdout"])
+    ldd_libraries = parse_ldd_libraries(ldd["stdout"] + "\n" + ldd["stderr"])
+    all_libraries = unique_sorted([*needed_libraries, *ldd_libraries])
+    undefined_symbols = parse_undefined_symbols(nm_dynamic["stdout"])
+    undefined_unwind_symbols = [
+        symbol
+        for symbol in undefined_symbols
+        if symbol_base(symbol).startswith("_Unwind_")
+        or symbol_base(symbol) == "__gcc_personality_v0"
+    ]
+    undefined_glibc_symbols = [
+        symbol
+        for symbol in undefined_symbols
+        if "@GLIBC_" in symbol or symbol_base(symbol).startswith("__libc_")
+    ]
+    undefined_tls_symbols = [
+        symbol
+        for symbol in undefined_symbols
+        if symbol_base(symbol) == "__tls_get_addr" or "tls" in symbol_base(symbol).lower()
+    ]
+
+    loader_needed = any("ld-linux" in library for library in all_libraries)
+    libc_needed = any(library.startswith("libc.so") for library in all_libraries)
+    libgcc_needed = any(library.startswith("libgcc_s.so") for library in all_libraries)
+    host_needed_libraries = [library for library in all_libraries if is_host_runtime_library(library)]
+    blocking_reasons = []
+    if host_needed_libraries:
+        blocking_reasons.append("host_needed_libraries_present")
+    if loader_needed:
+        blocking_reasons.append("host_loader_dependency")
+    if libc_needed:
+        blocking_reasons.append("host_libc_dependency")
+    if libgcc_needed:
+        blocking_reasons.append("libgcc_runtime_dependency")
+    if undefined_unwind_symbols:
+        blocking_reasons.append("undefined_unwind_symbols")
+    if undefined_glibc_symbols:
+        blocking_reasons.append("undefined_glibc_symbols")
+    if undefined_tls_symbols:
+        blocking_reasons.append("undefined_tls_symbols")
+
+    breakdown.update(
+        {
+            "needed_libraries": needed_libraries,
+            "ldd_libraries": ldd_libraries,
+            "host_needed_libraries": host_needed_libraries,
+            "undefined_symbols": undefined_symbols,
+            "undefined_unwind_symbols": unique_sorted(undefined_unwind_symbols),
+            "undefined_glibc_symbols": unique_sorted(undefined_glibc_symbols),
+            "undefined_tls_symbols": unique_sorted(undefined_tls_symbols),
+            "loader_needed": loader_needed,
+            "libc_needed": libc_needed,
+            "libgcc_needed": libgcc_needed,
+            "blocking_reasons": blocking_reasons,
+        }
+    )
+    return breakdown
 
 
 def write_text(path, content):
@@ -187,6 +327,8 @@ def validate_manifest():
         errors.append("manifest must be linked to bd-srtkq")
     if manifest.get("required_log_fields") != REQUIRED_LOG_FIELDS:
         errors.append("required_log_fields do not match script contract")
+    if manifest.get("required_report_fields") != REQUIRED_REPORT_FIELDS:
+        errors.append("required_report_fields do not match script contract")
 
     artifact_policy = manifest.get("artifact_policy", {})
     replace_spec = packaging.get("artifacts", {}).get("replace", {})
@@ -280,6 +422,7 @@ def inspect_artifact(artifact):
             "failure_signature": "standalone_artifact_missing",
             "host_glibc_dependency": None,
             "sampled_symbols_present": False,
+            "dependency_breakdown": empty_dependency_breakdown(),
             "refs": refs,
         }
 
@@ -298,6 +441,7 @@ def inspect_artifact(artifact):
             "failure_signature": "wrong_artifact_profile",
             "host_glibc_dependency": None,
             "sampled_symbols_present": False,
+            "dependency_breakdown": empty_dependency_breakdown(),
             "refs": refs,
         }
 
@@ -322,6 +466,7 @@ def inspect_artifact(artifact):
         }
 
     mtime = int(artifact.stat().st_mtime)
+    dependency_breakdown = build_dependency_breakdown(readelf_dynamic, nm_dynamic, ldd)
     if head_epoch and mtime < head_epoch:
         return {
             "status": "stale",
@@ -331,6 +476,7 @@ def inspect_artifact(artifact):
             "failure_signature": "standalone_artifact_stale",
             "host_glibc_dependency": None,
             "sampled_symbols_present": False,
+            "dependency_breakdown": dependency_breakdown,
             "refs": refs,
         }
     if readelf_dynamic["returncode"] != 0:
@@ -342,6 +488,7 @@ def inspect_artifact(artifact):
             "failure_signature": "non_elf_artifact",
             "host_glibc_dependency": None,
             "sampled_symbols_present": False,
+            "dependency_breakdown": dependency_breakdown,
             "refs": refs,
         }
     if ldd["returncode"] != 0 or ldd["timed_out"]:
@@ -353,11 +500,16 @@ def inspect_artifact(artifact):
             "failure_signature": "artifact_dependency_inspection_failed",
             "host_glibc_dependency": None,
             "sampled_symbols_present": False,
+            "dependency_breakdown": dependency_breakdown,
             "refs": refs,
         }
 
     dep_text = readelf_dynamic["stdout"] + "\n" + ldd["stdout"] + "\n" + ldd["stderr"]
-    host_glibc_dependency = "libc.so" in dep_text or "ld-linux" in dep_text
+    host_glibc_dependency = (
+        "libc.so" in dep_text
+        or "ld-linux" in dep_text
+        or bool(dependency_breakdown["blocking_reasons"])
+    )
     symbol_text = readelf_symbols["stdout"] + "\n" + nm_dynamic["stdout"]
     samples = manifest.get("symbol_samples", [])
     present = {symbol: (symbol in symbol_text) for symbol in samples}
@@ -377,6 +529,7 @@ def inspect_artifact(artifact):
         "failure_signature": failure,
         "host_glibc_dependency": host_glibc_dependency,
         "sampled_symbols_present": sampled_symbols_present,
+        "dependency_breakdown": dependency_breakdown,
         "symbol_samples": present,
         "refs": refs,
     }
@@ -390,6 +543,7 @@ if mode == "validate-only":
         "path": None,
         "sha256": None,
         "failure_signature": "none" if not errors else "manifest_validation_failed",
+        "dependency_breakdown": empty_dependency_breakdown(),
         "refs": [],
     }
 else:
@@ -441,6 +595,7 @@ report = {
     "tool_evidence": tool_evidence,
     "errors": errors,
     "required_log_fields": REQUIRED_LOG_FIELDS,
+    "required_report_fields": REQUIRED_REPORT_FIELDS,
     "artifact_refs": [rel(manifest_path), rel(packaging_path), rel(levels_path), rel(report_path), rel(log_path), rel(out_dir)],
 }
 write_text(report_path, json.dumps(report, indent=2, sort_keys=True) + "\n")
