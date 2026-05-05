@@ -1,0 +1,108 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "replacement-claim-doc-audit",
+  "bead": "bd-5unc9",
+  "owner_bead": "bd-zyck1",
+  "generated_utc": "2026-05-05T05:50:00Z",
+  "source_commit": "12b9868dee9aeca5dba54293f3dc076bab39cac3",
+  "purpose": "Doc-claim audit binder. README and release docs cannot imply standalone replacement readiness — words like 'standalone-ready', 'L1 production-ready', 'replaces glibc' — unless the L1 dry-run dashboard (tests/conformance/l1_dry_run_readiness_dashboard.v1.json) currently shows every row passing AND replacement_levels.json#current_level has been promoted to L1 by an explicit human signoff. The audit fails closed on overclaim phrasing in any cited doc, and pins forbidden phrasing inline so reviewers see the exact language that would have shipped.",
+  "subject": {
+    "doc_paths": [
+      "README.md",
+      "FEATURE_PARITY.md"
+    ],
+    "release_script": "scripts/release/check_replacement_claim_evidence.sh"
+  },
+  "inputs": {
+    "readme": "README.md",
+    "feature_parity": "FEATURE_PARITY.md",
+    "l1_dry_run_readiness_dashboard": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "release_script": "scripts/release/check_replacement_claim_evidence.sh"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "audit_run_id",
+    "doc_path",
+    "phrase",
+    "phrase_kind",
+    "claim_state_required",
+    "claim_state_actual",
+    "decision",
+    "rejection_reason",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "policy": {
+    "default_decision": "block_until_l1_dashboard_and_promotion_aligned",
+    "rejected_evidence_kinds": [
+      "overclaim_in_doc_while_dashboard_blocks",
+      "overclaim_in_doc_while_current_level_l0",
+      "release_script_missing",
+      "missing_release_script_marker",
+      "doc_path_missing",
+      "stale_source_commit"
+    ]
+  },
+  "forbidden_phrases_unless_l1_promoted": [
+    {
+      "phrase_id": "standalone-ready",
+      "phrase": "standalone-ready",
+      "phrase_kind": "case_insensitive_substring",
+      "rationale": "Implies the artifact is a drop-in libc replacement; only allowed when current_level is L1 with the dashboard fully passing."
+    },
+    {
+      "phrase_id": "drop-in-replacement",
+      "phrase": "drop-in replacement",
+      "phrase_kind": "case_insensitive_substring_unless_disclaimed",
+      "disclaimer_anchors": ["?", "No.", "not yet", "remains planned"],
+      "rationale": "Marketing copy for full glibc parity; allowed only inside an explicit disclaimer / question form so the FAQ entry 'Is FrankenLibC a drop-in replacement for glibc today? No.' is preserved as the canonical disclaimer."
+    },
+    {
+      "phrase_id": "production-ready-libc",
+      "phrase": "production-ready libc",
+      "phrase_kind": "case_insensitive_substring",
+      "rationale": "Implies fitness for unsupervised production use; gate to L1+."
+    },
+    {
+      "phrase_id": "replaces-glibc",
+      "phrase": "replaces glibc",
+      "phrase_kind": "case_insensitive_substring",
+      "rationale": "Implies full functional substitution; gate to L1+."
+    },
+    {
+      "phrase_id": "no-host-libc-required",
+      "phrase": "no host libc required",
+      "phrase_kind": "case_insensitive_substring",
+      "rationale": "Implies host-independence achieved; gate to L1+ once dlfcn L1 burndown blockers are removed."
+    }
+  ],
+  "allowed_anchor_phrases": [
+    {
+      "phrase_id": "current-level-l0-anchor",
+      "phrase": "current_level",
+      "expected_doc_path": "README.md",
+      "rationale": "README should reference current_level so any human reader can compare claim language to the live promotion state. Phase-deferred until the L1 promotion section is added.",
+      "optional_until_phase": "phase-2-readme-promotion-section"
+    },
+    {
+      "phrase_id": "l1-dry-run-dashboard-anchor",
+      "phrase": "l1_dry_run_readiness_dashboard",
+      "expected_doc_path": "FEATURE_PARITY.md",
+      "rationale": "FEATURE_PARITY must cite the dashboard once it lands so readers can map prose claims to the artifact contract.",
+      "optional_until_phase": "phase-2"
+    }
+  ],
+  "release_script_required_markers": [
+    "FRANKENLIBC_RELEASE_TAG",
+    "release_claim_evidence_gate",
+    "L0",
+    "L1"
+  ],
+  "consuming_gates": [
+    "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+    "tests/conformance/replacement_levels.json"
+  ]
+}
