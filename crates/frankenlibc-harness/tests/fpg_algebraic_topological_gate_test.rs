@@ -88,6 +88,26 @@ fn log_path(root: &Path) -> PathBuf {
     root.join("target/conformance/fpg_algebraic_topological_gate.log.jsonl")
 }
 
+fn git_head(root: &Path) -> TestResult<String> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(root)
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+    Ok(String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
+        .trim()
+        .to_owned())
+}
+
 fn load_json(path: &Path) -> TestResult<Value> {
     let content = std::fs::read_to_string(path)
         .map_err(|err| test_error(format!("{} should be readable: {err}", path.display())))?;
@@ -230,6 +250,53 @@ fn gate_artifact_covers_all_algebraic_topological_rows() -> TestResult {
         "fpg-proof-algebraic-topological",
         "owner_family_group",
     )?;
+    let freshness_policy = field(&gate, "source_commit_freshness_policy", "gate")?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "recorded_source_commit_field",
+            "source_commit_freshness_policy",
+        )?,
+        "source_commit",
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "comparison_target",
+            "source_commit_freshness_policy",
+        )?,
+        "current git HEAD",
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "stale_result",
+            "source_commit_freshness_policy",
+        )?,
+        "block_algebraic_topological_gate_evidence",
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    ensure_eq(
+        field(
+            freshness_policy,
+            "monitor_gate_evidence_allowed_when_stale",
+            "source_commit_freshness_policy",
+        )?
+        .as_bool(),
+        Some(false),
+        "source_commit_freshness_policy.monitor_gate_evidence_allowed_when_stale",
+    )?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "rejected_evidence_kind",
+            "source_commit_freshness_policy",
+        )?,
+        "stale_source_commit",
+        "source_commit_freshness_policy.rejected_evidence_kind",
+    )?;
 
     let inputs = as_object(field(&gate, "inputs", "gate")?, "inputs")?;
     for value in inputs.values() {
@@ -296,6 +363,48 @@ fn gate_artifact_covers_all_algebraic_topological_rows() -> TestResult {
         expected_ids,
         "algebraic-topological gap id coverage",
     )
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_algebraic_topological_gate_evidence() -> TestResult {
+    let root = workspace_root();
+    let gate = load_json(&gate_path(&root))?;
+    let gate_commit = string_field(&gate, "source_commit", "gate")?;
+    ensure(
+        gate_commit.len() == 40 && gate_commit.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "source_commit must be a 40-character git SHA",
+    )?;
+
+    let current_head = git_head(&root)?;
+    if gate_commit != current_head {
+        let policy = field(&gate, "source_commit_freshness_policy", "gate")?;
+        ensure_eq(
+            string_field(policy, "stale_result", "source_commit_freshness_policy")?,
+            "block_algebraic_topological_gate_evidence",
+            "stale algebraic/topological source_commit must block gate evidence",
+        )?;
+        ensure_eq(
+            field(
+                policy,
+                "monitor_gate_evidence_allowed_when_stale",
+                "source_commit_freshness_policy",
+            )?
+            .as_bool(),
+            Some(false),
+            "stale algebraic/topological source_commit must not allow gate evidence",
+        )?;
+        ensure_eq(
+            string_field(
+                policy,
+                "rejected_evidence_kind",
+                "source_commit_freshness_policy",
+            )?,
+            "stale_source_commit",
+            "stale algebraic/topological source_commit must use stale_source_commit",
+        )?;
+    }
+
+    Ok(())
 }
 
 #[test]

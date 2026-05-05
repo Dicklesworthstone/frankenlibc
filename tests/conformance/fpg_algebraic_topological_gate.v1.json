@@ -6,6 +6,13 @@
   "evidence_owner": "runtime_math algebraic/topological monitor owners",
   "generated_utc": "2026-05-03T22:45:00Z",
   "source_commit": "a4a73d2b375a2eb077e1a97d71cae11ed5498e64",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_algebraic_topological_gate_evidence",
+    "monitor_gate_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "inputs": {
     "feature_parity": "FEATURE_PARITY.md",
     "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
