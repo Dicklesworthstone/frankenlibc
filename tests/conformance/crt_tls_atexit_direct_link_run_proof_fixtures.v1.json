@@ -48,6 +48,49 @@
     "artifact_refs",
     "failure_signature"
   ],
+  "required_execution_log_fields": [
+    "trace_id",
+    "bead_id",
+    "fixture_id",
+    "scenario_kind",
+    "runtime_mode",
+    "replacement_level",
+    "execution_model",
+    "expected_decision",
+    "actual_decision",
+    "expected_order",
+    "actual_order",
+    "source_commit",
+    "target_dir",
+    "artifact_refs",
+    "failure_signature",
+    "event",
+    "command",
+    "exit_code",
+    "stdout_sha256",
+    "stderr_sha256",
+    "stdout_path",
+    "stderr_path",
+    "loader_diagnostics",
+    "artifact_status",
+    "claim_status"
+  ],
+  "execution_runner": {
+    "bead": "bd-4xk24",
+    "artifact_env": "FLC_CRT_TLS_PROOF_REPLACE_ARTIFACT",
+    "fallback_artifact_env": "FRANKENLIBC_STANDALONE_LIB",
+    "forge_report_env": "FLC_CRT_TLS_STANDALONE_ARTIFACT_REPORT",
+    "proof_case_count": 5,
+    "runtime_modes": ["strict", "hardened"],
+    "probe_ids": [
+      "crt.startup.direct_link.main",
+      "tls.errno.pthread.direct_link",
+      "atexit.destructor.order.direct_link",
+      "malloc.free.direct_link",
+      "stdio.string.direct_link"
+    ],
+    "claim_policy": "Execution rows may record pass/fail for a current forged artifact, but replacement promotion remains blocked until the artifact forge reports host_glibc_dependency=false and all downstream direct-link obligations pass."
+  },
   "required_scenario_kinds": [
     "crt_startup",
     "tls_initialization",
@@ -74,6 +117,18 @@
     {
       "id": "replace_artifact_missing",
       "trigger": "libfrankenlibc_replace.so is absent while a row claims direct-link replacement evidence"
+    },
+    {
+      "id": "standalone_artifact_stale",
+      "trigger": "libfrankenlibc_replace.so exists but predates current git HEAD"
+    },
+    {
+      "id": "interpose_only_artifact",
+      "trigger": "the supplied direct-link artifact is named like the LD_PRELOAD/interpose cdylib instead of libfrankenlibc_replace.so"
+    },
+    {
+      "id": "direct_link_execution_failed",
+      "trigger": "a current replacement artifact compiles or starts a direct-link probe but exits with the wrong status or output"
     },
     {
       "id": "missing_source_commit",
@@ -122,6 +177,18 @@
       "mutation": "pin source_commit to a commit other than current HEAD",
       "expected_result": "claim_blocked",
       "failure_signature": "stale_source_commit"
+    },
+    {
+      "id": "neg-stale-standalone-artifact",
+      "mutation": "supply a libfrankenlibc_replace.so artifact whose mtime predates current HEAD",
+      "expected_result": "claim_blocked",
+      "failure_signature": "standalone_artifact_stale"
+    },
+    {
+      "id": "neg-interpose-only-artifact",
+      "mutation": "supply libfrankenlibc_abi.so as the direct-link replacement artifact",
+      "expected_result": "claim_blocked",
+      "failure_signature": "interpose_only_artifact"
     },
     {
       "id": "neg-missing-artifact-refs",

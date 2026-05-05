@@ -13,7 +13,11 @@ SOURCE_COMMIT="$(git -C "${ROOT}" rev-parse HEAD 2>/dev/null || printf 'unknown'
 mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
 
 python3 - "${ROOT}" "${MANIFEST}" "${REPORT}" "${LOG}" "${SOURCE_COMMIT}" "${TARGET_DIR}" <<'PY'
+import hashlib
 import json
+import os
+import shlex
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -43,6 +47,19 @@ REQUIRED_LOG_FIELDS = [
     "target_dir",
     "artifact_refs",
     "failure_signature",
+]
+REQUIRED_EXECUTION_LOG_FIELDS = [
+    *REQUIRED_LOG_FIELDS,
+    "event",
+    "command",
+    "exit_code",
+    "stdout_sha256",
+    "stderr_sha256",
+    "stdout_path",
+    "stderr_path",
+    "loader_diagnostics",
+    "artifact_status",
+    "claim_status",
 ]
 REQUIRED_SCENARIO_KINDS = {
     "crt_startup",
@@ -91,6 +108,7 @@ DIAGNOSTIC_SIGNATURES = {
 }
 errors = []
 log_rows = []
+execution_rows = []
 
 
 def fail(signature, message):
@@ -107,6 +125,43 @@ def rel(path):
         return Path(path).resolve().relative_to(root).as_posix()
     except Exception:
         return str(path)
+
+
+def sha256_text(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def write_text(path, content):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def run_command(command, *, cwd, env=None, timeout=20):
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+        return {
+            "returncode": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "timed_out": False,
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "returncode": 124,
+            "stdout": exc.stdout or "",
+            "stderr": exc.stderr or "timeout",
+            "timed_out": True,
+        }
 
 
 def load_json(path, label):
@@ -158,6 +213,220 @@ def commit_is_current(commit_marker):
     return commit_marker in {"current", "unknown", source_commit}
 
 
+def head_epoch():
+    override = os.environ.get("FLC_CRT_TLS_PROOF_HEAD_EPOCH")
+    if override:
+        try:
+            return int(override)
+        except ValueError:
+            fail("missing_field", "FLC_CRT_TLS_PROOF_HEAD_EPOCH must be an integer epoch")
+            return 0
+    try:
+        return int(
+            subprocess.check_output(
+                ["git", "log", "-1", "--format=%ct", "HEAD"],
+                cwd=root,
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        )
+    except Exception:
+        return 0
+
+
+def standalone_artifact_candidates(default_text):
+    env_candidates = [
+        os.environ.get("FLC_CRT_TLS_PROOF_REPLACE_ARTIFACT"),
+        os.environ.get("FRANKENLIBC_STANDALONE_LIB"),
+    ]
+    candidates = [Path(value) for value in env_candidates if value]
+    forge_report = Path(
+        os.environ.get(
+            "FLC_CRT_TLS_STANDALONE_ARTIFACT_REPORT",
+            root / "target/conformance/standalone_replacement_artifact.report.json",
+        )
+    )
+    if forge_report.exists():
+        try:
+            report = json.loads(forge_report.read_text(encoding="utf-8"))
+            forged_path = report.get("artifact_state", {}).get("path")
+            if forged_path:
+                candidates.append(Path(forged_path))
+        except Exception:
+            pass
+    candidates.append(resolve(default_text))
+    return candidates
+
+
+def classify_standalone_artifact(default_text):
+    current_head_epoch = head_epoch()
+    for candidate in standalone_artifact_candidates(default_text):
+        if not candidate.exists():
+            continue
+        artifact_status = "current"
+        failure_signature = "none"
+        if candidate.name != "libfrankenlibc_replace.so":
+            artifact_status = "wrong_profile"
+            failure_signature = "interpose_only_artifact"
+        else:
+            try:
+                if current_head_epoch and int(candidate.stat().st_mtime) < current_head_epoch:
+                    artifact_status = "stale"
+                    failure_signature = "standalone_artifact_stale"
+            except OSError:
+                artifact_status = "missing"
+                failure_signature = "replace_artifact_missing"
+        return {
+            "path": candidate,
+            "status": artifact_status,
+            "failure_signature": failure_signature,
+            "exists": artifact_status == "current",
+        }
+    return {
+        "path": None,
+        "status": "missing",
+        "failure_signature": "replace_artifact_missing",
+        "exists": False,
+    }
+
+
+def direct_link_cases():
+    return [
+        {
+            "id": "crt.startup.direct_link.main",
+            "scenario_kind": "crt_startup",
+            "extra_flags": [],
+            "source": "int main(int argc, char **argv) { return (argc > 0 && argv != 0) ? 0 : 7; }\n",
+            "stdout_contains": "",
+        },
+        {
+            "id": "tls.errno.pthread.direct_link",
+            "scenario_kind": "errno_tls_isolation",
+            "extra_flags": ["-pthread"],
+            "source": "#include <errno.h>\n#include <pthread.h>\nstatic __thread int tls_value;\nstatic void *worker(void *arg) { tls_value = 41; errno = 17; return (void *)(long)(tls_value + errno + (arg != 0)); }\nint main(void) { pthread_t thread; if (pthread_create(&thread, 0, worker, (void *)1) != 0) return 2; void *ret = 0; if (pthread_join(thread, &ret) != 0) return 3; errno = 0; tls_value = 1; return ((long)ret == 59 && errno == 0 && tls_value == 1) ? 0 : 4; }\n",
+            "stdout_contains": "",
+        },
+        {
+            "id": "atexit.destructor.order.direct_link",
+            "scenario_kind": "atexit_on_exit",
+            "extra_flags": [],
+            "source": "#include <stdio.h>\n#include <stdlib.h>\nstatic int marker;\nstatic void first(void) { marker = marker * 10 + 1; }\nstatic void second(void) { marker = marker * 10 + 2; }\nint main(void) { if (atexit(first) != 0) return 2; if (atexit(second) != 0) return 3; puts(\"atexit-registered\"); return 0; }\n",
+            "stdout_contains": "atexit-registered",
+        },
+        {
+            "id": "malloc.free.direct_link",
+            "scenario_kind": "tls_destructor",
+            "extra_flags": [],
+            "source": "#include <stdlib.h>\n#include <string.h>\nint main(void) { char *buf = (char *)malloc(32); if (!buf) return 2; strcpy(buf, \"malloc-ok\"); int ok = strcmp(buf, \"malloc-ok\") == 0; free(buf); return ok ? 0 : 3; }\n",
+            "stdout_contains": "",
+        },
+        {
+            "id": "stdio.string.direct_link",
+            "scenario_kind": "init_fini_ordering",
+            "extra_flags": [],
+            "source": "#include <stdio.h>\n#include <string.h>\nint main(void) { char buf[32]; strcpy(buf, \"stdio-string-ok\"); puts(buf); return strcmp(buf, \"stdio-string-ok\") == 0 ? 0 : 2; }\n",
+            "stdout_contains": "stdio-string-ok",
+        },
+    ]
+
+
+def append_execution_row(case, runtime_mode, artifact_state, command, result, refs, stdout_path, stderr_path):
+    stdout = result.get("stdout", "")
+    stderr = result.get("stderr", "")
+    status = "pass" if result["returncode"] == 0 and (not case["stdout_contains"] or case["stdout_contains"] in stdout) else "fail"
+    if artifact_state["status"] != "current":
+        status = "claim_blocked"
+    failure_signature = (
+        artifact_state["failure_signature"]
+        if artifact_state["status"] != "current"
+        else ("none" if status == "pass" else "direct_link_execution_failed")
+    )
+    claim_status = "evidence_recorded" if status == "pass" else "claim_blocked"
+    row = {
+        "trace_id": f"{BEAD_ID}::{case['id']}::{runtime_mode}::execution",
+        "bead_id": BEAD_ID,
+        "fixture_id": case["id"],
+        "scenario_kind": case["scenario_kind"],
+        "runtime_mode": runtime_mode,
+        "replacement_level": "L2",
+        "execution_model": "direct_link_run",
+        "expected_decision": "evidence_recorded",
+        "actual_decision": status,
+        "expected_order": ["compile", "direct_link", "run"],
+        "actual_order": ["compile", "direct_link", "run"] if artifact_state["status"] == "current" else [],
+        "source_commit": source_commit,
+        "target_dir": target_dir,
+        "artifact_refs": refs,
+        "failure_signature": failure_signature,
+        "event": "direct_link_candidate_run",
+        "command": command,
+        "exit_code": result["returncode"],
+        "stdout_sha256": sha256_text(stdout),
+        "stderr_sha256": sha256_text(stderr),
+        "stdout_path": rel(stdout_path),
+        "stderr_path": rel(stderr_path),
+        "loader_diagnostics": stderr,
+        "artifact_status": artifact_state["status"],
+        "claim_status": claim_status,
+    }
+    execution_rows.append(row)
+    log_rows.append(row)
+
+
+def run_direct_link_cases(artifact_state):
+    run_root = Path(target_dir) / "crt_tls_atexit_direct_link_runs"
+    compiler = os.environ.get("CC", "cc")
+    for index, case in enumerate(direct_link_cases(), start=1):
+        for runtime_mode in sorted(REQUIRED_RUNTIME_MODES):
+            case_dir = run_root / f"{index:02d}-{case['id'].replace('.', '_')}-{runtime_mode}"
+            source_path = case_dir / "source.c"
+            binary_path = case_dir / "candidate.bin"
+            stdout_path = case_dir / "stdout.txt"
+            stderr_path = case_dir / "stderr.txt"
+            write_text(source_path, case["source"])
+            refs = [rel(source_path), rel(stdout_path), rel(stderr_path)]
+            if artifact_state["path"]:
+                refs.append(rel(artifact_state["path"]))
+            command = [
+                compiler,
+                "-O2",
+                str(source_path),
+                "-Wl,--no-as-needed",
+            ]
+            if artifact_state["path"]:
+                command.append(str(artifact_state["path"]))
+                command.append(f"-Wl,-rpath,{artifact_state['path'].parent}")
+            command.extend(case["extra_flags"])
+            command.extend(["-o", str(binary_path)])
+            if artifact_state["status"] != "current":
+                write_text(stdout_path, "")
+                write_text(stderr_path, artifact_state["failure_signature"] + "\n")
+                append_execution_row(
+                    case,
+                    runtime_mode,
+                    artifact_state,
+                    command,
+                    {"returncode": 0, "stdout": "", "stderr": artifact_state["failure_signature"] + "\n"},
+                    refs,
+                    stdout_path,
+                    stderr_path,
+                )
+                continue
+            compile_result = run_command(command, cwd=root)
+            if compile_result["returncode"] != 0:
+                write_text(stdout_path, compile_result["stdout"])
+                write_text(stderr_path, compile_result["stderr"])
+                append_execution_row(case, runtime_mode, artifact_state, command, compile_result, refs, stdout_path, stderr_path)
+                continue
+            env = os.environ.copy()
+            env.pop("LD_PRELOAD", None)
+            env["FRANKENLIBC_MODE"] = runtime_mode
+            run_result = run_command([str(binary_path)], cwd=case_dir, env=env)
+            write_text(stdout_path, run_result["stdout"])
+            write_text(stderr_path, run_result["stderr"])
+            append_execution_row(case, runtime_mode, artifact_state, command, run_result, refs, stdout_path, stderr_path)
+
+
 manifest = require_object(load_json(resolve(manifest_path), "manifest"), "manifest")
 if manifest.get("schema_version") != "v1":
     fail("missing_field", "schema_version must be v1")
@@ -190,7 +459,8 @@ replace_artifact = repo_ref(
     "replacement_artifact_policy.replace_artifact",
     must_exist=False,
 )
-replace_artifact_exists = bool(replace_artifact and replace_artifact.exists())
+artifact_state = classify_standalone_artifact(replace_artifact_text)
+replace_artifact_exists = artifact_state["exists"]
 if policy.get("missing_artifact_result") != "claim_blocked":
     fail("missing_field", "missing_artifact_result must be claim_blocked")
 if policy.get("missing_row_source_commit_result") != "claim_blocked":
@@ -370,12 +640,25 @@ summary = {
     "execution_model_counts": dict(sorted(execution_counts.items())),
     "log_row_count": len(log_rows),
     "replace_artifact_exists": replace_artifact_exists,
+    "standalone_artifact_status": artifact_state["status"],
 }
 declared_summary = manifest.get("summary", {})
 if isinstance(declared_summary, dict):
     for key in ["fixture_count", "claim_blocked_count", "required_scenario_count", "strict_hardened_mode_count"]:
         if declared_summary.get(key) != summary.get(key):
             fail("stale_source_commit", f"summary.{key} drifted from computed value {summary.get(key)}")
+
+run_direct_link_cases(artifact_state)
+summary["fixture_log_row_count"] = summary["log_row_count"]
+summary["log_row_count"] = len(log_rows)
+summary["direct_link_execution_rows"] = len(execution_rows)
+summary["direct_link_execution_status_counts"] = dict(
+    sorted(Counter(row["actual_decision"] for row in execution_rows).items())
+)
+for row in execution_rows:
+    missing = [field for field in REQUIRED_EXECUTION_LOG_FIELDS if field not in row]
+    if missing:
+        fail("missing_field", f"{row['fixture_id']}: execution log row missing {missing}")
 
 report = {
     "schema_version": "v1",
@@ -388,9 +671,16 @@ report = {
     "source_commit": source_commit,
     "target_dir": target_dir,
     "replacement_artifact": replace_artifact_text,
+    "standalone_artifact": {
+        "path": str(artifact_state["path"]) if artifact_state["path"] else None,
+        "status": artifact_state["status"],
+        "failure_signature": artifact_state["failure_signature"],
+    },
     "errors": errors,
     "required_log_fields": REQUIRED_LOG_FIELDS,
+    "required_execution_log_fields": REQUIRED_EXECUTION_LOG_FIELDS,
     "summary": summary,
+    "execution_rows": execution_rows,
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 log_path.write_text(

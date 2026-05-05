@@ -27,6 +27,34 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "failure_signature",
 ];
 
+const REQUIRED_EXECUTION_LOG_FIELDS: &[&str] = &[
+    "trace_id",
+    "bead_id",
+    "fixture_id",
+    "scenario_kind",
+    "runtime_mode",
+    "replacement_level",
+    "execution_model",
+    "expected_decision",
+    "actual_decision",
+    "expected_order",
+    "actual_order",
+    "source_commit",
+    "target_dir",
+    "artifact_refs",
+    "failure_signature",
+    "event",
+    "command",
+    "exit_code",
+    "stdout_sha256",
+    "stderr_sha256",
+    "stdout_path",
+    "stderr_path",
+    "loader_diagnostics",
+    "artifact_status",
+    "claim_status",
+];
+
 const REQUIRED_SCENARIO_KINDS: &[&str] = &[
     "crt_startup",
     "tls_initialization",
@@ -232,6 +260,30 @@ fn run_gate(root: &Path, manifest: Option<&Path>, out_dir: &Path) -> TestResult<
         .map_err(|err| test_error(format!("failed to run CRT/TLS proof gate: {err}")))
 }
 
+fn build_sample_shared_object(path: &Path) -> TestResult {
+    let source = path.with_extension("c");
+    std::fs::write(
+        &source,
+        "int frankenlibc_crt_tls_atexit_probe_symbol(void) { return 7; }\n",
+    )?;
+    let output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source)
+        .arg("-o")
+        .arg(path)
+        .output()
+        .map_err(|err| test_error(format!("failed to run cc: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "cc failed\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
+}
+
 fn run_default_gate(root: &Path) -> TestResult<(Value, PathBuf)> {
     let out_dir = unique_temp_dir("crt-tls-proof-pass")?;
     let report_path = out_dir.join("crt-tls-proof.report.json");
@@ -278,7 +330,9 @@ fn parse_jsonl(path: &Path) -> TestResult<Vec<Value>> {
 fn expect_failure_signature(report: &Value, signature: &str) -> TestResult {
     let errors = array_field(report, "errors", "report")?;
     if errors.iter().any(|row| {
-        row.get("failure_signature").and_then(Value::as_str) == Some(signature)
+        row.get("failure_signature")
+            .and_then(Value::as_str)
+            .is_some_and(|actual| actual.eq(signature))
             || row
                 .get("message")
                 .and_then(Value::as_str)
@@ -322,6 +376,29 @@ fn manifest_defines_required_crt_tls_atexit_fixture_scope() -> TestResult {
     ensure(
         required_log_fields == REQUIRED_LOG_FIELDS,
         "required_log_fields should match structured log contract",
+    )?;
+    let required_execution_log_fields: Vec<_> =
+        array_field(&manifest, "required_execution_log_fields", "manifest")?
+            .iter()
+            .map(|value| {
+                value.as_str().ok_or_else(|| {
+                    test_error("required_execution_log_fields entries must be strings")
+                })
+            })
+            .collect::<TestResult<_>>()?;
+    ensure(
+        required_execution_log_fields == REQUIRED_EXECUTION_LOG_FIELDS,
+        "required_execution_log_fields should match direct-link execution log contract",
+    )?;
+    ensure(
+        field(
+            field(&manifest, "execution_runner", "manifest")?,
+            "proof_case_count",
+            "execution_runner",
+        )?
+        .as_u64()
+            == Some(5),
+        "execution runner should declare five direct-link proof cases",
     )?;
     ensure(
         string_set(&manifest, "required_scenario_kinds", "manifest")?
@@ -467,8 +544,16 @@ fn checker_emits_report_and_mode_specific_jsonl_rows() -> TestResult {
         "claim_blocked_count should be 8",
     )?;
     ensure(
-        field(summary, "log_row_count", "summary")?.as_u64() == Some(16),
-        "log_row_count should include strict and hardened rows",
+        field(summary, "fixture_log_row_count", "summary")?.as_u64() == Some(16),
+        "fixture_log_row_count should include strict and hardened fixture rows",
+    )?;
+    ensure(
+        field(summary, "direct_link_execution_rows", "summary")?.as_u64() == Some(10),
+        "direct_link_execution_rows should cover five probes in strict+hardened",
+    )?;
+    ensure(
+        field(summary, "log_row_count", "summary")?.as_u64() == Some(26),
+        "log_row_count should include fixture rows plus execution rows",
     )?;
     ensure(
         string_field(&report, "source_commit", "report")?.len() == 40,
@@ -477,12 +562,19 @@ fn checker_emits_report_and_mode_specific_jsonl_rows() -> TestResult {
 
     let logs = parse_jsonl(&log_path)?;
     ensure(
-        logs.len() == 16,
-        "expected one log row per fixture/runtime mode",
+        logs.len() == 26,
+        "expected fixture/runtime rows plus direct-link execution rows",
     )?;
     let mut modes = HashSet::new();
+    let mut execution_rows = 0;
     for row in &logs {
-        for field_name in REQUIRED_LOG_FIELDS {
+        let required_fields: &[&str] = if row.get("event").is_some() {
+            execution_rows += 1;
+            REQUIRED_EXECUTION_LOG_FIELDS
+        } else {
+            REQUIRED_LOG_FIELDS
+        };
+        for field_name in required_fields {
             ensure(
                 row.get(*field_name).is_some(),
                 "log row should include required field",
@@ -491,8 +583,144 @@ fn checker_emits_report_and_mode_specific_jsonl_rows() -> TestResult {
         modes.insert(string_field(row, "runtime_mode", "log_row")?);
     }
     ensure(
+        execution_rows == 10,
+        "JSONL should include strict+hardened execution rows for five probes",
+    )?;
+    ensure(
         modes == REQUIRED_RUNTIME_MODES.iter().copied().collect(),
         "JSONL rows should cover strict and hardened",
+    )
+}
+
+#[test]
+fn checker_consumes_current_forged_artifact_and_runs_direct_link_probes() -> TestResult {
+    let root = workspace_root();
+    if Command::new("cc").arg("--version").output().is_err() {
+        return Ok(());
+    }
+    let out_dir = unique_temp_dir("crt-tls-proof-current-artifact")?;
+    let artifact = out_dir.join("libfrankenlibc_replace.so");
+    build_sample_shared_object(&artifact)?;
+    let report_path = out_dir.join("crt-tls-proof.report.json");
+    let log_path = out_dir.join("crt-tls-proof.log.jsonl");
+    let output = Command::new("bash")
+        .arg(script_path(&root))
+        .current_dir(&root)
+        .env("FLC_CRT_TLS_PROOF_OUT_DIR", &out_dir)
+        .env("FLC_CRT_TLS_PROOF_REPORT", &report_path)
+        .env("FLC_CRT_TLS_PROOF_LOG", &log_path)
+        .env("FLC_CRT_TLS_PROOF_TARGET_DIR", &out_dir)
+        .env("FLC_CRT_TLS_PROOF_REPLACE_ARTIFACT", &artifact)
+        .output()
+        .map_err(|err| test_error(format!("failed to run CRT/TLS proof gate: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "gate should pass with current artifact\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+    let report = load_json(&report_path)?;
+    ensure(
+        string_field(
+            field(&report, "standalone_artifact", "report")?,
+            "status",
+            "standalone_artifact",
+        )? == "current",
+        "standalone artifact should be current",
+    )?;
+    let summary = field(&report, "summary", "report")?;
+    ensure(
+        field(summary, "direct_link_execution_rows", "summary")?.as_u64() == Some(10),
+        "all strict+hardened direct-link probe rows should be emitted",
+    )?;
+    ensure(
+        field(summary, "direct_link_execution_status_counts", "summary")?
+            .get("pass")
+            .and_then(Value::as_u64)
+            == Some(10),
+        "sample current artifact should run all direct-link probes",
+    )
+}
+
+#[test]
+fn checker_blocks_interpose_only_artifact_profile() -> TestResult {
+    let root = workspace_root();
+    if Command::new("cc").arg("--version").output().is_err() {
+        return Ok(());
+    }
+    let out_dir = unique_temp_dir("crt-tls-proof-wrong-artifact")?;
+    let artifact = out_dir.join("libfrankenlibc_abi.so");
+    build_sample_shared_object(&artifact)?;
+    let report_path = out_dir.join("crt-tls-proof.report.json");
+    let output = Command::new("bash")
+        .arg(script_path(&root))
+        .current_dir(&root)
+        .env("FLC_CRT_TLS_PROOF_OUT_DIR", &out_dir)
+        .env("FLC_CRT_TLS_PROOF_REPORT", &report_path)
+        .env(
+            "FLC_CRT_TLS_PROOF_LOG",
+            out_dir.join("crt-tls-proof.log.jsonl"),
+        )
+        .env("FLC_CRT_TLS_PROOF_TARGET_DIR", &out_dir)
+        .env("FLC_CRT_TLS_PROOF_REPLACE_ARTIFACT", &artifact)
+        .output()
+        .map_err(|err| test_error(format!("failed to run CRT/TLS proof gate: {err}")))?;
+    ensure(
+        output.status.success(),
+        "wrong-profile artifact should block claims without failing the gate",
+    )?;
+    let report = load_json(&report_path)?;
+    ensure(
+        string_field(
+            field(&report, "standalone_artifact", "report")?,
+            "failure_signature",
+            "standalone_artifact",
+        )? == "interpose_only_artifact",
+        "interpose-only artifact should be classified explicitly",
+    )
+}
+
+#[test]
+fn checker_blocks_stale_standalone_artifact() -> TestResult {
+    let root = workspace_root();
+    if Command::new("cc").arg("--version").output().is_err() {
+        return Ok(());
+    }
+    let out_dir = unique_temp_dir("crt-tls-proof-stale-artifact")?;
+    let artifact = out_dir.join("libfrankenlibc_replace.so");
+    build_sample_shared_object(&artifact)?;
+    let report_path = out_dir.join("crt-tls-proof.report.json");
+    let output = Command::new("bash")
+        .arg(script_path(&root))
+        .current_dir(&root)
+        .env("FLC_CRT_TLS_PROOF_OUT_DIR", &out_dir)
+        .env("FLC_CRT_TLS_PROOF_REPORT", &report_path)
+        .env(
+            "FLC_CRT_TLS_PROOF_LOG",
+            out_dir.join("crt-tls-proof.log.jsonl"),
+        )
+        .env("FLC_CRT_TLS_PROOF_TARGET_DIR", &out_dir)
+        .env("FLC_CRT_TLS_PROOF_REPLACE_ARTIFACT", &artifact)
+        .env("FLC_CRT_TLS_PROOF_HEAD_EPOCH", "4102444800")
+        .output()
+        .map_err(|err| test_error(format!("failed to run CRT/TLS proof gate: {err}")))?;
+    ensure(
+        output.status.success(),
+        "stale artifact should block claims without failing the gate",
+    )?;
+    let report = load_json(&report_path)?;
+    let actual_signature = string_field(
+        field(&report, "standalone_artifact", "report")?,
+        "failure_signature",
+        "standalone_artifact",
+    )?;
+    ensure(
+        actual_signature.eq("standalone_artifact_stale"),
+        format!(
+            "stale artifact should be classified explicitly, got {actual_signature}: {report:#?}"
+        ),
     )
 }
 
