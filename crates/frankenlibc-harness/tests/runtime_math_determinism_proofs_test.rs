@@ -6,6 +6,7 @@
 //! 3. The gate emits structured JSONL logs and a JSON report.
 //! 4. The report indicates both modes passed with zero failures.
 
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 fn workspace_root() -> PathBuf {
@@ -21,6 +22,73 @@ fn workspace_root() -> PathBuf {
 fn load_json(path: &Path) -> serde_json::Value {
     let content = std::fs::read_to_string(path).expect("json file should exist");
     serde_json::from_str(&content).expect("json should parse")
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
+#[test]
+fn runtime_math_kernel_snapshot_golden_checksum_matches_manifest() {
+    let root = workspace_root();
+    let golden_dir = root.join("tests/runtime_math/golden");
+    let snapshot_path = golden_dir.join("kernel_snapshot_smoke.v1.json");
+    let sha_path = golden_dir.join("sha256sums.txt");
+
+    let sha_body = std::fs::read_to_string(&sha_path).expect("sha256sums.txt should be readable");
+    let rows = sha_body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows.len(),
+        1,
+        "runtime math golden checksum manifest should pin exactly one snapshot"
+    );
+
+    let mut fields = rows[0].split_whitespace();
+    let expected_hash = fields.next().expect("checksum row should include hash");
+    let expected_name = fields
+        .next()
+        .expect("checksum row should include snapshot file name");
+    assert_eq!(
+        fields.next(),
+        None,
+        "checksum row should contain only hash and file name"
+    );
+    assert_eq!(expected_name, "kernel_snapshot_smoke.v1.json");
+    assert!(
+        expected_hash.len() == 64
+            && expected_hash
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "checksum should be a lowercase SHA-256 hex digest"
+    );
+
+    let snapshot_bytes = std::fs::read(&snapshot_path).expect("snapshot should be readable");
+    let actual_hash = hex_lower(&Sha256::digest(&snapshot_bytes));
+    assert_eq!(
+        actual_hash, expected_hash,
+        "sha256sums.txt must match the committed runtime math golden snapshot"
+    );
+
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&snapshot_bytes).expect("snapshot should parse as JSON");
+    assert_eq!(snapshot["version"].as_str(), Some("v1"));
+    assert_eq!(
+        snapshot["scenario"]["id"].as_str(),
+        Some("runtime_math_kernel_snapshot_smoke")
+    );
+    assert_eq!(snapshot["scenario"]["seed"].as_u64(), Some(0xDEAD_BEEF));
+    assert_eq!(snapshot["scenario"]["steps"].as_u64(), Some(512));
+    assert!(
+        snapshot["strict"].is_object() && snapshot["hardened"].is_object(),
+        "snapshot_gate.sh uses --mode both, so both mode snapshots must be present"
+    );
 }
 
 #[test]
