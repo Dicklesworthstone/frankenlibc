@@ -50,6 +50,7 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "errno",
     "duration_ms",
     "artifact_refs",
+    "artifact_hashes",
     "source_commit",
     "target_dir",
     "bundle_id",
@@ -159,6 +160,29 @@ fn run_gate(
     (temp, report, log, output)
 }
 
+fn build_dummy_standalone_artifact(prefix: &str) -> (PathBuf, PathBuf) {
+    let temp = unique_temp_dir(prefix);
+    let source = temp.join("dummy_replace.c");
+    let artifact = temp.join("libfrankenlibc_replace.so");
+    std::fs::write(&source, "void frankenlibc_replace_smoke_anchor(void) {}\n")
+        .expect("write dummy standalone source");
+    let output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source)
+        .arg("-o")
+        .arg(&artifact)
+        .output()
+        .expect("cc should build dummy standalone artifact");
+    assert!(
+        output.status.success(),
+        "dummy standalone artifact build failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (temp, artifact)
+}
+
 #[test]
 fn manifest_defines_case_schema_and_log_contract() {
     let manifest = load_manifest();
@@ -245,7 +269,7 @@ fn manifest_defines_failure_bundle_schema_and_fixture_classes() {
 fn cases_cover_required_domains_modes_levels_and_artifact_kinds() {
     let manifest = load_manifest();
     let cases = manifest["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 18);
+    assert_eq!(cases.len(), 20);
 
     let mut domains: HashMap<String, u64> = HashMap::new();
     let mut modes = HashSet::new();
@@ -288,6 +312,7 @@ fn cases_cover_required_domains_modes_levels_and_artifact_kinds() {
     assert!(levels.contains("L1"));
     assert!(artifact_kinds.contains("ld_preload_interpose"));
     assert!(artifact_kinds.contains("standalone_direct_link_future"));
+    assert!(artifact_kinds.contains("standalone_direct_link_real_program"));
     assert_eq!(
         manifest["summary"]["required_domain_coverage"],
         serde_json::to_value(domains).unwrap()
@@ -312,7 +337,7 @@ fn run_mode_writes_artifacts_and_blocks_claims_without_current_artifacts() {
     assert_eq!(report["schema_version"].as_str(), Some("v1"));
     assert_eq!(report["bead"].as_str(), Some("bd-bp8fl.10.2"));
     assert_eq!(report["status"].as_str(), Some("pass"));
-    assert_eq!(report["summary"]["cases"].as_u64(), Some(18));
+    assert_eq!(report["summary"]["cases"].as_u64(), Some(20));
     assert_eq!(report["summary"]["failed"].as_u64(), Some(0));
     assert_eq!(
         report["summary"]["non_support_statuses_do_not_claim_support"].as_bool(),
@@ -329,7 +354,7 @@ fn run_mode_writes_artifacts_and_blocks_claims_without_current_artifacts() {
     );
 
     let rows = report["rows"].as_array().unwrap();
-    assert_eq!(rows.len(), 18);
+    assert_eq!(rows.len(), 20);
     assert!(rows.iter().any(|row| {
         row["artifact_refs"]
             .as_array()
@@ -381,6 +406,10 @@ fn run_mode_writes_artifacts_and_blocks_claims_without_current_artifacts() {
         for field in REQUIRED_LOG_FIELDS {
             assert!(event.get(*field).is_some(), "log row missing {field}");
         }
+        assert!(
+            event["artifact_hashes"].as_object().is_some(),
+            "log row should include artifact hashes"
+        );
         if event["actual_status"].as_str() != Some("pass") {
             assert_eq!(event["support_claimed"].as_bool(), Some(false));
         }
@@ -404,6 +433,96 @@ fn run_mode_writes_artifacts_and_blocks_claims_without_current_artifacts() {
             .starts_with("bd-"),
         "bundle must name a next safe bead"
     );
+}
+
+#[test]
+fn current_standalone_artifact_rows_block_host_glibc_dependency() {
+    let (_artifact_temp, artifact) =
+        build_dummy_standalone_artifact("real-program-dummy-standalone");
+    let (_temp, report_path, log_path, output) = run_gate(
+        "--run",
+        "real-program-standalone-current",
+        &[("FRANKENLIBC_STANDALONE_LIB", artifact.display().to_string())],
+        true,
+    );
+    assert!(
+        output.status.success(),
+        "real-program smoke gate with standalone artifact failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&report_path);
+    assert_eq!(report["status"].as_str(), Some("pass"));
+    assert_eq!(
+        report["artifact_state"]["standalone"]["status"].as_str(),
+        Some("current")
+    );
+    let rows: Vec<_> = report["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| {
+            row["case_id"]
+                .as_str()
+                .unwrap()
+                .starts_with("standalone_real_program_argv_env")
+        })
+        .collect();
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        assert_eq!(row["actual_status"].as_str(), Some("claim_blocked"));
+        assert_eq!(row["support_claimed"].as_bool(), Some(false));
+        assert_eq!(
+            row["failure_signature"].as_str(),
+            Some("host_glibc_dependency_detected")
+        );
+        let refs = row["artifact_refs"].as_array().unwrap();
+        assert!(
+            refs.iter().any(|value| value
+                .as_str()
+                .unwrap_or_default()
+                .ends_with("dependency_scan.json")),
+            "standalone rows should include dependency scan artifact"
+        );
+        let hashes = row["artifact_hashes"].as_object().unwrap();
+        assert!(
+            hashes.keys().any(|path| path.ends_with("candidate.bin")),
+            "standalone row should hash the linked candidate"
+        );
+    }
+
+    let log = std::fs::read_to_string(&log_path).expect("log should be readable");
+    let events: Vec<serde_json::Value> = log
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("log row should parse"))
+        .collect();
+    let blocked_events: Vec<_> = events
+        .iter()
+        .filter(|event| event["event"].as_str() == Some("standalone_host_dependency_blocked"))
+        .collect();
+    assert_eq!(blocked_events.len(), 2);
+    for event in blocked_events {
+        assert_eq!(
+            event["failure_signature"].as_str(),
+            Some("host_glibc_dependency_detected")
+        );
+        assert!(
+            event["command"]
+                .as_str()
+                .unwrap()
+                .contains("libfrankenlibc_replace.so"),
+            "logged command should name the standalone artifact"
+        );
+        let hashes = event["artifact_hashes"].as_object().unwrap();
+        assert!(
+            hashes
+                .keys()
+                .any(|path| path.ends_with("libfrankenlibc_replace.so")),
+            "log should hash the standalone artifact"
+        );
+    }
 }
 
 #[test]
@@ -439,7 +558,7 @@ fn validate_only_rejects_stale_prior_report() {
         Some(true)
     );
     assert_eq!(report["summary"]["support_claimed"].as_u64(), Some(0));
-    assert_eq!(report["summary"]["validated"].as_u64(), Some(18));
+    assert_eq!(report["summary"]["validated"].as_u64(), Some(20));
 
     let log = std::fs::read_to_string(&log_path).expect("log should be readable");
     assert!(
@@ -507,7 +626,7 @@ fn bundle_fixture_mode_covers_required_classes_and_redacts_runner_env() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|key| key.as_str() == Some("REAL_PROGRAM_SECRET_TOKEN")),
+                .any(|key| matches!(key.as_str(), Some("REAL_PROGRAM_SECRET_TOKEN"))),
             "secret runner env key should be redacted"
         );
         assert!(
@@ -531,6 +650,7 @@ fn bundle_fixture_mode_covers_required_classes_and_redacts_runner_env() {
         for field in REQUIRED_LOG_FIELDS {
             assert!(row.get(*field).is_some(), "log row missing {field}");
         }
+        assert!(row["artifact_hashes"].as_object().is_some());
         assert_ne!(row["bundle_id"].as_str(), Some("none"));
         assert!(classes.contains(row["failure_class"].as_str().unwrap()));
         assert!(row["next_safe_action"].as_str().unwrap().contains(" "));

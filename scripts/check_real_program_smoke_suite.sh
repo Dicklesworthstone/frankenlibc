@@ -41,6 +41,7 @@ mkdir -p "${RUN_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
 
 python3 - "${ROOT}" "${MANIFEST}" "${RUN_DIR}" "${REPORT}" "${LOG}" "${MODE}" <<'PY'
 import json
+import hashlib
 import os
 import re
 import shlex
@@ -88,6 +89,7 @@ REQUIRED_LOG_FIELDS = [
     "errno",
     "duration_ms",
     "artifact_refs",
+    "artifact_hashes",
     "source_commit",
     "target_dir",
     "bundle_id",
@@ -165,6 +167,33 @@ def rel(path):
         return str(path)
 
 
+def ref_path(ref):
+    path = Path(ref)
+    if path.is_absolute():
+        return path
+    return root / path
+
+
+def sha256_file(path):
+    try:
+        digest = hashlib.sha256()
+        with Path(path).open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def hash_artifact_refs(refs):
+    hashes = {}
+    for ref in refs:
+        digest = sha256_file(ref_path(ref))
+        if digest:
+            hashes[ref] = digest
+    return hashes
+
+
 def write_text(path, content):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -215,6 +244,7 @@ def append_log(
         "errno": errno,
         "duration_ms": duration_ms,
         "artifact_refs": artifact_refs,
+        "artifact_hashes": hash_artifact_refs(artifact_refs),
         "source_commit": source_commit,
         "target_dir": str(run_dir),
         "bundle_id": bundle_id,
@@ -358,6 +388,13 @@ def validate_manifest():
             if expected != "claim_blocked" or case.get("support_claim") != "never":
                 case_ok = False
                 errors.append(f"{case_id}: standalone future rows must remain claim_blocked and never support")
+        if case.get("artifact_kind") == "standalone_direct_link_real_program":
+            if case.get("support_claim") != "never":
+                case_ok = False
+                errors.append(f"{case_id}: standalone real-program rows must not claim support")
+            if not isinstance(case.get("standalone_source"), str) or not case.get("standalone_source", "").strip():
+                case_ok = False
+                errors.append(f"{case_id}: standalone real-program rows require standalone_source")
 
     checks["case_rows"] = "pass" if case_ok else "fail"
     if not case_ok:
@@ -814,6 +851,357 @@ def output_matches(case, result):
     return True, "none"
 
 
+def command_line(argv):
+    return " ".join(shlex.quote(str(part)) for part in argv)
+
+
+def parse_needed_libraries(readelf_stdout):
+    needed = []
+    for line in readelf_stdout.splitlines():
+        if "(NEEDED)" not in line:
+            continue
+        match = re.search(r"\[(.*?)\]", line)
+        if match:
+            needed.append(match.group(1))
+    return sorted(set(needed))
+
+
+def standalone_blocked_result(
+    case,
+    *,
+    case_dir,
+    artifact_refs,
+    command_text,
+    event,
+    failure_signature,
+    blocked_reason,
+    duration_ms=0,
+    stdout_ref=None,
+    stderr_ref=None,
+    extra=None,
+):
+    actual_status = "claim_blocked"
+    blocked_payload = {
+        "artifact_state": standalone_state,
+        "actual_status": actual_status,
+        "failure_signature": failure_signature,
+        "blocked_reason": blocked_reason,
+        "support_claimed": False,
+    }
+    if extra:
+        blocked_payload.update(extra)
+    blocked_path = case_dir / "candidate.blocked.json"
+    write_json(blocked_path, blocked_payload)
+    artifact_refs.append(rel(blocked_path))
+    bundle = emit_failure_bundle(
+        case,
+        case_dir=case_dir,
+        artifact_refs=artifact_refs,
+        command_text=command_text,
+        actual_status=actual_status,
+        failure_signature=failure_signature,
+        stdout_ref=stdout_ref,
+        stderr_ref=stderr_ref,
+        blocked_reason=blocked_reason,
+    )
+    if bundle["artifact_ref"]:
+        artifact_refs.append(bundle["artifact_ref"])
+    append_log(
+        event=event,
+        workload_id=case["workload_id"],
+        command=command_text,
+        runtime_mode=case["runtime_mode"],
+        replacement_level=case["replacement_level"],
+        oracle_kind=case["oracle_kind"],
+        expected_status=str(case.get("expected", {}).get("status")),
+        actual_status=actual_status,
+        errno=case.get("expected", {}).get("errno"),
+        duration_ms=duration_ms,
+        artifact_refs=artifact_refs,
+        failure_signature=failure_signature,
+        bundle_id=bundle["bundle_id"],
+        failure_class=bundle["failure_class"],
+        next_safe_action=bundle["next_safe_action"],
+        support_claimed=False,
+        blocked_reason=blocked_reason,
+    )
+    return {
+        "case_id": case["case_id"],
+        "workload_id": case["workload_id"],
+        "actual_status": actual_status,
+        "support_claimed": False,
+        "artifact_refs": artifact_refs,
+        "artifact_hashes": hash_artifact_refs(artifact_refs),
+        "failure_signature": failure_signature,
+        "blocked_reason": blocked_reason,
+        "bundle_id": bundle["bundle_id"],
+        "failure_class": bundle["failure_class"],
+        "next_safe_action": bundle["next_safe_action"],
+    }
+
+
+def run_standalone_real_program_case(case, case_dir, artifact_refs):
+    source_text = case.get("standalone_source")
+    if not isinstance(source_text, str) or not source_text.strip():
+        return standalone_blocked_result(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_line([case["command"], *case.get("argv", [])]),
+            event="standalone_real_program_claim_blocked",
+            failure_signature="standalone_source_missing",
+            blocked_reason="standalone real-program row must embed a deterministic C source",
+        )
+
+    source_path = case_dir / "standalone_real_program.c"
+    binary_path = case_dir / "candidate.bin"
+    write_text(source_path, source_text)
+    artifact_refs.append(rel(source_path))
+
+    compiler_parts = shlex.split(os.environ.get("CC", case["command"] or "cc"))
+    compiler = resolve_command(compiler_parts[0]) if compiler_parts else None
+    if compiler is None:
+        return standalone_blocked_result(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_line([case["command"], *case.get("argv", [])]),
+            event="standalone_real_program_claim_blocked",
+            failure_signature="standalone_compiler_unavailable",
+            blocked_reason="C compiler is unavailable for direct-link real-program proof",
+        )
+
+    compile_argv = [
+        compiler,
+        *compiler_parts[1:],
+        "-O2",
+        str(source_path),
+        "-Wl,--no-as-needed",
+    ]
+    if standalone_state["path"]:
+        standalone_path = Path(standalone_state["path"])
+        compile_argv.extend([str(standalone_path), f"-Wl,-rpath,{standalone_path.parent}"])
+        artifact_refs.append(rel(standalone_path))
+    compile_argv.extend(case.get("standalone_compile_flags", []))
+    compile_argv.extend(["-o", str(binary_path)])
+    run_argv = [str(binary_path), *case.get("standalone_run_argv", [])]
+    command_text = f"{command_line(compile_argv)} && {command_line(run_argv)}"
+
+    if standalone_state["status"] != "current":
+        failure_signature = (
+            "standalone_artifact_missing"
+            if standalone_state["status"] == "missing"
+            else standalone_state["failure_signature"]
+        )
+        return standalone_blocked_result(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_text,
+            event="standalone_real_program_claim_blocked",
+            failure_signature=failure_signature,
+            blocked_reason=standalone_state["detail"] or "standalone artifact is not current",
+        )
+
+    compile_result = run_command(
+        compile_argv,
+        cwd=root,
+        env=isolated_env(case),
+        timeout_ms=case.get("timeout_ms", 5000),
+    )
+    write_json(
+        case_dir / "compile.result.json",
+        {
+            "argv": compile_argv,
+            "returncode": compile_result["returncode"],
+            "stdout": compile_result["stdout"],
+            "stderr": compile_result["stderr"],
+            "timed_out": compile_result["timed_out"],
+            "duration_ms": compile_result["duration_ms"],
+        },
+    )
+    write_text(case_dir / "compile.stdout.txt", compile_result["stdout"])
+    write_text(case_dir / "compile.stderr.txt", compile_result["stderr"])
+    artifact_refs.extend(
+        [
+            rel(case_dir / "compile.result.json"),
+            rel(case_dir / "compile.stdout.txt"),
+            rel(case_dir / "compile.stderr.txt"),
+        ]
+    )
+    if compile_result["returncode"] != 0 or compile_result["timed_out"]:
+        signature = "standalone_direct_link_compile_timeout" if compile_result["timed_out"] else "standalone_direct_link_compile_failed"
+        return standalone_blocked_result(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_text,
+            event="standalone_real_program_compile_blocked",
+            failure_signature=signature,
+            blocked_reason="standalone real-program candidate did not compile",
+            duration_ms=compile_result["duration_ms"],
+            stdout_ref=case_dir / "compile.stdout.txt",
+            stderr_ref=case_dir / "compile.stderr.txt",
+        )
+
+    artifact_refs.append(rel(binary_path))
+    readelf = resolve_command("readelf")
+    if readelf is None:
+        return standalone_blocked_result(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_text,
+            event="standalone_host_dependency_blocked",
+            failure_signature="dependency_inspector_unavailable",
+            blocked_reason="readelf is unavailable, so host-glibc dependency cannot be excluded",
+        )
+
+    readelf_result = run_command(
+        [readelf, "-d", str(binary_path)],
+        cwd=case_dir,
+        env=isolated_env(case),
+        timeout_ms=5000,
+    )
+    needed_libraries = parse_needed_libraries(readelf_result["stdout"])
+    write_json(
+        case_dir / "dependency_scan.json",
+        {
+            "argv": [readelf, "-d", str(binary_path)],
+            "returncode": readelf_result["returncode"],
+            "stdout": readelf_result["stdout"],
+            "stderr": readelf_result["stderr"],
+            "timed_out": readelf_result["timed_out"],
+            "duration_ms": readelf_result["duration_ms"],
+            "needed_libraries": needed_libraries,
+            "host_glibc_dependency": "libc.so.6" in needed_libraries,
+        },
+    )
+    write_text(case_dir / "dependency_scan.stdout.txt", readelf_result["stdout"])
+    write_text(case_dir / "dependency_scan.stderr.txt", readelf_result["stderr"])
+    artifact_refs.extend(
+        [
+            rel(case_dir / "dependency_scan.json"),
+            rel(case_dir / "dependency_scan.stdout.txt"),
+            rel(case_dir / "dependency_scan.stderr.txt"),
+        ]
+    )
+    if readelf_result["returncode"] != 0 or readelf_result["timed_out"]:
+        return standalone_blocked_result(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_text,
+            event="standalone_host_dependency_blocked",
+            failure_signature="dependency_inspector_failed",
+            blocked_reason="readelf failed, so host-glibc dependency cannot be excluded",
+            duration_ms=readelf_result["duration_ms"],
+            stdout_ref=case_dir / "dependency_scan.stdout.txt",
+            stderr_ref=case_dir / "dependency_scan.stderr.txt",
+            extra={"needed_libraries": needed_libraries},
+        )
+    if "libc.so.6" in needed_libraries:
+        return standalone_blocked_result(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_text,
+            event="standalone_host_dependency_blocked",
+            failure_signature="host_glibc_dependency_detected",
+            blocked_reason="candidate still declares NEEDED libc.so.6; standalone support cannot be inferred",
+            duration_ms=readelf_result["duration_ms"],
+            stdout_ref=case_dir / "dependency_scan.stdout.txt",
+            stderr_ref=case_dir / "dependency_scan.stderr.txt",
+            extra={"needed_libraries": needed_libraries},
+        )
+
+    candidate_result = run_command(
+        run_argv,
+        cwd=case_dir,
+        env=isolated_env(case, candidate=True, library_path=None),
+        timeout_ms=case.get("timeout_ms", 5000),
+    )
+    ok, failure_signature = output_matches(case, candidate_result)
+    actual_status = "pass" if ok else "fail"
+    if candidate_result["timed_out"]:
+        actual_status = "fail"
+        failure_signature = manifest.get("timeout_policy", {}).get(
+            "timeout_failure_signature", "startup_timeout"
+        )
+    support_claimed = row_support_claimed(case, actual_status)
+    write_json(
+        case_dir / "candidate.result.json",
+        {
+            "argv": run_argv,
+            "returncode": candidate_result["returncode"],
+            "stdout": candidate_result["stdout"],
+            "stderr": candidate_result["stderr"],
+            "timed_out": candidate_result["timed_out"],
+            "duration_ms": candidate_result["duration_ms"],
+            "actual_status": actual_status,
+            "support_claimed": support_claimed,
+            "failure_signature": failure_signature,
+            "needed_libraries": needed_libraries,
+        },
+    )
+    write_text(case_dir / "candidate.stdout.txt", candidate_result["stdout"])
+    write_text(case_dir / "candidate.stderr.txt", candidate_result["stderr"])
+    write_text(case_dir / "candidate.exit_code", f"{candidate_result['returncode']}\n")
+    artifact_refs.extend(
+        [
+            rel(case_dir / "candidate.result.json"),
+            rel(case_dir / "candidate.stdout.txt"),
+            rel(case_dir / "candidate.stderr.txt"),
+            rel(case_dir / "candidate.exit_code"),
+        ]
+    )
+    bundle = dict(NO_BUNDLE)
+    if actual_status == "fail":
+        bundle = emit_failure_bundle(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_text,
+            actual_status=actual_status,
+            failure_signature=failure_signature,
+            stdout_ref=case_dir / "candidate.stdout.txt",
+            stderr_ref=case_dir / "candidate.stderr.txt",
+        )
+        if bundle["artifact_ref"]:
+            artifact_refs.append(bundle["artifact_ref"])
+        errors.append(f"{case['case_id']}: standalone candidate failed with {failure_signature}")
+    append_log(
+        event="standalone_real_program_run",
+        workload_id=case["workload_id"],
+        command=command_text,
+        runtime_mode=case["runtime_mode"],
+        replacement_level=case["replacement_level"],
+        oracle_kind=case["oracle_kind"],
+        expected_status=str(case.get("expected", {}).get("status")),
+        actual_status=actual_status,
+        errno=case.get("expected", {}).get("errno"),
+        duration_ms=candidate_result["duration_ms"],
+        artifact_refs=artifact_refs,
+        failure_signature=failure_signature,
+        bundle_id=bundle["bundle_id"],
+        failure_class=bundle["failure_class"],
+        next_safe_action=bundle["next_safe_action"],
+        support_claimed=support_claimed,
+    )
+    return {
+        "case_id": case["case_id"],
+        "workload_id": case["workload_id"],
+        "actual_status": actual_status,
+        "support_claimed": support_claimed,
+        "artifact_refs": artifact_refs,
+        "artifact_hashes": hash_artifact_refs(artifact_refs),
+        "failure_signature": failure_signature,
+        "bundle_id": bundle["bundle_id"],
+        "failure_class": bundle["failure_class"],
+        "next_safe_action": bundle["next_safe_action"],
+    }
+
+
 def row_support_claimed(case, actual_status):
     return case.get("support_claim") == "on_pass" and actual_status == "pass"
 
@@ -854,6 +1242,9 @@ def run_case(case):
             "failure_class": "none",
             "next_safe_action": "none",
         }
+
+    if case["artifact_kind"] == "standalone_direct_link_real_program":
+        return run_standalone_real_program_case(case, case_dir, artifact_refs)
 
     if case["artifact_kind"] == "standalone_direct_link_future":
         actual_status = "claim_blocked"

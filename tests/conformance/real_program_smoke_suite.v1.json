@@ -3,7 +3,7 @@
   "manifest_id": "real-program-smoke-suite",
   "bead": "bd-bp8fl.10.2",
   "generated_utc": "2026-05-03T05:20:00Z",
-  "purpose": "Deterministic real-program smoke rows for L0 LD_PRELOAD and L1 hardened-interpose evidence, plus fail-closed future standalone rows that cannot be reported as supported without current artifact evidence.",
+  "purpose": "Deterministic real-program smoke rows for L0 LD_PRELOAD and L1 hardened-interpose evidence, plus fail-closed standalone direct-link real-program rows that cannot be reported as supported without current artifact and host-dependency evidence.",
   "inputs": {
     "user_workload_acceptance_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
     "replacement_levels": "tests/conformance/replacement_levels.json",
@@ -40,6 +40,7 @@
     "errno",
     "duration_ms",
     "artifact_refs",
+    "artifact_hashes",
     "source_commit",
     "target_dir",
     "bundle_id",
@@ -899,17 +900,110 @@
       },
       "oracle_kind": "standalone_future_claim_gate",
       "support_claim": "never"
+    },
+    {
+      "case_id": "standalone_real_program_argv_env_l1_strict",
+      "workload_id": "standalone_real_program.argv_env",
+      "domain": "standalone_future",
+      "command": "cc",
+      "argv": [
+        "-O2",
+        "standalone_real_program.c",
+        "-Wl,--no-as-needed",
+        "${FRANKENLIBC_STANDALONE_LIB}",
+        "-o",
+        "candidate.bin"
+      ],
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 10000,
+      "runtime_mode": "strict",
+      "replacement_level": "L1",
+      "artifact_kind": "standalone_direct_link_real_program",
+      "expected": {
+        "status": 0,
+        "stdout_exact": "standalone-real-program:2:argv-env:C\n",
+        "stderr_exact": "",
+        "errno": null
+      },
+      "allowed_divergence": [
+        "missing, stale, or wrong-profile standalone artifact blocks support",
+        "readelf-detected NEEDED libc.so.6 blocks support as host glibc dependency"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/standalone_real_program_argv_env_l1_strict"
+      },
+      "oracle_kind": "standalone_real_program_direct_link_gate",
+      "support_claim": "never",
+      "standalone_run_argv": [
+        "argv-env"
+      ],
+      "standalone_source": "#include <stdio.h>\n#include <stdlib.h>\nint main(int argc, char **argv) {\n    const char *locale = getenv(\"LC_ALL\");\n    const char *arg = argc > 1 ? argv[1] : \"missing\";\n    printf(\"standalone-real-program:%d:%s:%s\\n\", argc, arg, locale ? locale : \"unset\");\n    return (argc == 2 && locale && arg[0] != 0) ? 0 : 3;\n}\n"
+    },
+    {
+      "case_id": "standalone_real_program_argv_env_l1_hardened",
+      "workload_id": "standalone_real_program.argv_env",
+      "domain": "standalone_future",
+      "command": "cc",
+      "argv": [
+        "-O2",
+        "standalone_real_program.c",
+        "-Wl,--no-as-needed",
+        "${FRANKENLIBC_STANDALONE_LIB}",
+        "-o",
+        "candidate.bin"
+      ],
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 10000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "artifact_kind": "standalone_direct_link_real_program",
+      "expected": {
+        "status": 0,
+        "stdout_exact": "standalone-real-program:2:argv-env:C\n",
+        "stderr_exact": "",
+        "errno": null
+      },
+      "allowed_divergence": [
+        "missing, stale, or wrong-profile standalone artifact blocks support",
+        "readelf-detected NEEDED libc.so.6 blocks support as host glibc dependency"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/standalone_real_program_argv_env_l1_hardened"
+      },
+      "oracle_kind": "standalone_real_program_direct_link_gate",
+      "support_claim": "never",
+      "standalone_run_argv": [
+        "argv-env"
+      ],
+      "standalone_source": "#include <stdio.h>\n#include <stdlib.h>\nint main(int argc, char **argv) {\n    const char *locale = getenv(\"LC_ALL\");\n    const char *arg = argc > 1 ? argv[1] : \"missing\";\n    printf(\"standalone-real-program:%d:%s:%s\\n\", argc, arg, locale ? locale : \"unset\");\n    return (argc == 2 && locale && arg[0] != 0) ? 0 : 3;\n}\n"
     }
   ],
   "summary": {
-    "case_count": 18,
+    "case_count": 20,
     "ld_preload_interpose_case_count": 16,
-    "standalone_future_case_count": 2,
-    "strict_case_count": 9,
-    "hardened_case_count": 9,
+    "standalone_future_case_count": 4,
+    "standalone_direct_link_real_program_case_count": 2,
+    "strict_case_count": 10,
+    "hardened_case_count": 10,
     "l0_case_count": 8,
-    "l1_case_count": 10,
-    "non_support_claim_policy_rows": 4,
+    "l1_case_count": 12,
+    "non_support_claim_policy_rows": 6,
     "failure_bundle_schema_fields": 26,
     "failure_bundle_fixture_case_count": 6,
     "required_domain_coverage": {
@@ -920,7 +1014,7 @@
       "stdio_file": 2,
       "threaded": 2,
       "failure_unsupported": 4,
-      "standalone_future": 2
+      "standalone_future": 4
     }
   }
 }
