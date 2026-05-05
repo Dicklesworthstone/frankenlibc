@@ -2,6 +2,14 @@
   "schema_version": "v1",
   "bead_id": "bd-b92jd.1.2",
   "gate_id": "crt-tls-atexit-direct-link-run-proof-fixtures-v1",
+  "source_commit": "53b3496cd5b91b3f151178bd09573e06d3323117",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_crt_tls_atexit_direct_link_proof_evidence",
+    "direct_link_proof_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "generated_at_utc": "2026-05-04T17:16:00Z",
   "purpose": "Define direct link-run and replace-mode simulated proof fixtures for CRT startup, process/thread TLS, init/fini ordering, atexit/on_exit, errno isolation, environment ownership, and secure-mode diagnostics. These rows fail closed until a current libfrankenlibc_replace.so artifact and per-row evidence exist.",
   "freshness": {

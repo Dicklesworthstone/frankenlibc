@@ -222,6 +222,21 @@ def commit_is_current(commit_marker):
     return commit_marker in {"current", "unknown", source_commit}
 
 
+def validate_freshness_policy(manifest):
+    expected = {
+        "recorded_source_commit_field": "source_commit",
+        "comparison_target": "current git HEAD",
+        "stale_result": "block_crt_tls_atexit_direct_link_proof_evidence",
+        "direct_link_proof_evidence_allowed_when_stale": False,
+        "rejected_evidence_kind": "stale_source_commit",
+    }
+    if manifest.get("source_commit_freshness_policy") != expected:
+        fail(
+            "stale_source_commit",
+            "source_commit_freshness_policy must match the stale CRT/TLS direct-link proof block contract",
+        )
+
+
 def head_epoch():
     override = os.environ.get("FLC_CRT_TLS_PROOF_HEAD_EPOCH")
     if override:
@@ -465,6 +480,12 @@ if manifest.get("required_log_fields") != REQUIRED_LOG_FIELDS:
     fail("missing_field", "required_log_fields must match CRT/TLS proof log contract")
 
 freshness = require_object(manifest.get("freshness"), "freshness")
+manifest_commit = manifest.get("source_commit")
+if not isinstance(manifest_commit, str) or len(manifest_commit) != 40 or not all(
+    byte in "0123456789abcdefABCDEF" for byte in manifest_commit
+):
+    fail("missing_source_commit", "manifest.source_commit must be a 40-hex git commit")
+validate_freshness_policy(manifest)
 required_commit = str(freshness.get("required_source_commit", ""))
 if not commit_is_current(required_commit):
     fail(

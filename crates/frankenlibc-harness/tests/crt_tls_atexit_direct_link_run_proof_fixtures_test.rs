@@ -70,6 +70,32 @@ const REQUIRED_SCENARIO_KINDS: &[&str] = &[
 const REQUIRED_RUNTIME_MODES: &[&str] = &["strict", "hardened"];
 const REQUIRED_EXECUTION_MODELS: &[&str] = &["direct_link_run", "replace_mode_simulated"];
 
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn git_head(root: &Path) -> TestResult<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!("git rev-parse HEAD failed with status {}", output.status),
+    )?;
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git rev-parse HEAD emitted non-UTF8: {err}")))?;
+    let head = stdout.trim().to_owned();
+    ensure(
+        is_hex_commit(&head),
+        format!("git HEAD must be a 40-hex commit, got {head:?}"),
+    )?;
+    Ok(head)
+}
+
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -216,6 +242,53 @@ fn string_set(value: &Value, key: &str, context: &str) -> TestResult<HashSet<Str
                 .ok_or_else(|| test_error(format!("{context}.{key} must contain strings")))
         })
         .collect()
+}
+
+fn source_commit_freshness_policy(manifest: &Value) -> TestResult<&Value> {
+    field(manifest, "source_commit_freshness_policy", "manifest")
+}
+
+fn assert_source_commit_freshness_policy(manifest: &Value) -> TestResult {
+    let policy = source_commit_freshness_policy(manifest)?;
+    ensure(
+        string_field(
+            policy,
+            "recorded_source_commit_field",
+            "source_commit_freshness_policy",
+        )? == "source_commit",
+        "source_commit_freshness_policy.recorded_source_commit_field should be source_commit",
+    )?;
+    ensure(
+        string_field(
+            policy,
+            "comparison_target",
+            "source_commit_freshness_policy",
+        )? == "current git HEAD",
+        "source_commit_freshness_policy.comparison_target should be current git HEAD",
+    )?;
+    ensure(
+        string_field(policy, "stale_result", "source_commit_freshness_policy")?
+            == "block_crt_tls_atexit_direct_link_proof_evidence",
+        "source_commit_freshness_policy.stale_result should block CRT/TLS direct-link proof evidence",
+    )?;
+    ensure(
+        field(
+            policy,
+            "direct_link_proof_evidence_allowed_when_stale",
+            "source_commit_freshness_policy",
+        )?
+        .as_bool()
+            == Some(false),
+        "source_commit_freshness_policy.direct_link_proof_evidence_allowed_when_stale should be false",
+    )?;
+    ensure(
+        string_field(
+            policy,
+            "rejected_evidence_kind",
+            "source_commit_freshness_policy",
+        )? == "stale_source_commit",
+        "source_commit_freshness_policy.rejected_evidence_kind should be stale_source_commit",
+    )
 }
 
 fn assert_repo_relative_existing_path(root: &Path, rel: &str, context: &str) -> TestResult {
@@ -399,6 +472,7 @@ fn expect_failure_signature(report: &Value, signature: &str) -> TestResult {
 fn manifest_defines_required_crt_tls_atexit_fixture_scope() -> TestResult {
     let root = workspace_root();
     let manifest = load_json(&manifest_path(&root))?;
+    let source_commit = string_field(&manifest, "source_commit", "manifest")?;
 
     ensure(
         string_field(&manifest, "schema_version", "manifest")? == "v1",
@@ -413,6 +487,11 @@ fn manifest_defines_required_crt_tls_atexit_fixture_scope() -> TestResult {
             == "crt-tls-atexit-direct-link-run-proof-fixtures-v1",
         "gate_id should match CRT/TLS proof gate",
     )?;
+    ensure(
+        is_hex_commit(source_commit),
+        format!("source_commit should be a 40-hex git commit, got {source_commit:?}"),
+    )?;
+    assert_source_commit_freshness_policy(&manifest)?;
 
     let required_log_fields: Vec<_> = array_field(&manifest, "required_log_fields", "manifest")?
         .iter()
@@ -518,6 +597,46 @@ fn manifest_defines_required_crt_tls_atexit_fixture_scope() -> TestResult {
                 test_error(format!("sources.{key} must be a string")) // ubs:ignore — test diagnostics include the manifest key, not a hot path
             })?,
             key,
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_crt_tls_direct_link_proof_evidence() -> TestResult {
+    let root = workspace_root();
+    let manifest = load_json(&manifest_path(&root))?;
+    let source_commit = string_field(&manifest, "source_commit", "manifest")?;
+    ensure(
+        is_hex_commit(source_commit),
+        format!("source_commit should be a 40-hex git commit, got {source_commit:?}"),
+    )?;
+    let current_head = git_head(&root)?;
+    assert_source_commit_freshness_policy(&manifest)?;
+    if source_commit != current_head {
+        let policy = source_commit_freshness_policy(&manifest)?;
+        ensure(
+            string_field(policy, "stale_result", "source_commit_freshness_policy")?
+                == "block_crt_tls_atexit_direct_link_proof_evidence",
+            "stale source commits must block CRT/TLS direct-link proof evidence",
+        )?;
+        ensure(
+            field(
+                policy,
+                "direct_link_proof_evidence_allowed_when_stale",
+                "source_commit_freshness_policy",
+            )?
+            .as_bool()
+                == Some(false),
+            "stale source commits must not allow CRT/TLS direct-link proof evidence",
+        )?;
+        ensure(
+            string_field(
+                policy,
+                "rejected_evidence_kind",
+                "source_commit_freshness_policy",
+            )? == "stale_source_commit",
+            "stale source commits must use the stale_source_commit rejection kind",
         )?;
     }
     Ok(())
@@ -925,6 +1044,15 @@ fn checker_rejects_row_missing_source_commit() -> TestResult {
     )?;
     let report = run_negative_case(&root, "crt-tls-proof-missing-source-commit", &manifest)?;
     expect_failure_signature(&report, "missing_source_commit")
+}
+
+#[test]
+fn checker_rejects_missing_source_commit_freshness_policy() -> TestResult {
+    let root = workspace_root();
+    let mut manifest = load_json(&manifest_path(&root))?;
+    remove_object_field(&mut manifest, "source_commit_freshness_policy", "manifest")?;
+    let report = run_negative_case(&root, "crt-tls-proof-missing-freshness-policy", &manifest)?;
+    expect_failure_signature(&report, "stale_source_commit")
 }
 
 #[test]
