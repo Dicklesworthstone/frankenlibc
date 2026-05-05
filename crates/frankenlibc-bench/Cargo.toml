@@ -68,3 +68,7 @@ harness = false
 [[bench]]
 name = "glibc_baseline_bench"
 harness = false
+
+[[bench]]
+name = "errno_bench"
+harness = false
