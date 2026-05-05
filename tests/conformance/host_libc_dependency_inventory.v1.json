@@ -12,7 +12,12 @@
   "artifact_inventory": {
     "cdylib_output": "target/release/libfrankenlibc_abi.so",
     "staticlib_output": "target/release/libfrankenlibc_abi.a",
-    "staticlib_current_state": "frankenlibc-abi currently emits cdylib+rlib, so missing staticlib output is inventoried as an L2/L3 standalone blocker rather than hidden."
+    "configured_crate_types": [
+      "cdylib",
+      "staticlib",
+      "rlib"
+    ],
+    "staticlib_current_state": "frankenlibc-abi declares cdylib+staticlib+rlib outputs. Static artifact configuration rows are inventory evidence, and L2/L3 standalone blockers are emitted only when staticlib output is not configured or concrete artifact probes expose host/runtime dependencies."
   },
   "source_surfaces": {
     "build_scripts": [

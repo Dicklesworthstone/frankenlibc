@@ -75,6 +75,35 @@ fn string_array(value: &serde_json::Value, field: &str) -> TestResult<Vec<String
         .collect()
 }
 
+fn abi_crate_types() -> TestResult<HashSet<String>> {
+    let cargo_toml_path = workspace_root()?.join("crates/frankenlibc-abi/Cargo.toml");
+    let cargo_toml = std::fs::read_to_string(&cargo_toml_path)
+        .map_err(|err| format!("{}: {err}", cargo_toml_path.display()))?;
+    let crate_type_line = cargo_toml
+        .lines()
+        .find(|line| line.trim_start().starts_with("crate-type"))
+        .ok_or_else(|| format!("{} missing crate-type line", cargo_toml_path.display()))?;
+    let (_, rhs) = crate_type_line
+        .split_once('=')
+        .ok_or_else(|| format!("malformed crate-type line: {crate_type_line}"))?;
+    let entries = rhs
+        .trim()
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .ok_or_else(|| format!("crate-type must be an inline TOML array: {crate_type_line}"))?;
+    entries
+        .split(',')
+        .map(|entry| {
+            let crate_type = entry.trim().trim_matches('"');
+            require(
+                !crate_type.is_empty(),
+                format!("crate-type array contains an empty entry: {crate_type_line}"),
+            )?;
+            Ok(crate_type.to_owned())
+        })
+        .collect()
+}
+
 fn summary_string_array(value: &serde_json::Value, field: &str) -> TestResult<Vec<String>> {
     value["summary"][field]
         .as_array()
@@ -290,6 +319,50 @@ fn configured_staticlib_rows_are_not_l2_l3_blockers() -> TestResult {
         configured_count >= 3,
         format!("expected cdylib/staticlib/rlib configured rows, got {configured_count}"),
     )
+}
+
+#[test]
+fn contract_staticlib_state_matches_abi_crate_types() -> TestResult {
+    let contract = load_contract()?;
+    let artifact_inventory = &contract["artifact_inventory"];
+    let expected_types: HashSet<String> = ["cdylib", "staticlib", "rlib"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    let cargo_types = abi_crate_types()?;
+    require(
+        cargo_types == expected_types,
+        format!("frankenlibc-abi crate types changed: {cargo_types:?}"),
+    )?;
+
+    let contract_types: HashSet<String> =
+        string_array(artifact_inventory, "configured_crate_types")?
+            .into_iter()
+            .collect();
+    require(
+        contract_types == cargo_types,
+        format!(
+            "artifact_inventory.configured_crate_types {contract_types:?} must match Cargo.toml {cargo_types:?}"
+        ),
+    )?;
+
+    let staticlib_state = artifact_inventory["staticlib_current_state"]
+        .as_str()
+        .ok_or_else(|| "artifact_inventory.staticlib_current_state must be a string".to_string())?;
+    require(
+        staticlib_state.contains("cdylib+staticlib+rlib"),
+        "staticlib_current_state must describe the configured staticlib output",
+    )?;
+    for stale_phrase in [
+        "currently emits cdylib+rlib",
+        "missing staticlib output is inventoried as an L2/L3 standalone blocker",
+    ] {
+        require(
+            !staticlib_state.contains(stale_phrase),
+            format!("staticlib_current_state still contains stale phrase: {stale_phrase}"),
+        )?;
+    }
+    Ok(())
 }
 
 #[test]
