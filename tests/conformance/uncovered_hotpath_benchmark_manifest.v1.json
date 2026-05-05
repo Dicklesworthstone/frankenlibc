@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-b92jd.2.2",
-  "generated_at_utc": "2026-05-05T04:23:14Z",
-  "source_commit": "0afbe0bd",
+  "generated_at_utc": "2026-05-05T05:06:25Z",
+  "source_commit": "4d96257d",
   "purpose": "Fail-closed manifest for strict hot-path symbols not covered by the current benchmark suite map.",
   "inputs": {
     "support_matrix": "support_matrix.json",
@@ -17,7 +17,7 @@
     "perf_baseline": "22cb5fcf7f762e268df2fb478b49ecbd8aa12502a19b4aaee23178fb37dbde3c",
     "perf_baseline_spec": "e12a3ed8c5ab3b9164c8489351fc3950e9e8d9147639c9a3846ffd87840046af",
     "perf_budget_policy": "df4e8f522d1faa4283660c6cb9a532080f44a05106a6005dc47f681a9e790c7c",
-    "perf_regression_prevention": "eb2955dfa21ad83819bac35268229fb7a554b54d4b1d222e401b64a0bb8bc79d",
+    "perf_regression_prevention": "5830ad23dfdac4204536da3665ae6294165d3a1ca7a0205496735000a4308507",
     "support_matrix": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d"
   },
   "required_row_fields": [
@@ -3069,5 +3069,5 @@
     "target_report": "target/conformance/uncovered_hotpath_benchmark_manifest.report.json",
     "target_log": "target/conformance/uncovered_hotpath_benchmark_manifest.log.jsonl"
   },
-  "artifact_hash": "f68ba5940964cf2e5b27f96fd8cac58a8cf754770b68f4d03c0184f39daeb212"
+  "artifact_hash": "a593d8f1ed2546b475dfd445eb2f345a2986b9a8cee7824b216b6398db309887"
 }
