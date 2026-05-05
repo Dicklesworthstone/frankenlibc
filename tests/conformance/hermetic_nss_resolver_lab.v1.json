@@ -1,0 +1,203 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "hermetic-nss-resolver-lab",
+  "bead": "bd-b92jd.5.1",
+  "owner_bead": "bd-b92jd.5",
+  "generated_utc": "2026-05-05T03:30:00Z",
+  "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
+  "purpose": "Hermetic resolver/NSS lab manifest. Declares the synthetic fake-root layout (hosts, services, passwd, group, resolv.conf, optional fake UDP DNS endpoint), the test scenarios that exercise it, and the fail-closed contract that no scenario may issue a real-network call. Each scenario carries strict/hardened mode coverage, an oracle, structured-log fields, and a fixture obligation pointing at the synthetic root entry that drives it. The harness gate verifies the manifest's structural invariants — it does NOT spin up the lab itself; the per-scenario kernels referenced by harness_test_name will land alongside the lab driver.",
+  "execution_policy": {
+    "default_runner": "rch_only",
+    "real_network_allowed": false,
+    "real_network_envvar_override": "FRANKENLIBC_NSS_LAB_ALLOW_NETWORK",
+    "rationale": "Default runs must be reproducible offline; opting in to real network requires the FRANKENLIBC_NSS_LAB_ALLOW_NETWORK env var so CI cannot accidentally exercise a remote resolver.",
+    "cargo_invocation_template": "rch exec -- cargo test -p frankenlibc-harness --test <scenario_test_name>"
+  },
+  "fake_root_layout": {
+    "root_envvar": "FRANKENLIBC_NSS_LAB_ROOT",
+    "files": [
+      {
+        "relative_path": "etc/hosts",
+        "kind": "hosts_db",
+        "required": true,
+        "rationale": "Static host-IP map for hosts-only scenarios."
+      },
+      {
+        "relative_path": "etc/services",
+        "kind": "services_db",
+        "required": true,
+        "rationale": "Static port/proto map; needed by getaddrinfo with a service name."
+      },
+      {
+        "relative_path": "etc/passwd",
+        "kind": "passwd_db",
+        "required": true,
+        "rationale": "Static getpwnam/getpwuid backing for nsswitch=files passwd path."
+      },
+      {
+        "relative_path": "etc/group",
+        "kind": "group_db",
+        "required": true,
+        "rationale": "Static getgrnam/getgrgid backing for nsswitch=files group path."
+      },
+      {
+        "relative_path": "etc/resolv.conf",
+        "kind": "resolv_conf",
+        "required": true,
+        "rationale": "Single-line nameserver pointing at the fake UDP endpoint when DNS scenarios are active."
+      },
+      {
+        "relative_path": "etc/nsswitch.conf",
+        "kind": "nsswitch_conf",
+        "required": true,
+        "rationale": "Pin the order of databases per scenario; default 'files dns' for hosts."
+      }
+    ],
+    "fake_dns_endpoint": {
+      "kind": "fake_udp_dns",
+      "default_address": "127.0.0.1:0",
+      "address_envvar": "FRANKENLIBC_NSS_LAB_DNS_ADDR",
+      "rationale": "When a scenario needs DNS responses (timeout, poisoning, NXDOMAIN), the lab driver binds an ephemeral UDP socket and writes its address into resolv.conf. Default 127.0.0.1:0 means the driver picks a free port; tests assert no traffic leaves localhost."
+    }
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "scenario_kind",
+    "fake_root_id",
+    "runtime_mode",
+    "oracle_kind",
+    "query_kind",
+    "resolved_host",
+    "resolved_addrs",
+    "resolved_errno",
+    "expected",
+    "actual",
+    "decision_path",
+    "duration_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_until_lab_evidence_current",
+    "block_status_without_evidence": ["DONE"],
+    "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
+    "rejected_evidence_kinds": [
+      "real_network_call_observed",
+      "missing_fake_root_file",
+      "scenario_lacks_oracle",
+      "scenario_lacks_runtime_mode_coverage",
+      "duplicate_scenario_id",
+      "stale_source_commit",
+      "scenario_lacks_fixture_obligation"
+    ]
+  },
+  "scenarios": [
+    {
+      "scenario_id": "nss-numeric-hosts-bypass",
+      "scenario_kind": "numeric",
+      "description": "getaddrinfo('127.0.0.1') and getaddrinfo('::1') must short-circuit numeric parsing with no nsswitch lookup, no resolv.conf read, and no UDP traffic.",
+      "harness_test_name": "nss_lab_numeric_hosts_bypass",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "numeric_short_circuit_replay",
+      "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf"],
+      "fixture_obligation": "Numeric inputs must produce IN6/IN responses without touching DNS state; assert no UDP send was issued by the lab DNS endpoint.",
+      "evidence_artifact": "target/conformance/nss_lab/numeric_hosts_bypass.jsonl"
+    },
+    {
+      "scenario_id": "nss-hosts-files-only",
+      "scenario_kind": "hosts",
+      "description": "nsswitch=files only; getaddrinfo on 'hermetic.local' must resolve from etc/hosts to the synthetic IP.",
+      "harness_test_name": "nss_lab_hosts_files_only",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "files_db_replay",
+      "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf"],
+      "fixture_obligation": "etc/hosts row 'hermetic.local 198.51.100.7' must round-trip through getaddrinfo without DNS fallback.",
+      "evidence_artifact": "target/conformance/nss_lab/hosts_files_only.jsonl"
+    },
+    {
+      "scenario_id": "nss-dns-success-then-cache",
+      "scenario_kind": "dns",
+      "description": "fake DNS endpoint answers A/AAAA for 'cached.example'; second query must hit the resolver cache and not re-issue UDP.",
+      "harness_test_name": "nss_lab_dns_success_then_cache",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "udp_send_count_replay",
+      "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf", "etc/resolv.conf"],
+      "fake_dns_required": true,
+      "fixture_obligation": "First lookup issues 1 UDP send; second lookup within TTL issues 0; assert cache hit on second.",
+      "evidence_artifact": "target/conformance/nss_lab/dns_success_then_cache.jsonl"
+    },
+    {
+      "scenario_id": "nss-dns-timeout",
+      "scenario_kind": "dns",
+      "description": "fake DNS endpoint silently drops query; resolver must time out per resolv.conf 'timeout' option, not block forever.",
+      "harness_test_name": "nss_lab_dns_timeout",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "deadline_bound_replay",
+      "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf", "etc/resolv.conf"],
+      "fake_dns_required": true,
+      "fixture_obligation": "Set resolv.conf timeout=1 attempts=1; assert getaddrinfo returns within 2s wall clock with EAI_AGAIN/EAI_NONAME.",
+      "evidence_artifact": "target/conformance/nss_lab/dns_timeout.jsonl"
+    },
+    {
+      "scenario_id": "nss-dns-poisoning-rejected",
+      "scenario_kind": "dns",
+      "description": "fake DNS endpoint replies with mismatched txid / wrong-section answer; resolver must reject.",
+      "harness_test_name": "nss_lab_dns_poisoning_rejected",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "poisoning_reject_replay",
+      "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf", "etc/resolv.conf"],
+      "fake_dns_required": true,
+      "fixture_obligation": "Inject a response with txid=0xDEAD when the query used 0xBEEF; assert resolver does NOT cache or return the spoofed address.",
+      "evidence_artifact": "target/conformance/nss_lab/dns_poisoning_rejected.jsonl"
+    },
+    {
+      "scenario_id": "nss-search-domain-walk",
+      "scenario_kind": "dns",
+      "description": "resolv.conf 'search a.example b.example'; query for 'foo' must walk the search list and stop at first NOERROR/NXDOMAIN response per glibc semantics.",
+      "harness_test_name": "nss_lab_search_domain_walk",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "search_walk_order_replay",
+      "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf", "etc/resolv.conf"],
+      "fake_dns_required": true,
+      "fixture_obligation": "Fake DNS NXDOMAINs 'foo.a.example', responds for 'foo.b.example'; assert exactly two queries issued in the right order.",
+      "evidence_artifact": "target/conformance/nss_lab/search_domain_walk.jsonl"
+    },
+    {
+      "scenario_id": "nss-passwd-files-only",
+      "scenario_kind": "passwd",
+      "description": "nsswitch=files only; getpwnam('hermetic_user') must return the synthetic etc/passwd row; getpwuid round-trips.",
+      "harness_test_name": "nss_lab_passwd_files_only",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "files_db_replay",
+      "fake_root_files_needed": ["etc/passwd", "etc/nsswitch.conf"],
+      "fixture_obligation": "etc/passwd row 'hermetic_user:x:60001:60001::/home/hermetic:/bin/sh' must round-trip both name and uid lookups.",
+      "evidence_artifact": "target/conformance/nss_lab/passwd_files_only.jsonl"
+    },
+    {
+      "scenario_id": "nss-group-files-only",
+      "scenario_kind": "group",
+      "description": "nsswitch=files only; getgrnam/getgrgid round-trip the synthetic etc/group row.",
+      "harness_test_name": "nss_lab_group_files_only",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "files_db_replay",
+      "fake_root_files_needed": ["etc/group", "etc/nsswitch.conf"],
+      "fixture_obligation": "etc/group row 'hermetic:x:60001:hermetic_user' must round-trip both gid and name lookups.",
+      "evidence_artifact": "target/conformance/nss_lab/group_files_only.jsonl"
+    }
+  ],
+  "minimum_scenario_counts": {
+    "numeric": 1,
+    "hosts": 1,
+    "dns": 4,
+    "passwd": 1,
+    "group": 1
+  },
+  "consuming_gates": [
+    "tests/conformance/replacement_levels.json",
+    "tests/conformance/feature_parity_gap_ledger.v1.json"
+  ]
+}
