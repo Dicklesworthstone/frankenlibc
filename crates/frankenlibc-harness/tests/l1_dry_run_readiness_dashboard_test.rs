@@ -1119,6 +1119,60 @@ fn dlfcn_l1_burndown_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn every_input_source_commit_freshness_policy_is_exposed() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let rows = as_array(&dashboard["rows"], "rows")?;
+    let inputs = dashboard["inputs"]
+        .as_object()
+        .ok_or_else(|| test_error("inputs must be an object"))?;
+    for (input_key, input_path_value) in inputs {
+        let input_path = as_str(input_path_value, "inputs value")?;
+        let artifact = load_json(&workspace_root().join(input_path))?;
+        let Some(policy) = artifact.get("source_commit_freshness_policy") else {
+            continue;
+        };
+        let policy_fields = policy
+            .as_object()
+            .ok_or_else(|| {
+                test_error(format!(
+                    "{input_key} source_commit_freshness_policy must be an object"
+                ))
+            })?
+            .keys()
+            .map(|key| format!("source_commit_freshness_policy.{key}"))
+            .collect::<BTreeSet<_>>();
+        ensure(
+            !policy_fields.is_empty(),
+            format!("{input_key} source_commit_freshness_policy must not be empty"),
+        )?;
+        let freshness_rows = rows
+            .iter()
+            .filter(|row| row["evidence_artifact"].as_str() == Some(input_path))
+            .filter(|row| {
+                row["field"]
+                    .as_str()
+                    .is_some_and(|field| field.starts_with("source_commit_freshness_policy."))
+            })
+            .collect::<Vec<_>>();
+        ensure_eq(
+            freshness_rows.len(),
+            policy_fields.len(),
+            format!("{input_key} dashboard source freshness row count"),
+        )?;
+        let exposed_fields = freshness_rows
+            .iter()
+            .map(|row| as_str(&row["field"], "row.field").map(str::to_owned))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        ensure_eq(
+            exposed_fields,
+            policy_fields,
+            format!("{input_key} dashboard source freshness fields"),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
 fn source_commit_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
