@@ -74,6 +74,7 @@
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
+    "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
     "tool_evidence.*.exit_code",
     "tool_evidence.*.timed_out",

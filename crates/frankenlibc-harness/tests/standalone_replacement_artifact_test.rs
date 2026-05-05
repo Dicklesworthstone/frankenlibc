@@ -34,6 +34,7 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
+    "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
     "tool_evidence.*.exit_code",
     "tool_evidence.*.timed_out",
@@ -1786,6 +1787,11 @@ fn forge_mode_reports_host_dependency_breakdown() {
     assert_eq!(breakdown["loader_needed"].as_bool(), Some(true));
 
     let reasons = string_set(&breakdown["blocking_reasons"]);
+    assert_eq!(
+        string_set(&report_json["blocking_reasons"]),
+        reasons,
+        "top-level blocking_reasons must mirror dependency breakdown"
+    );
     for reason in [
         "host_needed_libraries_present",
         "host_direct_needed_libraries_present",
@@ -1923,6 +1929,7 @@ fn forge_mode_blocks_artifact_when_sampled_symbols_are_missing() {
         string_set(&report_json["artifact_state"]["dependency_breakdown"]["blocking_reasons"])
             .is_empty()
     );
+    assert!(string_set(&report_json["blocking_reasons"]).is_empty());
 }
 
 #[test]

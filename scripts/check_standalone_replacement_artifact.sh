@@ -83,6 +83,7 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
+    "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
     "tool_evidence.*.exit_code",
     "tool_evidence.*.timed_out",
@@ -968,6 +969,7 @@ report = {
     "cargo_target_dir": str(cargo_target_dir),
     "checks": checks,
     "artifact_state": artifact_state,
+    "blocking_reasons": artifact_state.get("dependency_breakdown", {}).get("blocking_reasons", []),
     "tool_evidence": tool_evidence,
     "inspection_timeout_policy": {
         "env": INSPECTION_TIMEOUT_ENV,
