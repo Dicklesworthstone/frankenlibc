@@ -52,6 +52,17 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.mtime",
 ];
 
+const REQUIRED_EVIDENCE_FILES: &[&str] = &[
+    "build.stdout.txt",
+    "build.stderr.txt",
+    "artifact.sha256",
+    "artifact.readelf.dynamic.txt",
+    "artifact.readelf.symbols.txt",
+    "artifact.readelf.version.txt",
+    "artifact.nm.dynamic.txt",
+    "artifact.ldd.txt",
+];
+
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest)
@@ -625,6 +636,16 @@ fn manifest_matches_forge_contract() {
         .map(|value| value.as_str().unwrap())
         .collect();
     assert_eq!(report_fields, REQUIRED_REPORT_FIELDS);
+
+    let evidence_files: Vec<_> = manifest
+        .get("required_evidence_files")
+        .and_then(serde_json::Value::as_array)
+        .expect("required_evidence_files should be an array")
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert_eq!(evidence_files, REQUIRED_EVIDENCE_FILES);
+
     let timeout_policy = &manifest["inspection_timeout_policy"];
     assert_eq!(
         timeout_policy["env"].as_str(),
