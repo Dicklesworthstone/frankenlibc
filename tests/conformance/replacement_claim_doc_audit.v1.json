@@ -5,6 +5,13 @@
   "owner_bead": "bd-zyck1",
   "generated_utc": "2026-05-05T05:50:00Z",
   "source_commit": "12b9868dee9aeca5dba54293f3dc076bab39cac3",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_replacement_claim_text",
+    "claim_text_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "purpose": "Doc-claim audit binder. README and release docs cannot imply standalone replacement readiness — words like 'standalone-ready', 'L1 production-ready', 'replaces glibc' — unless the L1 dry-run dashboard (tests/conformance/l1_dry_run_readiness_dashboard.v1.json) currently shows every row passing AND replacement_levels.json#current_level has been promoted to L1 by an explicit human signoff. The audit fails closed on overclaim phrasing in any cited doc, and pins forbidden phrasing inline so reviewers see the exact language that would have shipped.",
   "subject": {
     "doc_paths": [
