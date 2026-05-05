@@ -4,6 +4,10 @@
   "bead": "bd-bp8fl.6.2",
   "generated_utc": "2026-05-02T16:45:00Z",
   "description": "Standalone direct-link smoke manifest for replacement-level evidence. These rows are intentionally distinct from LD_PRELOAD interpose smoke and fail closed when the standalone replacement artifact is absent, stale, or missing loader/startup obligations.",
+  "freshness": {
+    "required_source_commit": "current",
+    "source_commit_policy": "checker records current git HEAD and rejects pinned stale manifest source commits"
+  },
   "inputs": {
     "replacement_levels": "tests/conformance/replacement_levels.json",
     "packaging_spec": "tests/conformance/packaging_spec.json",

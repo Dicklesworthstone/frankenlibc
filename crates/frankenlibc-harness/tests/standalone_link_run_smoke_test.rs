@@ -78,7 +78,16 @@ fn fake_ldd_failure_path(temp: &Path) -> OsString {
     path
 }
 
-fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
+fn write_json(path: &Path, value: &serde_json::Value) {
+    let content = serde_json::to_string_pretty(value).expect("json should serialize");
+    std::fs::write(path, format!("{content}\n")).expect("write json");
+}
+
+fn run_gate_with_manifest(
+    mode: &str,
+    prefix: &str,
+    manifest_override: Option<&Path>,
+) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
     let root = workspace_root();
     let temp = unique_temp_dir(prefix);
     let out_dir = temp.join("target");
@@ -94,10 +103,17 @@ fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::proces
         .env("STANDALONE_SMOKE_RUN_ID", prefix)
         .env_remove("FRANKENLIBC_STANDALONE_LIB")
         .env_remove("LD_PRELOAD");
+    if let Some(manifest) = manifest_override {
+        command.env("STANDALONE_SMOKE_MANIFEST", manifest);
+    }
     let output = command
         .output()
         .expect("standalone link-run smoke gate should execute");
     (temp, report, log, output)
+}
+
+fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
+    run_gate_with_manifest(mode, prefix, None)
 }
 
 #[test]
@@ -105,6 +121,17 @@ fn manifest_defines_required_rows_and_log_contract() {
     let manifest = load_manifest();
     assert_eq!(manifest["schema_version"].as_str(), Some("v1"));
     assert_eq!(manifest["bead"].as_str(), Some("bd-bp8fl.6.2"));
+    assert_eq!(
+        manifest["freshness"]["required_source_commit"].as_str(),
+        Some("current")
+    );
+    assert!(
+        manifest["freshness"]["source_commit_policy"]
+            .as_str()
+            .unwrap()
+            .contains("current git HEAD"),
+        "manifest must require checker-side current-HEAD freshness"
+    );
     assert_eq!(
         manifest["current_claim_policy"]["ld_preload_evidence_accepted"].as_bool(),
         Some(false)
@@ -190,6 +217,43 @@ fn manifest_defines_required_rows_and_log_contract() {
 }
 
 #[test]
+fn validate_only_rejects_stale_manifest_source_commit() {
+    let temp = unique_temp_dir("standalone-stale-source-commit-manifest");
+    let manifest_path = temp.join("standalone_link_run_smoke.stale.json");
+    let mut manifest = load_manifest();
+    manifest["freshness"]["required_source_commit"] =
+        serde_json::Value::String("0000000000000000000000000000000000000000".to_owned());
+    write_json(&manifest_path, &manifest);
+
+    let (_gate_temp, report_path, _log_path, output) = run_gate_with_manifest(
+        "--validate-only",
+        "standalone-stale-source-commit",
+        Some(&manifest_path),
+    );
+    assert!(
+        !output.status.success(),
+        "validate-only should reject stale manifest source commits:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&report_path);
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    assert_eq!(
+        report["checks"]["source_commit_freshness"].as_str(),
+        Some("fail")
+    );
+    let errors = report["errors"].as_array().unwrap();
+    assert!(
+        errors.iter().any(|error| error
+            .as_str()
+            .unwrap_or_default()
+            .contains("freshness.required_source_commit")),
+        "report should explain the stale source-commit policy failure"
+    );
+}
+
+#[test]
 fn loader_process_owner_rows_cover_all_gap_ids() {
     let manifest = load_manifest();
     let owner_group = manifest["owner_family_groups"]
@@ -261,7 +325,7 @@ fn link_commands_are_direct_and_case_isolated() {
         assert!(
             candidate
                 .iter()
-                .any(|token| token.as_str() == Some("${standalone_library}")),
+                .any(|token| matches!(token.as_str(), Some("${standalone_library}"))),
             "{smoke_id}: candidate command must link the standalone library directly"
         );
         assert!(
@@ -591,8 +655,10 @@ fn run_mode_compiles_baseline_programs_and_emits_artifacts() {
         "run log must include baseline compile/run events"
     );
     assert!(
-        rows.iter()
-            .any(|row| row["failure_signature"].as_str() == Some("standalone_artifact_missing")),
+        rows.iter().any(|row| matches!(
+            row["failure_signature"].as_str(),
+            Some("standalone_artifact_missing")
+        )),
         "run log must explain missing standalone artifact"
     );
     assert!(
