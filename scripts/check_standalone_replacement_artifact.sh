@@ -130,6 +130,22 @@ EXPECTED_SYMBOL_SAMPLES = [
     "getaddrinfo",
 ]
 
+EXPECTED_ARTIFACT_POLICY = {
+    "canonical_artifact_name": "libfrankenlibc_replace.so",
+    "source_cdylib_name": "libfrankenlibc_abi.so",
+    "cargo_package": "frankenlibc-abi",
+    "cargo_profile": "release",
+    "cargo_features": ["standalone"],
+    "default_cargo_target_dir": "target/standalone_replacement_artifact/cargo-target",
+    "artifact_env": "FRANKENLIBC_STANDALONE_LIB",
+    "source_artifact_env": "STANDALONE_REPLACEMENT_SOURCE_LIB",
+    "cargo_target_dir_env": "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR",
+    "build_command_env": "STANDALONE_REPLACEMENT_BUILD_CMD",
+    "skip_build_env": "STANDALONE_REPLACEMENT_SKIP_BUILD",
+    "stale_if_older_than_head": True,
+    "ld_preload_substitutes_allowed": False,
+}
+
 EXPECTED_FAILURE_CLASSIFICATIONS = {
     "standalone_artifact_missing": "claim_blocked",
     "standalone_artifact_stale": "claim_blocked",
@@ -528,6 +544,8 @@ def validate_manifest():
 
     artifact_policy = manifest.get("artifact_policy", {})
     replace_spec = packaging.get("artifacts", {}).get("replace", {})
+    if artifact_policy != EXPECTED_ARTIFACT_POLICY:
+        errors.append("artifact_policy does not match script contract")
     if artifact_policy.get("canonical_artifact_name") != "libfrankenlibc_replace.so":
         errors.append("canonical artifact must be libfrankenlibc_replace.so")
     if artifact_policy.get("source_cdylib_name") != "libfrankenlibc_abi.so":

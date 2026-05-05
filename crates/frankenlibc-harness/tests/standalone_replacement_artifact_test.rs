@@ -621,6 +621,24 @@ fn manifest_matches_forge_contract() {
     assert_eq!(manifest["schema_version"].as_str(), Some("v1"));
     assert_eq!(manifest["bead"].as_str(), Some("bd-srtkq"));
     assert_eq!(
+        manifest["artifact_policy"],
+        serde_json::json!({
+            "canonical_artifact_name": "libfrankenlibc_replace.so",
+            "source_cdylib_name": "libfrankenlibc_abi.so",
+            "cargo_package": "frankenlibc-abi",
+            "cargo_profile": "release",
+            "cargo_features": ["standalone"],
+            "default_cargo_target_dir": "target/standalone_replacement_artifact/cargo-target",
+            "artifact_env": "FRANKENLIBC_STANDALONE_LIB",
+            "source_artifact_env": "STANDALONE_REPLACEMENT_SOURCE_LIB",
+            "cargo_target_dir_env": "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR",
+            "build_command_env": "STANDALONE_REPLACEMENT_BUILD_CMD",
+            "skip_build_env": "STANDALONE_REPLACEMENT_SKIP_BUILD",
+            "stale_if_older_than_head": true,
+            "ld_preload_substitutes_allowed": false,
+        })
+    );
+    assert_eq!(
         manifest["artifact_policy"]["canonical_artifact_name"].as_str(),
         Some("libfrankenlibc_replace.so")
     );
@@ -890,6 +908,44 @@ fn validate_only_rejects_symbol_samples_contract_drift() {
             .iter()
             .any(|error| error.as_str() == Some("symbol_samples do not match script contract")),
         "expected symbol_samples contract error: {errors:?}"
+    );
+}
+
+#[test]
+fn validate_only_rejects_artifact_policy_contract_drift() {
+    let manifest_path =
+        write_manifest_variant("standalone-artifact-policy-drift-manifest", |manifest| {
+            manifest["artifact_policy"]["cargo_package"] =
+                serde_json::Value::String("frankenlibc".to_owned());
+            manifest["artifact_policy"]["cargo_profile"] =
+                serde_json::Value::String("dev".to_owned());
+            manifest["artifact_policy"]["artifact_env"] =
+                serde_json::Value::String("FRANKENLIBC_LD_PRELOAD_LIB".to_owned());
+            manifest["artifact_policy"]["stale_if_older_than_head"] =
+                serde_json::Value::Bool(false);
+            manifest["artifact_policy"]["ld_preload_substitutes_allowed"] =
+                serde_json::Value::Bool(true);
+        });
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) =
+        run_gate_with_env("--validate-only", "standalone-artifact-policy-drift", &envs);
+    assert!(
+        !output.status.success(),
+        "artifact_policy drift should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.as_str() == Some("artifact_policy does not match script contract")),
+        "expected artifact_policy contract error: {errors:?}"
     );
 }
 
