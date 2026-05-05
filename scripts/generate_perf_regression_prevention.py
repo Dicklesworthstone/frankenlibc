@@ -107,7 +107,7 @@ def check_hotpath_coverage(root, budget_policy, spec):
         "malloc_abi": "malloc",
         "wchar_abi": None,  # no suite yet
         "ctype_abi": None,
-        "errno_abi": None,
+        "errno_abi": "errno",
         "pthread_abi": "mutex",  # partial coverage via mutex_bench
     }
 
@@ -192,6 +192,8 @@ def check_gate_wiring(root):
         enforced.append("string")
     if "malloc_bench" in content:
         enforced.append("malloc")
+    if "errno_bench" in content:
+        enforced.append("errno")
     if "runtime_math_kernels_bench" in content:
         enforced.append("runtime_math_kernels")
 

@@ -53,7 +53,19 @@
       "membrane/stage_bounds_check": "membrane/bounds_admissibility",
       "membrane/validate_null": "membrane/ptr_validator_null_path",
       "membrane/validate_foreign": "membrane/ptr_validator_foreign_path",
-      "membrane/validate_known": "membrane/ptr_validator_pipeline"
+      "membrane/validate_known": "membrane/ptr_validator_pipeline",
+      "string/memcpy_16": "string/memcpy_hotpath",
+      "string/memcpy_64": "string/memcpy_hotpath",
+      "string/memcpy_256": "string/memcpy_hotpath",
+      "string/memcpy_1024": "string/memcpy_hotpath",
+      "string/memcpy_4096": "string/memcpy_hotpath",
+      "string/memcpy_65536": "string/memcpy_hotpath",
+      "string/strlen_16": "string/strlen_hotpath",
+      "string/strlen_256": "string/strlen_hotpath",
+      "malloc/alloc_free_cycle": "malloc/size_class_fastpath",
+      "malloc/alloc_burst": "malloc/burst_allocator",
+      "errno/errno_location_fastpath": "errno/thread_local_accessor",
+      "errno/errno_set_then_read_roundtrip": "errno/thread_local_storage_roundtrip"
     },
     "unknown_component_label": "unknown_component"
   },
@@ -132,7 +144,8 @@
       "commands": [
         "scripts/profile_pipeline.sh",
         "cargo bench -p frankenlibc-bench --bench runtime_math_bench",
-        "cargo bench -p frankenlibc-bench --bench membrane_bench"
+        "cargo bench -p frankenlibc-bench --bench membrane_bench",
+        "cargo bench -p frankenlibc-bench --bench errno_bench"
       ]
     },
     "baseline_warning": {
@@ -177,7 +190,7 @@
     "required_detected_benchmark": "runtime_math/decide"
   },
   "summary": {
-    "mapped_benchmarks": 13,
+    "mapped_benchmarks": 25,
     "regression_classes": 5,
     "required_log_fields": 13,
     "triage_playbooks": 4,

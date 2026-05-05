@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.1",
-  "generated_at_utc": "2026-05-04T18:07:14Z",
-  "source_commit": "a75a334f",
+  "generated_at_utc": "2026-05-05T06:51:40Z",
+  "source_commit": "b00442e1",
   "purpose": "Inventory current benchmark coverage for ported hot paths and membrane gates before optimization work advances.",
   "inputs": {
     "support_matrix": "support_matrix.json",
@@ -17,12 +17,12 @@
     ]
   },
   "input_digests": {
-    "perf_baseline": "22cb5fcf7f762e268df2fb478b49ecbd8aa12502a19b4aaee23178fb37dbde3c",
-    "perf_baseline_spec": "e12a3ed8c5ab3b9164c8489351fc3950e9e8d9147639c9a3846ffd87840046af",
+    "perf_baseline": "2e5d1aaaf442a4a6380a8c8ef851ff340974f71210b4041b8399021a308af28d",
+    "perf_baseline_spec": "6a7fced48f32a9c9ee38a5a8654f408c1a56a034bac6e5fc484d98c39b2af6b3",
     "support_matrix": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d",
     "user_workload_acceptance_matrix": "e1522428db6fb6f63c2a51cab24ec930cdcd52e8efdbe128794600d5e0336910",
     "workload_matrix": "bd7a6bb698667ce9dc9a502ff18e1c99527e26742c990ebe1c7718afebe7ec0e",
-    "bench_targets": "99b8055d91911440590ad26494df7062d5a9958f402e3f064927e7b5f6a8f018"
+    "bench_targets": "a3562915746b5a6ee9584916f1f43ef67bb8dac5917b6fbc612605e22cbf6da2"
   },
   "required_log_fields": [
     "trace_id",
@@ -66,9 +66,9 @@
   "summary": {
     "family_count": 7,
     "required_family_count": 6,
-    "actual_bench_target_count": 13,
+    "actual_bench_target_count": 14,
     "mapped_bench_target_count": 9,
-    "unmapped_bench_target_count": 4,
+    "unmapped_bench_target_count": 5,
     "hot_symbol_count_in_scope": 384,
     "inventory_row_count": 794,
     "covered_inventory_row_count": 44,
@@ -49694,6 +49694,14 @@
       "mentions_strict_or_hardened": false
     },
     {
+      "bench": "errno_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/errno_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 2,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": true
+    },
+    {
       "bench": "glibc_baseline_bench",
       "bench_file": "crates/frankenlibc-bench/benches/glibc_baseline_bench.rs",
       "exists": true,
@@ -49769,6 +49777,7 @@
   "unmapped_bench_targets": [
     "alien_cs_bench",
     "elimination_bench",
+    "errno_bench",
     "glibc_baseline_bench",
     "metadata_read_bench"
   ],
@@ -49779,5 +49788,5 @@
     "target_report": "target/conformance/benchmark_coverage_inventory.report.json",
     "target_log": "target/conformance/benchmark_coverage_inventory.log.jsonl"
   },
-  "artifact_hash": "eca9dfbcff20b956ad5b4e1d5deb2de4815eadc55b98a7e6f1ad74eb6bba9df7"
+  "artifact_hash": "3a4d6956eb290b14b94f84f05bf24b9050a6963a62960660a225131c8957b1b6"
 }

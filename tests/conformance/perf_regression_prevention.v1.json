@@ -1,14 +1,14 @@
 {
   "schema_version": "v1",
   "bead": "bd-1qfc",
-  "generated_at": "2026-05-05T05:04:43Z",
+  "generated_at": "2026-05-05T06:58:23Z",
   "summary": {
-    "total_suites_in_spec": 4,
-    "suites_with_bench_files": 4,
-    "suites_enforced_in_gate": 2,
-    "suites_with_full_baselines": 4,
+    "total_suites_in_spec": 5,
+    "suites_with_bench_files": 5,
+    "suites_enforced_in_gate": 3,
+    "suites_with_full_baselines": 5,
     "baseline_slot_fill_pct": 100.0,
-    "hotpath_symbol_coverage_pct": 59.2,
+    "hotpath_symbol_coverage_pct": 59.9,
     "total_hotpath_symbols": 152,
     "extra_bench_files_beyond_spec": 9,
     "total_issues": 0,
@@ -42,6 +42,13 @@
       "exists": true,
       "benchmark_count": 2,
       "enforced_in_gate": false
+    },
+    {
+      "suite_id": "errno",
+      "bench_file": "crates/frankenlibc-bench/benches/errno_bench.rs",
+      "exists": true,
+      "benchmark_count": 2,
+      "enforced_in_gate": true
     }
   ],
   "baseline_coverage": [
@@ -72,6 +79,13 @@
       "baselines_present": 4,
       "baselines_missing": [],
       "coverage_pct": 100.0
+    },
+    {
+      "suite_id": "errno",
+      "total_benchmarks_x_modes": 4,
+      "baselines_present": 4,
+      "baselines_missing": [],
+      "coverage_pct": 100.0
     }
   ],
   "gate_wiring": {
@@ -79,6 +93,7 @@
     "enforced_suites": [
       "runtime_math",
       "membrane",
+      "errno",
       "runtime_math_kernels"
     ],
     "features": {
@@ -91,13 +106,12 @@
   },
   "hotpath_symbol_coverage": {
     "total_hotpath_symbols": 152,
-    "covered_by_bench_suite": 90,
-    "not_covered": 62,
-    "coverage_pct": 59.2,
+    "covered_by_bench_suite": 91,
+    "not_covered": 61,
+    "coverage_pct": 59.9,
     "uncovered_modules": [
       "c11threads_abi",
       "ctype_abi",
-      "errno_abi",
       "resolv_abi",
       "stdio_abi",
       "stdlib_abi",
@@ -108,17 +122,17 @@
       "__ctype_b_loc",
       "__ctype_tolower_loc",
       "__ctype_toupper_loc",
-      "__errno_location",
       "__h_errno_location",
       "btowc",
       "feof_unlocked",
       "ferror_unlocked",
       "fflush_unlocked",
-      "fgets_unlocked"
+      "fgets_unlocked",
+      "fputs_unlocked"
     ]
   },
   "config_consistency": {
-    "baseline_version": 2,
+    "baseline_version": 3,
     "regression_max_pct": 15,
     "strict_target_ns": 20,
     "hardened_target_ns": 200,

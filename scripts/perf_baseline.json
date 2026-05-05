@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": 2,
-  "generated_at_utc": "2026-05-04T18:01:30Z",
+  "version": 3,
+  "generated_at_utc": "2026-05-05T06:49:43Z",
   "targets_ns_op": {
     "strict": {
       "decide": 20,
@@ -16,7 +16,9 @@
       "stage_bounds_check": 5,
       "validate_null": 20,
       "validate_foreign": 20,
-      "validate_known": 20
+      "validate_known": 20,
+      "errno_location_fastpath": 20,
+      "errno_set_then_read_roundtrip": 20
     },
     "hardened": {
       "decide": 200,
@@ -31,7 +33,9 @@
       "stage_bounds_check": 5,
       "validate_null": 200,
       "validate_foreign": 200,
-      "validate_known": 200
+      "validate_known": 200,
+      "errno_location_fastpath": 200,
+      "errno_set_then_read_roundtrip": 200
     }
   },
   "baseline_p50_ns_op": {
@@ -104,6 +108,16 @@
         "alloc_free_cycle": 37.350,
         "alloc_burst": 24760.258
       }
+    },
+    "errno": {
+      "strict": {
+        "errno_location_fastpath": 1.942,
+        "errno_set_then_read_roundtrip": 1.942
+      },
+      "hardened": {
+        "errno_location_fastpath": 2.594,
+        "errno_set_then_read_roundtrip": 2.596
+      }
     }
   },
   "baseline_sources": {
@@ -122,6 +136,10 @@
     "malloc": {
       "strict": "FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-malloc-strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench malloc_bench -- --noplot 'alloc_free_cycle|alloc_burst'",
       "hardened": "FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-b92jd-2-1-malloc-hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench malloc_bench -- --noplot 'alloc_free_cycle|alloc_burst'"
+    },
+    "errno": {
+      "strict": "FRANKENLIBC_ERRNO_BENCH_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_swiftknoll_bd_hiogf_errno_strict4 RCH_ENV_ALLOWLIST=FRANKENLIBC_ERRNO_BENCH_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench errno_bench -- --noplot",
+      "hardened": "FRANKENLIBC_ERRNO_BENCH_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_swiftknoll_bd_hiogf_errno_hardened2 RCH_ENV_ALLOWLIST=FRANKENLIBC_ERRNO_BENCH_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench errno_bench -- --noplot"
     }
   },
   "machine_fingerprint": {
@@ -138,6 +156,10 @@
       "hardened": "AMD EPYC Processor (with IBPB)"
     },
     "malloc": {
+      "strict": "AMD EPYC Processor (with IBPB)",
+      "hardened": "AMD EPYC Processor (with IBPB)"
+    },
+    "errno": {
       "strict": "AMD EPYC Processor (with IBPB)",
       "hardened": "AMD EPYC Processor (with IBPB)"
     }

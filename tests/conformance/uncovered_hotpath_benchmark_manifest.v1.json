@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-b92jd.2.2",
-  "generated_at_utc": "2026-05-05T05:06:25Z",
-  "source_commit": "4d96257d",
+  "generated_at_utc": "2026-05-05T06:58:23Z",
+  "source_commit": "4c86d023",
   "purpose": "Fail-closed manifest for strict hot-path symbols not covered by the current benchmark suite map.",
   "inputs": {
     "support_matrix": "support_matrix.json",
@@ -13,11 +13,11 @@
     "perf_baseline": "scripts/perf_baseline.json"
   },
   "input_digests": {
-    "benchmark_coverage_inventory": "e4532cab8cc55da76499f14b9f0dcbeb0be45d463e86e1844abb7e8d6a76c591",
-    "perf_baseline": "22cb5fcf7f762e268df2fb478b49ecbd8aa12502a19b4aaee23178fb37dbde3c",
-    "perf_baseline_spec": "e12a3ed8c5ab3b9164c8489351fc3950e9e8d9147639c9a3846ffd87840046af",
+    "benchmark_coverage_inventory": "0c1f49075a5ff22423a1b03fb3ade4e26fd4596a784473c0523ed11b422fcdb6",
+    "perf_baseline": "2e5d1aaaf442a4a6380a8c8ef851ff340974f71210b4041b8399021a308af28d",
+    "perf_baseline_spec": "6a7fced48f32a9c9ee38a5a8654f408c1a56a034bac6e5fc484d98c39b2af6b3",
     "perf_budget_policy": "df4e8f522d1faa4283660c6cb9a532080f44a05106a6005dc47f681a9e790c7c",
-    "perf_regression_prevention": "5830ad23dfdac4204536da3665ae6294165d3a1ca7a0205496735000a4308507",
+    "perf_regression_prevention": "c941128bf757843f6fbc7eb396f5d3162f58cae6a259426d39b8039097c4a219",
     "support_matrix": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d"
   },
   "required_row_fields": [
@@ -54,17 +54,17 @@
   "current_covered_module_map": {
     "string_abi": "string",
     "malloc_abi": "malloc",
+    "errno_abi": "errno",
     "pthread_abi": "pthread"
   },
   "summary": {
     "total_strict_hotpath_symbols": 152,
-    "current_uncovered_symbol_count": 62,
-    "current_covered_symbol_count": 90,
-    "module_count": 8,
+    "current_uncovered_symbol_count": 61,
+    "current_covered_symbol_count": 91,
+    "module_count": 7,
     "modules": [
       "c11threads_abi",
       "ctype_abi",
-      "errno_abi",
       "resolv_abi",
       "stdio_abi",
       "stdlib_abi",
@@ -110,19 +110,6 @@
       ],
       "unsafe_benchmark_blockers": [],
       "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
-    },
-    {
-      "module": "errno_abi",
-      "api_family": "errno",
-      "symbol_count": 1,
-      "benchmark_file": "crates/frankenlibc-bench/benches/errno_bench.rs",
-      "suite_id": "errno",
-      "plan_kind": "new_benchmark_family",
-      "coverage_blockers": [
-        "missing_benchmark_target_and_spec_suite"
-      ],
-      "unsafe_benchmark_blockers": [],
-      "next_action": "Create a TLS errno/h_errno accessor benchmark family with strict/hardened mode attribution."
     },
     {
       "module": "resolv_abi",
@@ -218,6 +205,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -264,6 +252,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -310,6 +299,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -356,6 +346,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -402,6 +393,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -448,6 +440,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -494,6 +487,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -540,6 +534,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -586,6 +581,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -632,6 +628,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -678,6 +675,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -724,6 +722,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -770,6 +769,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -816,6 +816,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -862,6 +863,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -908,6 +910,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -954,6 +957,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1000,6 +1004,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1046,6 +1051,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1092,6 +1098,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1116,52 +1123,6 @@
       "failure_signature": "uncovered_hotpath_benchmark:ctype_abi:toupper"
     },
     {
-      "row_id": "errno_abi:__errno_location",
-      "symbol": "__errno_location",
-      "module": "errno_abi",
-      "status": "Implemented",
-      "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
-      "support_matrix_perf_class": "strict_hotpath",
-      "benchmark_assignment": {
-        "api_family": "errno",
-        "suite_id": "errno",
-        "benchmark_id": "errno.errno_location",
-        "benchmark_file": "crates/frankenlibc-bench/benches/errno_bench.rs",
-        "plan_kind": "new_benchmark_family",
-        "next_action": "Create a TLS errno/h_errno accessor benchmark family with strict/hardened mode attribution."
-      },
-      "coverage_gap": {
-        "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
-        "current_coverage_state": "uncovered",
-        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
-        "current_covered_modules": {
-          "string_abi": "string",
-          "malloc_abi": "malloc",
-          "pthread_abi": "pthread"
-        }
-      },
-      "safety": {
-        "can_benchmark_without_real_network": true,
-        "can_benchmark_without_system_mutation": true,
-        "unsafe_to_benchmark_reason": null,
-        "required_fixture": "deterministic_inputs"
-      },
-      "priority": {
-        "rank": 21,
-        "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
-      },
-      "artifact_refs": [
-        "support_matrix.json",
-        "tests/conformance/perf_budget_policy.json",
-        "tests/conformance/perf_regression_prevention.v1.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "tests/conformance/perf_baseline_spec.json",
-        "scripts/perf_baseline.json"
-      ],
-      "failure_signature": "uncovered_hotpath_benchmark:errno_abi:__errno_location"
-    },
-    {
       "row_id": "resolv_abi:__h_errno_location",
       "symbol": "__h_errno_location",
       "module": "resolv_abi",
@@ -1184,6 +1145,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1194,7 +1156,7 @@
         "required_fixture": "hermetic"
       },
       "priority": {
-        "rank": 22,
+        "rank": 21,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1230,6 +1192,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1240,7 +1203,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 23,
+        "rank": 22,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1276,6 +1239,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1286,7 +1250,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 24,
+        "rank": 23,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1322,6 +1286,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1332,7 +1297,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 25,
+        "rank": 24,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1368,6 +1333,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1378,7 +1344,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 26,
+        "rank": 25,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1414,6 +1380,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1424,7 +1391,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 27,
+        "rank": 26,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1460,6 +1427,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1470,7 +1438,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 28,
+        "rank": 27,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1506,6 +1474,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1516,7 +1485,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 29,
+        "rank": 28,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1552,6 +1521,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1562,7 +1532,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 30,
+        "rank": 29,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1598,6 +1568,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1608,7 +1579,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 31,
+        "rank": 30,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1644,6 +1615,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1654,7 +1626,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 32,
+        "rank": 31,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1690,6 +1662,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1700,7 +1673,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 33,
+        "rank": 32,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1736,6 +1709,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1746,7 +1720,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 34,
+        "rank": 33,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1782,6 +1756,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1792,7 +1767,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 35,
+        "rank": 34,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1828,6 +1803,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1838,7 +1814,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 36,
+        "rank": 35,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1874,6 +1850,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1884,7 +1861,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 37,
+        "rank": 36,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1920,6 +1897,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1930,7 +1908,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 38,
+        "rank": 37,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -1966,6 +1944,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -1976,7 +1955,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 39,
+        "rank": 38,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2012,6 +1991,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2022,7 +2002,7 @@
         "required_fixture": "hermetic"
       },
       "priority": {
-        "rank": 40,
+        "rank": 39,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2058,6 +2038,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2068,7 +2049,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 41,
+        "rank": 40,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2104,6 +2085,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2114,7 +2096,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 42,
+        "rank": 41,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2150,6 +2132,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2160,7 +2143,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 43,
+        "rank": 42,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2196,6 +2179,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2206,7 +2190,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 44,
+        "rank": 43,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2242,6 +2226,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2252,7 +2237,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 45,
+        "rank": 44,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2288,6 +2273,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2298,7 +2284,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 46,
+        "rank": 45,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2334,6 +2320,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2344,7 +2331,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 47,
+        "rank": 46,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2380,6 +2367,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2390,7 +2378,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 48,
+        "rank": 47,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2426,6 +2414,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2436,7 +2425,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 49,
+        "rank": 48,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2472,6 +2461,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2482,7 +2472,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 50,
+        "rank": 49,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2518,6 +2508,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2528,7 +2519,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 51,
+        "rank": 50,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2564,6 +2555,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2574,7 +2566,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 52,
+        "rank": 51,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2610,6 +2602,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2620,7 +2613,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 53,
+        "rank": 52,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2656,6 +2649,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2666,7 +2660,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 54,
+        "rank": 53,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2702,6 +2696,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2712,7 +2707,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 55,
+        "rank": 54,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2748,6 +2743,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2758,7 +2754,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 56,
+        "rank": 55,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2794,6 +2790,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2804,7 +2801,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 57,
+        "rank": 56,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2840,6 +2837,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2850,7 +2848,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 58,
+        "rank": 57,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2886,6 +2884,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2896,7 +2895,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 59,
+        "rank": 58,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2932,6 +2931,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2942,7 +2942,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 60,
+        "rank": 59,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -2978,6 +2978,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -2988,7 +2989,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 61,
+        "rank": 60,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -3024,6 +3025,7 @@
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
+          "errno_abi": "errno",
           "pthread_abi": "pthread"
         }
       },
@@ -3034,7 +3036,7 @@
         "required_fixture": "deterministic_inputs"
       },
       "priority": {
-        "rank": 62,
+        "rank": 61,
         "reason": "strict_hotpath_uncovered_by_current_perf_regression_gate"
       },
       "artifact_refs": [
@@ -3069,5 +3071,5 @@
     "target_report": "target/conformance/uncovered_hotpath_benchmark_manifest.report.json",
     "target_log": "target/conformance/uncovered_hotpath_benchmark_manifest.log.jsonl"
   },
-  "artifact_hash": "a593d8f1ed2546b475dfd445eb2f345a2986b9a8cee7824b216b6398db309887"
+  "artifact_hash": "bc4a28fdc378b1afdc85cb93787559ac8a12d77a1f4509224c99da81db0377c2"
 }

@@ -62,6 +62,16 @@ cat >"${INJECTED}" <<'JSON'
       "validate_foreign": 3570.812,
       "validate_known": 3499.877
     }
+  },
+  "errno": {
+    "strict": {
+      "errno_location_fastpath": 1.942,
+      "errno_set_then_read_roundtrip": 1.942
+    },
+    "hardened": {
+      "errno_location_fastpath": 2.594,
+      "errno_set_then_read_roundtrip": 2.596
+    }
   }
 }
 JSON

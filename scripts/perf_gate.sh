@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Performance regression gate for runtime_math + membrane hot paths.
+# Performance regression gate for runtime_math + membrane + errno hot paths.
 #
 # Behavior:
 # - runs strict+hardened benchmark checks (or injected observations for tests),
@@ -427,15 +427,18 @@ check_metric() {
 
 run_mode() {
     local mode="$1"
-    local out_rt out_mem out_kernels rt_decide rt_observe rt_decide_observe
+    local out_rt out_mem out_errno out_kernels rt_decide rt_observe rt_decide_observe
+    local errno_location_fastpath errno_set_then_read_roundtrip
     local mem_stage_null_check mem_stage_tls_cache_hit mem_stage_bloom_hit
     local mem_stage_arena_lookup mem_stage_fingerprint_verify mem_stage_canary_verify
     local mem_stage_bounds_check mem_validate_null mem_validate_foreign mem_validate_known
     local b_decide b_observe b_decide_observe
+    local b_errno_location_fastpath b_errno_set_then_read_roundtrip
     local b_stage_null_check b_stage_tls_cache_hit b_stage_bloom_hit
     local b_stage_arena_lookup b_stage_fingerprint_verify b_stage_canary_verify
     local b_stage_bounds_check b_validate_null b_validate_foreign b_validate_known
     local t_decide t_observe t_decide_observe
+    local t_errno_location_fastpath t_errno_set_then_read_roundtrip
     local t_stage_null_check t_stage_tls_cache_hit t_stage_bloom_hit
     local t_stage_arena_lookup t_stage_fingerprint_verify t_stage_canary_verify
     local t_stage_bounds_check t_validate_null t_validate_foreign t_validate_known
@@ -462,8 +465,11 @@ run_mode() {
         mem_validate_null="$(inject_metric "${mode}" "membrane" "validate_null")"
         mem_validate_foreign="$(inject_metric "${mode}" "membrane" "validate_foreign")"
         mem_validate_known="$(inject_metric "${mode}" "membrane" "validate_known")"
+        errno_location_fastpath="$(inject_metric "${mode}" "errno" "errno_location_fastpath")"
+        errno_set_then_read_roundtrip="$(inject_metric "${mode}" "errno" "errno_set_then_read_roundtrip")"
         out_rt=""
         out_mem=""
+        out_errno=""
         out_kernels=""
     else
         out_rt="$(
@@ -476,6 +482,12 @@ run_mode() {
             FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE="${mode}" \
                 cargo bench -p frankenlibc-bench --bench membrane_bench 2>/dev/null \
                 | rg '^MEMBRANE_BENCH ' || true
+        )"
+
+        out_errno="$(
+            FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_ERRNO_BENCH_MODE="${mode}" \
+                cargo bench -p frankenlibc-bench --bench errno_bench 2>/dev/null \
+                | rg '^ERRNO_BENCH ' || true
         )"
 
         if [[ "${ENABLE_KERNEL_SUITE}" == "1" ]]; then
@@ -496,6 +508,10 @@ run_mode() {
             echo "perf_gate: failed to collect MEMBRANE_BENCH lines for mode=${mode}" >&2
             exit 2
         fi
+        if [[ -z "${out_errno}" ]]; then
+            echo "perf_gate: failed to collect ERRNO_BENCH lines for mode=${mode}" >&2
+            exit 2
+        fi
 
         rt_decide="$(printf "%s\n" "${out_rt}" | extract_p50 "RUNTIME_MATH_BENCH" "${mode}" "decide")"
         rt_observe="$(printf "%s\n" "${out_rt}" | extract_p50 "RUNTIME_MATH_BENCH" "${mode}" "observe_fast")"
@@ -510,6 +526,8 @@ run_mode() {
         mem_validate_null="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "validate_null")"
         mem_validate_foreign="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "validate_foreign")"
         mem_validate_known="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "validate_known")"
+        errno_location_fastpath="$(printf "%s\n" "${out_errno}" | extract_p50 "ERRNO_BENCH" "${mode}" "errno_location_fastpath")"
+        errno_set_then_read_roundtrip="$(printf "%s\n" "${out_errno}" | extract_p50 "ERRNO_BENCH" "${mode}" "errno_set_then_read_roundtrip")"
     fi
 
     if [[ -z "${rt_decide}" || -z "${rt_observe}" || -z "${rt_decide_observe}" \
@@ -517,12 +535,15 @@ run_mode() {
         || -z "${mem_stage_bloom_hit}" || -z "${mem_stage_arena_lookup}" \
         || -z "${mem_stage_fingerprint_verify}" || -z "${mem_stage_canary_verify}" \
         || -z "${mem_stage_bounds_check}" || -z "${mem_validate_null}" \
-        || -z "${mem_validate_foreign}" || -z "${mem_validate_known}" ]]; then
+        || -z "${mem_validate_foreign}" || -z "${mem_validate_known}" \
+        || -z "${errno_location_fastpath}" || -z "${errno_set_then_read_roundtrip}" ]]; then
         echo "perf_gate: missing metric values for mode=${mode}" >&2
         echo "--- runtime_math lines ---" >&2
         printf "%s\n" "${out_rt}" >&2
         echo "--- membrane lines ---" >&2
         printf "%s\n" "${out_mem}" >&2
+        echo "--- errno lines ---" >&2
+        printf "%s\n" "${out_errno}" >&2
         exit 2
     fi
 
@@ -539,6 +560,8 @@ run_mode() {
     b_validate_null="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.validate_null" "${BASELINE_FILE}")"
     b_validate_foreign="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.validate_foreign" "${BASELINE_FILE}")"
     b_validate_known="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.validate_known" "${BASELINE_FILE}")"
+    b_errno_location_fastpath="$(jq -r ".baseline_p50_ns_op.errno.${mode}.errno_location_fastpath" "${BASELINE_FILE}")"
+    b_errno_set_then_read_roundtrip="$(jq -r ".baseline_p50_ns_op.errno.${mode}.errno_set_then_read_roundtrip" "${BASELINE_FILE}")"
 
     t_decide="$(jq -r ".targets_ns_op.${mode}.decide" "${BASELINE_FILE}")"
     t_observe="$(jq -r ".targets_ns_op.${mode}.observe_fast" "${BASELINE_FILE}")"
@@ -553,6 +576,8 @@ run_mode() {
     t_validate_null="$(jq -r ".targets_ns_op.${mode}.validate_null" "${BASELINE_FILE}")"
     t_validate_foreign="$(jq -r ".targets_ns_op.${mode}.validate_foreign" "${BASELINE_FILE}")"
     t_validate_known="$(jq -r ".targets_ns_op.${mode}.validate_known" "${BASELINE_FILE}")"
+    t_errno_location_fastpath="$(jq -r ".targets_ns_op.${mode}.errno_location_fastpath" "${BASELINE_FILE}")"
+    t_errno_set_then_read_roundtrip="$(jq -r ".targets_ns_op.${mode}.errno_set_then_read_roundtrip" "${BASELINE_FILE}")"
 
     check_metric "runtime_math" "${mode}" "decide" "${b_decide}" "${t_decide}" "${rt_decide}" || {
         rc=$?
@@ -603,6 +628,14 @@ run_mode() {
         if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
     }
     check_metric "membrane" "${mode}" "validate_known" "${b_validate_known}" "${t_validate_known}" "${mem_validate_known}" || {
+        rc=$?
+        if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
+    }
+    check_metric "errno" "${mode}" "errno_location_fastpath" "${b_errno_location_fastpath}" "${t_errno_location_fastpath}" "${errno_location_fastpath}" || {
+        rc=$?
+        if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
+    }
+    check_metric "errno" "${mode}" "errno_set_then_read_roundtrip" "${b_errno_set_then_read_roundtrip}" "${t_errno_set_then_read_roundtrip}" "${errno_set_then_read_roundtrip}" || {
         rc=$?
         if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
     }

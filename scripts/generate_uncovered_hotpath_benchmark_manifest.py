@@ -20,6 +20,7 @@ REQUIRED_MODES = ["strict", "hardened"]
 CURRENT_COVERED_MODULES = {
     "string_abi": "string",
     "malloc_abi": "malloc",
+    "errno_abi": "errno",
     "pthread_abi": "pthread",
 }
 REQUIRED_ROW_FIELDS = [

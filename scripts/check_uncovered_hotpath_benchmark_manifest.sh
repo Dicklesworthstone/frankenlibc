@@ -53,8 +53,8 @@ if report.get("bead") != "bd-b92jd.2.2":
     raise SystemExit("bead must be bd-b92jd.2.2")
 if summary["current_uncovered_symbol_count"] != len(rows):
     raise SystemExit("current_uncovered_symbol_count does not match rows")
-if summary["current_uncovered_symbol_count"] != 62:
-    raise SystemExit(f"expected 62 uncovered strict hot-path symbols, got {summary['current_uncovered_symbol_count']}")
+if summary["current_uncovered_symbol_count"] != 61:
+    raise SystemExit(f"expected 61 uncovered strict hot-path symbols, got {summary['current_uncovered_symbol_count']}")
 if summary["module_count"] != len(modules):
     raise SystemExit("module_count does not match modules")
 if summary["duplicate_row_count"] != 0:
@@ -67,7 +67,6 @@ if summary["stale_support_matrix_row_count"] != 0:
 required_modules = {
     "c11threads_abi",
     "ctype_abi",
-    "errno_abi",
     "resolv_abi",
     "stdio_abi",
     "stdlib_abi",

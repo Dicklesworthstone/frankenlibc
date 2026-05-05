@@ -11,11 +11,10 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 type Mutator = Box<dyn Fn(&mut Value) -> TestResult>;
 type NegativeCase = (&'static str, Mutator, &'static str);
 
-const CURRENT_COVERED_MODULES: &[&str] = &["string_abi", "malloc_abi", "pthread_abi"];
+const CURRENT_COVERED_MODULES: &[&str] = &["string_abi", "malloc_abi", "errno_abi", "pthread_abi"];
 const REQUIRED_MODULES: &[&str] = &[
     "c11threads_abi",
     "ctype_abi",
-    "errno_abi",
     "resolv_abi",
     "stdio_abi",
     "stdlib_abi",
@@ -141,7 +140,7 @@ fn committed_manifest_matches_current_uncovered_hotpath_set() -> TestResult {
     assert_eq!(manifest["bead"].as_str(), Some("bd-b92jd.2.2"));
     assert_eq!(
         manifest["summary"]["current_uncovered_symbol_count"].as_u64(),
-        Some(62)
+        Some(61)
     );
     assert_eq!(
         manifest["summary"]["total_strict_hotpath_symbols"].as_u64(),
@@ -153,7 +152,7 @@ fn committed_manifest_matches_current_uncovered_hotpath_set() -> TestResult {
     );
 
     let rows = json_array(&manifest, "rows")?;
-    assert_eq!(rows.len(), 62);
+    assert_eq!(rows.len(), 61);
     assert_eq!(
         row_ids(rows).len(),
         rows.len(),
@@ -230,7 +229,7 @@ fn gate_script_emits_current_report_and_structured_logs() -> TestResult {
     )?;
     assert_eq!(
         report["summary"]["current_uncovered_symbol_count"].as_u64(),
-        Some(62)
+        Some(61)
     );
     let log = std::fs::read_to_string(
         root.join("target/conformance/uncovered_hotpath_benchmark_manifest.log.jsonl"),
