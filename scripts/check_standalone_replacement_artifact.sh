@@ -149,6 +149,13 @@ def run_command(command, *, env=None, cwd=root, timeout=900):
             "stderr": exc.stderr or "timeout",
             "timed_out": True,
         }
+    except OSError as exc:
+        return {
+            "returncode": 127,
+            "stdout": "",
+            "stderr": str(exc),
+            "timed_out": False,
+        }
 
 
 def append_log(event, *, artifact_path, artifact_status, claim_status, artifact_hash, command, exit_code, failure_signature, refs):
@@ -333,6 +340,17 @@ def inspect_artifact(artifact):
             "sha256": artifact_hash,
             "mtime": mtime,
             "failure_signature": "non_elf_artifact",
+            "host_glibc_dependency": None,
+            "sampled_symbols_present": False,
+            "refs": refs,
+        }
+    if ldd["returncode"] != 0 or ldd["timed_out"]:
+        return {
+            "status": "inspection_failed",
+            "path": str(artifact),
+            "sha256": artifact_hash,
+            "mtime": mtime,
+            "failure_signature": "artifact_dependency_inspection_failed",
             "host_glibc_dependency": None,
             "sampled_symbols_present": False,
             "refs": refs,

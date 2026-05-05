@@ -1,6 +1,7 @@
 //! Integration tests for the standalone replacement artifact forge gate.
 
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -48,6 +49,29 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     dir
+}
+
+fn fake_ldd_failure_path(temp: &Path) -> OsString {
+    let fake_bin = temp.join("fake-bin");
+    std::fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_ldd = fake_bin.join("ldd");
+    std::fs::write(&fake_ldd, "#!/bin/sh\necho ldd probe failed >&2\nexit 42\n")
+        .expect("write fake ldd");
+    let chmod = Command::new("chmod")
+        .arg("+x")
+        .arg(&fake_ldd)
+        .output()
+        .expect("chmod should run");
+    assert!(
+        chmod.status.success(),
+        "chmod failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&chmod.stdout),
+        String::from_utf8_lossy(&chmod.stderr)
+    );
+    let mut path = OsString::from(fake_bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    path
 }
 
 fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
@@ -109,6 +133,7 @@ fn manifest_matches_forge_contract() {
         "wrong_artifact_profile",
         "non_elf_artifact",
         "host_glibc_dependency",
+        "artifact_dependency_inspection_failed",
         "symbol_evidence_missing",
     ] {
         assert!(classifications.contains(signature), "missing {signature}");
@@ -228,6 +253,90 @@ fn forge_mode_can_materialize_a_supplied_shared_object_for_fast_tests() {
         ),
         "sample artifact may block claims, but the forge itself should classify it"
     );
+}
+
+#[test]
+fn forge_mode_blocks_artifact_when_ldd_probe_fails() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-artifact-ldd-probe-failed");
+    let source_c = temp.join("sample.c");
+    let source_so = temp.join("libfrankenlibc_abi.so");
+    std::fs::write(
+        &source_c,
+        "int frankenlibc_sample_symbol(void) { return 7; }\n",
+    )
+    .expect("write sample source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source_c)
+        .arg("-o")
+        .arg(&source_so)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+
+    let out_dir = temp.join("out");
+    let cargo_target = temp.join("cargo-target");
+    let report = temp.join("standalone_replacement_artifact.report.json");
+    let log = temp.join("standalone_replacement_artifact.log.jsonl");
+    let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+        .arg("--forge")
+        .current_dir(&root)
+        .env("PATH", fake_ldd_failure_path(&temp))
+        .env("STANDALONE_REPLACEMENT_OUT_DIR", &out_dir)
+        .env("STANDALONE_REPLACEMENT_CARGO_TARGET_DIR", &cargo_target)
+        .env("STANDALONE_REPLACEMENT_REPORT", &report)
+        .env("STANDALONE_REPLACEMENT_LOG", &log)
+        .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
+        .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
+        .env_remove("LD_PRELOAD")
+        .output()
+        .expect("forge mode should run");
+    assert!(
+        output.status.success(),
+        "forge mode with failing ldd should keep gate pass/claim blocked:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("pass"));
+    assert_eq!(report_json["claim_status"].as_str(), Some("claim_blocked"));
+    assert_eq!(
+        report_json["artifact_state"]["status"].as_str(),
+        Some("inspection_failed")
+    );
+    assert_eq!(
+        report_json["artifact_state"]["failure_signature"].as_str(),
+        Some("artifact_dependency_inspection_failed")
+    );
+    assert_eq!(
+        report_json["tool_evidence"]["artifact.ldd.txt"]["exit_code"].as_i64(),
+        Some(42)
+    );
+
+    let log = std::fs::read_to_string(log).expect("log should be readable");
+    let rows: Vec<serde_json::Value> = log
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("log line should parse"))
+        .collect();
+    assert!(rows.iter().any(|row| {
+        row["event"].as_str() == Some("artifact_inspected")
+            && row["artifact_status"].as_str() == Some("inspection_failed")
+            && row["claim_status"].as_str() == Some("claim_blocked")
+            && matches!(
+                row["failure_signature"].as_str(),
+                Some("artifact_dependency_inspection_failed")
+            )
+    }));
 }
 
 #[test]

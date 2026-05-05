@@ -84,6 +84,11 @@
       "description": "The artifact was produced, but dependency evidence still shows host libc linkage."
     },
     {
+      "failure_signature": "artifact_dependency_inspection_failed",
+      "expected_result": "claim_blocked",
+      "description": "A required dependency evidence probe failed while inspecting the canonical standalone artifact."
+    },
+    {
       "failure_signature": "symbol_evidence_missing",
       "expected_result": "claim_blocked",
       "description": "The artifact exists, but sampled public replacement symbols are missing from dynamic-symbol evidence."
@@ -96,6 +101,7 @@
       "artifact_status=current",
       "artifact_name=libfrankenlibc_replace.so",
       "readelf_dynamic_status=pass",
+      "ldd_status=pass",
       "host_glibc_dependency=false",
       "sampled_symbols_present=true",
       "source_commit matches HEAD"
