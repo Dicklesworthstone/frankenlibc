@@ -1,0 +1,339 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-ewv1l",
+  "gate_id": "hermetic-resolver-nss-semantic-kernels-v1",
+  "description": "Semantic-kernel promotion gate for the hermetic NSS/resolver lab. This consumes the loopback-only lab runner output and checks actual semantic invariants for hosts, services, passwd, group, resolv.conf, nsswitch, fake DNS cache/timeout/poisoning, and search-domain order.",
+  "freshness": {
+    "required_source_commit": "current",
+    "lab_report_source_commit_policy": "semantic report and source lab report must carry the same current git commit"
+  },
+  "sources": {
+    "lab_manifest": "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+    "lab_runner": "scripts/run_hermetic_nss_resolver_lab.sh",
+    "resolver_fixture": "tests/conformance/fixtures/resolver.json",
+    "resolver_nss_hard_parts": "tests/conformance/resolver_nss_hard_parts.v1.json",
+    "oracle_precedence_divergence": "tests/conformance/oracle_precedence_divergence.v1.json",
+    "user_environment_coverage": "tests/conformance/user_environment_coverage_matrix.v1.json",
+    "resolver_conformance_test": "crates/frankenlibc-harness/tests/resolver_conformance_test.rs",
+    "nss_lab_execution_test": "crates/frankenlibc-harness/tests/hermetic_nss_resolver_lab_execution_test.rs"
+  },
+  "execution_policy": {
+    "default_runner": "rch_only",
+    "real_network_allowed": false,
+    "real_network_envvar_override": "FRANKENLIBC_NSS_LAB_ALLOW_NETWORK",
+    "lab_runner_command": "scripts/run_hermetic_nss_resolver_lab.sh",
+    "cargo_validation_command": "rch exec -- cargo test -p frankenlibc-harness --test hermetic_resolver_nss_semantic_kernels_test -- --nocapture"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "kernel_id",
+    "scenario_id",
+    "runtime_mode",
+    "semantic_domain",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "required_semantic_domains": [
+    "hosts",
+    "services",
+    "passwd",
+    "group",
+    "resolv_conf",
+    "nsswitch",
+    "dns_cache",
+    "dns_timeout",
+    "dns_poisoning",
+    "search_domain"
+  ],
+  "required_runtime_modes": [
+    "strict",
+    "hardened"
+  ],
+  "diagnostic_signatures": [
+    {
+      "id": "missing_field",
+      "meaning": "A required manifest, source, semantic kernel, or lab row field is absent."
+    },
+    {
+      "id": "stale_artifact",
+      "meaning": "The semantic gate or consumed lab report is not tied to the current source commit."
+    },
+    {
+      "id": "missing_source_artifact",
+      "meaning": "A source artifact, fake-root file, scenario artifact, or lab output is missing."
+    },
+    {
+      "id": "missing_semantic_kernel",
+      "meaning": "A required semantic domain or strict/hardened row is absent."
+    },
+    {
+      "id": "real_network_required",
+      "meaning": "A manifest attempts to permit real network access for hermetic resolver evidence."
+    },
+    {
+      "id": "semantic_kernel_mismatch",
+      "meaning": "A semantic kernel computed from fake-root or lab JSONL output differs from the expected value."
+    },
+    {
+      "id": "unexpected_dns_egress",
+      "meaning": "The consumed lab report indicates network traffic outside loopback-only fake DNS evidence."
+    },
+    {
+      "id": "unsupported_lookup_family",
+      "meaning": "A kernel requests a domain, scenario, or lookup family outside the supported hermetic lab set."
+    }
+  ],
+  "semantic_kernels": [
+    {
+      "kernel_id": "hosts-files-hermetic-local",
+      "semantic_domain": "hosts",
+      "scenario_id": "nss-hosts-files-only",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "files_db_replay",
+      "fake_root_file": "etc/hosts",
+      "query": "hermetic.local",
+      "expected": {
+        "addresses": [
+          "198.51.100.7"
+        ],
+        "lookup_source": "files",
+        "dns_fallback": false
+      },
+      "artifact_refs": [
+        "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+        "scripts/run_hermetic_nss_resolver_lab.sh"
+      ]
+    },
+    {
+      "kernel_id": "services-hermetic-service-tcp",
+      "semantic_domain": "services",
+      "scenario_id": "nss-hosts-files-only",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "files_db_replay",
+      "fake_root_file": "etc/services",
+      "query": "hermetic-service/tcp",
+      "expected": {
+        "service": "hermetic-service",
+        "port": 4242,
+        "protocol": "tcp"
+      },
+      "artifact_refs": [
+        "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+        "scripts/run_hermetic_nss_resolver_lab.sh"
+      ]
+    },
+    {
+      "kernel_id": "passwd-hermetic-user",
+      "semantic_domain": "passwd",
+      "scenario_id": "nss-passwd-files-only",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "files_db_replay",
+      "fake_root_file": "etc/passwd",
+      "query": "hermetic_user",
+      "expected": {
+        "name": "hermetic_user",
+        "uid": 60001,
+        "gid": 60001,
+        "home": "/home/hermetic",
+        "shell": "/bin/sh"
+      },
+      "artifact_refs": [
+        "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+        "scripts/run_hermetic_nss_resolver_lab.sh"
+      ]
+    },
+    {
+      "kernel_id": "group-hermetic-members",
+      "semantic_domain": "group",
+      "scenario_id": "nss-group-files-only",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "files_db_replay",
+      "fake_root_file": "etc/group",
+      "query": "hermetic",
+      "expected": {
+        "name": "hermetic",
+        "gid": 60001,
+        "members": [
+          "hermetic_user"
+        ]
+      },
+      "artifact_refs": [
+        "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+        "scripts/run_hermetic_nss_resolver_lab.sh"
+      ]
+    },
+    {
+      "kernel_id": "resolv-conf-loopback-timeout-search",
+      "semantic_domain": "resolv_conf",
+      "scenario_id": "nss-dns-timeout",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "deadline_bound_replay",
+      "fake_root_file": "etc/resolv.conf",
+      "query": "timeout.example",
+      "expected": {
+        "nameserver_loopback": true,
+        "timeout": 1,
+        "attempts": 1,
+        "search": [
+          "a.example",
+          "b.example"
+        ]
+      },
+      "artifact_refs": [
+        "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+        "scripts/run_hermetic_nss_resolver_lab.sh"
+      ]
+    },
+    {
+      "kernel_id": "nsswitch-files-dns-order",
+      "semantic_domain": "nsswitch",
+      "scenario_id": "nss-dns-success-then-cache",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "udp_send_count_replay",
+      "fake_root_file": "etc/nsswitch.conf",
+      "query": "hosts",
+      "expected": {
+        "hosts": [
+          "files",
+          "dns"
+        ],
+        "passwd": [
+          "files"
+        ],
+        "group": [
+          "files"
+        ],
+        "services": [
+          "files"
+        ]
+      },
+      "artifact_refs": [
+        "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+        "scripts/run_hermetic_nss_resolver_lab.sh"
+      ]
+    },
+    {
+      "kernel_id": "dns-success-cache-hit",
+      "semantic_domain": "dns_cache",
+      "scenario_id": "nss-dns-success-then-cache",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "udp_send_count_replay",
+      "fake_root_file": "etc/resolv.conf",
+      "query": "cached.example",
+      "expected": {
+        "resolved_addrs": [
+          "203.0.113.10",
+          "2001:db8::10"
+        ],
+        "first_udp_sends": 1,
+        "second_udp_sends": 0,
+        "cache_hit": true,
+        "resolved_errno": "0"
+      },
+      "artifact_refs": [
+        "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+        "scripts/run_hermetic_nss_resolver_lab.sh"
+      ]
+    },
+    {
+      "kernel_id": "dns-timeout-bounded",
+      "semantic_domain": "dns_timeout",
+      "scenario_id": "nss-dns-timeout",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "deadline_bound_replay",
+      "fake_root_file": "etc/resolv.conf",
+      "query": "timeout.example",
+      "expected": {
+        "resolved_addrs": [],
+        "resolved_errno": "EAI_AGAIN",
+        "timeout_seconds": 1,
+        "attempts": 1,
+        "bounded": true
+      },
+      "artifact_refs": [
+        "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+        "scripts/run_hermetic_nss_resolver_lab.sh"
+      ]
+    },
+    {
+      "kernel_id": "dns-poisoning-txid-rejected",
+      "semantic_domain": "dns_poisoning",
+      "scenario_id": "nss-dns-poisoning-rejected",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "poisoning_reject_replay",
+      "fake_root_file": "etc/resolv.conf",
+      "query": "poisoned.example",
+      "expected": {
+        "resolved_addrs": [],
+        "resolved_errno": "EAI_FAIL",
+        "query_txid": "0xBEEF",
+        "reply_txid": "0xDEAD",
+        "accepted": false
+      },
+      "artifact_refs": [
+        "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+        "scripts/run_hermetic_nss_resolver_lab.sh"
+      ]
+    },
+    {
+      "kernel_id": "dns-search-domain-order",
+      "semantic_domain": "search_domain",
+      "scenario_id": "nss-search-domain-walk",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "search_walk_order_replay",
+      "fake_root_file": "etc/resolv.conf",
+      "query": "foo",
+      "expected": {
+        "resolved_addrs": [
+          "203.0.113.44"
+        ],
+        "resolved_errno": "0",
+        "queries": [
+          "foo.a.example",
+          "foo.b.example"
+        ],
+        "stop_index": 2
+      },
+      "artifact_refs": [
+        "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+        "scripts/run_hermetic_nss_resolver_lab.sh"
+      ]
+    }
+  ]
+}
