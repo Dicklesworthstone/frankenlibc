@@ -3365,6 +3365,26 @@ GLIBC_2.2.5 {
         ns_name_skip;
         ns_name_uncompress;
         ns_name_unpack;
+        /* libresolv ns_* helpers implemented in resolv_abi.rs (bd-0j2ha) */
+        ns_datetosecs;
+        ns_format_ttl;
+        ns_get16;
+        ns_get32;
+        ns_initparse;
+        ns_makecanon;
+        ns_msg_getflag;
+        ns_name_ntol;
+        ns_name_rollback;
+        ns_parse_ttl;
+        ns_parserr;
+        ns_put16;
+        ns_put32;
+        ns_samedomain;
+        ns_samename;
+        ns_skiprr;
+        ns_sprintrr;
+        ns_sprintrrf;
+        ns_subdomain;
         obstack_alloc_failed_handler;
         obstack_exit_failure;
         optarg;
