@@ -379,7 +379,7 @@ def scan_artifact_configuration() -> None:
             symbol=f"crate-type:{crate_type}",
             context=f"frankenlibc-abi crate-type includes {crate_type}",
             oracle_kind="cargo_crate_type_scan",
-            expected="cdylib present and staticlib gap explicit",
+            expected="cdylib, staticlib, and rlib crate types are configured for standalone evidence",
             actual="configured",
             extra={
                 "allowed_replacement_levels": ["L0", "L1", "L2", "L3"],

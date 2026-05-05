@@ -302,7 +302,7 @@ fn gate_emits_complete_inventory_report_and_log() -> TestResult {
 
 #[test]
 fn configured_staticlib_rows_are_not_l2_l3_blockers() -> TestResult {
-    let report = run_gate()?;
+    let (report, log_path) = run_gate_named("staticlib-configured-rows")?;
     let blockers = json_array(&report, "l2_l3_blockers")?;
     require(
         !blockers.iter().any(|row| {
@@ -318,7 +318,42 @@ fn configured_staticlib_rows_are_not_l2_l3_blockers() -> TestResult {
     require(
         configured_count >= 3,
         format!("expected cdylib/staticlib/rlib configured rows, got {configured_count}"),
-    )
+    )?;
+
+    let log = std::fs::read_to_string(&log_path)
+        .map_err(|err| format!("{}: {err}", log_path.display()))?;
+    let configured_rows = log
+        .lines()
+        .filter(|line| line.contains("\"category\":\"static_artifact_configuration\""))
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .map_err(|err| format!("static artifact log row did not parse: {err}: {line}"))
+        })
+        .collect::<TestResult<Vec<_>>>()?;
+    require(
+        configured_rows.len() >= 3,
+        format!(
+            "expected cdylib/staticlib/rlib configured log rows, got {}",
+            configured_rows.len()
+        ),
+    )?;
+    let expected_text =
+        "cdylib, staticlib, and rlib crate types are configured for standalone evidence";
+    for row in configured_rows {
+        require(
+            row["actual"].as_str() == Some("configured"),
+            format!("static artifact row must record configured actual: {row:?}"),
+        )?;
+        require(
+            row["profile_policy"].as_str() == Some("static_artifact_configured"),
+            format!("static artifact row must use configured profile policy: {row:?}"),
+        )?;
+        require(
+            row["expected"].as_str() == Some(expected_text),
+            format!("static artifact row has stale expected text: {row:?}"),
+        )?;
+    }
+    Ok(())
 }
 
 #[test]
