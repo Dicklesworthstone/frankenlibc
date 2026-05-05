@@ -96,6 +96,13 @@ POSITIVE_SMOKE_IDS = {
 }
 NEGATIVE_SMOKE_ID = "standalone.loader_process_negative_missing_obligation"
 ALLOWED_EVIDENCE_KIND = "standalone_link_run_and_versioned_symbol_gate"
+EXPECTED_FRESHNESS_POLICY = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_reverse_loader_standalone_gate_evidence",
+    "standalone_gate_evidence_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
+}
 
 errors = []
 logs = []
@@ -221,6 +228,8 @@ if isinstance(gate, dict):
     source_commit = gate.get("source_commit")
     if not isinstance(source_commit, str) or len(source_commit) < 12:
         fail("gate source_commit must be a non-empty commit-ish string")
+    if gate.get("source_commit_freshness_policy") != EXPECTED_FRESHNESS_POLICY:
+        fail("gate source_commit_freshness_policy must match the stale reverse-loader block contract")
     try:
         datetime.fromisoformat(str(gate.get("generated_utc")).replace("Z", "+00:00"))
     except Exception:
@@ -235,6 +244,9 @@ if isinstance(gate, dict):
         fail("claim policy must reject LD_PRELOAD evidence")
     if policy.get("summary_only_claims_accepted") is not False:
         fail("claim policy must reject summary-only claims")
+    rejected = policy.get("rejected_evidence_kinds", [])
+    if not isinstance(rejected, list) or "stale_source_commit" not in rejected:
+        fail("claim policy rejected_evidence_kinds must include stale_source_commit")
     rows = gate.get("rows", [])
     if not isinstance(rows, list):
         fail("gate rows must be a list")

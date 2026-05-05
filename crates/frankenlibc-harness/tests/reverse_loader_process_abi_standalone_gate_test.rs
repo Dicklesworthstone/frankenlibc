@@ -121,6 +121,83 @@ fn gate_path(root: &Path) -> PathBuf {
     root.join("tests/conformance/reverse_loader_process_abi_standalone_gate.v1.json")
 }
 
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn git_head(root: &Path) -> TestResult<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!("git rev-parse HEAD failed with status {}", output.status),
+    )?;
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git rev-parse HEAD emitted non-UTF8: {err}")))?;
+    let head = stdout.trim().to_owned();
+    ensure(
+        is_hex_commit(&head),
+        format!("git HEAD must be a 40-hex commit, got {head:?}"),
+    )?;
+    Ok(head)
+}
+
+fn source_commit_freshness_policy(gate: &Value) -> TestResult<&Value> {
+    field(gate, "source_commit_freshness_policy", "gate")
+}
+
+fn assert_source_commit_freshness_policy(gate: &Value) -> TestResult {
+    let policy = source_commit_freshness_policy(gate)?;
+    ensure_eq(
+        string_field(
+            policy,
+            "recorded_source_commit_field",
+            "source_commit_freshness_policy",
+        )?,
+        "source_commit",
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        string_field(
+            policy,
+            "comparison_target",
+            "source_commit_freshness_policy",
+        )?,
+        "current git HEAD",
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    ensure_eq(
+        string_field(policy, "stale_result", "source_commit_freshness_policy")?,
+        "block_reverse_loader_standalone_gate_evidence",
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    ensure_eq(
+        field(
+            policy,
+            "standalone_gate_evidence_allowed_when_stale",
+            "source_commit_freshness_policy",
+        )?
+        .as_bool(),
+        Some(false),
+        "source_commit_freshness_policy.standalone_gate_evidence_allowed_when_stale",
+    )?;
+    ensure_eq(
+        string_field(
+            policy,
+            "rejected_evidence_kind",
+            "source_commit_freshness_policy",
+        )?,
+        "stale_source_commit",
+        "source_commit_freshness_policy.rejected_evidence_kind",
+    )?;
+    Ok(())
+}
+
 fn report_path(root: &Path) -> PathBuf {
     root.join("target/conformance/reverse_loader_process_abi_standalone_gate.report.json")
 }
@@ -294,6 +371,26 @@ fn gate_artifact_preserves_loader_process_gap_contract() -> TestResult {
         "fpg-reverse-loader-process-abi",
         "owner_family_group",
     )?;
+    let source_commit = string_field(&gate, "source_commit", "gate")?;
+    ensure(
+        is_hex_commit(source_commit),
+        format!("source_commit must be a 40-hex commit, got {source_commit:?}"),
+    )?;
+    assert_source_commit_freshness_policy(&gate)?;
+
+    let claim_policy = field(&gate, "claim_policy", "gate")?;
+    let rejected: Vec<&str> = array_field(claim_policy, "rejected_evidence_kinds", "claim_policy")?
+        .iter()
+        .map(|value| {
+            value.as_str().ok_or_else(|| {
+                test_error("claim_policy.rejected_evidence_kinds entries must be strings")
+            })
+        })
+        .collect::<TestResult<Vec<&str>>>()?;
+    ensure(
+        rejected.contains(&"stale_source_commit"),
+        "claim_policy rejected_evidence_kinds must include stale_source_commit",
+    )?;
 
     let inputs = object_field(&gate, "inputs", "gate")?;
     for value in inputs.values() {
@@ -391,6 +488,47 @@ fn gate_artifact_preserves_loader_process_gap_contract() -> TestResult {
 }
 
 #[test]
+fn stale_source_commit_policy_blocks_reverse_loader_gate_evidence() -> TestResult {
+    let root = workspace_root();
+    let gate = load_json(&gate_path(&root))?;
+    let source_commit = string_field(&gate, "source_commit", "gate")?;
+    ensure(
+        is_hex_commit(source_commit),
+        format!("source_commit must be a 40-hex commit, got {source_commit:?}"),
+    )?;
+    assert_source_commit_freshness_policy(&gate)?;
+    let current_head = git_head(&root)?;
+    if source_commit != current_head {
+        let policy = source_commit_freshness_policy(&gate)?;
+        ensure_eq(
+            string_field(policy, "stale_result", "source_commit_freshness_policy")?,
+            "block_reverse_loader_standalone_gate_evidence",
+            "stale reverse-loader source_commit must block standalone gate evidence",
+        )?;
+        ensure_eq(
+            field(
+                policy,
+                "standalone_gate_evidence_allowed_when_stale",
+                "source_commit_freshness_policy",
+            )?
+            .as_bool(),
+            Some(false),
+            "stale reverse-loader source_commit must not allow standalone gate evidence",
+        )?;
+        ensure_eq(
+            string_field(
+                policy,
+                "rejected_evidence_kind",
+                "source_commit_freshness_policy",
+            )?,
+            "stale_source_commit",
+            "stale reverse-loader source_commit must use stale_source_commit",
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
 fn checker_passes_and_emits_report_and_logs() -> TestResult {
     let root = workspace_root();
     let report = report_path(&root);
@@ -443,6 +581,25 @@ fn checker_passes_and_emits_report_and_logs() -> TestResult {
     }
 
     Ok(())
+}
+
+#[test]
+fn checker_rejects_missing_source_commit_freshness_policy() -> TestResult {
+    let root = workspace_root();
+    let mut gate = load_json(&gate_path(&root))?;
+    object_mut(&mut gate, "gate")?.remove("source_commit_freshness_policy");
+    let bad_gate = unique_temp_path(&root, "reverse-loader-missing-freshness-policy");
+    write_json(&bad_gate, &gate)?;
+    let output = run_checker(
+        &root,
+        &bad_gate,
+        &unique_temp_path(&root, "reverse-loader-missing-freshness-policy-report"),
+        &unique_temp_path(&root, "reverse-loader-missing-freshness-policy-log"),
+    )?;
+    ensure(
+        !output.status.success(),
+        "checker must reject a missing source_commit_freshness_policy",
+    )
 }
 
 #[test]

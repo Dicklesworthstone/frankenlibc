@@ -4,6 +4,13 @@
   "bead": "bd-bp8fl.3.7",
   "owner_family_group": "fpg-reverse-loader-process-abi",
   "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_reverse_loader_standalone_gate_evidence",
+    "standalone_gate_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "generated_utc": "2026-05-04T14:22:00Z",
   "purpose": "Bind every fpg-reverse-loader-process-abi feature-parity gap to direct-link standalone smoke rows, versioned-symbol checks, negative claim-blocking evidence, and structured logs.",
   "inputs": {
@@ -49,6 +56,7 @@
       "version_script_only",
       "summary_only",
       "stale_standalone_artifact",
+      "stale_source_commit",
       "missing_negative_row",
       "missing_gap_binding",
       "host_callthrough_overclaim"
