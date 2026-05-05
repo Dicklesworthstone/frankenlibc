@@ -363,6 +363,14 @@ fn standalone_artifact_report_rows_are_explicit() -> TestResult {
             "artifact_state.dependency_breakdown.host_resolved_libraries",
         ),
         (
+            "standalone-artifact-report-sampled-symbols-present-diagnostic",
+            "artifact_state.sampled_symbols_present",
+        ),
+        (
+            "standalone-artifact-report-symbol-samples-diagnostic",
+            "artifact_state.symbol_samples",
+        ),
+        (
             "standalone-artifact-report-undefined-symbols-diagnostic",
             "artifact_state.dependency_breakdown.undefined_symbols",
         ),

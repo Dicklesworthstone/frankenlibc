@@ -121,6 +121,22 @@
       "rationale": "L1 dashboard consumers must distinguish ldd-resolved host libraries from direct DT_NEEDED entries."
     },
     {
+      "row_id": "standalone-artifact-report-sampled-symbols-present-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.17",
+      "expected_value": "artifact_state.sampled_symbols_present",
+      "rationale": "L1 dashboard consumers must see whether the forge observed every required sampled replacement symbol."
+    },
+    {
+      "row_id": "standalone-artifact-report-symbol-samples-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.18",
+      "expected_value": "artifact_state.symbol_samples",
+      "rationale": "L1 dashboard consumers must see the per-symbol sampled export map behind sampled_symbols_present."
+    },
+    {
       "row_id": "standalone-artifact-report-undefined-symbols-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",

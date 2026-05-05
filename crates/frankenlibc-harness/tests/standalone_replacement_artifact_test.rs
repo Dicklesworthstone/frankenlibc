@@ -40,6 +40,8 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "tool_evidence.*.path",
     "artifact_state.dependency_breakdown.host_direct_needed_libraries",
     "artifact_state.dependency_breakdown.host_resolved_libraries",
+    "artifact_state.sampled_symbols_present",
+    "artifact_state.symbol_samples",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -63,6 +65,17 @@ fn string_set(value: &serde_json::Value) -> HashSet<String> {
         .expect("value should be an array")
         .iter()
         .map(|entry| entry.as_str().expect("entry should be string").to_owned())
+        .collect()
+}
+
+fn symbol_sample_map(value: &serde_json::Value) -> HashSet<String> {
+    value
+        .as_object()
+        .expect("symbol_samples should be an object")
+        .iter()
+        .filter_map(|(symbol, present)| {
+            present.as_bool().unwrap_or(false).then_some(symbol.clone())
+        })
         .collect()
 }
 
@@ -120,9 +133,15 @@ fi
 if [ "$1" = "-Ws" ]; then
   cat <<'EOF'
    Num:    Value          Size Type    Bind   Vis      Ndx Name
-     1: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND printf@GLIBC_2.2.5
-     2: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND __tls_get_addr@GLIBC_2.3
-     3: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_Resume@GCC_3.0
+     1: 0000000000001000     1 FUNC    GLOBAL DEFAULT   10 __libc_start_main
+     2: 0000000000001001     1 FUNC    GLOBAL DEFAULT   10 malloc
+     3: 0000000000001002     1 FUNC    GLOBAL DEFAULT   10 free
+     4: 0000000000001003     1 FUNC    GLOBAL DEFAULT   10 printf
+     5: 0000000000001004     1 FUNC    GLOBAL DEFAULT   10 pthread_create
+     6: 0000000000001005     1 FUNC    GLOBAL DEFAULT   10 getaddrinfo
+     7: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND printf@GLIBC_2.2.5
+     8: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND __tls_get_addr@GLIBC_2.3
+     9: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_Resume@GCC_3.0
 EOF
   exit 0
 fi
@@ -166,6 +185,60 @@ EOF
 "#,
     )
     .expect("write fake ldd");
+    for tool in ["readelf", "nm", "ldd"] {
+        let chmod = Command::new("chmod")
+            .arg("+x")
+            .arg(fake_bin.join(tool))
+            .output()
+            .expect("chmod should run");
+        assert!(
+            chmod.status.success(),
+            "chmod failed for {tool}:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&chmod.stdout),
+            String::from_utf8_lossy(&chmod.stderr)
+        );
+    }
+    let mut path = OsString::from(fake_bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    path
+}
+
+fn fake_missing_sample_probe_path(temp: &Path) -> OsString {
+    let fake_bin = temp.join("fake-missing-sample-bin");
+    std::fs::create_dir_all(&fake_bin).expect("create fake probe bin dir");
+    std::fs::write(
+        fake_bin.join("readelf"),
+        r#"#!/bin/sh
+if [ "$1" = "-d" ]; then
+  cat <<'EOF'
+Dynamic section at offset 0x1000 contains 1 entry:
+ 0x000000000000000e (SONAME)             Library soname: [libfrankenlibc_replace.so]
+EOF
+  exit 0
+fi
+if [ "$1" = "-Ws" ]; then
+  cat <<'EOF'
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     1: 0000000000002000     1 FUNC    GLOBAL DEFAULT   10 frankenlibc_private_only
+EOF
+  exit 0
+fi
+if [ "$1" = "--version-info" ]; then
+  echo 'No version information found in this file.'
+  exit 0
+fi
+echo unexpected readelf invocation "$@" >&2
+exit 2
+"#,
+    )
+    .expect("write fake readelf");
+    std::fs::write(
+        fake_bin.join("nm"),
+        "0000000000002000 T frankenlibc_private_only\n",
+    )
+    .expect("write fake nm");
+    std::fs::write(fake_bin.join("ldd"), "statically linked\n").expect("write fake ldd");
     for tool in ["readelf", "nm", "ldd"] {
         let chmod = Command::new("chmod")
             .arg("+x")
@@ -619,6 +692,11 @@ fn validate_only_writes_report_and_required_log_fields() {
         report["artifact_state"]["status"].as_str(),
         Some("not_checked")
     );
+    assert_eq!(
+        report["artifact_state"]["sampled_symbols_present"].as_bool(),
+        Some(false)
+    );
+    assert!(symbol_sample_map(&report["artifact_state"]["symbol_samples"]).is_empty());
 
     let log = std::fs::read_to_string(log).expect("log should be readable");
     let rows: Vec<serde_json::Value> = log
@@ -649,6 +727,11 @@ fn check_mode_reports_missing_artifact_as_claim_blocked() {
         report["artifact_state"]["failure_signature"].as_str(),
         Some("standalone_artifact_missing")
     );
+    assert_eq!(
+        report["artifact_state"]["sampled_symbols_present"].as_bool(),
+        Some(false)
+    );
+    assert!(symbol_sample_map(&report["artifact_state"]["symbol_samples"]).is_empty());
 }
 
 #[test]
@@ -874,6 +957,21 @@ fn forge_mode_reports_host_dependency_breakdown() {
         report_json["artifact_state"]["host_glibc_dependency"].as_bool(),
         Some(true)
     );
+    assert_eq!(
+        report_json["artifact_state"]["sampled_symbols_present"].as_bool(),
+        Some(true)
+    );
+    let samples = symbol_sample_map(&report_json["artifact_state"]["symbol_samples"]);
+    for symbol in [
+        "__libc_start_main",
+        "malloc",
+        "free",
+        "printf",
+        "pthread_create",
+        "getaddrinfo",
+    ] {
+        assert!(samples.contains(symbol), "missing sampled symbol {symbol}");
+    }
 
     let breakdown = &report_json["artifact_state"]["dependency_breakdown"];
     let needed = string_set(&breakdown["needed_libraries"]);
@@ -931,6 +1029,83 @@ fn forge_mode_reports_host_dependency_breakdown() {
     ] {
         assert!(reasons.contains(reason), "missing {reason}");
     }
+}
+
+#[test]
+fn forge_mode_blocks_artifact_when_sampled_symbols_are_missing() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-artifact-missing-sampled-symbols");
+    let source_c = temp.join("sample.c");
+    let source_so = temp.join("libfrankenlibc_abi.so");
+    std::fs::write(
+        &source_c,
+        "int frankenlibc_private_only(void) { return 7; }\n",
+    )
+    .expect("write sample source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source_c)
+        .arg("-o")
+        .arg(&source_so)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+
+    let out_dir = temp.join("out");
+    let cargo_target = temp.join("cargo-target");
+    let report = temp.join("standalone_replacement_artifact.report.json");
+    let log = temp.join("standalone_replacement_artifact.log.jsonl");
+    let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+        .arg("--forge")
+        .current_dir(&root)
+        .env("PATH", fake_missing_sample_probe_path(&temp))
+        .env("STANDALONE_REPLACEMENT_OUT_DIR", &out_dir)
+        .env("STANDALONE_REPLACEMENT_CARGO_TARGET_DIR", &cargo_target)
+        .env("STANDALONE_REPLACEMENT_REPORT", &report)
+        .env("STANDALONE_REPLACEMENT_LOG", &log)
+        .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
+        .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
+        .env_remove("LD_PRELOAD")
+        .output()
+        .expect("forge mode should run");
+    assert!(
+        output.status.success(),
+        "forge mode should keep gate pass/claim blocked for missing sampled symbols:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("pass"));
+    assert_eq!(report_json["claim_status"].as_str(), Some("claim_blocked"));
+    assert_eq!(
+        report_json["artifact_state"]["status"].as_str(),
+        Some("current")
+    );
+    assert_eq!(
+        report_json["artifact_state"]["failure_signature"].as_str(),
+        Some("symbol_evidence_missing")
+    );
+    assert_eq!(
+        report_json["artifact_state"]["host_glibc_dependency"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        report_json["artifact_state"]["sampled_symbols_present"].as_bool(),
+        Some(false)
+    );
+    assert!(symbol_sample_map(&report_json["artifact_state"]["symbol_samples"]).is_empty());
+    assert!(
+        string_set(&report_json["artifact_state"]["dependency_breakdown"]["blocking_reasons"])
+            .is_empty()
+    );
 }
 
 #[test]

@@ -89,6 +89,8 @@ REQUIRED_REPORT_FIELDS = [
     "tool_evidence.*.path",
     "artifact_state.dependency_breakdown.host_direct_needed_libraries",
     "artifact_state.dependency_breakdown.host_resolved_libraries",
+    "artifact_state.sampled_symbols_present",
+    "artifact_state.symbol_samples",
 ]
 
 INSPECTION_TIMEOUT_ENV = "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS"
@@ -120,6 +122,13 @@ def load_json(path):
 manifest = load_json(manifest_path)
 packaging = load_json(packaging_path)
 levels = load_json(levels_path)
+
+
+def empty_symbol_samples():
+    samples = manifest.get("symbol_samples", [])
+    if not isinstance(samples, list):
+        return {}
+    return {str(symbol): False for symbol in samples}
 
 
 def git_output(args, default):
@@ -673,6 +682,9 @@ else:
         env_artifact = os.environ.get("FRANKENLIBC_STANDALONE_LIB")
         artifact_path = Path(env_artifact) if env_artifact else cargo_target_dir / "release" / "libfrankenlibc_replace.so"
     artifact_state = inspect_artifact(artifact_path)
+
+artifact_state.setdefault("sampled_symbols_present", False)
+artifact_state.setdefault("symbol_samples", empty_symbol_samples())
 
 if artifact_state["failure_signature"] == "none" and artifact_state["status"] in {"current", "not_checked"}:
     claim_status = "artifact_current" if artifact_state["status"] == "current" else "schema_validated"
