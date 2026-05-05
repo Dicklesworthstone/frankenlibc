@@ -342,6 +342,16 @@ standalone_state = classify_library(
 )
 
 
+def full_git_commit(value):
+    return isinstance(value, str) and len(value) == 40 and all(
+        byte in "0123456789abcdefABCDEF" for byte in value
+    )
+
+
+def source_commit_marker_is_current(value):
+    return value == "current" or (source_commit != "unknown" and value == source_commit)
+
+
 def validate_manifest():
     checks["json_parse"] = "pass" if isinstance(manifest, dict) else "fail"
     if manifest.get("schema_version") != "v1":
@@ -353,8 +363,8 @@ def validate_manifest():
     freshness = manifest.get("freshness", {})
     required_source_commit = freshness.get("required_source_commit") if isinstance(freshness, dict) else None
     source_commit_policy = freshness.get("source_commit_policy", "") if isinstance(freshness, dict) else ""
-    source_commit_matches = required_source_commit == "current" or (
-        source_commit != "unknown" and required_source_commit == source_commit
+    source_commit_matches = (
+        required_source_commit == "current" or source_commit_marker_is_current(required_source_commit)
     )
     freshness_ok = (
         isinstance(freshness, dict)
@@ -370,15 +380,19 @@ def validate_manifest():
             "and source_commit_policy must reject stale manifest source commits"
         )
     manifest_source_commit = manifest.get("source_commit")
+    recorded_source_commit_current = source_commit_marker_is_current(manifest_source_commit)
     source_commit_policy_ok = (
-        isinstance(manifest_source_commit, str)
-        and len(manifest_source_commit) == 40
-        and all(byte in "0123456789abcdefABCDEF" for byte in manifest_source_commit)
+        (manifest_source_commit == "current" or full_git_commit(manifest_source_commit))
         and manifest.get("source_commit_freshness_policy") == EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY
     )
     checks["source_commit_freshness_policy"] = "pass" if source_commit_policy_ok else "fail"
+    checks["recorded_source_commit_freshness"] = (
+        "pass" if source_commit_policy_ok and recorded_source_commit_current else "fail"
+    )
     if not source_commit_policy_ok:
         errors.append("source_commit_freshness_policy does not match script contract")
+    elif not recorded_source_commit_current:
+        errors.append("source_commit must be 'current' or match current git HEAD")
 
     if manifest.get("required_case_fields") == REQUIRED_CASE_FIELDS:
         checks["required_case_fields"] = "pass"
