@@ -748,6 +748,32 @@ fn manifest_matches_forge_contract() {
     ] {
         assert!(classifications.contains(signature), "missing {signature}");
     }
+    assert_eq!(
+        manifest["claim_policy"]["current_level_must_remain"].as_str(),
+        Some("L0")
+    );
+    assert_eq!(
+        manifest["claim_policy"]["successful_forge_is_not_promotion"].as_bool(),
+        Some(true)
+    );
+    let claim_unblocked_only_when: Vec<_> = manifest["claim_policy"]["claim_unblocked_only_when"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        claim_unblocked_only_when,
+        [
+            "artifact_status=current",
+            "artifact_name=libfrankenlibc_replace.so",
+            "readelf_dynamic_status=pass",
+            "ldd_status=pass",
+            "host_glibc_dependency=false",
+            "sampled_symbols_present=true",
+            "source_commit matches HEAD",
+        ]
+    );
 }
 
 #[test]
@@ -905,6 +931,47 @@ fn validate_only_rejects_failure_classification_contract_drift() {
             error.as_str() == Some("expected_failure_classifications do not match script contract")
         }),
         "expected expected_failure_classifications contract error: {errors:?}"
+    );
+}
+
+#[test]
+fn validate_only_rejects_claim_policy_contract_drift() {
+    let manifest_path = write_manifest_variant(
+        "standalone-artifact-claim-policy-drift-manifest",
+        |manifest| {
+            manifest["claim_policy"]["current_level_must_remain"] =
+                serde_json::Value::String("L1".to_owned());
+            manifest["claim_policy"]["successful_forge_is_not_promotion"] =
+                serde_json::Value::Bool(false);
+            let criteria = manifest["claim_policy"]["claim_unblocked_only_when"]
+                .as_array_mut()
+                .expect("claim_unblocked_only_when should be an array");
+            criteria.retain(|value| value.as_str() != Some("source_commit matches HEAD"));
+        },
+    );
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) = run_gate_with_env(
+        "--validate-only",
+        "standalone-artifact-claim-policy-drift",
+        &envs,
+    );
+    assert!(
+        !output.status.success(),
+        "claim_policy drift should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.as_str() == Some("claim_policy does not match script contract")),
+        "expected claim_policy contract error: {errors:?}"
     );
 }
 

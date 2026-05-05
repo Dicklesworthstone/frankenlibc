@@ -131,6 +131,20 @@ EXPECTED_FAILURE_CLASSIFICATIONS = {
     "symbol_evidence_missing": "claim_blocked",
 }
 
+EXPECTED_CLAIM_POLICY = {
+    "current_level_must_remain": "L0",
+    "successful_forge_is_not_promotion": True,
+    "claim_unblocked_only_when": [
+        "artifact_status=current",
+        "artifact_name=libfrankenlibc_replace.so",
+        "readelf_dynamic_status=pass",
+        "ldd_status=pass",
+        "host_glibc_dependency=false",
+        "sampled_symbols_present=true",
+        "source_commit matches HEAD",
+    ],
+}
+
 INSPECTION_TIMEOUT_ENV = "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS"
 INSPECTION_TIMEOUT_DEFAULT_SECS = 60
 INSPECTION_TIMEOUT_MIN_SECS = 1
@@ -487,6 +501,8 @@ def validate_manifest():
                 classification_map[entry["failure_signature"]] = entry.get("expected_result")
     if classification_map != EXPECTED_FAILURE_CLASSIFICATIONS:
         errors.append("expected_failure_classifications do not match script contract")
+    if manifest.get("claim_policy") != EXPECTED_CLAIM_POLICY:
+        errors.append("claim_policy does not match script contract")
     timeout_policy = manifest.get("inspection_timeout_policy", {})
     expected_timeout_policy = {
         "env": INSPECTION_TIMEOUT_ENV,
