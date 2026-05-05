@@ -5,6 +5,13 @@
   "owner_bead": "bd-b92jd.1",
   "generated_utc": "2026-05-05T03:00:00Z",
   "source_commit": "6ee3eaea80075a15074162412beceeee258c9c62",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_l1_promotion",
+    "promotion_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "purpose": "Fail-closed replacement-level promotion gate. Refuses to advance current_level or release_tag_policy.current_release_level past L0 unless every cited evidence artifact (host-independence probes, CRT/TLS/atexit link-run proofs, ld_preload smoke, perf-baseline + waiver-audit, claim-reconciliation, replacement-level blockers) is current, structurally well-formed, and free of stale source_commit drift. Catches README/FEATURE_PARITY overclaim by binding promotion to evidence presence, not prose.",
   "subject": {
     "replacement_levels_artifact": "tests/conformance/replacement_levels.json",
@@ -58,6 +65,7 @@
       "missing_artifact",
       "schema_drift",
       "source_commit_zero_or_blank",
+      "stale_source_commit",
       "current_level_drifted_above_l0_without_gate_pass",
       "claim_reconciliation_status_not_pass"
     ]

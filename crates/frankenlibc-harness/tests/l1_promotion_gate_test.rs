@@ -11,6 +11,7 @@
 use serde_json::Value;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -69,6 +70,26 @@ fn gate_path() -> PathBuf {
     workspace_root().join("tests/conformance/l1_promotion_gate.v1.json")
 }
 
+fn git_head(root: &Path) -> Result<String, Box<dyn Error>> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(root)
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+    Ok(String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
+        .trim()
+        .to_owned())
+}
+
 const REQUIRED_LOG_FIELDS: &[&str] = &[
     "trace_id",
     "bead_id",
@@ -91,6 +112,7 @@ const REJECTED_EVIDENCE_KINDS: &[&str] = &[
     "missing_artifact",
     "schema_drift",
     "source_commit_zero_or_blank",
+    "stale_source_commit",
     "current_level_drifted_above_l0_without_gate_pass",
     "claim_reconciliation_status_not_pass",
 ];
@@ -143,6 +165,32 @@ fn gate_artifact_is_well_formed() -> TestResult {
             .unwrap_or_default()
             .is_empty(),
         "source_commit must be set",
+    )?;
+    let freshness_policy = &gate["source_commit_freshness_policy"];
+    ensure_eq(
+        freshness_policy["recorded_source_commit_field"].as_str(),
+        Some("source_commit"),
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        freshness_policy["comparison_target"].as_str(),
+        Some("current git HEAD"),
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    ensure_eq(
+        freshness_policy["stale_result"].as_str(),
+        Some("block_l1_promotion"),
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    ensure_eq(
+        freshness_policy["promotion_allowed_when_stale"].as_bool(),
+        Some(false),
+        "source_commit_freshness_policy.promotion_allowed_when_stale",
+    )?;
+    ensure_eq(
+        freshness_policy["rejected_evidence_kind"].as_str(),
+        Some("stale_source_commit"),
+        "source_commit_freshness_policy.rejected_evidence_kind",
     )?;
 
     let inputs = gate["inputs"]
@@ -220,6 +268,39 @@ fn gate_artifact_is_well_formed() -> TestResult {
             format!("rejected_evidence_kinds must include {kind}"),
         )?;
     }
+    Ok(())
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_l1_promotion() -> TestResult {
+    let root = workspace_root();
+    let gate = load_json(&gate_path())?;
+    let gate_commit = as_str(&gate["source_commit"], "source_commit")?;
+    ensure(
+        gate_commit.len() == 40 && gate_commit.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "source_commit must be a 40-character git SHA",
+    )?;
+
+    let current_head = git_head(&root)?;
+    if gate_commit != current_head {
+        let policy = &gate["source_commit_freshness_policy"];
+        ensure_eq(
+            policy["stale_result"].as_str(),
+            Some("block_l1_promotion"),
+            "stale promotion gate source_commit must block L1 promotion",
+        )?;
+        ensure_eq(
+            policy["promotion_allowed_when_stale"].as_bool(),
+            Some(false),
+            "stale promotion gate source_commit must not allow promotion",
+        )?;
+        ensure_eq(
+            policy["rejected_evidence_kind"].as_str(),
+            Some("stale_source_commit"),
+            "stale promotion gate source_commit must use stale_source_commit",
+        )?;
+    }
+
     Ok(())
 }
 
