@@ -83,6 +83,10 @@ fn json_array_contains(value: &serde_json::Value, needle: &str) -> bool {
         .any(|entry| entry.as_str() == Some(needle))
 }
 
+fn json_array_lacks(value: &serde_json::Value, needle: &str) -> bool {
+    !json_array_contains(value, needle)
+}
+
 fn assert_repo_relative_existing_path(root: &Path, rel: &str, context: &str) {
     let path = Path::new(rel);
     assert!(!rel.is_empty(), "{context}: artifact ref must not be empty");
@@ -163,6 +167,93 @@ fn standalone_artifact_is_first_class_readiness_evidence() {
         assert!(
             json_array_contains(&obligation["evidence_artifacts"], STANDALONE_ARTIFACT_REF),
             "{obligation_id}: evidence_artifacts must include {STANDALONE_ARTIFACT_REF}"
+        );
+    }
+}
+
+#[test]
+fn standalone_forge_audits_are_present_failing_evidence() {
+    let matrix = load_matrix();
+    let proof_rows = matrix["proof_rows"].as_array().unwrap();
+
+    let symbol_row = proof_rows
+        .iter()
+        .find(|row| row["proof_row_id"].as_str() == Some("symbol_version_nodes"))
+        .expect("symbol_version_nodes proof row must exist");
+    assert!(
+        json_array_contains(
+            &symbol_row["present_evidence"],
+            "current standalone forge symbol/version audit with sampled symbols present",
+        ),
+        "symbol_version_nodes must treat current forge audit as present evidence"
+    );
+    assert!(
+        json_array_lacks(
+            &symbol_row["missing_evidence"],
+            "current standalone artifact symbol/version audit",
+        ),
+        "symbol_version_nodes must not classify the current forge audit as missing"
+    );
+    for blocker in [
+        "full claimed-subset version-node parity",
+        "cleared host version requirements in standalone forge report",
+    ] {
+        assert!(
+            json_array_contains(&symbol_row["missing_evidence"], blocker),
+            "symbol_version_nodes missing_evidence must include {blocker}"
+        );
+    }
+
+    let host_row = proof_rows
+        .iter()
+        .find(|row| row["proof_row_id"].as_str() == Some("host_glibc_free_execution"))
+        .expect("host_glibc_free_execution proof row must exist");
+    assert!(
+        json_array_contains(
+            &host_row["present_evidence"],
+            "current standalone forge dependency audit with host_glibc_dependency=true",
+        ),
+        "host_glibc_free_execution must treat current forge audit as present evidence"
+    );
+    assert!(
+        json_array_lacks(
+            &host_row["missing_evidence"],
+            "current libfrankenlibc_replace.so dynamic dependency audit",
+        ),
+        "host_glibc_free_execution must not classify the current forge audit as missing"
+    );
+    for blocker in [
+        "host-glibc-free dynamic dependency audit",
+        "cleared loader/libc/libgcc/unwind/TLS blocker set",
+    ] {
+        assert!(
+            json_array_contains(&host_row["missing_evidence"], blocker),
+            "host_glibc_free_execution missing_evidence must include {blocker}"
+        );
+    }
+
+    let obligations = matrix["obligations"].as_array().unwrap();
+    let version_obligation = obligations
+        .iter()
+        .find(|entry| entry["id"].as_str() == Some("l2-versioned-symbol-subset"))
+        .expect("l2-versioned-symbol-subset obligation must exist");
+    assert!(
+        version_obligation["blocker_reason"]
+            .as_str()
+            .unwrap()
+            .contains("Current forge evidence"),
+        "versioned-symbol obligation must name current forge evidence"
+    );
+
+    let host_obligation = obligations
+        .iter()
+        .find(|entry| entry["id"].as_str() == Some("l2-host-dependency-allowlist"))
+        .expect("l2-host-dependency-allowlist obligation must exist");
+    let host_reason = host_obligation["blocker_reason"].as_str().unwrap();
+    for blocker in ["host loader", "libc", "libgcc", "unwind", "TLS"] {
+        assert!(
+            host_reason.contains(blocker),
+            "host dependency blocker reason must mention {blocker}"
         );
     }
 }
@@ -414,6 +505,7 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         "proof_rows",
         "obligations",
         "standalone_artifact_refs",
+        "standalone_forge_evidence_semantics",
         "dimension_coverage",
         "claim_policy",
         "summary_counts",

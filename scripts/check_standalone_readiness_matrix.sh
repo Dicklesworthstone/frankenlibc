@@ -79,6 +79,24 @@ REQUIRED_OBLIGATION_FIELDS = [
 ]
 REQUIRED_LEVELS = {"L2", "L3"}
 STANDALONE_ARTIFACT_REF = "tests/conformance/standalone_replacement_artifact.v1.json"
+FORGE_PRESENT_EVIDENCE = {
+    "symbol_version_nodes": "current standalone forge symbol/version audit with sampled symbols present",
+    "host_glibc_free_execution": "current standalone forge dependency audit with host_glibc_dependency=true",
+}
+FORGE_MISSING_EVIDENCE = {
+    "symbol_version_nodes": [
+        "full claimed-subset version-node parity",
+        "cleared host version requirements in standalone forge report",
+    ],
+    "host_glibc_free_execution": [
+        "host-glibc-free dynamic dependency audit",
+        "cleared loader/libc/libgcc/unwind/TLS blocker set",
+    ],
+}
+FORBIDDEN_MISSING_AUDIT_TEXT = {
+    "symbol_version_nodes": "current standalone artifact symbol/version audit",
+    "host_glibc_free_execution": "current libfrankenlibc_replace.so dynamic dependency audit",
+}
 
 def load_json(path):
     try:
@@ -308,6 +326,42 @@ for kind, by_id, target_id, field in [
         standalone_artifact_refs_ok = False
         errors.append(f"{kind} {target_id}: {field} must include {STANDALONE_ARTIFACT_REF}")
 checks["standalone_artifact_refs"] = "pass" if standalone_artifact_refs_ok else "fail"
+
+standalone_forge_evidence_semantics_ok = True
+for proof_row_id, required_present in FORGE_PRESENT_EVIDENCE.items():
+    row = proof_rows_by_id.get(proof_row_id)
+    if row is None:
+        standalone_forge_evidence_semantics_ok = False
+        errors.append(f"{proof_row_id}: missing proof row for forge evidence semantics")
+        continue
+    present = row.get("present_evidence", [])
+    missing = row.get("missing_evidence", [])
+    if required_present not in present:
+        standalone_forge_evidence_semantics_ok = False
+        errors.append(f"{proof_row_id}: present_evidence must include {required_present}")
+    for required_missing in FORGE_MISSING_EVIDENCE[proof_row_id]:
+        if required_missing not in missing:
+            standalone_forge_evidence_semantics_ok = False
+            errors.append(f"{proof_row_id}: missing_evidence must include {required_missing}")
+    forbidden = FORBIDDEN_MISSING_AUDIT_TEXT[proof_row_id]
+    if forbidden in missing:
+        standalone_forge_evidence_semantics_ok = False
+        errors.append(f"{proof_row_id}: current forge audit is present failing evidence, not missing evidence")
+
+version_obligation = obligations_by_id.get("l2-versioned-symbol-subset", {})
+if "Current forge evidence" not in version_obligation.get("blocker_reason", ""):
+    standalone_forge_evidence_semantics_ok = False
+    errors.append("l2-versioned-symbol-subset blocker_reason must mention current forge evidence")
+
+host_obligation = obligations_by_id.get("l2-host-dependency-allowlist", {})
+host_blocker_reason = host_obligation.get("blocker_reason", "")
+for blocker in ["host loader", "libc", "libgcc", "unwind", "TLS"]:
+    if blocker not in host_blocker_reason:
+        standalone_forge_evidence_semantics_ok = False
+        errors.append(f"l2-host-dependency-allowlist blocker_reason must mention {blocker}")
+checks["standalone_forge_evidence_semantics"] = (
+    "pass" if standalone_forge_evidence_semantics_ok else "fail"
+)
 
 missing_dimensions = sorted(required_dimensions - set(dimension_coverage))
 if not missing_dimensions:

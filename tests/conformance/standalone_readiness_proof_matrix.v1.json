@@ -233,10 +233,12 @@
       ],
       "present_evidence": [
         "version script",
+        "current standalone forge symbol/version audit with sampled symbols present",
         "support matrix"
       ],
       "missing_evidence": [
-        "current standalone artifact symbol/version audit"
+        "full claimed-subset version-node parity",
+        "cleared host version requirements in standalone forge report"
       ],
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
@@ -328,10 +330,12 @@
         "readelf/ldd/nm audit proves no host glibc dependency for replacement artifact"
       ],
       "present_evidence": [
-        "host dependency inventory schema"
+        "host dependency inventory schema",
+        "current standalone forge dependency audit with host_glibc_dependency=true"
       ],
       "missing_evidence": [
-        "current libfrankenlibc_replace.so dynamic dependency audit"
+        "host-glibc-free dynamic dependency audit",
+        "cleared loader/libc/libgcc/unwind/TLS blocker set"
       ],
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
@@ -467,7 +471,7 @@
       "title": "Versioned symbol subset export proof",
       "requirement": "Prove every L2 subset symbol has the expected exported name, version node, calling convention, and fixture-backed semantic status.",
       "current_state": "blocked",
-      "blocker_reason": "Current symbol counts do not prove subset version-node compatibility or semantic fixture coverage.",
+      "blocker_reason": "Current forge evidence proves only sampled symbols are present; full subset version-node parity and host version requirements are still blockers.",
       "evidence_artifacts": [
         "crates/frankenlibc-abi/version_scripts/libc.map",
         "tests/conformance/standalone_replacement_artifact.v1.json",
@@ -502,7 +506,7 @@
       "title": "L2 host dependency allowlist and runtime audit",
       "requirement": "Inventory every host libc, loader, CRT, startup, and dlsym/dlopen dependency reachable from the L2 artifact and block unapproved dependencies.",
       "current_state": "blocked",
-      "blocker_reason": "Host-dependency inventory is not yet a current release gate for standalone claims.",
+      "blocker_reason": "Current forge evidence is present but still reports host loader/libc/libgcc/unwind/TLS blockers, so standalone claims remain blocked.",
       "evidence_artifacts": [
         "tests/conformance/replacement_levels.json",
         "tests/conformance/standalone_replacement_artifact.v1.json",
