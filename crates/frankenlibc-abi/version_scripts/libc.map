@@ -2899,6 +2899,7 @@ GLIBC_2.2.5 {
         _dl_mcount_wrapper;
         _dl_mcount_wrapper_check;
         __dn_comp;
+        __dn_count_labels;
         __dn_expand;
         __dn_skipname;
         __dup2;
