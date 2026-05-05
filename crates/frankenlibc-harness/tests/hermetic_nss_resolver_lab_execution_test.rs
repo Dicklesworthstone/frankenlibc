@@ -17,6 +17,7 @@ type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 const REQUIRED_SCENARIOS: &[&str] = &[
     "nss-numeric-hosts-bypass",
     "nss-hosts-files-only",
+    "nss-services-files-only",
     "nss-dns-success-then-cache",
     "nss-dns-timeout",
     "nss-dns-poisoning-rejected",
@@ -37,6 +38,8 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "resolved_host",
     "resolved_addrs",
     "resolved_errno",
+    "semantic_kernel",
+    "oracle_delta",
     "expected",
     "actual",
     "decision_path",
@@ -53,6 +56,9 @@ const REQUIRED_FAILURE_SIGNATURES: &[&str] = &[
     "nss_lab_missing_oracle",
     "nss_lab_missing_runtime_mode",
     "nss_lab_missing_fixture_obligation",
+    "nss_lab_missing_semantic_kernel",
+    "nss_lab_unsupported_lookup_family",
+    "nss_lab_oracle_delta_detected",
 ];
 
 fn test_error(message: impl Into<String>) -> Box<dyn Error> {
@@ -325,7 +331,7 @@ fn runner_passes_and_emits_current_jsonl_evidence() -> TestResult {
             "report.summary",
         )?
         .as_u64(),
-        Some(8),
+        Some(9),
         "scenario count",
     )?;
     ensure_eq(
@@ -335,8 +341,18 @@ fn runner_passes_and_emits_current_jsonl_evidence() -> TestResult {
             "report.summary",
         )?
         .as_u64(),
-        Some(16),
+        Some(18),
         "evidence row count",
+    )?;
+    ensure_eq(
+        field(
+            field(&report, "summary", "report")?,
+            "semantic_kernel_count",
+            "report.summary",
+        )?
+        .as_u64(),
+        Some(8),
+        "semantic kernel count",
     )?;
     ensure(
         field(&report, "real_network_observed", "report")?.as_bool() == Some(false),
@@ -407,6 +423,19 @@ fn runner_passes_and_emits_current_jsonl_evidence() -> TestResult {
             field(&entry, "duration_ns", "entry")?.as_u64().is_some(),
             "duration_ns should be numeric",
         )?;
+        ensure(
+            string_field(&entry, "semantic_kernel", "entry")?.ends_with("_kernel"),
+            "semantic_kernel should identify the executed semantic kernel",
+        )?;
+        let delta = as_object(
+            field(&entry, "oracle_delta", "entry")?,
+            "entry.oracle_delta",
+        )?;
+        ensure_eq(
+            delta.get("kind").and_then(Value::as_str),
+            Some("none"),
+            "oracle_delta.kind",
+        )?;
         let refs = as_array(
             field(&entry, "artifact_refs", "entry")?,
             "entry.artifact_refs",
@@ -422,7 +451,7 @@ fn runner_passes_and_emits_current_jsonl_evidence() -> TestResult {
             )?;
         }
     }
-    ensure_eq(row_count, 16usize, "JSONL row count")?;
+    ensure_eq(row_count, 18usize, "JSONL row count")?;
     for scenario_id in REQUIRED_SCENARIOS {
         let modes = modes_by_scenario
             .get(*scenario_id)
@@ -515,6 +544,39 @@ fn runner_fails_closed_for_missing_fixture_obligation() -> TestResult {
     set_object_field(first, "fixture_obligation", json!(""), "scenario")?;
     let report = run_lab_with_manifest(&root, "missing_fixture_obligation", &manifest)?;
     expect_error_signature(&report, "nss_lab_missing_fixture_obligation")
+}
+
+#[test]
+fn runner_fails_closed_for_missing_semantic_kernel() -> TestResult {
+    let root = workspace_root();
+    let mut manifest = load_json(&manifest_path(&root))?;
+    let first = mutable_scenarios(&mut manifest)?
+        .first_mut()
+        .ok_or_else(|| test_error("manifest should have scenarios"))?;
+    set_object_field(first, "semantic_kernel", json!(""), "scenario")?;
+    let report = run_lab_with_manifest(&root, "missing_semantic_kernel", &manifest)?;
+    expect_error_signature(&report, "nss_lab_missing_semantic_kernel")
+}
+
+#[test]
+fn runner_fails_closed_for_unsupported_lookup_family() -> TestResult {
+    let root = workspace_root();
+    let mut manifest = load_json(&manifest_path(&root))?;
+    let kernels = manifest
+        .get_mut("semantic_kernels")
+        .and_then(|semantic| semantic.get_mut("required_kernels"))
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| test_error("semantic_kernels.required_kernels should be mutable"))?;
+    kernels.push(json!({
+        "kernel_id": "netgroup_kernel",
+        "lookup_family": "netgroup",
+        "input_files": ["etc/netgroup"],
+        "host_glibc_fixture_ids": ["getnetgrent_files_subset"],
+        "frankenlibc_surface": "unsupported",
+        "contract": "unsupported lookup families must fail closed"
+    }));
+    let report = run_lab_with_manifest(&root, "unsupported_lookup_family", &manifest)?;
+    expect_error_signature(&report, "nss_lab_unsupported_lookup_family")
 }
 
 #[test]

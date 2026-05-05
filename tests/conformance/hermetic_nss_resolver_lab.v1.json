@@ -5,7 +5,7 @@
   "owner_bead": "bd-b92jd.5",
   "generated_utc": "2026-05-05T03:30:00Z",
   "source_commit": "a75bb9c55e6373099e27552b2f3d05dbe569fc0b",
-  "purpose": "Hermetic resolver/NSS lab manifest. Declares the synthetic fake-root layout (hosts, services, passwd, group, resolv.conf, optional fake UDP DNS endpoint), the test scenarios that exercise it, and the fail-closed contract that no scenario may issue a real-network call. Each scenario carries strict/hardened mode coverage, an oracle, structured-log fields, and a fixture obligation pointing at the synthetic root entry that drives it. The execution runner materializes fake roots, binds only loopback fake DNS endpoints, and emits current-commit JSONL evidence under target/conformance/nss_lab/.",
+  "purpose": "Hermetic resolver/NSS lab manifest. Declares the synthetic fake-root layout (hosts, services, passwd, group, resolv.conf, optional fake UDP DNS endpoint), the semantic kernels that parse and replay those files, the test scenarios that exercise them, and the fail-closed contract that no scenario may issue a real-network call. Each scenario carries strict/hardened mode coverage, an oracle, structured-log fields, host-glibc fixture anchors, and a fixture obligation pointing at the synthetic root entry that drives it. The execution runner materializes fake roots, runs only the declared semantic kernels, binds only loopback fake DNS endpoints, and emits current-commit JSONL evidence under target/conformance/nss_lab/.",
   "execution_runner": "scripts/run_hermetic_nss_resolver_lab.sh",
   "freshness": {
     "required_source_commit": "current",
@@ -17,6 +17,81 @@
     "real_network_envvar_override": "FRANKENLIBC_NSS_LAB_ALLOW_NETWORK",
     "rationale": "Default runs must be reproducible offline; opting in to real network requires the FRANKENLIBC_NSS_LAB_ALLOW_NETWORK env var so CI cannot accidentally exercise a remote resolver.",
     "cargo_invocation_template": "rch exec -- cargo test -p frankenlibc-harness --test <scenario_test_name>"
+  },
+  "semantic_kernels": {
+    "required_kernels": [
+      {
+        "kernel_id": "numeric_short_circuit_kernel",
+        "lookup_family": "numeric_hosts",
+        "input_files": [],
+        "host_glibc_fixture_ids": ["getaddrinfo_numeric_ipv4", "getaddrinfo_numeric_ipv6"],
+        "frankenlibc_surface": "crates/frankenlibc-core/src/resolv/dns.rs",
+        "contract": "Classify numeric IPv4/IPv6 input before files, nsswitch, resolv.conf, or DNS are touched."
+      },
+      {
+        "kernel_id": "hosts_files_kernel",
+        "lookup_family": "hosts",
+        "input_files": ["etc/hosts", "etc/nsswitch.conf"],
+        "host_glibc_fixture_ids": ["getaddrinfo_hosts_file_subset", "hosts_lookup_inline_comments_and_aliases"],
+        "frankenlibc_surface": "crates/frankenlibc-core/src/resolv/dns.rs",
+        "contract": "Parse /etc/hosts aliases and return deterministic address rows when nsswitch selects files."
+      },
+      {
+        "kernel_id": "services_files_kernel",
+        "lookup_family": "services",
+        "input_files": ["etc/services"],
+        "host_glibc_fixture_ids": ["getaddrinfo_service_name"],
+        "frankenlibc_surface": "crates/frankenlibc-core/src/resolv/dns.rs",
+        "contract": "Parse /etc/services name/protocol rows and attach service ports to resolver expectations."
+      },
+      {
+        "kernel_id": "passwd_files_kernel",
+        "lookup_family": "passwd",
+        "input_files": ["etc/passwd", "etc/nsswitch.conf"],
+        "host_glibc_fixture_ids": ["getpwnam_files_subset", "getpwuid_files_subset"],
+        "frankenlibc_surface": "crates/frankenlibc-abi/src/pwd_abi.rs",
+        "contract": "Parse passwd name/uid/gid/home/shell fields and compare files-only NSS expectations."
+      },
+      {
+        "kernel_id": "group_files_kernel",
+        "lookup_family": "group",
+        "input_files": ["etc/group", "etc/nsswitch.conf"],
+        "host_glibc_fixture_ids": ["getgrnam_files_subset", "getgrgid_files_subset"],
+        "frankenlibc_surface": "crates/frankenlibc-abi/src/grp_abi.rs",
+        "contract": "Parse group name/gid/member lists and compare files-only NSS expectations."
+      },
+      {
+        "kernel_id": "resolv_conf_kernel",
+        "lookup_family": "resolv_conf",
+        "input_files": ["etc/resolv.conf"],
+        "host_glibc_fixture_ids": ["resolv_conf_options_attempts", "resolv_conf_options_timeout", "resolv_conf_search_list"],
+        "frankenlibc_surface": "crates/frankenlibc-core/src/resolv/config.rs",
+        "contract": "Parse nameserver, timeout, attempts, and search-domain controls for bounded fake-DNS replay."
+      },
+      {
+        "kernel_id": "nsswitch_kernel",
+        "lookup_family": "nsswitch",
+        "input_files": ["etc/nsswitch.conf"],
+        "host_glibc_fixture_ids": ["nsswitch_hosts_files_dns_order", "nsswitch_passwd_files_order", "nsswitch_group_files_order"],
+        "frankenlibc_surface": "crates/frankenlibc-core/src/resolv/mod.rs",
+        "contract": "Parse per-database source order and reject scenarios that require unsupported NSS backends."
+      },
+      {
+        "kernel_id": "fake_dns_loopback_kernel",
+        "lookup_family": "fake_dns_loopback",
+        "input_files": ["etc/resolv.conf"],
+        "host_glibc_fixture_ids": ["dns_header_query", "dns_encode_domain_name"],
+        "frankenlibc_surface": "crates/frankenlibc-core/src/resolv/dns.rs",
+        "contract": "Replay fake loopback DNS success, timeout, poisoning rejection, and search-list walks without real-network egress."
+      }
+    ],
+    "unsupported_lookup_families": ["netgroup", "rpc", "nscd", "sunrpc"],
+    "oracle_delta_policy": {
+      "required": true,
+      "pass_value": "none",
+      "blocked_value": "unsupported_lookup_family",
+      "description": "Each row records the semantic-kernel expected/actual comparison. Supported scenarios must emit oracle_delta.kind=none; unsupported lookup families must fail closed with nss_lab_unsupported_lookup_family."
+    }
   },
   "fake_root_layout": {
     "root_envvar": "FRANKENLIBC_NSS_LAB_ROOT",
@@ -77,6 +152,8 @@
     "resolved_host",
     "resolved_addrs",
     "resolved_errno",
+    "semantic_kernel",
+    "oracle_delta",
     "expected",
     "actual",
     "decision_path",
@@ -97,7 +174,8 @@
       "scenario_lacks_runtime_mode_coverage",
       "duplicate_scenario_id",
       "stale_source_commit",
-      "scenario_lacks_fixture_obligation"
+      "scenario_lacks_fixture_obligation",
+      "unsupported_lookup_family"
     ]
   },
   "optional_skip_conditions": [
@@ -116,6 +194,8 @@
       "harness_test_name": "nss_lab_numeric_hosts_bypass",
       "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "numeric_short_circuit_replay",
+      "semantic_kernel": "numeric_short_circuit_kernel",
+      "host_glibc_fixture_ids": ["getaddrinfo_numeric_ipv4", "getaddrinfo_numeric_ipv6"],
       "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf"],
       "fixture_obligation": "Numeric inputs must produce IN6/IN responses without touching DNS state; assert no UDP send was issued by the lab DNS endpoint.",
       "evidence_artifact": "target/conformance/nss_lab/numeric_hosts_bypass.jsonl"
@@ -127,9 +207,24 @@
       "harness_test_name": "nss_lab_hosts_files_only",
       "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "files_db_replay",
+      "semantic_kernel": "hosts_files_kernel",
+      "host_glibc_fixture_ids": ["getaddrinfo_hosts_file_subset", "hosts_lookup_inline_comments_and_aliases"],
       "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf"],
       "fixture_obligation": "etc/hosts row 'hermetic.local 198.51.100.7' must round-trip through getaddrinfo without DNS fallback.",
       "evidence_artifact": "target/conformance/nss_lab/hosts_files_only.jsonl"
+    },
+    {
+      "scenario_id": "nss-services-files-only",
+      "scenario_kind": "services",
+      "description": "nsswitch=files only; getaddrinfo on service 'hermetic-service' must resolve the synthetic etc/services tcp port without DNS or network fallback.",
+      "harness_test_name": "nss_lab_services_files_only",
+      "runtime_modes": ["strict", "hardened"],
+      "oracle_kind": "files_db_replay",
+      "semantic_kernel": "services_files_kernel",
+      "host_glibc_fixture_ids": ["getaddrinfo_service_name"],
+      "fake_root_files_needed": ["etc/services", "etc/nsswitch.conf"],
+      "fixture_obligation": "etc/services row 'hermetic-service 4242/tcp' must attach tcp port 4242 to getaddrinfo service-name expectations.",
+      "evidence_artifact": "target/conformance/nss_lab/services_files_only.jsonl"
     },
     {
       "scenario_id": "nss-dns-success-then-cache",
@@ -138,6 +233,8 @@
       "harness_test_name": "nss_lab_dns_success_then_cache",
       "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "udp_send_count_replay",
+      "semantic_kernel": "fake_dns_loopback_kernel",
+      "host_glibc_fixture_ids": ["dns_header_query", "dns_encode_domain_name"],
       "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf", "etc/resolv.conf"],
       "fake_dns_required": true,
       "fixture_obligation": "First lookup issues 1 UDP send; second lookup within TTL issues 0; assert cache hit on second.",
@@ -150,6 +247,8 @@
       "harness_test_name": "nss_lab_dns_timeout",
       "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "deadline_bound_replay",
+      "semantic_kernel": "resolv_conf_kernel",
+      "host_glibc_fixture_ids": ["resolv_conf_options_attempts", "resolv_conf_options_timeout"],
       "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf", "etc/resolv.conf"],
       "fake_dns_required": true,
       "fixture_obligation": "Set resolv.conf timeout=1 attempts=1; assert getaddrinfo returns within 2s wall clock with EAI_AGAIN/EAI_NONAME.",
@@ -162,6 +261,8 @@
       "harness_test_name": "nss_lab_dns_poisoning_rejected",
       "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "poisoning_reject_replay",
+      "semantic_kernel": "fake_dns_loopback_kernel",
+      "host_glibc_fixture_ids": ["dns_header_query"],
       "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf", "etc/resolv.conf"],
       "fake_dns_required": true,
       "fixture_obligation": "Inject a response with txid=0xDEAD when the query used 0xBEEF; assert resolver does NOT cache or return the spoofed address.",
@@ -174,6 +275,8 @@
       "harness_test_name": "nss_lab_search_domain_walk",
       "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "search_walk_order_replay",
+      "semantic_kernel": "fake_dns_loopback_kernel",
+      "host_glibc_fixture_ids": ["resolv_conf_search_list", "dns_encode_domain_name"],
       "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf", "etc/resolv.conf"],
       "fake_dns_required": true,
       "fixture_obligation": "Fake DNS NXDOMAINs 'foo.a.example', responds for 'foo.b.example'; assert exactly two queries issued in the right order.",
@@ -186,6 +289,8 @@
       "harness_test_name": "nss_lab_passwd_files_only",
       "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "files_db_replay",
+      "semantic_kernel": "passwd_files_kernel",
+      "host_glibc_fixture_ids": ["getpwnam_files_subset", "getpwuid_files_subset"],
       "fake_root_files_needed": ["etc/passwd", "etc/nsswitch.conf"],
       "fixture_obligation": "etc/passwd row 'hermetic_user:x:60001:60001::/home/hermetic:/bin/sh' must round-trip both name and uid lookups.",
       "evidence_artifact": "target/conformance/nss_lab/passwd_files_only.jsonl"
@@ -197,6 +302,8 @@
       "harness_test_name": "nss_lab_group_files_only",
       "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "files_db_replay",
+      "semantic_kernel": "group_files_kernel",
+      "host_glibc_fixture_ids": ["getgrnam_files_subset", "getgrgid_files_subset"],
       "fake_root_files_needed": ["etc/group", "etc/nsswitch.conf"],
       "fixture_obligation": "etc/group row 'hermetic:x:60001:hermetic_user' must round-trip both gid and name lookups.",
       "evidence_artifact": "target/conformance/nss_lab/group_files_only.jsonl"
@@ -205,6 +312,7 @@
   "minimum_scenario_counts": {
     "numeric": 1,
     "hosts": 1,
+    "services": 1,
     "dns": 4,
     "passwd": 1,
     "group": 1

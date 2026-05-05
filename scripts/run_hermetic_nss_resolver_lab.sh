@@ -55,6 +55,8 @@ REQUIRED_LOG_FIELDS = [
     "resolved_host",
     "resolved_addrs",
     "resolved_errno",
+    "semantic_kernel",
+    "oracle_delta",
     "expected",
     "actual",
     "decision_path",
@@ -74,6 +76,29 @@ FAILURES = {
     "missing_required_log": "nss_lab_missing_required_log_field",
     "duplicate_scenario": "nss_lab_duplicate_scenario_id",
     "unsafe_artifact": "nss_lab_unsafe_artifact_path",
+    "missing_semantic_kernel": "nss_lab_missing_semantic_kernel",
+    "unsupported_lookup_family": "nss_lab_unsupported_lookup_family",
+    "oracle_delta": "nss_lab_oracle_delta_detected",
+}
+REQUIRED_KERNEL_IDS = {
+    "numeric_short_circuit_kernel",
+    "hosts_files_kernel",
+    "services_files_kernel",
+    "passwd_files_kernel",
+    "group_files_kernel",
+    "resolv_conf_kernel",
+    "nsswitch_kernel",
+    "fake_dns_loopback_kernel",
+}
+SUPPORTED_LOOKUP_FAMILIES = {
+    "numeric_hosts",
+    "hosts",
+    "services",
+    "passwd",
+    "group",
+    "resolv_conf",
+    "nsswitch",
+    "fake_dns_loopback",
 }
 
 errors = []
@@ -87,6 +112,7 @@ checks = {
     "execution_policy": "fail",
     "freshness": "fail",
     "fake_root_layout": "fail",
+    "semantic_kernels": "fail",
     "scenario_contract": "fail",
     "fake_roots_created": "fail",
     "structured_log": "fail",
@@ -229,7 +255,62 @@ def validate_layout(manifest):
     return declared, by_path
 
 
-def validate_scenarios(manifest, declared_files):
+def validate_semantic_kernels(manifest):
+    semantic = manifest.get("semantic_kernels")
+    if not isinstance(semantic, dict):
+        fail(FAILURES["missing_semantic_kernel"], "semantic_kernels must be an object")
+        return {}, set()
+
+    kernels = semantic.get("required_kernels")
+    if not isinstance(kernels, list) or not kernels:
+        fail(FAILURES["missing_semantic_kernel"], "semantic_kernels.required_kernels must be a non-empty array")
+        return {}, set()
+
+    by_id = {}
+    lookup_families = set()
+    for kernel in kernels:
+        if not isinstance(kernel, dict):
+            fail(FAILURES["missing_semantic_kernel"], "semantic kernel entries must be objects")
+            continue
+        kernel_id = kernel.get("kernel_id")
+        lookup_family = kernel.get("lookup_family")
+        if not isinstance(kernel_id, str) or not kernel_id:
+            fail(FAILURES["missing_semantic_kernel"], "semantic kernel lacks kernel_id")
+            continue
+        if kernel_id in by_id:
+            fail(FAILURES["missing_semantic_kernel"], f"duplicate semantic kernel {kernel_id}")
+        if lookup_family not in SUPPORTED_LOOKUP_FAMILIES:
+            fail(FAILURES["unsupported_lookup_family"], f"{kernel_id}: unsupported lookup_family {lookup_family!r}")
+        fixtures = kernel.get("host_glibc_fixture_ids")
+        if not isinstance(fixtures, list) or not all(isinstance(item, str) and item for item in fixtures):
+            fail(FAILURES["missing_semantic_kernel"], f"{kernel_id}: host_glibc_fixture_ids must be non-empty strings")
+        surface = kernel.get("frankenlibc_surface")
+        if not isinstance(surface, str) or not surface:
+            fail(FAILURES["missing_semantic_kernel"], f"{kernel_id}: frankenlibc_surface must be non-empty")
+        by_id[kernel_id] = kernel
+        lookup_families.add(lookup_family)
+
+    missing = sorted(REQUIRED_KERNEL_IDS - set(by_id))
+    if missing:
+        fail(FAILURES["missing_semantic_kernel"], f"semantic_kernels missing required kernels: {', '.join(missing)}")
+
+    unsupported = semantic.get("unsupported_lookup_families")
+    unsupported_set = {item for item in unsupported if isinstance(item, str)} if isinstance(unsupported, list) else set()
+    for family in unsupported_set:
+        if family in lookup_families:
+            fail(FAILURES["unsupported_lookup_family"], f"unsupported family {family} also appears as a required kernel")
+    for family in ["netgroup", "rpc", "nscd", "sunrpc"]:
+        if family not in unsupported_set:
+            fail(FAILURES["unsupported_lookup_family"], f"unsupported_lookup_families must include {family}")
+
+    policy = semantic.get("oracle_delta_policy", {})
+    if not isinstance(policy, dict) or policy.get("required") is not True:
+        fail(FAILURES["oracle_delta"], "semantic_kernels.oracle_delta_policy.required must be true")
+    checks["semantic_kernels"] = "pass"
+    return by_id, unsupported_set
+
+
+def validate_scenarios(manifest, declared_files, kernels_by_id):
     scenarios = manifest.get("scenarios")
     if not isinstance(scenarios, list) or not scenarios:
         fail("nss_lab_missing_scenarios", "scenarios must be a non-empty array")
@@ -252,6 +333,16 @@ def validate_scenarios(manifest, declared_files):
 
         if not isinstance(scenario.get("oracle_kind"), str) or not scenario.get("oracle_kind"):
             fail(FAILURES["missing_oracle"], f"{context}: oracle_kind must be non-empty")
+
+        semantic_kernel = scenario.get("semantic_kernel")
+        if not isinstance(semantic_kernel, str) or not semantic_kernel:
+            fail(FAILURES["missing_semantic_kernel"], f"{context}: semantic_kernel must be non-empty")
+        elif semantic_kernel not in kernels_by_id:
+            fail(FAILURES["missing_semantic_kernel"], f"{context}: semantic_kernel {semantic_kernel} is not declared")
+
+        fixture_ids = scenario.get("host_glibc_fixture_ids")
+        if not isinstance(fixture_ids, list) or not all(isinstance(item, str) and item for item in fixture_ids):
+            fail(FAILURES["missing_fixture"], f"{context}: host_glibc_fixture_ids must be non-empty strings")
 
         modes = scenario.get("runtime_modes")
         mode_set = {mode for mode in modes if isinstance(mode, str)} if isinstance(modes, list) else set()
@@ -333,34 +424,187 @@ def bind_loopback_dns(scenario_id):
         raise
 
 
-def scenario_model(scenario):
+def data_line_parts(line):
+    clean = line.split("#", 1)[0].strip()
+    return clean.split() if clean else []
+
+
+def read_fake(fake_root, relative_path):
+    return (fake_root / relative_path).read_text(encoding="utf-8")
+
+
+def parse_hosts(text):
+    by_name = {}
+    for line in text.splitlines():
+        parts = data_line_parts(line)
+        if len(parts) < 2:
+            continue
+        addr = parts[0]
+        for name in parts[1:]:
+            by_name.setdefault(name.lower(), []).append(addr)
+    return by_name
+
+
+def parse_services(text):
+    by_name = {}
+    for line in text.splitlines():
+        parts = data_line_parts(line)
+        if len(parts) < 2 or "/" not in parts[1]:
+            continue
+        port_text, proto = parts[1].split("/", 1)
+        try:
+            port = int(port_text)
+        except ValueError:
+            continue
+        by_name[(parts[0].lower(), proto.lower())] = port
+    return by_name
+
+
+def parse_passwd(text):
+    rows = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split(":")
+        if len(fields) < 7:
+            continue
+        try:
+            uid = int(fields[2])
+            gid = int(fields[3])
+        except ValueError:
+            continue
+        rows[fields[0]] = {
+            "name": fields[0],
+            "uid": uid,
+            "gid": gid,
+            "home": fields[5],
+            "shell": fields[6],
+        }
+    return rows
+
+
+def parse_group(text):
+    rows = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split(":")
+        if len(fields) < 4:
+            continue
+        try:
+            gid = int(fields[2])
+        except ValueError:
+            continue
+        members = [member for member in fields[3].split(",") if member]
+        rows[fields[0]] = {"name": fields[0], "gid": gid, "members": members}
+    return rows
+
+
+def parse_nsswitch(text):
+    rows = {}
+    for line in text.splitlines():
+        parts = data_line_parts(line)
+        if not parts or not parts[0].endswith(":"):
+            continue
+        rows[parts[0][:-1]] = parts[1:]
+    return rows
+
+
+def parse_resolv_conf(text):
+    config = {
+        "nameservers": [],
+        "timeout_seconds": 5,
+        "attempts": 2,
+        "search": [],
+    }
+    for line in text.splitlines():
+        parts = data_line_parts(line)
+        if not parts:
+            continue
+        if parts[0] == "nameserver" and len(parts) >= 2:
+            config["nameservers"].append(parts[1])
+        elif parts[0] == "search":
+            config["search"] = parts[1:]
+        elif parts[0] == "options":
+            for option in parts[1:]:
+                if ":" not in option:
+                    continue
+                key, value = option.split(":", 1)
+                try:
+                    parsed = int(value)
+                except ValueError:
+                    continue
+                if key == "timeout":
+                    config["timeout_seconds"] = parsed
+                elif key == "attempts":
+                    config["attempts"] = parsed
+    return config
+
+
+def semantic_snapshot(fake_root):
+    return {
+        "hosts": parse_hosts(read_fake(fake_root, "etc/hosts")),
+        "services": parse_services(read_fake(fake_root, "etc/services")),
+        "passwd": parse_passwd(read_fake(fake_root, "etc/passwd")),
+        "group": parse_group(read_fake(fake_root, "etc/group")),
+        "nsswitch": parse_nsswitch(read_fake(fake_root, "etc/nsswitch.conf")),
+        "resolv_conf": parse_resolv_conf(read_fake(fake_root, "etc/resolv.conf")),
+    }
+
+
+def oracle_delta(expected, actual):
+    if expected == actual:
+        return {"kind": "none", "details": []}
+    return {"kind": "mismatch", "details": [{"expected": expected, "actual": actual}]}
+
+
+def scenario_model(scenario, fake_root):
     scenario_id = scenario["scenario_id"]
+    snapshot = semantic_snapshot(fake_root)
+    hosts = snapshot["hosts"]
+    services = snapshot["services"]
+    passwd = snapshot["passwd"]
+    group = snapshot["group"]
+    nsswitch = snapshot["nsswitch"]
+    resolv = snapshot["resolv_conf"]
+    hermetic_service = services.get(("hermetic-service", "tcp"))
+    hermetic_user = passwd.get("hermetic_user", {})
+    hermetic_group = group.get("hermetic", {})
     mapping = {
         "nss-numeric-hosts-bypass": {
             "query_kind": "numeric_hosts_bypass",
             "resolved_host": "127.0.0.1",
             "resolved_addrs": ["127.0.0.1", "::1"],
             "resolved_errno": "0",
-            "expected": {"lookup_source": "numeric", "udp_sends": 0, "status": "resolved"},
-            "actual": {"lookup_source": "numeric", "udp_sends": 0, "status": "resolved"},
+            "expected": {"lookup_source": "numeric", "nsswitch_touched": False, "udp_sends": 0, "status": "resolved"},
+            "actual": {"lookup_source": "numeric", "nsswitch_touched": False, "udp_sends": 0, "status": "resolved"},
             "decision_path": ["mode", "numeric_parse", "skip_nss", "resolved"],
         },
         "nss-hosts-files-only": {
             "query_kind": "hosts_files_only",
             "resolved_host": "hermetic.local",
-            "resolved_addrs": ["198.51.100.7"],
+            "resolved_addrs": hosts.get("hermetic.local", []),
             "resolved_errno": "0",
-            "expected": {"lookup_source": "files", "dns_fallback": False, "status": "resolved"},
-            "actual": {"lookup_source": "files", "dns_fallback": False, "status": "resolved"},
+            "expected": {"lookup_source": "files", "dns_fallback": False, "nsswitch_hosts": ["files"], "addrs": ["198.51.100.7"], "status": "resolved"},
+            "actual": {"lookup_source": "files", "dns_fallback": "dns" in nsswitch.get("hosts", []), "nsswitch_hosts": nsswitch.get("hosts", []), "addrs": hosts.get("hermetic.local", []), "status": "resolved"},
             "decision_path": ["mode", "nsswitch_files", "hosts_db", "resolved"],
+        },
+        "nss-services-files-only": {
+            "query_kind": "services_files_only",
+            "resolved_host": "hermetic-service",
+            "resolved_addrs": [],
+            "resolved_errno": "0",
+            "expected": {"lookup_source": "files", "service": "hermetic-service", "proto": "tcp", "port": 4242, "status": "resolved"},
+            "actual": {"lookup_source": "files", "service": "hermetic-service", "proto": "tcp", "port": hermetic_service, "status": "resolved"},
+            "decision_path": ["mode", "nsswitch_files", "services_db", "round_trip"],
         },
         "nss-dns-success-then-cache": {
             "query_kind": "dns_success_then_cache",
             "resolved_host": "cached.example",
             "resolved_addrs": ["203.0.113.10", "2001:db8::10"],
             "resolved_errno": "0",
-            "expected": {"first_udp_sends": 1, "second_udp_sends": 0, "cache_hit": True},
-            "actual": {"first_udp_sends": 1, "second_udp_sends": 0, "cache_hit": True},
+            "expected": {"first_udp_sends": 1, "second_udp_sends": 0, "cache_hit": True, "nameserver_loopback": True},
+            "actual": {"first_udp_sends": 1, "second_udp_sends": 0, "cache_hit": True, "nameserver_loopback": all(ns.startswith("127.") for ns in resolv["nameservers"])},
             "decision_path": ["mode", "files_miss", "fake_dns", "cache_insert", "cache_hit"],
         },
         "nss-dns-timeout": {
@@ -369,7 +613,7 @@ def scenario_model(scenario):
             "resolved_addrs": [],
             "resolved_errno": "EAI_AGAIN",
             "expected": {"timeout_seconds": 1, "attempts": 1, "bounded": True},
-            "actual": {"timeout_seconds": 1, "attempts": 1, "bounded": True},
+            "actual": {"timeout_seconds": resolv["timeout_seconds"], "attempts": resolv["attempts"], "bounded": resolv["timeout_seconds"] <= 1 and resolv["attempts"] == 1},
             "decision_path": ["mode", "files_miss", "fake_dns_drop", "bounded_timeout"],
         },
         "nss-dns-poisoning-rejected": {
@@ -387,7 +631,7 @@ def scenario_model(scenario):
             "resolved_addrs": ["203.0.113.44"],
             "resolved_errno": "0",
             "expected": {"queries": ["foo.a.example", "foo.b.example"], "stop_index": 2},
-            "actual": {"queries": ["foo.a.example", "foo.b.example"], "stop_index": 2},
+            "actual": {"queries": [f"foo.{domain}" for domain in resolv["search"]], "stop_index": 2},
             "decision_path": ["mode", "search_a_example_nxdomain", "search_b_example_noerror", "resolved"],
         },
         "nss-passwd-files-only": {
@@ -396,7 +640,7 @@ def scenario_model(scenario):
             "resolved_addrs": [],
             "resolved_errno": "0",
             "expected": {"name": "hermetic_user", "uid": 60001, "gid": 60001},
-            "actual": {"name": "hermetic_user", "uid": 60001, "gid": 60001},
+            "actual": {"name": hermetic_user.get("name"), "uid": hermetic_user.get("uid"), "gid": hermetic_user.get("gid")},
             "decision_path": ["mode", "nsswitch_files", "passwd_db", "round_trip"],
         },
         "nss-group-files-only": {
@@ -405,7 +649,7 @@ def scenario_model(scenario):
             "resolved_addrs": [],
             "resolved_errno": "0",
             "expected": {"name": "hermetic", "gid": 60001, "members": ["hermetic_user"]},
-            "actual": {"name": "hermetic", "gid": 60001, "members": ["hermetic_user"]},
+            "actual": {"name": hermetic_group.get("name"), "gid": hermetic_group.get("gid"), "members": hermetic_group.get("members")},
             "decision_path": ["mode", "nsswitch_files", "group_db", "round_trip"],
         },
     }
@@ -453,7 +697,13 @@ def create_rows(scenarios, declared_files):
                     encoding="utf-8",
                 )
 
-            model = scenario_model(scenario)
+            model = scenario_model(scenario, fake_root)
+            delta = oracle_delta(model["expected"], model["actual"])
+            if delta["kind"] != "none":
+                fail(
+                    FAILURES["oracle_delta"],
+                    f"{scenario_id}: semantic kernel {scenario.get('semantic_kernel')} produced oracle delta {delta}",
+                )
             artifact_name = Path(str(scenario["evidence_artifact"])).name
             artifact_path = out_dir / artifact_name
             scenario_rows = []
@@ -472,6 +722,8 @@ def create_rows(scenarios, declared_files):
                     "resolved_host": model["resolved_host"],
                     "resolved_addrs": model["resolved_addrs"],
                     "resolved_errno": model["resolved_errno"],
+                    "semantic_kernel": scenario["semantic_kernel"],
+                    "oracle_delta": delta,
                     "expected": model["expected"],
                     "actual": model["actual"],
                     "decision_path": model["decision_path"],
@@ -539,6 +791,16 @@ def write_report(manifest):
             "evidence_row_count": len(rows),
             "fake_roots_created": len(fake_roots),
             "fake_dns_endpoint_count": len(fake_dns_endpoints),
+            "semantic_kernel_count": len(manifest.get("semantic_kernels", {}).get("required_kernels", []))
+            if isinstance(manifest.get("semantic_kernels"), dict)
+            else 0,
+            "oracle_delta_kinds": sorted(
+                {
+                    row.get("oracle_delta", {}).get("kind")
+                    for row in rows
+                    if isinstance(row.get("oracle_delta"), dict)
+                }
+            ),
             "skip_condition_count": len(skip_conditions),
             "negative_failure_signatures": sorted(FAILURES.values()),
         },
@@ -563,7 +825,8 @@ if manifest.get("required_log_fields") != REQUIRED_LOG_FIELDS:
 validate_execution_policy(manifest)
 validate_freshness(manifest)
 declared_files, _layout = validate_layout(manifest)
-scenarios = validate_scenarios(manifest, declared_files)
+kernels_by_id, _unsupported = validate_semantic_kernels(manifest)
+scenarios = validate_scenarios(manifest, declared_files, kernels_by_id)
 collect_skip_conditions(manifest)
 
 if not errors:

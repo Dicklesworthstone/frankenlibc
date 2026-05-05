@@ -24,7 +24,7 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -58,6 +58,21 @@ where
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn workspace_relative_path(root: &Path, reference: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let rel_path = Path::new(reference);
+    ensure(
+        !rel_path.is_absolute(),
+        format!("path must be workspace-relative: {reference}"),
+    )?;
+    for component in rel_path.components() {
+        ensure(
+            matches!(component, Component::Normal(_)),
+            format!("path may not escape workspace root: {reference}"),
+        )?;
+    }
+    Ok(root.join(rel_path)) // ubs:ignore - rel_path is rejected unless relative with only normal components.
 }
 
 fn load_json(path: &Path) -> Result<Value, Box<dyn Error>> {
@@ -95,6 +110,8 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "resolved_host",
     "resolved_addrs",
     "resolved_errno",
+    "semantic_kernel",
+    "oracle_delta",
     "expected",
     "actual",
     "decision_path",
@@ -113,6 +130,7 @@ const REJECTED_EVIDENCE_KINDS: &[&str] = &[
     "duplicate_scenario_id",
     "stale_source_commit",
     "scenario_lacks_fixture_obligation",
+    "unsupported_lookup_family",
 ];
 
 const SUPPORTED_FILE_KINDS: &[&str] = &[
@@ -122,6 +140,17 @@ const SUPPORTED_FILE_KINDS: &[&str] = &[
     "group_db",
     "resolv_conf",
     "nsswitch_conf",
+];
+
+const REQUIRED_SEMANTIC_KERNELS: &[&str] = &[
+    "numeric_short_circuit_kernel",
+    "hosts_files_kernel",
+    "services_files_kernel",
+    "passwd_files_kernel",
+    "group_files_kernel",
+    "resolv_conf_kernel",
+    "nsswitch_kernel",
+    "fake_dns_loopback_kernel",
 ];
 
 #[test]
@@ -253,6 +282,80 @@ fn fake_root_layout_is_well_formed() -> TestResult {
 }
 
 #[test]
+fn semantic_kernels_cover_fake_root_and_unsupported_families() -> TestResult {
+    let manifest = load_json(&manifest_path())?;
+    let semantic = &manifest["semantic_kernels"];
+    let kernels = as_array(
+        &semantic["required_kernels"],
+        "semantic_kernels.required_kernels",
+    )?;
+    let mut kernel_ids = BTreeSet::new();
+    let mut lookup_families = BTreeSet::new();
+    for kernel in kernels {
+        let kernel_id = as_str(&kernel["kernel_id"], "kernel.kernel_id")?;
+        ensure(
+            kernel_ids.insert(kernel_id.to_string()),
+            format!("duplicate semantic kernel {kernel_id}"),
+        )?;
+        let lookup_family = as_str(&kernel["lookup_family"], "kernel.lookup_family")?;
+        lookup_families.insert(lookup_family.to_string());
+        let fixture_ids = as_array(
+            &kernel["host_glibc_fixture_ids"],
+            "kernel.host_glibc_fixture_ids",
+        )?;
+        ensure(
+            !fixture_ids.is_empty(),
+            format!("{kernel_id}: host_glibc_fixture_ids must be non-empty"),
+        )?;
+        let surface = as_str(&kernel["frankenlibc_surface"], "kernel.frankenlibc_surface")?;
+        ensure(
+            surface.starts_with("crates/frankenlibc-"),
+            format!("{kernel_id}: frankenlibc_surface must point at a crate path"),
+        )?;
+    }
+    for kernel_id in REQUIRED_SEMANTIC_KERNELS {
+        ensure(
+            kernel_ids.contains(*kernel_id),
+            format!("semantic_kernels.required_kernels must include {kernel_id}"),
+        )?;
+    }
+    for family in [
+        "numeric_hosts",
+        "hosts",
+        "services",
+        "passwd",
+        "group",
+        "resolv_conf",
+        "nsswitch",
+        "fake_dns_loopback",
+    ] {
+        ensure(
+            lookup_families.contains(family),
+            format!("semantic kernels must cover lookup family {family}"),
+        )?;
+    }
+    let unsupported = as_array(
+        &semantic["unsupported_lookup_families"],
+        "semantic_kernels.unsupported_lookup_families",
+    )?
+    .iter()
+    .filter_map(Value::as_str)
+    .collect::<BTreeSet<_>>();
+    for family in ["netgroup", "rpc", "nscd", "sunrpc"] {
+        ensure(
+            unsupported.contains(family),
+            format!("unsupported_lookup_families must include {family}"),
+        )?;
+    }
+    ensure_eq(
+        semantic["oracle_delta_policy"]["required"].as_bool(),
+        Some(true),
+        "oracle_delta_policy.required",
+    )?;
+    Ok(())
+}
+
+#[test]
 fn scenarios_are_unique_complete_and_meet_minimum_counts() -> TestResult {
     let manifest = load_json(&manifest_path())?;
     let layout_files: BTreeSet<String> = as_array(
@@ -285,6 +388,16 @@ fn scenarios_are_unique_complete_and_meet_minimum_counts() -> TestResult {
         ensure(
             !oracle.is_empty(),
             format!("scenario {id}: scenario_lacks_oracle"),
+        )?;
+        let semantic_kernel = as_str(&row["semantic_kernel"], "row.semantic_kernel")?;
+        ensure(
+            REQUIRED_SEMANTIC_KERNELS.contains(&semantic_kernel),
+            format!("scenario {id}: semantic_kernel {semantic_kernel} is not declared"),
+        )?;
+        let fixture_ids = as_array(&row["host_glibc_fixture_ids"], "row.host_glibc_fixture_ids")?;
+        ensure(
+            !fixture_ids.is_empty(),
+            format!("scenario {id}: host_glibc_fixture_ids must be non-empty"),
         )?;
         let modes: Vec<&str> = as_array(&row["runtime_modes"], "row.runtime_modes")?
             .iter()
@@ -402,8 +515,9 @@ fn consuming_gates_exist_on_disk() -> TestResult {
     let root = workspace_root();
     for gate in as_array(&manifest["consuming_gates"], "consuming_gates")? {
         let path = as_str(gate, "consuming_gates[]")?;
+        let full_path = workspace_relative_path(&root, path)?;
         ensure(
-            root.join(path).exists(),
+            full_path.exists(),
             format!("consuming_gates entry not found on disk: {path}"),
         )?;
     }
