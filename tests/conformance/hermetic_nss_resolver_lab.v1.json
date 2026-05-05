@@ -4,8 +4,13 @@
   "bead": "bd-b92jd.5.1",
   "owner_bead": "bd-b92jd.5",
   "generated_utc": "2026-05-05T03:30:00Z",
-  "source_commit": "cc8db48a6047bf7ea0775e2504e9ff3923462db1",
-  "purpose": "Hermetic resolver/NSS lab manifest. Declares the synthetic fake-root layout (hosts, services, passwd, group, resolv.conf, optional fake UDP DNS endpoint), the test scenarios that exercise it, and the fail-closed contract that no scenario may issue a real-network call. Each scenario carries strict/hardened mode coverage, an oracle, structured-log fields, and a fixture obligation pointing at the synthetic root entry that drives it. The harness gate verifies the manifest's structural invariants — it does NOT spin up the lab itself; the per-scenario kernels referenced by harness_test_name will land alongside the lab driver.",
+  "source_commit": "a75bb9c55e6373099e27552b2f3d05dbe569fc0b",
+  "purpose": "Hermetic resolver/NSS lab manifest. Declares the synthetic fake-root layout (hosts, services, passwd, group, resolv.conf, optional fake UDP DNS endpoint), the test scenarios that exercise it, and the fail-closed contract that no scenario may issue a real-network call. Each scenario carries strict/hardened mode coverage, an oracle, structured-log fields, and a fixture obligation pointing at the synthetic root entry that drives it. The execution runner materializes fake roots, binds only loopback fake DNS endpoints, and emits current-commit JSONL evidence under target/conformance/nss_lab/.",
+  "execution_runner": "scripts/run_hermetic_nss_resolver_lab.sh",
+  "freshness": {
+    "required_source_commit": "current",
+    "source_commit_policy": "Runner reports and JSONL rows must carry the current git commit; execution tests mutate this field to prove stale artifacts fail closed."
+  },
   "execution_policy": {
     "default_runner": "rch_only",
     "real_network_allowed": false,
@@ -95,6 +100,14 @@
       "scenario_lacks_fixture_obligation"
     ]
   },
+  "optional_skip_conditions": [
+    {
+      "skip_id": "real-network-probe-disabled-by-default",
+      "condition": "FRANKENLIBC_NSS_LAB_ALLOW_NETWORK is unset",
+      "expected_status": "skipped",
+      "recorded_reason": "Real-network probes are optional and disabled in hermetic CI; the default runner records loopback-only fake DNS evidence instead."
+    }
+  ],
   "scenarios": [
     {
       "scenario_id": "nss-numeric-hosts-bypass",
