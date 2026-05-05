@@ -46,6 +46,46 @@ const REQUIRED_PROBE_TYPES: &[&str] = &[
     "negative_claim_control",
 ];
 
+const FORGE_PROJECTION_FIELDS: &[&str] = &[
+    "claim_status",
+    "source_commit",
+    "artifact_state.status",
+    "artifact_state.failure_signature",
+    "artifact_state.host_glibc_dependency",
+    "artifact_state.path",
+    "artifact_state.sha256",
+    "artifact_state.mtime",
+    "artifact_state.dependency_breakdown.needed_libraries",
+    "artifact_state.dependency_breakdown.host_direct_needed_libraries",
+    "artifact_state.dependency_breakdown.host_resolved_libraries",
+    "artifact_state.dependency_breakdown.undefined_unwind_symbols",
+    "artifact_state.dependency_breakdown.undefined_glibc_symbols",
+    "artifact_state.dependency_breakdown.undefined_tls_symbols",
+    "artifact_state.dependency_breakdown.version_needs",
+    "artifact_state.dependency_breakdown.host_version_requirements",
+    "artifact_state.dependency_breakdown.blocking_reasons",
+];
+
+const FORGE_BLOCKING_REASON_MAPPINGS: &[(&str, &str)] = &[
+    (
+        "host_needed_libraries_present",
+        "readelf_dynamic_dependencies",
+    ),
+    ("host_loader_dependency", "ldd_host_glibc_scan"),
+    ("host_libc_dependency", "ldd_host_glibc_scan"),
+    ("libgcc_runtime_dependency", "readelf_dynamic_dependencies"),
+    ("undefined_unwind_symbols", "nm_undefined_host_symbols"),
+    ("undefined_glibc_symbols", "nm_undefined_host_symbols"),
+    ("undefined_tls_symbols", "nm_undefined_host_symbols"),
+    ("host_version_requirements", "version_script_export_nodes"),
+];
+
+const FORGE_FAILURE_SIGNATURE_MAPPINGS: &[(&str, &str)] = &[
+    ("standalone_artifact_missing", "missing_replace_artifact"),
+    ("standalone_artifact_stale", "stale_source_commit"),
+    ("host_glibc_dependency", "residual_host_glibc_dependency"),
+];
+
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest)
@@ -247,6 +287,18 @@ fn plan_has_required_shape_and_probe_coverage() -> TestResult {
         json_field(&plan, "inputs")?.is_object(),
         "inputs must be object",
     )?;
+    let inputs = json_field(&plan, "inputs")?
+        .as_object()
+        .ok_or_else(|| "inputs must be object".to_string())?;
+    let standalone_artifact_ref = inputs
+        .get("standalone_replacement_artifact")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "inputs.standalone_replacement_artifact must be string".to_string())?;
+    assert_repo_relative_existing_path(
+        &root,
+        standalone_artifact_ref,
+        "inputs.standalone_replacement_artifact",
+    )?;
     require(
         json_field(&plan, "artifact_freshness_policy")?.is_object(),
         "artifact freshness policy must be present",
@@ -282,6 +334,76 @@ fn plan_has_required_shape_and_probe_coverage() -> TestResult {
         row_types == expected_types,
         "probe rows must cover every required probe type",
     )?;
+
+    let standalone_manifest = load_json(&root.join(standalone_artifact_ref))?;
+    let standalone_report_fields = string_set(&standalone_manifest, "required_report_fields")?;
+    let standalone_failure_signatures: HashSet<_> =
+        json_array(&standalone_manifest, "expected_failure_classifications")?
+            .iter()
+            .map(|entry| json_string(entry, "failure_signature").map(str::to_owned))
+            .collect::<TestResult<_>>()?;
+    let probe_ids: HashSet<_> = json_array(&plan, "probe_rows")?
+        .iter()
+        .map(|row| json_string(row, "probe_id").map(str::to_owned))
+        .collect::<TestResult<_>>()?;
+    let negative_test_ids: HashSet<_> = json_array(&plan, "negative_claim_tests")?
+        .iter()
+        .map(|entry| json_string(entry, "id").map(str::to_owned))
+        .collect::<TestResult<_>>()?;
+
+    let projection = json_field(&plan, "current_forge_blocker_projection")?;
+    require(
+        json_string(projection, "source_artifact")? == standalone_artifact_ref,
+        "projection source_artifact must match standalone input",
+    )?;
+    require(
+        json_string(projection, "decision")? == "projection_only_claims_remain_blocked",
+        "projection decision must not promote claims",
+    )?;
+    let projected_fields = string_set(projection, "projected_report_fields")?;
+    for field in FORGE_PROJECTION_FIELDS {
+        require(
+            projected_fields.contains(*field),
+            format!("projection missing field {field}"),
+        )?;
+        require(
+            standalone_report_fields.contains(*field),
+            format!("projection field is not in standalone report contract: {field}"),
+        )?;
+    }
+
+    let reason_map = json_field(projection, "blocking_reason_to_probe_id")?
+        .as_object()
+        .ok_or_else(|| "blocking_reason_to_probe_id must be object".to_string())?;
+    for (reason, probe_id) in FORGE_BLOCKING_REASON_MAPPINGS {
+        require(
+            reason_map.get(*reason).and_then(Value::as_str) == Some(*probe_id),
+            format!("blocking reason {reason} must map to {probe_id}"),
+        )?;
+        require(
+            probe_ids.contains(*probe_id),
+            format!("mapped probe id missing: {probe_id}"),
+        )?;
+    }
+
+    let failure_map = json_field(projection, "failure_signature_to_negative_test")?
+        .as_object()
+        .ok_or_else(|| "failure_signature_to_negative_test must be object".to_string())?;
+    for (failure, test_id) in FORGE_FAILURE_SIGNATURE_MAPPINGS {
+        let mapped_test_id = failure_map.get(*failure).and_then(Value::as_str);
+        require(
+            mapped_test_id.is_some_and(|actual| actual.eq(*test_id)),
+            format!("failure entry {failure} must map to {test_id}"),
+        )?;
+        require(
+            standalone_failure_signatures.contains(*failure),
+            format!("mapped failure entry missing from standalone manifest: {failure}"),
+        )?;
+        require(
+            negative_test_ids.contains(*test_id),
+            format!("mapped negative test missing: {test_id}"),
+        )?;
+    }
     Ok(())
 }
 
@@ -435,5 +557,26 @@ fn checker_rejects_missing_materialized_artifact_ref() -> TestResult {
         &mutated,
         "standalone-host-probe-plan-bad-ref",
         "artifact ref does not exist",
+    )
+}
+
+#[test]
+fn checker_rejects_missing_forge_projection_mapping() -> TestResult {
+    let mutated = write_mutated_plan("standalone-host-probe-plan-missing-projection", |plan| {
+        let projection = plan
+            .get_mut("current_forge_blocker_projection")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing current_forge_blocker_projection".to_string())?;
+        let reason_map = projection
+            .get_mut("blocking_reason_to_probe_id")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing blocking_reason_to_probe_id".to_string())?;
+        reason_map.remove("host_libc_dependency");
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "standalone-host-probe-plan-missing-projection",
+        "blocking_reason_to_probe_id missing host_libc_dependency",
     )
 }

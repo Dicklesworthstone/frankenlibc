@@ -6,6 +6,7 @@
   "inputs": {
     "support_matrix": "support_matrix.json",
     "replacement_levels": "tests/conformance/replacement_levels.json",
+    "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
     "replacement_profile": "tests/conformance/replacement_profile.json",
     "host_dependency_inventory": "tests/conformance/host_libc_dependency_inventory.v1.json",
     "standalone_readiness_matrix": "tests/conformance/standalone_readiness_proof_matrix.v1.json",
@@ -80,6 +81,44 @@
     "staleness_rule": "replacement artifacts must have mtime greater than or equal to HEAD commit time before any L2/L3 pass row is accepted",
     "missing_artifact_decision": "claim_blocked",
     "stale_artifact_decision": "claim_blocked"
+  },
+  "current_forge_blocker_projection": {
+    "source_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "decision": "projection_only_claims_remain_blocked",
+    "projected_report_fields": [
+      "claim_status",
+      "source_commit",
+      "artifact_state.status",
+      "artifact_state.failure_signature",
+      "artifact_state.host_glibc_dependency",
+      "artifact_state.path",
+      "artifact_state.sha256",
+      "artifact_state.mtime",
+      "artifact_state.dependency_breakdown.needed_libraries",
+      "artifact_state.dependency_breakdown.host_direct_needed_libraries",
+      "artifact_state.dependency_breakdown.host_resolved_libraries",
+      "artifact_state.dependency_breakdown.undefined_unwind_symbols",
+      "artifact_state.dependency_breakdown.undefined_glibc_symbols",
+      "artifact_state.dependency_breakdown.undefined_tls_symbols",
+      "artifact_state.dependency_breakdown.version_needs",
+      "artifact_state.dependency_breakdown.host_version_requirements",
+      "artifact_state.dependency_breakdown.blocking_reasons"
+    ],
+    "blocking_reason_to_probe_id": {
+      "host_needed_libraries_present": "readelf_dynamic_dependencies",
+      "host_loader_dependency": "ldd_host_glibc_scan",
+      "host_libc_dependency": "ldd_host_glibc_scan",
+      "libgcc_runtime_dependency": "readelf_dynamic_dependencies",
+      "undefined_unwind_symbols": "nm_undefined_host_symbols",
+      "undefined_glibc_symbols": "nm_undefined_host_symbols",
+      "undefined_tls_symbols": "nm_undefined_host_symbols",
+      "host_version_requirements": "version_script_export_nodes"
+    },
+    "failure_signature_to_negative_test": {
+      "standalone_artifact_missing": "missing_replace_artifact",
+      "standalone_artifact_stale": "stale_source_commit",
+      "host_glibc_dependency": "residual_host_glibc_dependency"
+    }
   },
   "negative_claim_tests": [
     {
@@ -571,6 +610,9 @@
     "claim_blocked_count": 13,
     "l2_l3_blocker_count": 13,
     "negative_claim_test_count": 5,
+    "forge_projection_field_count": 17,
+    "forge_projection_blocking_reason_count": 8,
+    "forge_projection_failure_signature_count": 3,
     "tool_count": 10
   }
 }

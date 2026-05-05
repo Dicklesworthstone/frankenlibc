@@ -84,6 +84,40 @@ REQUIRED_PROBE_FIELDS = [
     "blocks_promotion_to",
     "artifact_refs",
 ]
+REQUIRED_FORGE_PROJECTION_FIELDS = {
+    "claim_status",
+    "source_commit",
+    "artifact_state.status",
+    "artifact_state.failure_signature",
+    "artifact_state.host_glibc_dependency",
+    "artifact_state.path",
+    "artifact_state.sha256",
+    "artifact_state.mtime",
+    "artifact_state.dependency_breakdown.needed_libraries",
+    "artifact_state.dependency_breakdown.host_direct_needed_libraries",
+    "artifact_state.dependency_breakdown.host_resolved_libraries",
+    "artifact_state.dependency_breakdown.undefined_unwind_symbols",
+    "artifact_state.dependency_breakdown.undefined_glibc_symbols",
+    "artifact_state.dependency_breakdown.undefined_tls_symbols",
+    "artifact_state.dependency_breakdown.version_needs",
+    "artifact_state.dependency_breakdown.host_version_requirements",
+    "artifact_state.dependency_breakdown.blocking_reasons",
+}
+REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE = {
+    "host_needed_libraries_present": "readelf_dynamic_dependencies",
+    "host_loader_dependency": "ldd_host_glibc_scan",
+    "host_libc_dependency": "ldd_host_glibc_scan",
+    "libgcc_runtime_dependency": "readelf_dynamic_dependencies",
+    "undefined_unwind_symbols": "nm_undefined_host_symbols",
+    "undefined_glibc_symbols": "nm_undefined_host_symbols",
+    "undefined_tls_symbols": "nm_undefined_host_symbols",
+    "host_version_requirements": "version_script_export_nodes",
+}
+REQUIRED_FORGE_FAILURE_SIGNATURE_TO_NEGATIVE_TEST = {
+    "standalone_artifact_missing": "missing_replace_artifact",
+    "standalone_artifact_stale": "stale_source_commit",
+    "host_glibc_dependency": "residual_host_glibc_dependency",
+}
 ALLOWED_LEVELS = {"L0", "L1", "L2", "L3"}
 errors = []
 log_rows = []
@@ -159,6 +193,7 @@ for required_tool in ["readelf", "ldd", "nm"]:
 for key in [
     "support_matrix",
     "replacement_levels",
+    "standalone_replacement_artifact",
     "replacement_profile",
     "host_dependency_inventory",
     "standalone_readiness_matrix",
@@ -168,8 +203,29 @@ for key in [
     ref = plan.get("inputs", {}).get(key)
     repo_path(ref, f"inputs.{key}", must_exist=True)
 
+standalone_artifact_ref = plan.get("inputs", {}).get("standalone_replacement_artifact")
+standalone_artifact_path = repo_path(
+    standalone_artifact_ref,
+    "inputs.standalone_replacement_artifact",
+    must_exist=True,
+)
+standalone_artifact_manifest = (
+    load_json(standalone_artifact_path) if standalone_artifact_path else {}
+)
+standalone_required_report_fields = set(
+    field
+    for field in standalone_artifact_manifest.get("required_report_fields", [])
+    if isinstance(field, str)
+)
+standalone_failure_signatures = set(
+    entry.get("failure_signature")
+    for entry in standalone_artifact_manifest.get("expected_failure_classifications", [])
+    if isinstance(entry, dict)
+)
+
 negative_tests = plan.get("negative_claim_tests", [])
 negative_signatures = set()
+negative_test_ids = set()
 if not isinstance(negative_tests, list) or len(negative_tests) < 5:
     errors.append("negative_claim_tests must include at least five fail-closed cases")
 else:
@@ -178,6 +234,8 @@ else:
             errors.append("negative_claim_tests entries must be objects")
             continue
         test_id = test.get("id", "<missing>")
+        if isinstance(test_id, str) and test_id:
+            negative_test_ids.add(test_id)
         if test.get("expected_result") != "claim_blocked":
             errors.append(f"{test_id}: negative test must expect claim_blocked")
         signature = test.get("failure_signature")
@@ -307,12 +365,97 @@ missing_probe_types = sorted(REQUIRED_PROBE_TYPES - set(probe_types_seen))
 if missing_probe_types:
     errors.append("missing probe type rows: " + ", ".join(missing_probe_types))
 
+projection = plan.get("current_forge_blocker_projection")
+forge_projection_field_count = 0
+forge_projection_blocking_reason_count = 0
+forge_projection_failure_signature_count = 0
+if not isinstance(projection, dict):
+    errors.append("current_forge_blocker_projection must be an object")
+else:
+    if projection.get("source_artifact") != standalone_artifact_ref:
+        errors.append(
+            "current_forge_blocker_projection.source_artifact must match inputs.standalone_replacement_artifact"
+        )
+    if projection.get("decision") != "projection_only_claims_remain_blocked":
+        errors.append("current_forge_blocker_projection.decision must remain projection_only_claims_remain_blocked")
+
+    projected_fields = projection.get("projected_report_fields", [])
+    if not isinstance(projected_fields, list) or not projected_fields:
+        errors.append("current_forge_blocker_projection.projected_report_fields must be a non-empty array")
+        projected_fields = []
+    projected_field_set = set()
+    for field in projected_fields:
+        if not isinstance(field, str) or not field:
+            errors.append("current_forge_blocker_projection.projected_report_fields entries must be strings")
+            continue
+        projected_field_set.add(field)
+        if field not in standalone_required_report_fields:
+            errors.append(
+                f"current_forge_blocker_projection.projected_report_fields unknown standalone report field: {field}"
+            )
+    missing_projected_fields = sorted(REQUIRED_FORGE_PROJECTION_FIELDS - projected_field_set)
+    if missing_projected_fields:
+        errors.append(
+            "current_forge_blocker_projection.projected_report_fields missing "
+            + ",".join(missing_projected_fields)
+        )
+    forge_projection_field_count = len(projected_field_set)
+
+    reason_map = projection.get("blocking_reason_to_probe_id", {})
+    if not isinstance(reason_map, dict) or not reason_map:
+        errors.append("current_forge_blocker_projection.blocking_reason_to_probe_id must be a non-empty object")
+        reason_map = {}
+    for reason, expected_probe_id in REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE.items():
+        actual_probe_id = reason_map.get(reason)
+        if actual_probe_id is None:
+            errors.append(f"current_forge_blocker_projection.blocking_reason_to_probe_id missing {reason}")
+        elif actual_probe_id != expected_probe_id:
+            errors.append(
+                f"current_forge_blocker_projection.blocking_reason_to_probe_id.{reason} must map to {expected_probe_id}"
+            )
+    for reason, probe_id in reason_map.items():
+        if reason not in REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE:
+            errors.append(f"current_forge_blocker_projection.blocking_reason_to_probe_id has unexpected reason {reason}")
+        if probe_id not in seen_probe_ids:
+            errors.append(
+                f"current_forge_blocker_projection.blocking_reason_to_probe_id.{reason} references unknown probe {probe_id}"
+            )
+    forge_projection_blocking_reason_count = len(reason_map)
+
+    failure_map = projection.get("failure_signature_to_negative_test", {})
+    if not isinstance(failure_map, dict) or not failure_map:
+        errors.append("current_forge_blocker_projection.failure_signature_to_negative_test must be a non-empty object")
+        failure_map = {}
+    for signature, expected_test_id in REQUIRED_FORGE_FAILURE_SIGNATURE_TO_NEGATIVE_TEST.items():
+        actual_test_id = failure_map.get(signature)
+        if actual_test_id is None:
+            errors.append(
+                f"current_forge_blocker_projection.failure_signature_to_negative_test missing {signature}"
+            )
+        elif actual_test_id != expected_test_id:
+            errors.append(
+                f"current_forge_blocker_projection.failure_signature_to_negative_test.{signature} must map to {expected_test_id}"
+            )
+    for signature, test_id in failure_map.items():
+        if signature not in standalone_failure_signatures:
+            errors.append(
+                f"current_forge_blocker_projection.failure_signature_to_negative_test unknown standalone failure {signature}"
+            )
+        if test_id not in negative_test_ids:
+            errors.append(
+                f"current_forge_blocker_projection.failure_signature_to_negative_test.{signature} references unknown negative test {test_id}"
+            )
+    forge_projection_failure_signature_count = len(failure_map)
+
 summary = {
     "probe_count": len(probe_rows),
     "required_probe_type_count": len(REQUIRED_PROBE_TYPES),
     "claim_blocked_count": decision_counts.get("claim_blocked", 0),
     "l2_l3_blocker_count": l2_l3_blocker_count,
     "negative_claim_test_count": len(negative_tests) if isinstance(negative_tests, list) else 0,
+    "forge_projection_field_count": forge_projection_field_count,
+    "forge_projection_blocking_reason_count": forge_projection_blocking_reason_count,
+    "forge_projection_failure_signature_count": forge_projection_failure_signature_count,
     "tool_count": len(tool_counts),
     "probe_counts_by_type": dict(sorted(probe_types_seen.items())),
     "decision_counts": dict(sorted((str(key), value) for key, value in decision_counts.items())),
@@ -326,6 +469,9 @@ for key in [
     "claim_blocked_count",
     "l2_l3_blocker_count",
     "negative_claim_test_count",
+    "forge_projection_field_count",
+    "forge_projection_blocking_reason_count",
+    "forge_projection_failure_signature_count",
     "tool_count",
 ]:
     if declared_summary.get(key) != summary[key]:
