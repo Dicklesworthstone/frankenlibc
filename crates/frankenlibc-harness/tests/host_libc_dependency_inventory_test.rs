@@ -272,6 +272,27 @@ fn gate_emits_complete_inventory_report_and_log() -> TestResult {
 }
 
 #[test]
+fn configured_staticlib_rows_are_not_l2_l3_blockers() -> TestResult {
+    let report = run_gate()?;
+    let blockers = json_array(&report, "l2_l3_blockers")?;
+    require(
+        !blockers.iter().any(|row| {
+            row["category"].as_str() == Some("static_artifact_configuration")
+                || row["failure_signature"].as_str()
+                    == Some("staticlib_not_configured_for_standalone")
+        }),
+        "configured staticlib crate-type rows must not remain L2/L3 blockers",
+    )?;
+    let configured_count = report["summary"]["policy_counts"]["static_artifact_configured"]
+        .as_u64()
+        .ok_or_else(|| "summary.policy_counts.static_artifact_configured missing".to_string())?;
+    require(
+        configured_count >= 3,
+        format!("expected cdylib/staticlib/rlib configured rows, got {configured_count}"),
+    )
+}
+
+#[test]
 fn strict_missing_release_artifact_mode_fails_with_signature() -> TestResult {
     let root = workspace_root()?;
     let missing_artifact = root.join("target/conformance/definitely_missing_libfrankenlibc_abi.so");

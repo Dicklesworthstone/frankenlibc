@@ -381,6 +381,11 @@ def scan_artifact_configuration() -> None:
             oracle_kind="cargo_crate_type_scan",
             expected="cdylib present and staticlib gap explicit",
             actual="configured",
+            extra={
+                "allowed_replacement_levels": ["L0", "L1", "L2", "L3"],
+                "blocked_replacement_levels": [],
+                "profile_policy": "static_artifact_configured",
+            },
         )
     if "staticlib" not in crate_types:
         add_event(
