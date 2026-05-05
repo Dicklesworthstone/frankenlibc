@@ -72,6 +72,14 @@ log_path = Path(sys.argv[5])
 bead_id = "bd-bp8fl.6.4"
 default_max_evidence_age_days = 180
 level_rank = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
+EXPECTED_L1_DASHBOARD_SOURCE_COMMIT_FRESHNESS_POLICY = {
+    "recorded_source_commit_field": "source_commit",
+    "current_head_check": "git rev-parse HEAD",
+    "fresh_result": "eligible_for_row_evaluation_only",
+    "stale_result": "report_blockers_no_auto_promotion",
+    "promotion_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
+}
 
 
 def artifact_path(env_name, default):
@@ -208,28 +216,22 @@ def full_git_commit(value):
 
 
 def l1_dashboard_source_commit_errors(dashboard):
+    errors = []
+    if (
+        dashboard.get("source_commit_freshness_policy")
+        != EXPECTED_L1_DASHBOARD_SOURCE_COMMIT_FRESHNESS_POLICY
+    ):
+        errors.append("release_claim_l1_dashboard_source_commit_policy_invalid")
     dashboard_commit = dashboard.get("source_commit")
     if not full_git_commit(dashboard_commit):
-        return ["release_claim_l1_dashboard_source_commit_invalid"]
-    if commit == "unknown":
-        return ["release_claim_l1_dashboard_source_commit_unknown"]
-    if dashboard_commit != commit:
-        errors = ["release_claim_l1_dashboard_source_commit_stale"]
-        freshness_policy = dashboard.get("source_commit_freshness_policy", {})
-        if not isinstance(freshness_policy, dict):
-            errors.append("release_claim_l1_dashboard_source_commit_policy_invalid")
-        else:
-            if (
-                freshness_policy.get("stale_result")
-                != "report_blockers_no_auto_promotion"
-            ):
-                errors.append("release_claim_l1_dashboard_source_commit_policy_invalid")
-            if freshness_policy.get("promotion_allowed_when_stale") is not False:
-                errors.append("release_claim_l1_dashboard_source_commit_policy_invalid")
-            if freshness_policy.get("rejected_evidence_kind") != "stale_source_commit":
-                errors.append("release_claim_l1_dashboard_source_commit_policy_invalid")
+        errors.append("release_claim_l1_dashboard_source_commit_invalid")
         return errors
-    return []
+    if commit == "unknown":
+        errors.append("release_claim_l1_dashboard_source_commit_unknown")
+        return errors
+    if dashboard_commit != commit:
+        errors.append("release_claim_l1_dashboard_source_commit_stale")
+    return errors
 
 
 def l1_matrix_source_commit_errors(matrix):

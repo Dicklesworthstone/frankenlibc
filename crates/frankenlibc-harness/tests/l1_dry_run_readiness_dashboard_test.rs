@@ -142,6 +142,17 @@ const REQUIRED_ROW_KINDS: &[&str] = &[
 
 const STATUS_SEMANTIC_ROW_KINDS: &[&str] = &["forge", "smoke", "direct_link", "real_program"];
 
+fn expected_source_commit_freshness_policy() -> Value {
+    json!({
+        "recorded_source_commit_field": "source_commit",
+        "current_head_check": "git rev-parse HEAD",
+        "fresh_result": "eligible_for_row_evaluation_only",
+        "stale_result": "report_blockers_no_auto_promotion",
+        "promotion_allowed_when_stale": false,
+        "rejected_evidence_kind": "stale_source_commit",
+    })
+}
+
 fn select_field<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     let mut cursor = root;
     for segment in path.split('.') {
@@ -171,6 +182,11 @@ fn dashboard_artifact_is_well_formed() -> TestResult {
     )?;
     let freshness_policy = &dashboard["source_commit_freshness_policy"];
     ensure_eq(
+        freshness_policy,
+        &expected_source_commit_freshness_policy(),
+        "source_commit_freshness_policy",
+    )?;
+    ensure_eq(
         freshness_policy["recorded_source_commit_field"].as_str(),
         Some("source_commit"),
         "source_commit_freshness_policy.recorded_source_commit_field",
@@ -179,6 +195,11 @@ fn dashboard_artifact_is_well_formed() -> TestResult {
         freshness_policy["current_head_check"].as_str(),
         Some("git rev-parse HEAD"),
         "source_commit_freshness_policy.current_head_check",
+    )?;
+    ensure_eq(
+        freshness_policy["fresh_result"].as_str(),
+        Some("eligible_for_row_evaluation_only"),
+        "source_commit_freshness_policy.fresh_result",
     )?;
     ensure_eq(
         freshness_policy["stale_result"].as_str(),
@@ -618,6 +639,13 @@ fn source_commit_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
         (
+            "l1-dashboard-source-commit-fresh-result",
+            (
+                "source_commit_freshness_policy.fresh_result",
+                json!("eligible_for_row_evaluation_only"),
+            ),
+        ),
+        (
             "l1-dashboard-stale-source-commit-result",
             (
                 "source_commit_freshness_policy.stale_result",
@@ -643,7 +671,9 @@ fn source_commit_freshness_rows_are_explicit() -> TestResult {
     .collect();
     for row in as_array(&dashboard["rows"], "rows")? {
         let row_id = as_str(&row["row_id"], "row.row_id")?;
-        if !row_id.starts_with("l1-dashboard-stale-source-commit-") {
+        if row_id != "l1-dashboard-source-commit-fresh-result"
+            && !row_id.starts_with("l1-dashboard-stale-source-commit-")
+        {
             continue;
         }
         let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {

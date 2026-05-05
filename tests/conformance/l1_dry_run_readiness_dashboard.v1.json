@@ -457,6 +457,14 @@
       "rationale": "ld_preload smoke overall must not be failed."
     },
     {
+      "row_id": "l1-dashboard-source-commit-fresh-result",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+      "field": "source_commit_freshness_policy.fresh_result",
+      "expected_value": "eligible_for_row_evaluation_only",
+      "rationale": "Even with a current dashboard source_commit, consumers may only evaluate rows; freshness alone cannot authorize L1 promotion."
+    },
+    {
       "row_id": "l1-dashboard-stale-source-commit-result",
       "row_kind": "gate_meta",
       "evidence_artifact": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",

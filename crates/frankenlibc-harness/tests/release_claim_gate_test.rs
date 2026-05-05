@@ -428,6 +428,74 @@ fn l1_dry_run_dashboard_wrong_source_commit_blocks_release_doc_claim() -> TestRe
 }
 
 #[test]
+fn l1_dry_run_dashboard_malformed_source_policy_blocks_release_doc_claim() -> TestResult {
+    let dashboard = unique_output_path("malformed-source-policy-l1-dashboard")?;
+    let claims = unique_output_path("malformed-source-policy-l1-dashboard-claims")?;
+    let report = unique_output_path("malformed-source-policy-l1-dashboard-report")?;
+    let log = unique_output_path("malformed-source-policy-l1-dashboard-log")?;
+    let mut dashboard_json: serde_json::Value = serde_json::from_str(&l1_dashboard_fixture(
+        "2026-05-05T07:00:00Z",
+        CURRENT_TEST_COMMIT,
+        true,
+    ))?;
+    dashboard_json["source_commit_freshness_policy"]["fresh_result"] =
+        serde_json::json!("claim_eligible_when_fresh");
+    write_file(
+        &dashboard,
+        &(serde_json::to_string_pretty(&dashboard_json)? + "\n"),
+    )?;
+    write_file(
+        &claims,
+        &format!(
+            r#"{{
+  "schema_version": "v1",
+  "claims": [
+    {{
+      "id": "malformed-source-policy-dashboard-doc-claim",
+      "tag": "v9.9.9-L1",
+      "claimed_level": "L1",
+      "claim_surface": "RELEASE.md",
+      "claim_text": "FrankenLibC is ready as a standalone replacement for glibc today.",
+      "artifact_refs": [{}]
+    }}
+  ]
+}}
+"#,
+            release_claim_refs(&[rel_path(&dashboard)?])?
+        ),
+    )?;
+
+    let output = run_gate_with_env(
+        &[
+            "--claims".to_owned(),
+            path_arg(&claims),
+            "--report".to_owned(),
+            path_arg(&report),
+            "--log".to_owned(),
+            path_arg(&log),
+        ],
+        &[
+            ("FRANKENLIBC_L1_DRY_RUN_DASHBOARD", path_arg(&dashboard)),
+            ("SOURCE_COMMIT", CURRENT_TEST_COMMIT.to_owned()),
+        ],
+    )?;
+
+    assert!(
+        !output.status.success(),
+        "malformed L1 dashboard source freshness policy must block standalone-ready doc claims"
+    );
+    let report_json = read_report(&report)?;
+    assert!(
+        report_json["claims"][0]["failure_signature"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("release_claim_l1_dashboard_source_commit_policy_invalid"),
+        "malformed source policy failure not found: {report_json}"
+    );
+    Ok(())
+}
+
+#[test]
 fn l1_proof_matrix_wrong_source_commit_blocks_release_claim() -> TestResult {
     let root = workspace_root()?;
     let matrix = unique_output_path("wrong-source-l1-matrix")?;
