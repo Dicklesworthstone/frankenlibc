@@ -6,6 +6,13 @@
   "evidence_owner": "frankenlibc-core and frankenlibc-abi subsystem owners",
   "generated_utc": "2026-05-04T14:02:27Z",
   "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_runtime_core_evidence",
+    "runtime_core_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "inputs": {
     "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
     "feature_parity_gap_owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
