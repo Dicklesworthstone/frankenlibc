@@ -2,6 +2,14 @@
   "schema_version": "v1",
   "manifest_id": "real-program-smoke-suite",
   "bead": "bd-bp8fl.10.2",
+  "source_commit": "c686807ebdf31b6c38140cee56f63b47050d9832",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_real_program_smoke_evidence",
+    "real_program_smoke_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "generated_utc": "2026-05-03T05:20:00Z",
   "purpose": "Deterministic real-program smoke rows for L0 LD_PRELOAD and L1 hardened-interpose evidence, plus fail-closed standalone direct-link real-program rows that cannot be reported as supported without current artifact and host-dependency evidence.",
   "freshness": {

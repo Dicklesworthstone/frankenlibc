@@ -117,6 +117,45 @@ fn load_manifest() -> serde_json::Value {
     load_json(&workspace_root().join("tests/conformance/real_program_smoke_suite.v1.json"))
 }
 
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn git_head(root: &Path) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .expect("git rev-parse HEAD should run");
+    assert!(
+        output.status.success(),
+        "git rev-parse HEAD failed with status {}",
+        output.status
+    );
+    let stdout = String::from_utf8(output.stdout).expect("git rev-parse HEAD should emit UTF-8");
+    let head = stdout.trim().to_owned();
+    assert!(
+        is_hex_commit(&head),
+        "git HEAD should be a 40-hex commit, got {head:?}"
+    );
+    head
+}
+
+fn assert_source_commit_freshness_policy(manifest: &serde_json::Value) {
+    assert_eq!(
+        manifest["source_commit_freshness_policy"],
+        serde_json::json!({
+            "recorded_source_commit_field": "source_commit",
+            "comparison_target": "current git HEAD",
+            "stale_result": "block_real_program_smoke_evidence",
+            "real_program_smoke_evidence_allowed_when_stale": false,
+            "rejected_evidence_kind": "stale_source_commit",
+        })
+    );
+}
+
 fn write_json(path: &Path, value: &serde_json::Value) {
     let content = serde_json::to_string_pretty(value).expect("json should serialize");
     std::fs::write(path, format!("{content}\n")).expect("write json");
@@ -217,6 +256,14 @@ fn manifest_defines_case_schema_and_log_contract() {
     let manifest = load_manifest();
     assert_eq!(manifest["schema_version"].as_str(), Some("v1"));
     assert_eq!(manifest["bead"].as_str(), Some("bd-bp8fl.10.2"));
+    let source_commit = manifest["source_commit"]
+        .as_str()
+        .expect("source_commit should be present");
+    assert!(
+        is_hex_commit(source_commit),
+        "source_commit should be a 40-hex commit, got {source_commit:?}"
+    );
+    assert_source_commit_freshness_policy(&manifest);
     assert_eq!(
         manifest["freshness"]["required_source_commit"].as_str(),
         Some("current")
@@ -262,6 +309,39 @@ fn manifest_defines_case_schema_and_log_contract() {
         .map(|field| field.as_str().unwrap())
         .collect();
     assert_eq!(log_fields, REQUIRED_LOG_FIELDS);
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_real_program_smoke_evidence() {
+    let root = workspace_root();
+    let manifest = load_manifest();
+    let source_commit = manifest["source_commit"]
+        .as_str()
+        .expect("source_commit should be present");
+    assert!(
+        is_hex_commit(source_commit),
+        "source_commit should be a 40-hex commit, got {source_commit:?}"
+    );
+    let current_head = git_head(&root);
+    assert_source_commit_freshness_policy(&manifest);
+    if source_commit != current_head {
+        let policy = &manifest["source_commit_freshness_policy"];
+        assert_eq!(
+            policy["stale_result"].as_str(),
+            Some("block_real_program_smoke_evidence"),
+            "stale source commits must block real-program smoke evidence"
+        );
+        assert_eq!(
+            policy["real_program_smoke_evidence_allowed_when_stale"].as_bool(),
+            Some(false),
+            "stale source commits must not allow real-program smoke evidence"
+        );
+        assert_eq!(
+            policy["rejected_evidence_kind"].as_str(),
+            Some("stale_source_commit"),
+            "stale source commits must use stale_source_commit"
+        );
+    }
 }
 
 #[test]
@@ -482,6 +562,47 @@ fn run_mode_writes_artifacts_and_blocks_claims_without_current_artifacts() {
             .unwrap()
             .starts_with("bd-"),
         "bundle must name a next safe bead"
+    );
+}
+
+#[test]
+fn validate_only_rejects_missing_source_commit_freshness_policy() {
+    let temp = unique_temp_dir("real-program-missing-source-policy-manifest");
+    let manifest_path = temp.join("real_program_smoke_suite.missing_policy.json");
+    let mut manifest = load_manifest();
+    manifest
+        .as_object_mut()
+        .expect("manifest should be object")
+        .remove("source_commit_freshness_policy");
+    write_json(&manifest_path, &manifest);
+
+    let (_temp, report_path, _log_path, output) = run_gate(
+        "--validate-only",
+        "real-program-missing-source-policy",
+        &[(
+            "REAL_PROGRAM_SMOKE_MANIFEST",
+            manifest_path.display().to_string(),
+        )],
+        true,
+    );
+    assert!(
+        !output.status.success(),
+        "validate-only should reject missing source_commit_freshness_policy:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&report_path);
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    assert_eq!(
+        report["checks"]["source_commit_freshness_policy"].as_str(),
+        Some("fail")
+    );
+    let errors = report["errors"].as_array().unwrap();
+    assert!(
+        errors.iter().any(|error| error.as_str()
+            == Some("source_commit_freshness_policy does not match script contract")),
+        "report should explain the source_commit_freshness_policy failure"
     );
 }
 
@@ -736,6 +857,10 @@ fn validate_only_rejects_stale_prior_report() {
 
     let report = load_json(&report_path);
     assert_eq!(report["status"].as_str(), Some("pass"));
+    assert_eq!(
+        report["checks"]["source_commit_freshness_policy"].as_str(),
+        Some("pass")
+    );
     assert_eq!(
         report["summary"]["stale_prior_result_rejected"].as_bool(),
         Some(true)

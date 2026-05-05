@@ -110,6 +110,13 @@ REQUIRED_DOMAINS = {
 REQUIRED_MODES = {"strict", "hardened"}
 REQUIRED_LEVELS = {"L0", "L1"}
 NON_SUPPORT_STATUSES = {"blocked", "claim_blocked", "dry_run", "skipped", "validated"}
+EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_real_program_smoke_evidence",
+    "real_program_smoke_evidence_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
+}
 NO_BUNDLE = {
     "bundle_id": "none",
     "artifact_ref": None,
@@ -362,6 +369,16 @@ def validate_manifest():
             "freshness.required_source_commit must be 'current' or match current git HEAD, "
             "and source_commit_policy must reject stale manifest source commits"
         )
+    manifest_source_commit = manifest.get("source_commit")
+    source_commit_policy_ok = (
+        isinstance(manifest_source_commit, str)
+        and len(manifest_source_commit) == 40
+        and all(byte in "0123456789abcdefABCDEF" for byte in manifest_source_commit)
+        and manifest.get("source_commit_freshness_policy") == EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY
+    )
+    checks["source_commit_freshness_policy"] = "pass" if source_commit_policy_ok else "fail"
+    if not source_commit_policy_ok:
+        errors.append("source_commit_freshness_policy does not match script contract")
 
     if manifest.get("required_case_fields") == REQUIRED_CASE_FIELDS:
         checks["required_case_fields"] = "pass"
