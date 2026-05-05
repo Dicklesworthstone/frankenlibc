@@ -163,6 +163,10 @@ def is_hex_commit(value):
     )
 
 
+def source_commit_marker_is_current(value):
+    return value == "current" or (source_commit != "unknown" and value == source_commit)
+
+
 def rel(path):
     try:
         return Path(path).resolve().relative_to(root).as_posix()
@@ -201,12 +205,22 @@ if not isinstance(plan, dict):
 
 if plan.get("schema_version") != "v1" or plan.get("bead") != BEAD_ID:
     errors.append("plan must declare schema_version=v1 and bead=bd-b92jd.1.1")
-if not is_hex_commit(plan.get("source_commit")):
-    errors.append("plan source_commit must be a 40-hex commit")
+plan_source_commit_value = plan.get("source_commit")
+source_commit_policy_ok = (
+    (plan_source_commit_value == "current" or is_hex_commit(plan_source_commit_value))
+    and plan.get("source_commit_freshness_policy") == EXPECTED_FRESHNESS_POLICY
+)
+recorded_source_commit_current = (
+    source_commit_policy_ok and source_commit_marker_is_current(plan_source_commit_value)
+)
+if not (plan_source_commit_value == "current" or is_hex_commit(plan_source_commit_value)):
+    errors.append("plan source_commit must be 'current' or a 40-hex commit")
 else:
-    plan_source_commit = plan["source_commit"]
+    plan_source_commit = plan_source_commit_value
 if plan.get("source_commit_freshness_policy") != EXPECTED_FRESHNESS_POLICY:
     errors.append("source_commit_freshness_policy must match the standalone host dependency stale-source block contract")
+elif not recorded_source_commit_current:
+    errors.append("plan source_commit must be 'current' or match current git HEAD")
 if plan.get("required_log_fields") != REQUIRED_LOG_FIELDS:
     errors.append("required_log_fields must match standalone host dependency log contract")
 
@@ -601,7 +615,8 @@ report = {
     "plan_source_commit": plan_source_commit,
     "source_commit": source_commit,
     "source_commit_freshness": {
-        "status": "current" if plan_source_commit == source_commit else "stale",
+        "status": "current" if recorded_source_commit_current else "stale",
+        "recorded_source_commit_freshness": "pass" if recorded_source_commit_current else "fail",
         "recorded_source_commit_field": EXPECTED_FRESHNESS_POLICY["recorded_source_commit_field"],
         "comparison_target": EXPECTED_FRESHNESS_POLICY["comparison_target"],
         "stale_result": EXPECTED_FRESHNESS_POLICY["stale_result"],

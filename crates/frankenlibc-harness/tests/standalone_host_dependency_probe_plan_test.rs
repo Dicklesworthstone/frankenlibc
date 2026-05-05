@@ -148,6 +148,10 @@ fn is_hex_commit(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+fn source_commit_is_current(value: &str, current_head: &str) -> bool {
+    value == "current" || value == current_head
+}
+
 fn git_head(root: &Path) -> TestResult<String> {
     let output = Command::new("git")
         .arg("-C")
@@ -196,6 +200,19 @@ fn assert_source_commit_freshness_policy(plan: &Value) -> TestResult {
     require(
         json_string(policy, "rejected_evidence_kind")? == "stale_source_commit",
         "source_commit_freshness_policy.rejected_evidence_kind",
+    )
+}
+
+fn assert_recorded_source_commit_is_current(root: &Path, plan: &Value) -> TestResult {
+    let source_commit = json_string(plan, "source_commit")?;
+    require(
+        source_commit == "current" || is_hex_commit(source_commit),
+        format!("source_commit must be 'current' or a 40-hex commit, got {source_commit:?}"),
+    )?;
+    let current_head = git_head(root)?;
+    require(
+        source_commit_is_current(source_commit, &current_head),
+        "source_commit must be 'current' or match current git HEAD",
     )
 }
 
@@ -353,9 +370,14 @@ fn plan_has_required_shape_and_probe_coverage() -> TestResult {
     require(json_string(&plan, "bead")? == "bd-b92jd.1.1", "bead")?;
     let source_commit = json_string(&plan, "source_commit")?;
     require(
-        is_hex_commit(source_commit),
-        format!("source_commit must be a 40-hex commit, got {source_commit:?}"),
+        source_commit == "current" || is_hex_commit(source_commit),
+        format!("source_commit must be 'current' or a 40-hex commit, got {source_commit:?}"),
     )?;
+    require(
+        source_commit == "current",
+        "source_commit must use current marker",
+    )?;
+    assert_recorded_source_commit_is_current(&root, &plan)?;
     assert_source_commit_freshness_policy(&plan)?;
     require(
         json_field(&plan, "inputs")?.is_object(),
@@ -594,13 +616,13 @@ fn stale_source_commit_policy_blocks_host_dependency_probe_evidence() -> TestRes
     let plan = load_json(&plan_path(&root))?;
     let source_commit = json_string(&plan, "source_commit")?;
     require(
-        is_hex_commit(source_commit),
-        format!("source_commit must be a 40-hex commit, got {source_commit:?}"),
+        source_commit == "current" || is_hex_commit(source_commit),
+        format!("source_commit must be 'current' or a 40-hex commit, got {source_commit:?}"),
     )?;
     assert_source_commit_freshness_policy(&plan)?;
 
     let current_head = git_head(&root)?;
-    if source_commit != current_head {
+    if !source_commit_is_current(source_commit, &current_head) {
         let policy = source_commit_freshness_policy(&plan)?;
         require(
             json_string(policy, "stale_result")?
@@ -618,6 +640,23 @@ fn stale_source_commit_policy_blocks_host_dependency_probe_evidence() -> TestRes
         )?;
     }
     Ok(())
+}
+
+#[test]
+fn stale_recorded_source_commit_helper_rejects_host_dependency_probe_evidence() -> TestResult {
+    let root = workspace_root()?;
+    let mut plan = load_json(&plan_path(&root))?;
+    set_json_field(
+        &mut plan,
+        "source_commit",
+        Value::String("0000000000000000000000000000000000000000".to_string()),
+    )?;
+    let error = assert_recorded_source_commit_is_current(&root, &plan)
+        .expect_err("stale recorded source_commit should be rejected");
+    require(
+        error.contains("source_commit must be 'current' or match current git HEAD"),
+        format!("unexpected stale source_commit error: {error}"),
+    )
 }
 
 #[test]
@@ -661,10 +700,18 @@ fn checker_emits_report_and_required_jsonl_rows() -> TestResult {
         "report source_commit must be current git SHA",
     )?;
     require(
-        json_string(&report, "plan_source_commit")?.len() == 40,
-        "report plan_source_commit must be the manifest SHA",
+        json_string(&report, "plan_source_commit")? == "current",
+        "report plan_source_commit must be the current marker",
     )?;
     let freshness = json_field(&report, "source_commit_freshness")?;
+    require(
+        json_string(freshness, "status")? == "current",
+        "report freshness status must be current",
+    )?;
+    require(
+        json_string(freshness, "recorded_source_commit_freshness")? == "pass",
+        "report recorded source_commit freshness must pass",
+    )?;
     require(
         json_string(freshness, "stale_result")?
             == "block_standalone_host_dependency_probe_evidence",
@@ -808,6 +855,40 @@ fn checker_rejects_missing_forge_projection_mapping() -> TestResult {
         &mutated,
         "standalone-host-probe-plan-missing-projection",
         "blocking_reason_to_probe_id missing host_libc_dependency",
+    )
+}
+
+#[test]
+fn checker_rejects_stale_recorded_source_commit() -> TestResult {
+    let mutated = write_mutated_plan("standalone-host-probe-plan-stale-source", |plan| {
+        set_json_field(
+            plan,
+            "source_commit",
+            Value::String("0000000000000000000000000000000000000000".to_string()),
+        )
+    })?;
+    let (output, report, _log) =
+        run_checker_with_plan(&mutated, "standalone-host-probe-plan-stale-source")?;
+    require(
+        !output.status.success(),
+        "checker unexpectedly passed stale recorded source_commit",
+    )?;
+    let report_json = load_json(&report)?;
+    let freshness = json_field(&report_json, "source_commit_freshness")?;
+    require(
+        json_string(freshness, "status")? == "stale",
+        "stale recorded source_commit should report stale freshness",
+    )?;
+    require(
+        json_string(freshness, "recorded_source_commit_freshness")? == "fail",
+        "stale recorded source_commit should fail recorded freshness",
+    )?;
+    let errors = json_array(&report_json, "errors")?;
+    require(
+        errors.iter().filter_map(Value::as_str).any(|error| {
+            error.contains("plan source_commit must be 'current' or match current git HEAD")
+        }),
+        format!("expected stale source_commit error; report={report_json:?}"),
     )
 }
 

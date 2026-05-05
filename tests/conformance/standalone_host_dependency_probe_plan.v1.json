@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-b92jd.1.1",
-  "source_commit": "3e387eab30c0c6f269e2eaf7804f59ffd113122f",
+  "source_commit": "current",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",
