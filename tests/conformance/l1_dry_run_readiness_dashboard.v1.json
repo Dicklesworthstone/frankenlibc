@@ -81,6 +81,38 @@
       "rationale": "LD_PRELOAD/interpose artifacts cannot substitute for standalone replacement evidence."
     },
     {
+      "row_id": "standalone-host-probe-projection-decision-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.decision",
+      "expected_value": "projection_only_claims_remain_blocked",
+      "rationale": "L1 dashboard consumers must see that host-probe forge projection remains claim-blocking evidence only."
+    },
+    {
+      "row_id": "standalone-host-probe-projection-field-count-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "summary.forge_projection_field_count",
+      "expected_value": 17,
+      "rationale": "L1 dashboard consumers must see the number of standalone forge report fields projected by host probes."
+    },
+    {
+      "row_id": "standalone-host-probe-projection-blocking-reason-count-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "summary.forge_projection_blocking_reason_count",
+      "expected_value": 8,
+      "rationale": "L1 dashboard consumers must see every projected forge blocking reason mapped back to a host probe."
+    },
+    {
+      "row_id": "standalone-host-probe-projection-failure-signature-count-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "summary.forge_projection_failure_signature_count",
+      "expected_value": 3,
+      "rationale": "L1 dashboard consumers must see every projected forge failure signature mapped to a negative-control probe."
+    },
+    {
       "row_id": "standalone-artifact-report-needed-libraries-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",

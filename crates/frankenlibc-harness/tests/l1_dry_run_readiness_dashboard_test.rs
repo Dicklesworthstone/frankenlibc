@@ -18,8 +18,8 @@
 //!   * required_log_fields, rejected_evidence_kinds, and
 //!     consuming_gates are well-formed.
 
-use serde_json::Value;
-use std::collections::BTreeSet;
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
@@ -476,6 +476,72 @@ fn standalone_artifact_report_rows_are_explicit() -> TestResult {
         seen,
         expected_rows,
         "standalone artifact report dashboard rows",
+    )
+}
+
+#[test]
+fn host_probe_projection_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "standalone-host-probe-projection-decision-diagnostic",
+            "current_forge_blocker_projection.decision",
+            json!("projection_only_claims_remain_blocked"),
+        ),
+        (
+            "standalone-host-probe-projection-field-count-diagnostic",
+            "summary.forge_projection_field_count",
+            json!(17),
+        ),
+        (
+            "standalone-host-probe-projection-blocking-reason-count-diagnostic",
+            "summary.forge_projection_blocking_reason_count",
+            json!(8),
+        ),
+        (
+            "standalone-host-probe-projection-failure-signature-count-diagnostic",
+            "summary.forge_projection_failure_signature_count",
+            json!(3),
+        ),
+    ]
+    .into_iter()
+    .map(|(row_id, field, expected_value)| (row_id, (field, expected_value)))
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-host-probe-projection-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows
+            .remove(row_id)
+            .ok_or_else(|| test_error(format!("unexpected host probe projection row: {row_id}")))?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "forge",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing standalone host probe projection dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
     )
 }
 
