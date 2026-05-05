@@ -375,6 +375,102 @@ exit 0
     Some(OsString::from(fake_bin))
 }
 
+fn fake_timeout_inspection_probe_path(temp: &Path, timeout_probe: &str) -> OsString {
+    let fake_bin = temp.join(format!("fake-timeout-{timeout_probe}-probe-bin"));
+    std::fs::create_dir_all(&fake_bin).expect("create timeout probe fake bin dir");
+    std::fs::write(
+        fake_bin.join("readelf"),
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = "-d" ]; then
+  if [ "{timeout_probe}" = "readelf-dynamic" ]; then
+    sleep 2
+  fi
+  cat <<'EOF'
+Dynamic section at offset 0x1000 contains 1 entry:
+ 0x000000000000000e (SONAME)             Library soname: [libfrankenlibc_replace.so]
+EOF
+  exit 0
+fi
+if [ "$1" = "-Ws" ]; then
+  if [ "{timeout_probe}" = "readelf-symbols" ]; then
+    sleep 2
+  fi
+  cat <<'EOF'
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     1: 0000000000001000     1 FUNC    GLOBAL DEFAULT   10 __libc_start_main
+     2: 0000000000001001     1 FUNC    GLOBAL DEFAULT   10 malloc
+     3: 0000000000001002     1 FUNC    GLOBAL DEFAULT   10 free
+     4: 0000000000001003     1 FUNC    GLOBAL DEFAULT   10 printf
+     5: 0000000000001004     1 FUNC    GLOBAL DEFAULT   10 pthread_create
+     6: 0000000000001005     1 FUNC    GLOBAL DEFAULT   10 getaddrinfo
+EOF
+  exit 0
+fi
+if [ "$1" = "--version-info" ]; then
+  if [ "{timeout_probe}" = "readelf-version" ]; then
+    sleep 2
+  fi
+  echo 'No version information found in this file.'
+  exit 0
+fi
+echo unexpected readelf invocation "$@" >&2
+exit 2
+"#
+        ),
+    )
+    .expect("write timeout readelf");
+    std::fs::write(
+        fake_bin.join("nm"),
+        format!(
+            r#"#!/bin/sh
+if [ "{timeout_probe}" = "nm" ]; then
+  sleep 2
+fi
+cat <<'EOF'
+0000000000001000 T __libc_start_main
+0000000000001001 T malloc
+0000000000001002 T free
+0000000000001003 T printf
+0000000000001004 T pthread_create
+0000000000001005 T getaddrinfo
+EOF
+"#
+        ),
+    )
+    .expect("write timeout nm");
+    std::fs::write(
+        fake_bin.join("ldd"),
+        format!(
+            r#"#!/bin/sh
+if [ "{timeout_probe}" = "ldd" ]; then
+  sleep 2
+fi
+echo '	statically linked'
+exit 0
+"#
+        ),
+    )
+    .expect("write timeout ldd");
+    for tool in ["readelf", "nm", "ldd"] {
+        let chmod = Command::new("chmod")
+            .arg("+x")
+            .arg(fake_bin.join(tool))
+            .output()
+            .expect("chmod should run");
+        assert!(
+            chmod.status.success(),
+            "chmod failed for {tool}:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&chmod.stdout),
+            String::from_utf8_lossy(&chmod.stderr)
+        );
+    }
+    let mut path = OsString::from(fake_bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    path
+}
+
 fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
     let root = workspace_root();
     let temp = unique_temp_dir(prefix);
@@ -938,6 +1034,96 @@ fn forge_mode_blocks_artifact_when_required_inspection_tool_is_missing() {
             "{missing_tool}: missing tool evidence should name the executable"
         );
         assert!(log.exists(), "{missing_tool}: log should be written");
+    }
+}
+
+#[test]
+fn forge_mode_blocks_artifact_when_required_inspection_probe_times_out() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-artifact-inspection-timeout");
+    let source_c = temp.join("sample.c");
+    let source_so = temp.join("libfrankenlibc_abi.so");
+    std::fs::write(
+        &source_c,
+        "int frankenlibc_sample_symbol(void) { return 7; }\n",
+    )
+    .expect("write sample source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source_c)
+        .arg("-o")
+        .arg(&source_so)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+
+    for (probe, evidence_file) in [
+        ("readelf-dynamic", "artifact.readelf.dynamic.txt"),
+        ("readelf-symbols", "artifact.readelf.symbols.txt"),
+        ("readelf-version", "artifact.readelf.version.txt"),
+        ("nm", "artifact.nm.dynamic.txt"),
+        ("ldd", "artifact.ldd.txt"),
+    ] {
+        let out_dir = temp.join(format!("timeout-{probe}-out"));
+        let cargo_target = temp.join(format!("timeout-{probe}-cargo-target"));
+        let report = temp.join(format!("timeout-{probe}.report.json"));
+        let log = temp.join(format!("timeout-{probe}.log.jsonl"));
+        let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+            .arg("--forge")
+            .current_dir(&root)
+            .env("PATH", fake_timeout_inspection_probe_path(&temp, probe))
+            .env("STANDALONE_REPLACEMENT_OUT_DIR", &out_dir)
+            .env("STANDALONE_REPLACEMENT_CARGO_TARGET_DIR", &cargo_target)
+            .env("STANDALONE_REPLACEMENT_REPORT", &report)
+            .env("STANDALONE_REPLACEMENT_LOG", &log)
+            .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
+            .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
+            .env("STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS", "1")
+            .env_remove("LD_PRELOAD")
+            .output()
+            .expect("forge mode should run");
+        assert!(
+            output.status.success(),
+            "forge mode should keep gate pass/claim blocked when {probe} times out:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let report_json = load_json(&report);
+        assert_eq!(report_json["status"].as_str(), Some("pass"), "{probe}");
+        assert_eq!(
+            report_json["claim_status"].as_str(),
+            Some("claim_blocked"),
+            "{probe}"
+        );
+        assert_eq!(
+            report_json["artifact_state"]["status"].as_str(),
+            Some("inspection_failed"),
+            "{probe}"
+        );
+        assert_eq!(
+            report_json["artifact_state"]["failure_signature"].as_str(),
+            Some("artifact_dependency_inspection_failed"),
+            "{probe}"
+        );
+        assert_eq!(
+            report_json["tool_evidence"][evidence_file]["exit_code"].as_i64(),
+            Some(124),
+            "{probe}: expected timeout to be recorded as exit 124"
+        );
+        assert_eq!(
+            report_json["tool_evidence"][evidence_file]["timed_out"].as_bool(),
+            Some(true),
+            "{probe}: expected timed_out=true"
+        );
+        assert!(log.exists(), "{probe}: log should be written");
     }
 }
 

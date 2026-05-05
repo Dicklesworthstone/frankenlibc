@@ -138,6 +138,29 @@ def unique_sorted(values):
     return sorted({value for value in values if value})
 
 
+def env_bounded_int(name, default, *, minimum, maximum):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        errors.append(f"{name} must be an integer from {minimum} to {maximum}")
+        return default
+    if value < minimum or value > maximum:
+        errors.append(f"{name} must be from {minimum} to {maximum}")
+        return default
+    return value
+
+
+inspection_timeout = env_bounded_int(
+    "STANDALONE_REPLACEMENT_INSPECTION_TIMEOUT_SECS",
+    60,
+    minimum=1,
+    maximum=300,
+)
+
+
 def empty_dependency_breakdown():
     return {
         "needed_libraries": [],
@@ -492,11 +515,11 @@ def inspect_artifact(artifact):
             "refs": refs,
         }
 
-    readelf_dynamic = run_command(["readelf", "-d", str(artifact)], timeout=60)
-    readelf_symbols = run_command(["readelf", "-Ws", str(artifact)], timeout=60)
-    readelf_version = run_command(["readelf", "--version-info", str(artifact)], timeout=60)
-    nm_dynamic = run_command(["nm", "-D", str(artifact)], timeout=60)
-    ldd = run_command(["ldd", str(artifact)], timeout=60)
+    readelf_dynamic = run_command(["readelf", "-d", str(artifact)], timeout=inspection_timeout)
+    readelf_symbols = run_command(["readelf", "-Ws", str(artifact)], timeout=inspection_timeout)
+    readelf_version = run_command(["readelf", "--version-info", str(artifact)], timeout=inspection_timeout)
+    nm_dynamic = run_command(["nm", "-D", str(artifact)], timeout=inspection_timeout)
+    ldd = run_command(["ldd", str(artifact)], timeout=inspection_timeout)
     evidence_commands = {
         "artifact.readelf.dynamic.txt": readelf_dynamic,
         "artifact.readelf.symbols.txt": readelf_symbols,
