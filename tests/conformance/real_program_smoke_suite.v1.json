@@ -75,6 +75,7 @@
     "prior_report_env": "REAL_PROGRAM_SMOKE_PRIOR_REPORT",
     "required_interpose_artifact_name": "libfrankenlibc_abi.so",
     "required_standalone_artifact_name": "libfrankenlibc_replace.so",
+    "dependency_probe_tools": ["readelf", "ldd"],
     "case_dir_template": "target/real_program_smoke_suite/${run_id}/${case_id}",
     "stale_if_source_commit_differs": true,
     "stale_result": "claim_blocked"
@@ -934,7 +935,8 @@
       },
       "allowed_divergence": [
         "missing, stale, or wrong-profile standalone artifact blocks support",
-        "readelf-detected NEEDED libc.so.6 blocks support as host glibc dependency"
+        "readelf/ldd dependency inspector failure blocks support",
+        "readelf/ldd-detected host libc or loader dependency blocks support as host glibc dependency"
       ],
       "cleanup": {
         "policy": "case_dir_scoped",
@@ -980,7 +982,8 @@
       },
       "allowed_divergence": [
         "missing, stale, or wrong-profile standalone artifact blocks support",
-        "readelf-detected NEEDED libc.so.6 blocks support as host glibc dependency"
+        "readelf/ldd dependency inspector failure blocks support",
+        "readelf/ldd-detected host libc or loader dependency blocks support as host glibc dependency"
       ],
       "cleanup": {
         "policy": "case_dir_scoped",

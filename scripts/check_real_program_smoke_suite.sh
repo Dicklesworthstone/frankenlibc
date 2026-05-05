@@ -831,6 +831,15 @@ def run_command(argv, *, cwd, env, timeout_ms):
             "timed_out": True,
             "duration_ms": duration_ms,
         }
+    except OSError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return {
+            "returncode": 127,
+            "stdout": "",
+            "stderr": str(exc),
+            "timed_out": False,
+            "duration_ms": duration_ms,
+        }
 
 
 def output_matches(case, result):
@@ -1046,7 +1055,11 @@ def run_standalone_real_program_case(case, case_dir, artifact_refs):
 
     artifact_refs.append(rel(binary_path))
     readelf = resolve_command("readelf")
-    if readelf is None:
+    ldd = resolve_command("ldd")
+    missing_inspectors = [
+        tool for tool, resolved in [("readelf", readelf), ("ldd", ldd)] if resolved is None
+    ]
+    if missing_inspectors:
         return standalone_blocked_result(
             case,
             case_dir=case_dir,
@@ -1054,7 +1067,11 @@ def run_standalone_real_program_case(case, case_dir, artifact_refs):
             command_text=command_text,
             event="standalone_host_dependency_blocked",
             failure_signature="dependency_inspector_unavailable",
-            blocked_reason="readelf is unavailable, so host-glibc dependency cannot be excluded",
+            blocked_reason=(
+                ", ".join(missing_inspectors)
+                + " unavailable, so host-glibc dependency cannot be excluded"
+            ),
+            extra={"missing_dependency_inspectors": missing_inspectors},
         )
 
     readelf_result = run_command(
@@ -1063,7 +1080,26 @@ def run_standalone_real_program_case(case, case_dir, artifact_refs):
         env=isolated_env(case),
         timeout_ms=5000,
     )
+    ldd_result = run_command(
+        [ldd, str(binary_path)],
+        cwd=case_dir,
+        env=isolated_env(case),
+        timeout_ms=5000,
+    )
     needed_libraries = parse_needed_libraries(readelf_result["stdout"])
+    dep_text = "\n".join(
+        [
+            readelf_result["stdout"],
+            readelf_result["stderr"],
+            ldd_result["stdout"],
+            ldd_result["stderr"],
+        ]
+    )
+    dependency_probe_failures = [
+        tool
+        for tool, result in [("readelf", readelf_result), ("ldd", ldd_result)]
+        if result["returncode"] != 0 or result["timed_out"]
+    ]
     write_json(
         case_dir / "dependency_scan.json",
         {
@@ -1073,20 +1109,49 @@ def run_standalone_real_program_case(case, case_dir, artifact_refs):
             "stderr": readelf_result["stderr"],
             "timed_out": readelf_result["timed_out"],
             "duration_ms": readelf_result["duration_ms"],
+            "readelf": {
+                "argv": [readelf, "-d", str(binary_path)],
+                "returncode": readelf_result["returncode"],
+                "timed_out": readelf_result["timed_out"],
+                "duration_ms": readelf_result["duration_ms"],
+            },
+            "ldd": {
+                "argv": [ldd, str(binary_path)],
+                "returncode": ldd_result["returncode"],
+                "timed_out": ldd_result["timed_out"],
+                "duration_ms": ldd_result["duration_ms"],
+            },
             "needed_libraries": needed_libraries,
-            "host_glibc_dependency": "libc.so.6" in needed_libraries,
+            "dependency_probe_failures": dependency_probe_failures,
+            "host_glibc_dependency": "libc.so.6" in needed_libraries
+            or "libc.so" in dep_text
+            or "ld-linux" in dep_text,
         },
     )
     write_text(case_dir / "dependency_scan.stdout.txt", readelf_result["stdout"])
     write_text(case_dir / "dependency_scan.stderr.txt", readelf_result["stderr"])
+    write_text(case_dir / "dependency_scan.ldd.stdout.txt", ldd_result["stdout"])
+    write_text(case_dir / "dependency_scan.ldd.stderr.txt", ldd_result["stderr"])
     artifact_refs.extend(
         [
             rel(case_dir / "dependency_scan.json"),
             rel(case_dir / "dependency_scan.stdout.txt"),
             rel(case_dir / "dependency_scan.stderr.txt"),
+            rel(case_dir / "dependency_scan.ldd.stdout.txt"),
+            rel(case_dir / "dependency_scan.ldd.stderr.txt"),
         ]
     )
-    if readelf_result["returncode"] != 0 or readelf_result["timed_out"]:
+    if dependency_probe_failures:
+        stdout_ref = (
+            case_dir / "dependency_scan.ldd.stdout.txt"
+            if "ldd" in dependency_probe_failures
+            else case_dir / "dependency_scan.stdout.txt"
+        )
+        stderr_ref = (
+            case_dir / "dependency_scan.ldd.stderr.txt"
+            if "ldd" in dependency_probe_failures
+            else case_dir / "dependency_scan.stderr.txt"
+        )
         return standalone_blocked_result(
             case,
             case_dir=case_dir,
@@ -1094,13 +1159,16 @@ def run_standalone_real_program_case(case, case_dir, artifact_refs):
             command_text=command_text,
             event="standalone_host_dependency_blocked",
             failure_signature="dependency_inspector_failed",
-            blocked_reason="readelf failed, so host-glibc dependency cannot be excluded",
-            duration_ms=readelf_result["duration_ms"],
-            stdout_ref=case_dir / "dependency_scan.stdout.txt",
-            stderr_ref=case_dir / "dependency_scan.stderr.txt",
-            extra={"needed_libraries": needed_libraries},
+            blocked_reason="dependency inspector failed, so host-glibc dependency cannot be excluded",
+            duration_ms=max(readelf_result["duration_ms"], ldd_result["duration_ms"]),
+            stdout_ref=stdout_ref,
+            stderr_ref=stderr_ref,
+            extra={
+                "needed_libraries": needed_libraries,
+                "dependency_probe_failures": dependency_probe_failures,
+            },
         )
-    if "libc.so.6" in needed_libraries:
+    if "libc.so.6" in needed_libraries or "libc.so" in dep_text or "ld-linux" in dep_text:
         return standalone_blocked_result(
             case,
             case_dir=case_dir,

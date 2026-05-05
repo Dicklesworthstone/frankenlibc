@@ -4,6 +4,7 @@
 //! skip/block handling, artifact writing, and stale-result rejection.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -126,6 +127,29 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
     dir
 }
 
+fn fake_ldd_failure_path(temp: &Path) -> OsString {
+    let fake_bin = temp.join("fake-bin");
+    std::fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    let fake_ldd = fake_bin.join("ldd");
+    std::fs::write(&fake_ldd, "#!/bin/sh\necho ldd probe failed >&2\nexit 42\n")
+        .expect("write fake ldd");
+    let chmod = Command::new("chmod")
+        .arg("+x")
+        .arg(&fake_ldd)
+        .output()
+        .expect("chmod should run");
+    assert!(
+        chmod.status.success(),
+        "chmod failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&chmod.stdout),
+        String::from_utf8_lossy(&chmod.stderr)
+    );
+    let mut path = OsString::from(fake_bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    path
+}
+
 fn run_gate(
     mode: &str,
     prefix: &str,
@@ -195,6 +219,16 @@ fn manifest_defines_case_schema_and_log_contract() {
     assert_eq!(
         manifest["result_policy"]["dry_run_claims_support"].as_bool(),
         Some(false)
+    );
+    let dependency_probe_tools: HashSet<_> = manifest["artifact_policy"]["dependency_probe_tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool.as_str().unwrap())
+        .collect();
+    assert!(
+        dependency_probe_tools.contains("readelf") && dependency_probe_tools.contains("ldd"),
+        "standalone real-program dependency probes must include readelf and ldd"
     );
 
     let case_fields: Vec<_> = manifest["required_case_fields"]
@@ -522,6 +556,98 @@ fn current_standalone_artifact_rows_block_host_glibc_dependency() {
                 .any(|path| path.ends_with("libfrankenlibc_replace.so")),
             "log should hash the standalone artifact"
         );
+    }
+}
+
+#[test]
+fn current_standalone_artifact_rows_block_dependency_inspector_failure() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let (artifact_temp, artifact) =
+        build_dummy_standalone_artifact("real-program-dummy-standalone-ldd-failure");
+    let fake_path = fake_ldd_failure_path(&artifact_temp)
+        .to_string_lossy()
+        .into_owned();
+    let (_temp, report_path, log_path, output) = run_gate(
+        "--run",
+        "real-program-standalone-ldd-failure",
+        &[
+            ("PATH", fake_path),
+            ("FRANKENLIBC_STANDALONE_LIB", artifact.display().to_string()),
+        ],
+        true,
+    );
+    assert!(
+        output.status.success(),
+        "real-program smoke gate with failing ldd failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&report_path);
+    assert_eq!(report["status"].as_str(), Some("pass"));
+    assert_eq!(
+        report["artifact_state"]["standalone"]["status"].as_str(),
+        Some("current")
+    );
+    let rows: Vec<_> = report["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| {
+            row["case_id"]
+                .as_str()
+                .unwrap()
+                .starts_with("standalone_real_program_argv_env")
+        })
+        .collect();
+    assert_eq!(rows.len(), 2);
+    for row in &rows {
+        assert_eq!(row["actual_status"].as_str(), Some("claim_blocked"));
+        assert_eq!(row["support_claimed"].as_bool(), Some(false));
+        assert_eq!(
+            row["failure_signature"].as_str(),
+            Some("dependency_inspector_failed")
+        );
+        let scan_ref = row["artifact_refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str())
+            .find(|path| path.ends_with("dependency_scan.json"))
+            .expect("standalone rows should include dependency scan artifact");
+        let scan = load_json(&workspace_root().join(scan_ref));
+        assert_eq!(scan["ldd"]["returncode"].as_i64(), Some(42));
+        assert_eq!(
+            scan["dependency_probe_failures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ldd"]
+        );
+    }
+
+    let log = std::fs::read_to_string(&log_path).expect("log should be readable");
+    let events: Vec<serde_json::Value> = log
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("log row should parse"))
+        .collect();
+    let blocked_events: Vec<_> = events
+        .iter()
+        .filter(|event| event["event"].as_str() == Some("standalone_host_dependency_blocked"))
+        .collect();
+    assert_eq!(blocked_events.len(), 2);
+    for event in blocked_events {
+        assert_eq!(
+            event["failure_signature"].as_str(),
+            Some("dependency_inspector_failed")
+        );
+        assert_eq!(event["actual_status"].as_str(), Some("claim_blocked"));
     }
 }
 
