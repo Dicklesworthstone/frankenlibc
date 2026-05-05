@@ -78,6 +78,8 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.dependency_breakdown.undefined_unwind_symbols",
     "artifact_state.dependency_breakdown.undefined_glibc_symbols",
     "artifact_state.dependency_breakdown.undefined_tls_symbols",
+    "artifact_state.dependency_breakdown.version_needs",
+    "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
 ]
@@ -144,6 +146,8 @@ def empty_dependency_breakdown():
         "undefined_unwind_symbols": [],
         "undefined_glibc_symbols": [],
         "undefined_tls_symbols": [],
+        "version_needs": {},
+        "host_version_requirements": [],
         "loader_needed": False,
         "libc_needed": False,
         "libgcc_needed": False,
@@ -182,6 +186,33 @@ def parse_undefined_symbols(nm_text):
     return unique_sorted(symbols)
 
 
+def parse_version_needs(readelf_version_text):
+    needs = {}
+    in_needs = False
+    current_file = None
+    for line in readelf_version_text.splitlines():
+        if line.startswith("Version needs section"):
+            in_needs = True
+            current_file = None
+            continue
+        if not in_needs:
+            continue
+        file_match = re.search(r"\bFile:\s+(\S+)\s+Cnt:", line)
+        if file_match:
+            current_file = file_match.group(1)
+            needs.setdefault(current_file, [])
+            continue
+        if current_file is None:
+            continue
+        name_match = re.search(r"\bName:\s+(\S+)\s+Flags:", line)
+        if name_match:
+            needs[current_file].append(name_match.group(1))
+    return {
+        provider: unique_sorted(versions)
+        for provider, versions in sorted(needs.items())
+    }
+
+
 def symbol_base(symbol):
     return symbol.split("@", 1)[0]
 
@@ -198,12 +229,13 @@ def is_host_runtime_library(name):
     )
 
 
-def build_dependency_breakdown(readelf_dynamic, nm_dynamic, ldd):
+def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd):
     breakdown = empty_dependency_breakdown()
     needed_libraries = parse_needed_libraries(readelf_dynamic["stdout"])
     ldd_libraries = parse_ldd_libraries(ldd["stdout"] + "\n" + ldd["stderr"])
     all_libraries = unique_sorted([*needed_libraries, *ldd_libraries])
     undefined_symbols = parse_undefined_symbols(nm_dynamic["stdout"])
+    version_needs = parse_version_needs(readelf_version["stdout"] + "\n" + readelf_version["stderr"])
     undefined_unwind_symbols = [
         symbol
         for symbol in undefined_symbols
@@ -225,6 +257,12 @@ def build_dependency_breakdown(readelf_dynamic, nm_dynamic, ldd):
     libc_needed = any(library.startswith("libc.so") for library in all_libraries)
     libgcc_needed = any(library.startswith("libgcc_s.so") for library in all_libraries)
     host_needed_libraries = [library for library in all_libraries if is_host_runtime_library(library)]
+    host_version_requirements = [
+        f"{provider}:{version}"
+        for provider, versions in version_needs.items()
+        if is_host_runtime_library(provider)
+        for version in versions
+    ]
     blocking_reasons = []
     if host_needed_libraries:
         blocking_reasons.append("host_needed_libraries_present")
@@ -240,6 +278,8 @@ def build_dependency_breakdown(readelf_dynamic, nm_dynamic, ldd):
         blocking_reasons.append("undefined_glibc_symbols")
     if undefined_tls_symbols:
         blocking_reasons.append("undefined_tls_symbols")
+    if host_version_requirements:
+        blocking_reasons.append("host_version_requirements")
 
     breakdown.update(
         {
@@ -250,6 +290,8 @@ def build_dependency_breakdown(readelf_dynamic, nm_dynamic, ldd):
             "undefined_unwind_symbols": unique_sorted(undefined_unwind_symbols),
             "undefined_glibc_symbols": unique_sorted(undefined_glibc_symbols),
             "undefined_tls_symbols": unique_sorted(undefined_tls_symbols),
+            "version_needs": version_needs,
+            "host_version_requirements": unique_sorted(host_version_requirements),
             "loader_needed": loader_needed,
             "libc_needed": libc_needed,
             "libgcc_needed": libgcc_needed,
@@ -447,11 +489,13 @@ def inspect_artifact(artifact):
 
     readelf_dynamic = run_command(["readelf", "-d", str(artifact)], timeout=60)
     readelf_symbols = run_command(["readelf", "-Ws", str(artifact)], timeout=60)
+    readelf_version = run_command(["readelf", "--version-info", str(artifact)], timeout=60)
     nm_dynamic = run_command(["nm", "-D", str(artifact)], timeout=60)
     ldd = run_command(["ldd", str(artifact)], timeout=60)
     evidence_commands = {
         "artifact.readelf.dynamic.txt": readelf_dynamic,
         "artifact.readelf.symbols.txt": readelf_symbols,
+        "artifact.readelf.version.txt": readelf_version,
         "artifact.nm.dynamic.txt": nm_dynamic,
         "artifact.ldd.txt": ldd,
     }
@@ -466,7 +510,7 @@ def inspect_artifact(artifact):
         }
 
     mtime = int(artifact.stat().st_mtime)
-    dependency_breakdown = build_dependency_breakdown(readelf_dynamic, nm_dynamic, ldd)
+    dependency_breakdown = build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd)
     if head_epoch and mtime < head_epoch:
         return {
             "status": "stale",

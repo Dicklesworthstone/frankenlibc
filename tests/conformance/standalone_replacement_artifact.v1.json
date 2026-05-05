@@ -47,6 +47,8 @@
     "artifact_state.dependency_breakdown.undefined_unwind_symbols",
     "artifact_state.dependency_breakdown.undefined_glibc_symbols",
     "artifact_state.dependency_breakdown.undefined_tls_symbols",
+    "artifact_state.dependency_breakdown.version_needs",
+    "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons"
   ],
@@ -56,6 +58,7 @@
     "artifact.sha256",
     "artifact.readelf.dynamic.txt",
     "artifact.readelf.symbols.txt",
+    "artifact.readelf.version.txt",
     "artifact.nm.dynamic.txt",
     "artifact.ldd.txt"
   ],

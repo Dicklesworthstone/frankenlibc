@@ -29,6 +29,8 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.undefined_unwind_symbols",
     "artifact_state.dependency_breakdown.undefined_glibc_symbols",
     "artifact_state.dependency_breakdown.undefined_tls_symbols",
+    "artifact_state.dependency_breakdown.version_needs",
+    "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
 ];
@@ -114,6 +116,18 @@ if [ "$1" = "-Ws" ]; then
      1: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND printf@GLIBC_2.2.5
      2: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND __tls_get_addr@GLIBC_2.3
      3: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_Resume@GCC_3.0
+EOF
+  exit 0
+fi
+if [ "$1" = "--version-info" ]; then
+  cat <<'EOF'
+Version needs section '.gnu.version_r' contains 2 entries:
+ Addr: 0x0000000000001000  Offset: 0x00001000  Link: 7 (.dynstr)
+  000000: Version: 1  File: libgcc_s.so.1  Cnt: 2
+  0x0020:   Name: GCC_3.0  Flags: none  Version: 5
+  0x0030:   Name: GCC_3.3  Flags: none  Version: 6
+  0x0010: Version: 1  File: ld-linux-x86-64.so.2  Cnt: 1
+  0x0040:   Name: GLIBC_2.3  Flags: none  Version: 4
 EOF
   exit 0
 fi
@@ -433,6 +447,15 @@ fn forge_mode_reports_host_dependency_breakdown() {
     assert!(glibc.contains("printf@GLIBC_2.2.5"));
     let tls = string_set(&breakdown["undefined_tls_symbols"]);
     assert!(tls.contains("__tls_get_addr@GLIBC_2.3"));
+    let libgcc_versions = string_set(&breakdown["version_needs"]["libgcc_s.so.1"]);
+    assert!(libgcc_versions.contains("GCC_3.0"));
+    assert!(libgcc_versions.contains("GCC_3.3"));
+    let loader_versions = string_set(&breakdown["version_needs"]["ld-linux-x86-64.so.2"]);
+    assert!(loader_versions.contains("GLIBC_2.3"));
+    let host_versions = string_set(&breakdown["host_version_requirements"]);
+    assert!(host_versions.contains("libgcc_s.so.1:GCC_3.0"));
+    assert!(host_versions.contains("libgcc_s.so.1:GCC_3.3"));
+    assert!(host_versions.contains("ld-linux-x86-64.so.2:GLIBC_2.3"));
     assert_eq!(breakdown["loader_needed"].as_bool(), Some(true));
 
     let reasons = string_set(&breakdown["blocking_reasons"]);
@@ -444,6 +467,7 @@ fn forge_mode_reports_host_dependency_breakdown() {
         "undefined_unwind_symbols",
         "undefined_glibc_symbols",
         "undefined_tls_symbols",
+        "host_version_requirements",
     ] {
         assert!(reasons.contains(reason), "missing {reason}");
     }
