@@ -324,6 +324,7 @@ def run_command(command, *, env=None, cwd=root, timeout=900):
             "stdout": completed.stdout,
             "stderr": completed.stderr,
             "timed_out": False,
+            "execution_error": False,
         }
     except subprocess.TimeoutExpired as exc:
         return {
@@ -331,6 +332,7 @@ def run_command(command, *, env=None, cwd=root, timeout=900):
             "stdout": exc.stdout or "",
             "stderr": exc.stderr or "timeout",
             "timed_out": True,
+            "execution_error": False,
         }
     except OSError as exc:
         return {
@@ -338,6 +340,7 @@ def run_command(command, *, env=None, cwd=root, timeout=900):
             "stdout": "",
             "stderr": str(exc),
             "timed_out": False,
+            "execution_error": True,
         }
 
 
@@ -513,11 +516,14 @@ def inspect_artifact(artifact):
 
     mtime = int(artifact.stat().st_mtime)
     dependency_breakdown = build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd)
+    readelf_dynamic_execution_failed = (
+        readelf_dynamic["timed_out"] or readelf_dynamic.get("execution_error", False)
+    )
     inspection_failed = any(
         result["returncode"] != 0 or result["timed_out"]
         for filename, result in evidence_commands.items()
         if filename != "artifact.readelf.dynamic.txt"
-    )
+    ) or readelf_dynamic_execution_failed
     if head_epoch and mtime < head_epoch:
         return {
             "status": "stale",
@@ -530,7 +536,7 @@ def inspect_artifact(artifact):
             "dependency_breakdown": dependency_breakdown,
             "refs": refs,
         }
-    if readelf_dynamic["returncode"] != 0:
+    if readelf_dynamic["returncode"] != 0 and not readelf_dynamic_execution_failed:
         return {
             "status": "non_elf",
             "path": str(artifact),

@@ -270,6 +270,111 @@ exit 0
     path
 }
 
+fn host_tool_path(tool: &str) -> Option<PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&paths) {
+        let candidate = dir.join(tool);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn write_executable(path: &Path, content: impl AsRef<[u8]>) {
+    std::fs::write(path, content).expect("write executable");
+    let chmod = Command::new("chmod")
+        .arg("+x")
+        .arg(path)
+        .output()
+        .expect("chmod should run");
+    assert!(
+        chmod.status.success(),
+        "chmod failed for {}:\nstdout={}\nstderr={}",
+        path.display(),
+        String::from_utf8_lossy(&chmod.stdout),
+        String::from_utf8_lossy(&chmod.stderr)
+    );
+}
+
+fn write_host_tool_proxy(fake_bin: &Path, tool: &str) -> bool {
+    let Some(host_path) = host_tool_path(tool) else {
+        return false;
+    };
+    write_executable(
+        &fake_bin.join(tool),
+        format!("#!/bin/sh\nexec {} \"$@\"\n", host_path.display()),
+    );
+    true
+}
+
+fn fake_missing_inspection_tool_path(temp: &Path, missing_tool: &str) -> Option<OsString> {
+    let fake_bin = temp.join(format!("fake-missing-{missing_tool}-bin"));
+    std::fs::create_dir_all(&fake_bin).expect("create missing-tool fake bin dir");
+    for tool in ["bash", "python3", "dirname", "mkdir", "cat"] {
+        if !write_host_tool_proxy(&fake_bin, tool) {
+            return None;
+        }
+    }
+    if missing_tool != "readelf" {
+        write_executable(
+            &fake_bin.join("readelf"),
+            r#"#!/bin/sh
+if [ "$1" = "-d" ]; then
+  cat <<'EOF'
+Dynamic section at offset 0x1000 contains 1 entry:
+ 0x000000000000000e (SONAME)             Library soname: [libfrankenlibc_replace.so]
+EOF
+  exit 0
+fi
+if [ "$1" = "-Ws" ]; then
+  cat <<'EOF'
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     1: 0000000000001000     1 FUNC    GLOBAL DEFAULT   10 __libc_start_main
+     2: 0000000000001001     1 FUNC    GLOBAL DEFAULT   10 malloc
+     3: 0000000000001002     1 FUNC    GLOBAL DEFAULT   10 free
+     4: 0000000000001003     1 FUNC    GLOBAL DEFAULT   10 printf
+     5: 0000000000001004     1 FUNC    GLOBAL DEFAULT   10 pthread_create
+     6: 0000000000001005     1 FUNC    GLOBAL DEFAULT   10 getaddrinfo
+EOF
+  exit 0
+fi
+if [ "$1" = "--version-info" ]; then
+  echo 'No version information found in this file.'
+  exit 0
+fi
+echo unexpected readelf invocation "$@" >&2
+exit 2
+"#,
+        );
+    }
+    if missing_tool != "nm" {
+        write_executable(
+            &fake_bin.join("nm"),
+            r#"#!/bin/sh
+cat <<'EOF'
+0000000000001000 T __libc_start_main
+0000000000001001 T malloc
+0000000000001002 T free
+0000000000001003 T printf
+0000000000001004 T pthread_create
+0000000000001005 T getaddrinfo
+EOF
+"#,
+        );
+    }
+    if missing_tool != "ldd" {
+        write_executable(
+            &fake_bin.join("ldd"),
+            r#"#!/bin/sh
+echo '	statically linked'
+exit 0
+"#,
+        );
+    }
+    Some(OsString::from(fake_bin))
+}
+
 fn run_gate(mode: &str, prefix: &str) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
     let root = workspace_root();
     let temp = unique_temp_dir(prefix);
@@ -729,6 +834,110 @@ fn forge_mode_blocks_artifact_when_required_symbol_probe_fails() {
                 .is_some_and(|code| code != 0),
             "{probe}: expected failing tool_evidence exit code"
         );
+    }
+}
+
+#[test]
+fn forge_mode_blocks_artifact_when_required_inspection_tool_is_missing() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-artifact-missing-inspection-tool");
+    let source_c = temp.join("sample.c");
+    let source_so = temp.join("libfrankenlibc_abi.so");
+    std::fs::write(
+        &source_c,
+        "int frankenlibc_sample_symbol(void) { return 7; }\n",
+    )
+    .expect("write sample source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source_c)
+        .arg("-o")
+        .arg(&source_so)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+
+    for (missing_tool, evidence_file) in [
+        ("readelf", "artifact.readelf.dynamic.txt"),
+        ("nm", "artifact.nm.dynamic.txt"),
+        ("ldd", "artifact.ldd.txt"),
+    ] {
+        let out_dir = temp.join(format!("missing-{missing_tool}-out"));
+        let cargo_target = temp.join(format!("missing-{missing_tool}-cargo-target"));
+        let report = temp.join(format!("missing-{missing_tool}.report.json"));
+        let log = temp.join(format!("missing-{missing_tool}.log.jsonl"));
+        let Some(fake_path) = fake_missing_inspection_tool_path(&temp, missing_tool) else {
+            return;
+        };
+        let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+            .arg("--forge")
+            .current_dir(&root)
+            .env("PATH", fake_path)
+            .env("STANDALONE_REPLACEMENT_OUT_DIR", &out_dir)
+            .env("STANDALONE_REPLACEMENT_CARGO_TARGET_DIR", &cargo_target)
+            .env("STANDALONE_REPLACEMENT_REPORT", &report)
+            .env("STANDALONE_REPLACEMENT_LOG", &log)
+            .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
+            .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
+            .env_remove("LD_PRELOAD")
+            .output()
+            .expect("forge mode should run");
+        assert!(
+            output.status.success(),
+            "forge mode should keep gate pass/claim blocked when {missing_tool} is missing:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let report_json = load_json(&report);
+        assert_eq!(
+            report_json["status"].as_str(),
+            Some("pass"),
+            "{missing_tool}"
+        );
+        assert_eq!(
+            report_json["claim_status"].as_str(),
+            Some("claim_blocked"),
+            "{missing_tool}"
+        );
+        assert_eq!(
+            report_json["artifact_state"]["status"].as_str(),
+            Some("inspection_failed"),
+            "{missing_tool}"
+        );
+        assert_eq!(
+            report_json["artifact_state"]["failure_signature"].as_str(),
+            Some("artifact_dependency_inspection_failed"),
+            "{missing_tool}"
+        );
+        assert_eq!(
+            report_json["tool_evidence"][evidence_file]["exit_code"].as_i64(),
+            Some(127),
+            "{missing_tool}: expected missing tool to be recorded as exit 127"
+        );
+        assert_eq!(
+            report_json["tool_evidence"][evidence_file]["timed_out"].as_bool(),
+            Some(false),
+            "{missing_tool}: missing tool should not be reported as timeout"
+        );
+        let evidence_path = PathBuf::from(
+            report_json["tool_evidence"][evidence_file]["path"]
+                .as_str()
+                .expect("tool evidence path should be present"),
+        );
+        let evidence = std::fs::read_to_string(evidence_path).expect("tool evidence should exist");
+        assert!(
+            evidence.contains(missing_tool),
+            "{missing_tool}: missing tool evidence should name the executable"
+        );
+        assert!(log.exists(), "{missing_tool}: log should be written");
     }
 }
 
