@@ -1,0 +1,108 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "dlfcn-replace-boundary-l1-burndown",
+  "bead": "bd-wcwwl",
+  "owner_bead": "bd-zyck1",
+  "generated_utc": "2026-05-05T04:30:00Z",
+  "source_commit": "82190420674d98ccae9fb46f7133e6ed1122a791",
+  "purpose": "Burn-down classification atop tests/conformance/dlfcn_replace_boundary_sentinel.v1.json. The sentinel keeps the eight current host-delegation call sites visible; this file records, per call site, whether it is an L1 promotion blocker (must be removed before current_level can advance to L1) or whether it is structurally below L1 (only reachable from a runtime path that L1 turns off). The harness gate enforces the classification per the source-code guards and refuses any silent reclassification that would lift L1 promotion blockers without a native replacement.",
+  "subject": {
+    "sentinel": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+    "module": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+    "owner_bead": "bd-b92jd.5"
+  },
+  "inputs": {
+    "sentinel": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+    "dlfcn_source": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+    "replacement_levels": "tests/conformance/replacement_levels.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "callsite_id",
+    "l1_relevance",
+    "below_l1_proof_kind",
+    "expected_l1_blocker",
+    "actual_l1_blocker",
+    "decision",
+    "rejection_reason",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "policy": {
+    "default_decision": "block_until_burndown_classification_current",
+    "max_l1_blockers": 6,
+    "below_l1_proof_kinds": [
+      "runtime_policy_bootstrap_only",
+      "host_handle_round_trip_outside_l1_namespace",
+      "rtld_default_l0_only_lookup"
+    ],
+    "rejected_evidence_kinds": [
+      "callsite_missing_classification",
+      "below_l1_without_proof_kind",
+      "l1_blocker_count_drift",
+      "duplicate_callsite_id",
+      "stale_source_commit",
+      "classification_does_not_match_sentinel_id_set"
+    ]
+  },
+  "classifications": [
+    {
+      "callsite_id": "dlopen_bootstrap_passthrough",
+      "l1_relevance": "below_l1",
+      "below_l1_proof_kind": "runtime_policy_bootstrap_only",
+      "rationale": "Guarded by `runtime_policy::bootstrap_passthrough_active()` (dlfcn_abi.rs:216); bootstrap pass-through runs ONLY before runtime mode resolution, which itself happens before any L1 path can be taken. L1 promotion implies the runtime is past phase-0 startup, so this branch is unreachable at L1 by construction."
+    },
+    {
+      "callsite_id": "dlclose_bootstrap_passthrough",
+      "l1_relevance": "below_l1",
+      "below_l1_proof_kind": "runtime_policy_bootstrap_only",
+      "rationale": "Same `bootstrap_passthrough_active()` gate at dlfcn_abi.rs:609 (dlclose). Closes host-loaded handles created during bootstrap; if dlopen_bootstrap_passthrough is unreachable at L1, dlclose_bootstrap_passthrough has no live host handles to close."
+    },
+    {
+      "callsite_id": "host_dlvsym_next_raw_dlvsym_default_call",
+      "l1_relevance": "l1_blocker",
+      "rationale": "RTLD_NEXT walk via host_dlvsym_next_raw is the only versioned-symbol resolution path; L1 must replace this with native version-chain enumeration."
+    },
+    {
+      "callsite_id": "host_dlsym_helper",
+      "l1_relevance": "l1_blocker",
+      "rationale": "Helper used by host-handle dlsym delegation; L1 must replace with native dlsym backed by the loader's own symbol table."
+    },
+    {
+      "callsite_id": "host_dlvsym_helper",
+      "l1_relevance": "l1_blocker",
+      "rationale": "Helper used by host-handle dlvsym delegation; L1 must replace with native dlvsym."
+    },
+    {
+      "callsite_id": "dlopen_post_bootstrap",
+      "l1_relevance": "l1_blocker",
+      "rationale": "Post-bootstrap dlopen path delegates to host loader because we have no native ELF loader yet; L1 promotion REQUIRES a native loader, so this site is the central blocker."
+    },
+    {
+      "callsite_id": "dlsym_post_bootstrap_host_handle",
+      "l1_relevance": "l1_blocker",
+      "rationale": "Host handles obtained via host dlopen need host dlsym to resolve symbols; L1 native dlopen would obviate this site by producing native handles."
+    },
+    {
+      "callsite_id": "dlclose_post_bootstrap_host_handle",
+      "l1_relevance": "l1_blocker",
+      "rationale": "Companion of dlsym_post_bootstrap_host_handle; native handles will not need host dlclose at L1."
+    }
+  ],
+  "expected_counts": {
+    "total": 8,
+    "l1_blocker": 6,
+    "below_l1": 2,
+    "below_l1_by_proof_kind": {
+      "runtime_policy_bootstrap_only": 2,
+      "host_handle_round_trip_outside_l1_namespace": 0,
+      "rtld_default_l0_only_lookup": 0
+    }
+  },
+  "consuming_gates": [
+    "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+    "tests/conformance/replacement_levels.json"
+  ]
+}
