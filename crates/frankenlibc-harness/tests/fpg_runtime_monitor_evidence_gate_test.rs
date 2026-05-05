@@ -94,6 +94,26 @@ fn log_path(root: &Path) -> PathBuf {
     root.join("target/conformance/fpg_runtime_monitor_evidence_gate.log.jsonl")
 }
 
+fn git_head(root: &Path) -> TestResult<String> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(root)
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+    Ok(String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
+        .trim()
+        .to_owned())
+}
+
 fn load_json(path: &Path) -> TestResult<Value> {
     let content = std::fs::read_to_string(path)
         .map_err(|err| test_error(format!("{} should be readable: {err}", path.display())))?;
@@ -232,6 +252,53 @@ fn gate_artifact_covers_runtime_monitor_rows() -> TestResult {
         "fpg-gap-summary-runtime-monitor-evidence",
         "owner_family_group",
     )?;
+    let freshness_policy = field(&gate, "source_commit_freshness_policy", "gate")?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "recorded_source_commit_field",
+            "source_commit_freshness_policy",
+        )?,
+        "source_commit",
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "comparison_target",
+            "source_commit_freshness_policy",
+        )?,
+        "current git HEAD",
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "stale_result",
+            "source_commit_freshness_policy",
+        )?,
+        "block_runtime_monitor_gate_evidence",
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    ensure_eq(
+        field(
+            freshness_policy,
+            "runtime_monitor_evidence_allowed_when_stale",
+            "source_commit_freshness_policy",
+        )?
+        .as_bool(),
+        Some(false),
+        "source_commit_freshness_policy.runtime_monitor_evidence_allowed_when_stale",
+    )?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "rejected_evidence_kind",
+            "source_commit_freshness_policy",
+        )?,
+        "stale_source_commit",
+        "source_commit_freshness_policy.rejected_evidence_kind",
+    )?;
 
     let inputs = as_object(field(&gate, "inputs", "gate")?, "inputs")?;
     for value in inputs.values() {
@@ -303,6 +370,48 @@ fn gate_artifact_covers_runtime_monitor_rows() -> TestResult {
     }
     let expected_ids = EXPECTED_GAP_IDS.iter().copied().collect::<BTreeSet<_>>();
     ensure_eq(actual_ids, expected_ids, "runtime-monitor gap id coverage")
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_runtime_monitor_gate_evidence() -> TestResult {
+    let root = workspace_root();
+    let gate = load_json(&gate_path(&root))?;
+    let gate_commit = string_field(&gate, "source_commit", "gate")?;
+    ensure(
+        gate_commit.len() == 40 && gate_commit.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "source_commit must be a 40-character git SHA",
+    )?;
+
+    let current_head = git_head(&root)?;
+    if gate_commit != current_head {
+        let policy = field(&gate, "source_commit_freshness_policy", "gate")?;
+        ensure_eq(
+            string_field(policy, "stale_result", "source_commit_freshness_policy")?,
+            "block_runtime_monitor_gate_evidence",
+            "stale runtime-monitor source_commit must block gate evidence",
+        )?;
+        ensure_eq(
+            field(
+                policy,
+                "runtime_monitor_evidence_allowed_when_stale",
+                "source_commit_freshness_policy",
+            )?
+            .as_bool(),
+            Some(false),
+            "stale runtime-monitor source_commit must not allow gate evidence",
+        )?;
+        ensure_eq(
+            string_field(
+                policy,
+                "rejected_evidence_kind",
+                "source_commit_freshness_policy",
+            )?,
+            "stale_source_commit",
+            "stale runtime-monitor source_commit must use stale_source_commit",
+        )?;
+    }
+
+    Ok(())
 }
 
 #[test]

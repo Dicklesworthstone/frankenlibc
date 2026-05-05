@@ -6,6 +6,13 @@
   "evidence_owner": "runtime_math monitor owners",
   "generated_utc": "2026-05-03T23:05:00Z",
   "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_runtime_monitor_gate_evidence",
+    "runtime_monitor_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "inputs": {
     "feature_parity": "FEATURE_PARITY.md",
     "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",

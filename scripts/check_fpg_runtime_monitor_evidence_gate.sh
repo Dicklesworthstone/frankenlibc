@@ -189,6 +189,16 @@ if isinstance(gate, dict):
         fail("gate evidence_owner mismatch")
     if not gate.get("source_commit"):
         fail("gate source_commit must be non-empty")
+    freshness_policy = gate.get("source_commit_freshness_policy", {})
+    expected_freshness_policy = {
+        "recorded_source_commit_field": "source_commit",
+        "comparison_target": "current git HEAD",
+        "stale_result": "block_runtime_monitor_gate_evidence",
+        "runtime_monitor_evidence_allowed_when_stale": False,
+        "rejected_evidence_kind": "stale_source_commit",
+    }
+    if freshness_policy != expected_freshness_policy:
+        fail("source_commit_freshness_policy must match the stale runtime-monitor gate block contract")
     if gate.get("required_log_fields") != REQUIRED_LOG_FIELDS:
         fail("gate required_log_fields must match the bd-bp8fl.3.14 contract")
     try:
