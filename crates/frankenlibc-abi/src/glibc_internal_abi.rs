@@ -2859,9 +2859,18 @@ pub unsafe extern "C" fn inet_nsap_ntoa(
     // Static fallback buffer when caller passes NULL buf — preserves
     // glibc semantics. 512 bytes accommodates any reasonable NSAP
     // address (up to 20 bytes -> 59 char output + NUL).
+    //
+    // Hold the MutexGuard for the entire function body when the static
+    // buffer is in use; previously the guard was scoped to the if-arm
+    // and dropped before dst was written, racing the static buffer
+    // across concurrent NULL-buf callers (bd-o15jc).
     static NSAP_BUF: std::sync::Mutex<[u8; 512]> = std::sync::Mutex::new([0u8; 512]);
-    let dst = if buf.is_null() {
-        let mut b = NSAP_BUF.lock().unwrap_or_else(|e| e.into_inner());
+    let mut nsap_guard: Option<std::sync::MutexGuard<'_, [u8; 512]>> = if buf.is_null() {
+        Some(NSAP_BUF.lock().unwrap_or_else(|e| e.into_inner()))
+    } else {
+        None
+    };
+    let dst = if let Some(b) = nsap_guard.as_mut() {
         b.as_mut_ptr() as *mut c_char
     } else {
         buf
