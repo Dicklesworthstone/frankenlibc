@@ -245,7 +245,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "summary.forge_projection_failure_signature_count",
-      "expected_value": 3,
+      "expected_value": 6,
       "rationale": "L1 dashboard consumers must see every projected forge failure signature mapped to a negative-control probe."
     },
     {

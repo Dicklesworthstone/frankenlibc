@@ -222,7 +222,10 @@
     "failure_signature_to_negative_test": {
       "standalone_artifact_missing": "missing_replace_artifact",
       "standalone_artifact_stale": "stale_source_commit",
-      "host_glibc_dependency": "residual_host_glibc_dependency"
+      "wrong_artifact_profile": "wrong_artifact_profile",
+      "host_glibc_dependency": "residual_host_glibc_dependency",
+      "artifact_dependency_inspection_failed": "dependency_inspection_failed",
+      "symbol_evidence_missing": "missing_symbol_evidence"
     }
   },
   "negative_claim_tests": [
@@ -243,6 +246,24 @@
       "mutation": "readelf or ldd observes libc.so.6 for an L2/L3 replacement artifact",
       "expected_result": "claim_blocked",
       "failure_signature": "host_glibc_dependency_present"
+    },
+    {
+      "id": "wrong_artifact_profile",
+      "mutation": "present a replacement artifact that is not named libfrankenlibc_replace.so",
+      "expected_result": "claim_blocked",
+      "failure_signature": "wrong_artifact_profile"
+    },
+    {
+      "id": "dependency_inspection_failed",
+      "mutation": "make readelf, nm, or ldd fail or time out while inspecting the replacement artifact",
+      "expected_result": "claim_blocked",
+      "failure_signature": "artifact_dependency_inspection_failed"
+    },
+    {
+      "id": "missing_symbol_evidence",
+      "mutation": "drop one required standalone symbol sample from the replacement artifact evidence",
+      "expected_result": "claim_blocked",
+      "failure_signature": "symbol_evidence_missing"
     },
     {
       "id": "missing_startup_tls_rows",
@@ -714,11 +735,11 @@
     "required_probe_type_count": 14,
     "claim_blocked_count": 13,
     "l2_l3_blocker_count": 13,
-    "negative_claim_test_count": 5,
+    "negative_claim_test_count": 8,
     "forge_projection_field_count": 19,
     "forge_projection_blocking_reason_count": 10,
     "forge_projection_blocker_catalog_row_count": 10,
-    "forge_projection_failure_signature_count": 3,
+    "forge_projection_failure_signature_count": 6,
     "tool_count": 10
   }
 }

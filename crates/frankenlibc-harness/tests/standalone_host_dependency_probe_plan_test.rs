@@ -90,7 +90,13 @@ const FORGE_BLOCKING_REASON_MAPPINGS: &[(&str, &str)] = &[
 const FORGE_FAILURE_SIGNATURE_MAPPINGS: &[(&str, &str)] = &[
     ("standalone_artifact_missing", "missing_replace_artifact"),
     ("standalone_artifact_stale", "stale_source_commit"),
+    ("wrong_artifact_profile", "wrong_artifact_profile"),
     ("host_glibc_dependency", "residual_host_glibc_dependency"),
+    (
+        "artifact_dependency_inspection_failed",
+        "dependency_inspection_failed",
+    ),
+    ("symbol_evidence_missing", "missing_symbol_evidence"),
 ];
 
 fn workspace_root() -> TestResult<PathBuf> {
@@ -642,6 +648,14 @@ fn checker_emits_report_and_required_jsonl_rows() -> TestResult {
         json_u64(summary, "forge_projection_blocker_catalog_row_count")? == 10,
         "forge projection blocker catalog count must be 10",
     )?;
+    match json_u64(summary, "forge_projection_failure_signature_count")? {
+        6 => {}
+        actual => {
+            return Err(format!(
+                "forge projection failure signature count must be 6, found {actual}"
+            ));
+        }
+    }
     require(
         json_string(&report, "source_commit")?.len() == 40,
         "report source_commit must be current git SHA",
@@ -794,6 +808,27 @@ fn checker_rejects_missing_forge_projection_mapping() -> TestResult {
         &mutated,
         "standalone-host-probe-plan-missing-projection",
         "blocking_reason_to_probe_id missing host_libc_dependency",
+    )
+}
+
+#[test]
+fn checker_rejects_missing_forge_failure_signature_mapping() -> TestResult {
+    let mutated = write_mutated_plan("standalone-host-probe-plan-missing-failure-map", |plan| {
+        let projection = plan
+            .get_mut("current_forge_blocker_projection")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing current_forge_blocker_projection".to_string())?;
+        let failure_map = projection
+            .get_mut("failure_signature_to_negative_test")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing failure_signature_to_negative_test".to_string())?;
+        failure_map.remove("symbol_evidence_missing");
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "standalone-host-probe-plan-missing-failure-map",
+        "failure_signature_to_negative_test missing symbol_evidence_missing",
     )
 }
 

@@ -836,7 +836,7 @@ fn host_probe_projection_rows_are_explicit() -> TestResult {
         (
             "standalone-host-probe-projection-failure-signature-count-diagnostic",
             "summary.forge_projection_failure_signature_count",
-            json!(3),
+            json!(6),
         ),
     ]
     .into_iter()

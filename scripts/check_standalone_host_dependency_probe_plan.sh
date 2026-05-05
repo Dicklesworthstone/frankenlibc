@@ -120,7 +120,10 @@ REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE = {
 REQUIRED_FORGE_FAILURE_SIGNATURE_TO_NEGATIVE_TEST = {
     "standalone_artifact_missing": "missing_replace_artifact",
     "standalone_artifact_stale": "stale_source_commit",
+    "wrong_artifact_profile": "wrong_artifact_profile",
     "host_glibc_dependency": "residual_host_glibc_dependency",
+    "artifact_dependency_inspection_failed": "dependency_inspection_failed",
+    "symbol_evidence_missing": "missing_symbol_evidence",
 }
 EXPECTED_FRESHNESS_POLICY = {
     "recorded_source_commit_field": "source_commit",
