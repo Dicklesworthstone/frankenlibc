@@ -32,7 +32,13 @@
     "timeout_exit_code": 124,
     "reported_field": "tool_evidence.*.timeout_secs"
   },
-  "required_tools": ["rch", "cargo", "readelf", "nm", "ldd", "sha256"],
+  "required_tools": ["rch", "cargo", "readelf", "nm", "ldd"],
+  "hash_evidence_policy": {
+    "algorithm": "sha256",
+    "implementation": "python3 hashlib.sha256",
+    "reported_field": "artifact_state.sha256",
+    "evidence_file": "artifact.sha256"
+  },
   "required_log_fields": [
     "trace_id",
     "bead_id",

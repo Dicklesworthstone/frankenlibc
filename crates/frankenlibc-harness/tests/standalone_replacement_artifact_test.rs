@@ -63,6 +63,8 @@ const REQUIRED_EVIDENCE_FILES: &[&str] = &[
     "artifact.ldd.txt",
 ];
 
+const REQUIRED_TOOLS: &[&str] = &["rch", "cargo", "readelf", "nm", "ldd"];
+
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest)
@@ -619,6 +621,42 @@ fn manifest_matches_forge_contract() {
     assert_eq!(
         manifest["artifact_policy"]["ld_preload_substitutes_allowed"].as_bool(),
         Some(false)
+    );
+    let tools: Vec<_> = manifest
+        .get("required_tools")
+        .and_then(serde_json::Value::as_array)
+        .expect("required_tools should be an array")
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert_eq!(tools, REQUIRED_TOOLS);
+    let hash_policy = manifest
+        .get("hash_evidence_policy")
+        .and_then(serde_json::Value::as_object)
+        .expect("hash_evidence_policy should be an object");
+    assert_eq!(
+        hash_policy
+            .get("algorithm")
+            .and_then(serde_json::Value::as_str),
+        Some("sha256")
+    );
+    assert_eq!(
+        hash_policy
+            .get("implementation")
+            .and_then(serde_json::Value::as_str),
+        Some("python3 hashlib.sha256")
+    );
+    assert_eq!(
+        hash_policy
+            .get("reported_field")
+            .and_then(serde_json::Value::as_str),
+        Some("artifact_state.sha256")
+    );
+    assert_eq!(
+        hash_policy
+            .get("evidence_file")
+            .and_then(serde_json::Value::as_str),
+        Some("artifact.sha256")
     );
 
     let fields: Vec<_> = manifest["required_log_fields"]
