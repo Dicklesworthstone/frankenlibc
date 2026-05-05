@@ -103,6 +103,17 @@ REQUIRED_REPORT_FIELDS = [
 
 REQUIRED_TOOLS = ["rch", "cargo", "readelf", "nm", "ldd"]
 
+REQUIRED_EVIDENCE_FILES = [
+    "build.stdout.txt",
+    "build.stderr.txt",
+    "artifact.sha256",
+    "artifact.readelf.dynamic.txt",
+    "artifact.readelf.symbols.txt",
+    "artifact.readelf.version.txt",
+    "artifact.nm.dynamic.txt",
+    "artifact.ldd.txt",
+]
+
 EXPECTED_HASH_EVIDENCE_POLICY = {
     "algorithm": "sha256",
     "implementation": "python3 hashlib.sha256",
@@ -452,6 +463,8 @@ def validate_manifest():
         errors.append("required_log_fields do not match script contract")
     if manifest.get("required_report_fields") != REQUIRED_REPORT_FIELDS:
         errors.append("required_report_fields do not match script contract")
+    if manifest.get("required_evidence_files") != REQUIRED_EVIDENCE_FILES:
+        errors.append("required_evidence_files do not match script contract")
     if manifest.get("required_tools") != REQUIRED_TOOLS:
         errors.append("required_tools do not match script contract")
     if manifest.get("hash_evidence_policy") != EXPECTED_HASH_EVIDENCE_POLICY:

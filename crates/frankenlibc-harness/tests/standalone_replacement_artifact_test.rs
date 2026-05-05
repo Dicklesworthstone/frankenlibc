@@ -793,6 +793,48 @@ fn validate_only_rejects_hash_evidence_policy_contract_drift() {
 }
 
 #[test]
+fn validate_only_rejects_required_evidence_files_contract_drift() {
+    let manifest_path = write_manifest_variant(
+        "standalone-artifact-evidence-files-drift-manifest",
+        |manifest| {
+            manifest["required_evidence_files"] = serde_json::json!([
+                "build.stdout.txt",
+                "build.stderr.txt",
+                "artifact.readelf.dynamic.txt",
+                "artifact.readelf.symbols.txt",
+                "artifact.readelf.version.txt",
+                "artifact.nm.dynamic.txt",
+                "artifact.ldd.txt"
+            ]);
+        },
+    );
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) = run_gate_with_env(
+        "--validate-only",
+        "standalone-artifact-evidence-files-drift",
+        &envs,
+    );
+    assert!(
+        !output.status.success(),
+        "required_evidence_files drift should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors.iter().any(|error| {
+            error.as_str() == Some("required_evidence_files do not match script contract")
+        }),
+        "expected required_evidence_files contract error: {errors:?}"
+    );
+}
+
+#[test]
 fn invalid_inspection_timeout_override_fails_validate_only() {
     let (_temp, report, _log, output) = run_gate_with_env(
         "--validate-only",
