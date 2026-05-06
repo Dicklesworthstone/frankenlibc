@@ -418,6 +418,120 @@ fn current_level_remains_l0_until_dashboard_passes_completely() -> TestResult {
 }
 
 #[test]
+fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "replacement-level-release-tag-still-l0",
+            ("release_tag_policy.current_release_level", json!("L0")),
+        ),
+        (
+            "replacement-level-release-tag-example",
+            (
+                "release_tag_policy.current_release_tag_example",
+                json!("v0.1.0-L0"),
+            ),
+        ),
+        (
+            "replacement-level-current-stub-count",
+            ("current_assessment.stub", json!(0)),
+        ),
+        (
+            "replacement-level-current-callthrough-pct",
+            ("current_assessment.callthrough_pct", json!(0)),
+        ),
+        (
+            "replacement-level-l1-status",
+            ("levels.1.status", json!("in_progress")),
+        ),
+        (
+            "replacement-level-l1-objective-gate-status",
+            ("levels.1.objective_gate.status", json!("blocked")),
+        ),
+        (
+            "replacement-level-l1-promotion-outcome",
+            ("levels.1.objective_gate.obligations.6.outcome", json!("blocked")),
+        ),
+        (
+            "replacement-level-l1-promotion-actual-current-level",
+            (
+                "levels.1.objective_gate.obligations.6.actual.current_level",
+                json!("L0"),
+            ),
+        ),
+        (
+            "replacement-level-l1-crt-tls-outcome",
+            ("levels.1.objective_gate.obligations.7.outcome", json!("blocked")),
+        ),
+        (
+            "replacement-level-l1-crt-tls-blocked-row-count",
+            (
+                "levels.1.objective_gate.obligations.7.actual.blocked_row_count",
+                json!(6),
+            ),
+        ),
+        (
+            "replacement-level-l1-first-blocker",
+            (
+                "levels.1.blockers.0",
+                json!(
+                    "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate."
+                ),
+            ),
+        ),
+        (
+            "replacement-level-l0-to-l1-crt-requirement",
+            (
+                "transition_requirements.L0_to_L1.3",
+                json!(
+                    "Complete the L1 CRT/startup/TLS proof matrix for startup, TLS, init/fini, destructors, errno isolation, secure mode, and diagnostics"
+                ),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("replacement-level-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected replacement level dashboard row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "promotion_state",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/replacement_levels.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing replacement level claim-control dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn minimum_row_kinds_each_have_at_least_one_row() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut kinds_seen: BTreeSet<String> = BTreeSet::new();

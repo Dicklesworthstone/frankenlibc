@@ -2851,6 +2851,102 @@
       "field": "current_level",
       "expected_value": "L0",
       "rationale": "Until every other row passes, current_level must remain L0; the dashboard never promotes automatically."
+    },
+    {
+      "row_id": "replacement-level-release-tag-still-l0",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "release_tag_policy.current_release_level",
+      "expected_value": "L0",
+      "rationale": "The dashboard must expose that release tagging still claims L0 until promotion is explicitly approved."
+    },
+    {
+      "row_id": "replacement-level-release-tag-example",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "release_tag_policy.current_release_tag_example",
+      "expected_value": "v0.1.0-L0",
+      "rationale": "Dashboard consumers must see the release-tag suffix that still represents the current replacement level."
+    },
+    {
+      "row_id": "replacement-level-current-stub-count",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "current_assessment.stub",
+      "expected_value": 0,
+      "rationale": "The dashboard must expose that zero stubs is necessary but not sufficient for L1 promotion."
+    },
+    {
+      "row_id": "replacement-level-current-callthrough-pct",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "current_assessment.callthrough_pct",
+      "expected_value": 0,
+      "rationale": "The dashboard must expose that zero call-through percentage alone does not authorize L1 promotion."
+    },
+    {
+      "row_id": "replacement-level-l1-status",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.status",
+      "expected_value": "in_progress",
+      "rationale": "Dashboard consumers must see that L1 remains in progress rather than achieved."
+    },
+    {
+      "row_id": "replacement-level-l1-objective-gate-status",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.status",
+      "expected_value": "blocked",
+      "rationale": "The dashboard must expose the L1 objective gate blocked state."
+    },
+    {
+      "row_id": "replacement-level-l1-promotion-outcome",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.6.outcome",
+      "expected_value": "blocked",
+      "rationale": "Promotion claim-control must remain visibly blocked until current_level and release tag move together."
+    },
+    {
+      "row_id": "replacement-level-l1-promotion-actual-current-level",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.6.actual.current_level",
+      "expected_value": "L0",
+      "rationale": "Dashboard consumers must see the actual current_level that blocks the promotion-control obligation."
+    },
+    {
+      "row_id": "replacement-level-l1-crt-tls-outcome",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.7.outcome",
+      "expected_value": "blocked",
+      "rationale": "The dashboard must expose that CRT/startup/TLS proof matrix obligations still block L1."
+    },
+    {
+      "row_id": "replacement-level-l1-crt-tls-blocked-row-count",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.7.actual.blocked_row_count",
+      "expected_value": 6,
+      "rationale": "Dashboard consumers must see the exact remaining CRT/startup/TLS blocker count."
+    },
+    {
+      "row_id": "replacement-level-l1-first-blocker",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.blockers.0",
+      "expected_value": "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate.",
+      "rationale": "The dashboard must expose the primary L1 blocker as a concrete row."
+    },
+    {
+      "row_id": "replacement-level-l0-to-l1-crt-requirement",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "transition_requirements.L0_to_L1.3",
+      "expected_value": "Complete the L1 CRT/startup/TLS proof matrix for startup, TLS, init/fini, destructors, errno isolation, secure mode, and diagnostics",
+      "rationale": "The dashboard must expose the transition requirement that remains tied to the CRT/startup/TLS blocker."
     }
   ],
   "minimum_row_kinds": [
