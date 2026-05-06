@@ -5276,6 +5276,161 @@ fn l1_promotion_gate_rows_are_explicit() -> TestResult {
             ),
         ),
         (
+            "l1-promotion-gate-current-level-l0",
+            ("policy.current_level_at_audit_time", json!("L0")),
+        ),
+        (
+            "l1-promotion-gate-max-target-l1",
+            ("policy.max_promotion_target", json!("L1")),
+        ),
+        (
+            "l1-promotion-gate-block-missing-evidence",
+            (
+                "policy.block_promotion_kinds.0",
+                json!("missing_evidence_artifact"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-block-perf-waiver",
+            (
+                "policy.block_promotion_kinds.4",
+                json!("perf_waiver_broad_or_expired"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-block-readme-overclaim",
+            (
+                "policy.block_promotion_kinds.6",
+                json!("readme_overclaim_relative_to_replacement_levels"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-block-unresolved-blocker",
+            (
+                "policy.block_promotion_kinds.7",
+                json!("blocker_unresolved"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-reject-missing-artifact",
+            (
+                "policy.rejected_evidence_kinds.0",
+                json!("missing_artifact"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-reject-schema-drift",
+            ("policy.rejected_evidence_kinds.1", json!("schema_drift")),
+        ),
+        (
+            "l1-promotion-gate-reject-level-drift",
+            (
+                "policy.rejected_evidence_kinds.4",
+                json!("current_level_drifted_above_l0_without_gate_pass"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-reject-claim-reconciliation",
+            (
+                "policy.rejected_evidence_kinds.5",
+                json!("claim_reconciliation_status_not_pass"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-req-claim-zero-errors-id",
+            (
+                "evidence_requirements_for_l1.0.requirement_id",
+                json!("req-claim-reconciliation-zero-errors"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-req-claim-zero-errors-artifact",
+            (
+                "evidence_requirements_for_l1.0.evidence_artifact",
+                json!("tests/conformance/claim_reconciliation_report.v1.json"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-req-smoke-fails-field",
+            (
+                "evidence_requirements_for_l1.2.field",
+                json!("summary.fails"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-req-smoke-overall-expected",
+            (
+                "evidence_requirements_for_l1.3.expected_value",
+                json!(false),
+            ),
+        ),
+        (
+            "l1-promotion-gate-req-perf-issues-id",
+            (
+                "evidence_requirements_for_l1.4.requirement_id",
+                json!("req-perf-regression-no-issues"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-req-waiver-audit-field",
+            (
+                "evidence_requirements_for_l1.5.field",
+                json!("policy.default_decision"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-req-replacement-blocker-kind",
+            (
+                "evidence_requirements_for_l1.6.expected_kind",
+                json!("non_empty_array"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-input-replacement-levels",
+            (
+                "inputs.replacement_levels",
+                json!("tests/conformance/replacement_levels.json"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-input-perf-waiver",
+            (
+                "inputs.perf_waiver_audit",
+                json!("tests/conformance/perf_waiver_audit.v1.json"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-input-readme",
+            ("inputs.readme", json!("README.md")),
+        ),
+        (
+            "l1-promotion-gate-first-log-field",
+            ("required_log_fields.0", json!("trace_id")),
+        ),
+        (
+            "l1-promotion-gate-decision-log-field",
+            ("required_log_fields.10", json!("decision")),
+        ),
+        (
+            "l1-promotion-gate-last-log-field",
+            ("required_log_fields.14", json!("failure_signature")),
+        ),
+        (
+            "l1-promotion-gate-expiry-horizon",
+            ("expires_at_horizon_days", json!(60)),
+        ),
+        (
+            "l1-promotion-gate-first-consuming-gate",
+            (
+                "consuming_gates.0",
+                json!("tests/conformance/replacement_levels.json"),
+            ),
+        ),
+        (
+            "l1-promotion-gate-last-consuming-gate",
+            ("consuming_gates.2", json!("README.md")),
+        ),
+        (
             "l1-promotion-gate-source-commit-field",
             (
                 "source_commit_freshness_policy.recorded_source_commit_field",

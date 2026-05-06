@@ -4501,6 +4501,214 @@
       "rationale": "L1 promotion gate must remain wired to its fail-closed default."
     },
     {
+      "row_id": "l1-promotion-gate-current-level-l0",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "policy.current_level_at_audit_time",
+      "expected_value": "L0",
+      "rationale": "Dashboard consumers must see that the promotion audit starts from L0."
+    },
+    {
+      "row_id": "l1-promotion-gate-max-target-l1",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "policy.max_promotion_target",
+      "expected_value": "L1",
+      "rationale": "The dashboard must expose that this gate only governs promotion up to L1."
+    },
+    {
+      "row_id": "l1-promotion-gate-block-missing-evidence",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "policy.block_promotion_kinds.0",
+      "expected_value": "missing_evidence_artifact",
+      "rationale": "The dashboard must expose missing artifacts as a promotion blocker."
+    },
+    {
+      "row_id": "l1-promotion-gate-block-perf-waiver",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "policy.block_promotion_kinds.4",
+      "expected_value": "perf_waiver_broad_or_expired",
+      "rationale": "The dashboard must expose broad or expired perf waivers as promotion blockers."
+    },
+    {
+      "row_id": "l1-promotion-gate-block-readme-overclaim",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "policy.block_promotion_kinds.6",
+      "expected_value": "readme_overclaim_relative_to_replacement_levels",
+      "rationale": "The dashboard must expose README overclaim drift as a promotion blocker."
+    },
+    {
+      "row_id": "l1-promotion-gate-block-unresolved-blocker",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "policy.block_promotion_kinds.7",
+      "expected_value": "blocker_unresolved",
+      "rationale": "The dashboard must expose unresolved replacement blockers as promotion blockers."
+    },
+    {
+      "row_id": "l1-promotion-gate-reject-missing-artifact",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "policy.rejected_evidence_kinds.0",
+      "expected_value": "missing_artifact",
+      "rationale": "The dashboard must expose missing promotion artifacts as rejected evidence."
+    },
+    {
+      "row_id": "l1-promotion-gate-reject-schema-drift",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "policy.rejected_evidence_kinds.1",
+      "expected_value": "schema_drift",
+      "rationale": "The dashboard must expose promotion artifact schema drift as rejected evidence."
+    },
+    {
+      "row_id": "l1-promotion-gate-reject-level-drift",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "policy.rejected_evidence_kinds.4",
+      "expected_value": "current_level_drifted_above_l0_without_gate_pass",
+      "rationale": "The dashboard must expose current-level drift above L0 as rejected evidence."
+    },
+    {
+      "row_id": "l1-promotion-gate-reject-claim-reconciliation",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "policy.rejected_evidence_kinds.5",
+      "expected_value": "claim_reconciliation_status_not_pass",
+      "rationale": "The dashboard must expose claim reconciliation failure as rejected promotion evidence."
+    },
+    {
+      "row_id": "l1-promotion-gate-req-claim-zero-errors-id",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "evidence_requirements_for_l1.0.requirement_id",
+      "expected_value": "req-claim-reconciliation-zero-errors",
+      "rationale": "The dashboard must expose the first required L1 evidence obligation id."
+    },
+    {
+      "row_id": "l1-promotion-gate-req-claim-zero-errors-artifact",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "evidence_requirements_for_l1.0.evidence_artifact",
+      "expected_value": "tests/conformance/claim_reconciliation_report.v1.json",
+      "rationale": "The dashboard must expose claim reconciliation as the first promotion evidence artifact."
+    },
+    {
+      "row_id": "l1-promotion-gate-req-smoke-fails-field",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "evidence_requirements_for_l1.2.field",
+      "expected_value": "summary.fails",
+      "rationale": "The dashboard must expose the LD_PRELOAD smoke fail-count evidence field."
+    },
+    {
+      "row_id": "l1-promotion-gate-req-smoke-overall-expected",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "evidence_requirements_for_l1.3.expected_value",
+      "expected_value": false,
+      "rationale": "The dashboard must expose that overall smoke failure must be false."
+    },
+    {
+      "row_id": "l1-promotion-gate-req-perf-issues-id",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "evidence_requirements_for_l1.4.requirement_id",
+      "expected_value": "req-perf-regression-no-issues",
+      "rationale": "The dashboard must expose the perf regression zero-issues promotion obligation."
+    },
+    {
+      "row_id": "l1-promotion-gate-req-waiver-audit-field",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "evidence_requirements_for_l1.5.field",
+      "expected_value": "policy.default_decision",
+      "rationale": "The dashboard must expose the waiver-audit field that pins fail-closed perf waiver policy."
+    },
+    {
+      "row_id": "l1-promotion-gate-req-replacement-blocker-kind",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "evidence_requirements_for_l1.6.expected_kind",
+      "expected_value": "non_empty_array",
+      "rationale": "The dashboard must expose that L1 blockers remain expected until promotion happens."
+    },
+    {
+      "row_id": "l1-promotion-gate-input-replacement-levels",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "inputs.replacement_levels",
+      "expected_value": "tests/conformance/replacement_levels.json",
+      "rationale": "The dashboard must expose replacement levels as a promotion gate input."
+    },
+    {
+      "row_id": "l1-promotion-gate-input-perf-waiver",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "inputs.perf_waiver_audit",
+      "expected_value": "tests/conformance/perf_waiver_audit.v1.json",
+      "rationale": "The dashboard must expose perf waiver audit as a promotion gate input."
+    },
+    {
+      "row_id": "l1-promotion-gate-input-readme",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "inputs.readme",
+      "expected_value": "README.md",
+      "rationale": "The dashboard must expose README as an overclaim-checked promotion input."
+    },
+    {
+      "row_id": "l1-promotion-gate-first-log-field",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "required_log_fields.0",
+      "expected_value": "trace_id",
+      "rationale": "The dashboard must expose the first required promotion log field."
+    },
+    {
+      "row_id": "l1-promotion-gate-decision-log-field",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "required_log_fields.10",
+      "expected_value": "decision",
+      "rationale": "The dashboard must expose the required decision log field for promotion audits."
+    },
+    {
+      "row_id": "l1-promotion-gate-last-log-field",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "required_log_fields.14",
+      "expected_value": "failure_signature",
+      "rationale": "The dashboard must expose the final required promotion failure-signature log field."
+    },
+    {
+      "row_id": "l1-promotion-gate-expiry-horizon",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "expires_at_horizon_days",
+      "expected_value": 60,
+      "rationale": "The dashboard must expose the promotion gate expiry horizon."
+    },
+    {
+      "row_id": "l1-promotion-gate-first-consuming-gate",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "consuming_gates.0",
+      "expected_value": "tests/conformance/replacement_levels.json",
+      "rationale": "The dashboard must expose replacement levels as the first consumer of promotion-gate evidence."
+    },
+    {
+      "row_id": "l1-promotion-gate-last-consuming-gate",
+      "row_kind": "gate_meta",
+      "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
+      "field": "consuming_gates.2",
+      "expected_value": "README.md",
+      "rationale": "The dashboard must expose README as a consumer constrained by promotion-gate evidence."
+    },
+    {
       "row_id": "l1-promotion-gate-source-commit-field",
       "row_kind": "gate_meta",
       "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
