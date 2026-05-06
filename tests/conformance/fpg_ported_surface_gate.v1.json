@@ -5,7 +5,14 @@
   "owner_family_group": "fpg-gap-summary-ported-surface-evidence",
   "evidence_owner": "ported core/ABI family owners",
   "generated_utc": "2026-05-03T18:07:37Z",
-  "source_commit": "d6f0f48d6833bab542f6d3d756aa8b5b193c450c",
+  "source_commit": "current",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_ported_surface_gate_evidence",
+    "ported_surface_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "purpose": "Fail-closed gate for the ten ported-surface rows in the FEATURE_PARITY gap summary. These rows remain IN_PROGRESS until per-symbol fixtures, strict/hardened behavior evidence, ABI/core bindings, dlfcn policy, and performance proof artifacts are current. Missing or stale evidence blocks DONE and L1/L2/L3 replacement claims.",
   "inputs": {
     "feature_parity": "FEATURE_PARITY.md",
