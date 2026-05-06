@@ -925,6 +925,230 @@
       "rationale": "Stale standalone real-program evidence must remain claim_blocked."
     },
     {
+      "row_id": "real-program-smoke-suite-total-case-count",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.case_count",
+      "expected_value": 20,
+      "rationale": "Dashboard consumers must see the total checked real-program smoke case count."
+    },
+    {
+      "row_id": "real-program-smoke-suite-ld-preload-case-count",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.ld_preload_interpose_case_count",
+      "expected_value": 16,
+      "rationale": "Dashboard consumers must see how much real-program coverage is LD_PRELOAD interpose coverage."
+    },
+    {
+      "row_id": "real-program-smoke-suite-standalone-future-case-count",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.standalone_future_case_count",
+      "expected_value": 4,
+      "rationale": "Dashboard consumers must see the standalone-future case count that remains claim-gated."
+    },
+    {
+      "row_id": "real-program-smoke-suite-strict-case-count",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.strict_case_count",
+      "expected_value": 10,
+      "rationale": "Dashboard consumers must see strict-mode real-program coverage."
+    },
+    {
+      "row_id": "real-program-smoke-suite-hardened-case-count",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.hardened_case_count",
+      "expected_value": 10,
+      "rationale": "Dashboard consumers must see hardened-mode real-program coverage."
+    },
+    {
+      "row_id": "real-program-smoke-suite-l0-case-count",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.l0_case_count",
+      "expected_value": 8,
+      "rationale": "Dashboard consumers must see current L0 real-program smoke coverage."
+    },
+    {
+      "row_id": "real-program-smoke-suite-l1-case-count",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.l1_case_count",
+      "expected_value": 12,
+      "rationale": "Dashboard consumers must see L1 real-program rows separately from current L0 coverage."
+    },
+    {
+      "row_id": "real-program-smoke-suite-non-support-policy-rows",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.non_support_claim_policy_rows",
+      "expected_value": 6,
+      "rationale": "Dashboard consumers must see rows that explicitly cannot claim support."
+    },
+    {
+      "row_id": "real-program-smoke-suite-failure-bundle-schema-fields",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.failure_bundle_schema_fields",
+      "expected_value": 26,
+      "rationale": "Dashboard consumers must see failure bundle schema coverage for blocked or failed real-program smoke."
+    },
+    {
+      "row_id": "real-program-smoke-suite-failure-bundle-fixture-count",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.failure_bundle_fixture_case_count",
+      "expected_value": 6,
+      "rationale": "Dashboard consumers must see the synthetic failure bundle fixture count."
+    },
+    {
+      "row_id": "real-program-smoke-suite-shell-coreutils-domain-count",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.required_domain_coverage.shell_coreutils",
+      "expected_value": 2,
+      "rationale": "Dashboard consumers must see shell/coreutils domain coverage."
+    },
+    {
+      "row_id": "real-program-smoke-suite-resolver-nss-domain-count",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.required_domain_coverage.resolver_nss",
+      "expected_value": 2,
+      "rationale": "Dashboard consumers must see resolver/NSS domain coverage."
+    },
+    {
+      "row_id": "real-program-smoke-suite-standalone-future-domain-count",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "summary.required_domain_coverage.standalone_future",
+      "expected_value": 4,
+      "rationale": "Dashboard consumers must see standalone-future domain coverage separately."
+    },
+    {
+      "row_id": "real-program-smoke-suite-interpose-env",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "artifact_policy.interpose_library_env",
+      "expected_value": "FRANKENLIBC_SMOKE_LIB_PATH",
+      "rationale": "Dashboard consumers must see the environment input for LD_PRELOAD real-program smoke."
+    },
+    {
+      "row_id": "real-program-smoke-suite-standalone-env",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "artifact_policy.standalone_library_env",
+      "expected_value": "FRANKENLIBC_STANDALONE_LIB",
+      "rationale": "Dashboard consumers must see the environment input for standalone direct-link real-program smoke."
+    },
+    {
+      "row_id": "real-program-smoke-suite-required-standalone-artifact",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "artifact_policy.required_standalone_artifact_name",
+      "expected_value": "libfrankenlibc_replace.so",
+      "rationale": "Dashboard consumers must see the required standalone artifact name before any L1 support claim."
+    },
+    {
+      "row_id": "real-program-smoke-suite-stale-if-source-differs",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "artifact_policy.stale_if_source_commit_differs",
+      "expected_value": true,
+      "rationale": "Dashboard consumers must see that source-commit drift makes real-program smoke evidence stale."
+    },
+    {
+      "row_id": "real-program-smoke-suite-supported-case-requires-pass",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "result_policy.supported_case_requires_actual_status",
+      "expected_value": "pass",
+      "rationale": "Dashboard consumers must see that support requires a real pass, not skip or dry-run evidence."
+    },
+    {
+      "row_id": "real-program-smoke-suite-default-timeout-ms",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "timeout_policy.default_timeout_ms",
+      "expected_value": 5000,
+      "rationale": "Dashboard consumers must see the default real-program smoke timeout."
+    },
+    {
+      "row_id": "real-program-smoke-suite-timeout-failure-signature",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "timeout_policy.timeout_failure_signature",
+      "expected_value": "startup_timeout",
+      "rationale": "Dashboard consumers must see the timeout failure signature used by real-program smoke."
+    },
+    {
+      "row_id": "real-program-smoke-suite-failure-bundle-filename",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "failure_bundle_policy.bundle_filename",
+      "expected_value": "failure.bundle.json",
+      "rationale": "Dashboard consumers must see the failure bundle filename required for blocked real-program smoke."
+    },
+    {
+      "row_id": "real-program-smoke-suite-failure-bundle-max-size",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "failure_bundle_policy.max_bundle_size_bytes",
+      "expected_value": 262144,
+      "rationale": "Dashboard consumers must see the maximum failure bundle size."
+    },
+    {
+      "row_id": "real-program-smoke-suite-first-case-id",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "cases.0.case_id",
+      "expected_value": "shell_coreutils_sort_pipeline_l0_strict",
+      "rationale": "Dashboard consumers must see a representative shell/coreutils smoke case."
+    },
+    {
+      "row_id": "real-program-smoke-suite-first-case-stdout",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "cases.0.expected.stdout_exact",
+      "expected_value": "abc",
+      "rationale": "Dashboard consumers must see the exact oracle for a representative real-program smoke case."
+    },
+    {
+      "row_id": "real-program-smoke-suite-standalone-future-support-never",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "cases.16.support_claim",
+      "expected_value": "never",
+      "rationale": "Dashboard consumers must see that standalone-future rows cannot claim support today."
+    },
+    {
+      "row_id": "real-program-smoke-suite-standalone-real-program-command",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "cases.18.command",
+      "expected_value": "cc",
+      "rationale": "Dashboard consumers must see that standalone real-program smoke includes a direct compiler/link case."
+    },
+    {
+      "row_id": "real-program-smoke-suite-first-synthetic-failure-signature",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "failure_bundle_policy.synthetic_failure_cases.0.failure_signature",
+      "expected_value": "standalone_artifact_missing",
+      "rationale": "Dashboard consumers must see the first synthetic failure signature for missing standalone artifacts."
+    },
+    {
+      "row_id": "real-program-smoke-suite-timeout-failure-class",
+      "row_kind": "real_program",
+      "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "field": "failure_bundle_policy.synthetic_failure_cases.5.failure_class",
+      "expected_value": "timeout_failure",
+      "rationale": "Dashboard consumers must see the timeout failure class represented in failure bundle fixtures."
+    },
+    {
       "row_id": "dlfcn-sentinel-source-commit-field",
       "row_kind": "dlfcn",
       "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",

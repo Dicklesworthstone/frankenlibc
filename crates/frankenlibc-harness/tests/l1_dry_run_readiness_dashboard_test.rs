@@ -2947,6 +2947,207 @@ fn real_program_smoke_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn real_program_smoke_suite_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "real-program-smoke-suite-standalone-count",
+            (
+                "summary.standalone_direct_link_real_program_case_count",
+                json!(2),
+            ),
+        ),
+        (
+            "real-program-smoke-suite-stale-claim-blocked",
+            ("artifact_policy.stale_result", json!("claim_blocked")),
+        ),
+        (
+            "real-program-smoke-suite-total-case-count",
+            ("summary.case_count", json!(20)),
+        ),
+        (
+            "real-program-smoke-suite-ld-preload-case-count",
+            ("summary.ld_preload_interpose_case_count", json!(16)),
+        ),
+        (
+            "real-program-smoke-suite-standalone-future-case-count",
+            ("summary.standalone_future_case_count", json!(4)),
+        ),
+        (
+            "real-program-smoke-suite-strict-case-count",
+            ("summary.strict_case_count", json!(10)),
+        ),
+        (
+            "real-program-smoke-suite-hardened-case-count",
+            ("summary.hardened_case_count", json!(10)),
+        ),
+        (
+            "real-program-smoke-suite-l0-case-count",
+            ("summary.l0_case_count", json!(8)),
+        ),
+        (
+            "real-program-smoke-suite-l1-case-count",
+            ("summary.l1_case_count", json!(12)),
+        ),
+        (
+            "real-program-smoke-suite-non-support-policy-rows",
+            ("summary.non_support_claim_policy_rows", json!(6)),
+        ),
+        (
+            "real-program-smoke-suite-failure-bundle-schema-fields",
+            ("summary.failure_bundle_schema_fields", json!(26)),
+        ),
+        (
+            "real-program-smoke-suite-failure-bundle-fixture-count",
+            ("summary.failure_bundle_fixture_case_count", json!(6)),
+        ),
+        (
+            "real-program-smoke-suite-shell-coreutils-domain-count",
+            ("summary.required_domain_coverage.shell_coreutils", json!(2)),
+        ),
+        (
+            "real-program-smoke-suite-resolver-nss-domain-count",
+            ("summary.required_domain_coverage.resolver_nss", json!(2)),
+        ),
+        (
+            "real-program-smoke-suite-standalone-future-domain-count",
+            (
+                "summary.required_domain_coverage.standalone_future",
+                json!(4),
+            ),
+        ),
+        (
+            "real-program-smoke-suite-interpose-env",
+            (
+                "artifact_policy.interpose_library_env",
+                json!("FRANKENLIBC_SMOKE_LIB_PATH"),
+            ),
+        ),
+        (
+            "real-program-smoke-suite-standalone-env",
+            (
+                "artifact_policy.standalone_library_env",
+                json!("FRANKENLIBC_STANDALONE_LIB"),
+            ),
+        ),
+        (
+            "real-program-smoke-suite-required-standalone-artifact",
+            (
+                "artifact_policy.required_standalone_artifact_name",
+                json!("libfrankenlibc_replace.so"),
+            ),
+        ),
+        (
+            "real-program-smoke-suite-stale-if-source-differs",
+            (
+                "artifact_policy.stale_if_source_commit_differs",
+                json!(true),
+            ),
+        ),
+        (
+            "real-program-smoke-suite-supported-case-requires-pass",
+            (
+                "result_policy.supported_case_requires_actual_status",
+                json!("pass"),
+            ),
+        ),
+        (
+            "real-program-smoke-suite-default-timeout-ms",
+            ("timeout_policy.default_timeout_ms", json!(5000)),
+        ),
+        (
+            "real-program-smoke-suite-timeout-failure-signature",
+            (
+                "timeout_policy.timeout_failure_signature",
+                json!("startup_timeout"),
+            ),
+        ),
+        (
+            "real-program-smoke-suite-failure-bundle-filename",
+            (
+                "failure_bundle_policy.bundle_filename",
+                json!("failure.bundle.json"),
+            ),
+        ),
+        (
+            "real-program-smoke-suite-failure-bundle-max-size",
+            ("failure_bundle_policy.max_bundle_size_bytes", json!(262144)),
+        ),
+        (
+            "real-program-smoke-suite-first-case-id",
+            (
+                "cases.0.case_id",
+                json!("shell_coreutils_sort_pipeline_l0_strict"),
+            ),
+        ),
+        (
+            "real-program-smoke-suite-first-case-stdout",
+            ("cases.0.expected.stdout_exact", json!("abc")),
+        ),
+        (
+            "real-program-smoke-suite-standalone-future-support-never",
+            ("cases.16.support_claim", json!("never")),
+        ),
+        (
+            "real-program-smoke-suite-standalone-real-program-command",
+            ("cases.18.command", json!("cc")),
+        ),
+        (
+            "real-program-smoke-suite-first-synthetic-failure-signature",
+            (
+                "failure_bundle_policy.synthetic_failure_cases.0.failure_signature",
+                json!("standalone_artifact_missing"),
+            ),
+        ),
+        (
+            "real-program-smoke-suite-timeout-failure-class",
+            (
+                "failure_bundle_policy.synthetic_failure_cases.5.failure_class",
+                json!("timeout_failure"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("real-program-smoke-suite-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!("unexpected real-program smoke suite row: {row_id}"))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "real_program",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/real_program_smoke_suite.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing real-program smoke suite dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn dlfcn_sentinel_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
