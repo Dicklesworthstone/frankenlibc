@@ -3738,6 +3738,174 @@ fn dlfcn_sentinel_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn dlfcn_sentinel_boundary_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "dlfcn-sentinel-boundary-default-decision",
+            (
+                "policy.default_decision",
+                json!("block_until_replace_mode_evidence_current"),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-l1-host-callsite-limit",
+            ("policy.max_total_host_callsites_at_L1", json!(0)),
+        ),
+        (
+            "dlfcn-sentinel-boundary-l0-interpose-allowed",
+            ("policy.allowed_at_L0.0", json!("interpose_only")),
+        ),
+        (
+            "dlfcn-sentinel-boundary-l0-bootstrap-allowed",
+            ("policy.allowed_at_L0.2", json!("bootstrap_passthrough")),
+        ),
+        (
+            "dlfcn-sentinel-boundary-reject-unannotated",
+            (
+                "policy.rejected_evidence_kinds.0",
+                json!("unannotated_host_callsite"),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-reject-level-drift",
+            (
+                "policy.rejected_evidence_kinds.6",
+                json!("replacement_level_drift_without_evidence"),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-host-callsite-total",
+            ("expected_callsite_counts.total", json!(8)),
+        ),
+        (
+            "dlfcn-sentinel-boundary-dlopen-count",
+            ("expected_callsite_counts.by_host_symbol.dlopen", json!(2)),
+        ),
+        (
+            "dlfcn-sentinel-boundary-dlvsym-count",
+            ("expected_callsite_counts.by_host_symbol.dlvsym", json!(2)),
+        ),
+        (
+            "dlfcn-sentinel-boundary-interpose-count",
+            (
+                "expected_callsite_counts.by_annotation.interpose_only",
+                json!(4),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-bootstrap-count",
+            (
+                "expected_callsite_counts.by_annotation.bootstrap_passthrough",
+                json!(2),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-host-handle-count",
+            (
+                "expected_callsite_counts.by_annotation.host_handle_passthrough",
+                json!(2),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-resolve-host-symbol-count",
+            (
+                "expected_callsite_counts.resolve_host_symbol_raw_calls_in_source",
+                json!(7),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-host-dlvsym-next-count",
+            (
+                "expected_callsite_counts.host_dlvsym_next_raw_calls",
+                json!(1),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-native-handle-guard",
+            (
+                "required_native_handle_guards.0",
+                json!("fn is_native_handle(handle: *mut c_void)"),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-bootstrap-guard",
+            (
+                "required_native_handle_guards.2",
+                json!("runtime_policy::bootstrap_passthrough_active()"),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-support-dlvsym-status",
+            (
+                "support_matrix_required_status.dlfcn_abi.dlvsym",
+                json!("Implemented"),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-first-callsite-id",
+            (
+                "host_callsites.0.callsite_id",
+                json!("host_dlvsym_next_raw_dlvsym_default_call"),
+            ),
+        ),
+        (
+            "dlfcn-sentinel-boundary-first-callsite-symbol",
+            ("host_callsites.0.host_symbol", json!("dlvsym")),
+        ),
+        (
+            "dlfcn-sentinel-boundary-dlopen-post-bootstrap-annotation",
+            ("host_callsites.4.annotation", json!("interpose_only")),
+        ),
+        (
+            "dlfcn-sentinel-boundary-dlsym-host-handle-annotation",
+            (
+                "host_callsites.5.annotation",
+                json!("host_handle_passthrough"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("dlfcn-sentinel-boundary-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!("unexpected dlfcn sentinel boundary row: {row_id}"))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "dlfcn",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing dlfcn sentinel boundary dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn dlfcn_l1_burndown_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
@@ -3812,6 +3980,164 @@ fn dlfcn_l1_burndown_source_freshness_rows_are_explicit() -> TestResult {
         expected_rows.is_empty(),
         format!(
             "missing dlfcn L1 burndown freshness dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
+fn dlfcn_l1_burndown_detail_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "dlfcn-l1-burndown-detail-default-decision",
+            (
+                "policy.default_decision",
+                json!("block_until_burndown_classification_current"),
+            ),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-max-l1-blockers",
+            ("policy.max_l1_blockers", json!(6)),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-first-proof-kind",
+            (
+                "policy.below_l1_proof_kinds.0",
+                json!("runtime_policy_bootstrap_only"),
+            ),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-last-proof-kind",
+            (
+                "policy.below_l1_proof_kinds.2",
+                json!("rtld_default_l0_only_lookup"),
+            ),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-reject-missing-classification",
+            (
+                "policy.rejected_evidence_kinds.0",
+                json!("callsite_missing_classification"),
+            ),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-reject-sentinel-drift",
+            (
+                "policy.rejected_evidence_kinds.5",
+                json!("classification_does_not_match_sentinel_id_set"),
+            ),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-total-count",
+            ("expected_counts.total", json!(8)),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-l1-blocker-count",
+            ("expected_counts.l1_blocker", json!(6)),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-below-l1-count",
+            ("expected_counts.below_l1", json!(2)),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-bootstrap-proof-count",
+            (
+                "expected_counts.below_l1_by_proof_kind.runtime_policy_bootstrap_only",
+                json!(2),
+            ),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-host-handle-proof-count",
+            (
+                "expected_counts.below_l1_by_proof_kind.host_handle_round_trip_outside_l1_namespace",
+                json!(0),
+            ),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-first-classification-id",
+            ("classifications.0.callsite_id", json!("dlopen_bootstrap_passthrough")),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-first-classification-relevance",
+            ("classifications.0.l1_relevance", json!("below_l1")),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-first-classification-proof-kind",
+            (
+                "classifications.0.below_l1_proof_kind",
+                json!("runtime_policy_bootstrap_only"),
+            ),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-rtld-next-blocker-id",
+            (
+                "classifications.2.callsite_id",
+                json!("host_dlvsym_next_raw_dlvsym_default_call"),
+            ),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-rtld-next-blocker-relevance",
+            ("classifications.2.l1_relevance", json!("l1_blocker")),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-dlopen-blocker-id",
+            ("classifications.5.callsite_id", json!("dlopen_post_bootstrap")),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-dlopen-blocker-relevance",
+            ("classifications.5.l1_relevance", json!("l1_blocker")),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-last-classification-id",
+            (
+                "classifications.7.callsite_id",
+                json!("dlclose_post_bootstrap_host_handle"),
+            ),
+        ),
+        (
+            "dlfcn-l1-burndown-detail-consuming-sentinel",
+            (
+                "consuming_gates.0",
+                json!("tests/conformance/dlfcn_replace_boundary_sentinel.v1.json"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("dlfcn-l1-burndown-detail-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows
+            .remove(row_id)
+            .ok_or_else(|| test_error(format!("unexpected dlfcn burndown detail row: {row_id}")))?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "dlfcn",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing dlfcn L1 burndown detail dashboard rows: {:?}",
             expected_rows.keys().collect::<Vec<_>>()
         ),
     )

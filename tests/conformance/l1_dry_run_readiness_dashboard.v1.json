@@ -1773,6 +1773,174 @@
       "rationale": "Dashboard consumers must see stale dlfcn sentinel source drift as stale_source_commit evidence."
     },
     {
+      "row_id": "dlfcn-sentinel-boundary-default-decision",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "policy.default_decision",
+      "expected_value": "block_until_replace_mode_evidence_current",
+      "rationale": "Dashboard consumers must see dlfcn replacement evidence remains blocked until current evidence exists."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-l1-host-callsite-limit",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "policy.max_total_host_callsites_at_L1",
+      "expected_value": 0,
+      "rationale": "The dashboard must expose that L1 allows no host dlfcn delegation callsites."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-l0-interpose-allowed",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "policy.allowed_at_L0.0",
+      "expected_value": "interpose_only",
+      "rationale": "The dashboard must expose the L0-only interpose allowance."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-l0-bootstrap-allowed",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "policy.allowed_at_L0.2",
+      "expected_value": "bootstrap_passthrough",
+      "rationale": "The dashboard must expose the bootstrap-only dlfcn pass-through allowance."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-reject-unannotated",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "policy.rejected_evidence_kinds.0",
+      "expected_value": "unannotated_host_callsite",
+      "rationale": "The dashboard must expose that unannotated host callsites block dlfcn replacement evidence."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-reject-level-drift",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "policy.rejected_evidence_kinds.6",
+      "expected_value": "replacement_level_drift_without_evidence",
+      "rationale": "The dashboard must expose replacement-level drift as rejected dlfcn sentinel evidence."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-host-callsite-total",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "expected_callsite_counts.total",
+      "expected_value": 8,
+      "rationale": "The dashboard must expose the total inventoried dlfcn host delegation callsite count."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-dlopen-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "expected_callsite_counts.by_host_symbol.dlopen",
+      "expected_value": 2,
+      "rationale": "The dashboard must expose the dlopen host delegation count."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-dlvsym-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "expected_callsite_counts.by_host_symbol.dlvsym",
+      "expected_value": 2,
+      "rationale": "The dashboard must expose the dlvsym host delegation count."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-interpose-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "expected_callsite_counts.by_annotation.interpose_only",
+      "expected_value": 4,
+      "rationale": "The dashboard must expose how many dlfcn callsites are interpose-only."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-bootstrap-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "expected_callsite_counts.by_annotation.bootstrap_passthrough",
+      "expected_value": 2,
+      "rationale": "The dashboard must expose how many dlfcn callsites are bootstrap-only."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-host-handle-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "expected_callsite_counts.by_annotation.host_handle_passthrough",
+      "expected_value": 2,
+      "rationale": "The dashboard must expose how many dlfcn callsites round-trip host handles."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-resolve-host-symbol-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "expected_callsite_counts.resolve_host_symbol_raw_calls_in_source",
+      "expected_value": 7,
+      "rationale": "The dashboard must expose the raw host-symbol resolver call count in dlfcn_abi.rs."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-host-dlvsym-next-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "expected_callsite_counts.host_dlvsym_next_raw_calls",
+      "expected_value": 1,
+      "rationale": "The dashboard must expose the RTLD_NEXT raw dlvsym delegation count."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-native-handle-guard",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "required_native_handle_guards.0",
+      "expected_value": "fn is_native_handle(handle: *mut c_void)",
+      "rationale": "The dashboard must expose the native-handle guard required by dlfcn replacement policy."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-bootstrap-guard",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "required_native_handle_guards.2",
+      "expected_value": "runtime_policy::bootstrap_passthrough_active()",
+      "rationale": "The dashboard must expose the bootstrap pass-through guard required by dlfcn policy."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-support-dlvsym-status",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "support_matrix_required_status.dlfcn_abi.dlvsym",
+      "expected_value": "Implemented",
+      "rationale": "The dashboard must expose that support-matrix status is distinct from replacement-level dlfcn evidence."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-first-callsite-id",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "host_callsites.0.callsite_id",
+      "expected_value": "host_dlvsym_next_raw_dlvsym_default_call",
+      "rationale": "The dashboard must expose a representative RTLD_NEXT host delegation callsite id."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-first-callsite-symbol",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "host_callsites.0.host_symbol",
+      "expected_value": "dlvsym",
+      "rationale": "The dashboard must expose the host symbol behind the first dlfcn sentinel callsite."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-dlopen-post-bootstrap-annotation",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "host_callsites.4.annotation",
+      "expected_value": "interpose_only",
+      "rationale": "The dashboard must expose post-bootstrap dlopen as an interpose-only L1 blocker."
+    },
+    {
+      "row_id": "dlfcn-sentinel-boundary-dlsym-host-handle-annotation",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "host_callsites.5.annotation",
+      "expected_value": "host_handle_passthrough",
+      "rationale": "The dashboard must expose dlsym host-handle round-tripping as a replacement blocker."
+    },
+    {
       "row_id": "dlfcn-l1-burndown-source-commit-field",
       "row_kind": "dlfcn",
       "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
@@ -1819,6 +1987,166 @@
       "field": "expected_counts.l1_blocker",
       "expected_value_max": 6,
       "rationale": "L1 blocker count must be at or below the documented burndown (6); regressions block dashboard pass."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-default-decision",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "policy.default_decision",
+      "expected_value": "block_until_burndown_classification_current",
+      "rationale": "The dashboard must expose that dlfcn L1 burndown evidence blocks when classification is stale."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-max-l1-blockers",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "policy.max_l1_blockers",
+      "expected_value": 6,
+      "rationale": "The dashboard must expose the maximum allowed dlfcn L1 blocker count."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-first-proof-kind",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "policy.below_l1_proof_kinds.0",
+      "expected_value": "runtime_policy_bootstrap_only",
+      "rationale": "The dashboard must expose the bootstrap-only below-L1 proof kind."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-last-proof-kind",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "policy.below_l1_proof_kinds.2",
+      "expected_value": "rtld_default_l0_only_lookup",
+      "rationale": "The dashboard must expose the RTLD-default L0-only proof kind."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-reject-missing-classification",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "policy.rejected_evidence_kinds.0",
+      "expected_value": "callsite_missing_classification",
+      "rationale": "The dashboard must expose missing dlfcn classifications as rejected evidence."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-reject-sentinel-drift",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "policy.rejected_evidence_kinds.5",
+      "expected_value": "classification_does_not_match_sentinel_id_set",
+      "rationale": "The dashboard must expose drift between burndown classifications and sentinel callsite ids."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-total-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "expected_counts.total",
+      "expected_value": 8,
+      "rationale": "The dashboard must expose the total classified dlfcn callsite count."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-l1-blocker-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "expected_counts.l1_blocker",
+      "expected_value": 6,
+      "rationale": "The dashboard must expose the exact current dlfcn L1 blocker count."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-below-l1-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "expected_counts.below_l1",
+      "expected_value": 2,
+      "rationale": "The dashboard must expose the count of dlfcn callsites proven below L1."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-bootstrap-proof-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "expected_counts.below_l1_by_proof_kind.runtime_policy_bootstrap_only",
+      "expected_value": 2,
+      "rationale": "The dashboard must expose the bootstrap-only below-L1 proof count."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-host-handle-proof-count",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "expected_counts.below_l1_by_proof_kind.host_handle_round_trip_outside_l1_namespace",
+      "expected_value": 0,
+      "rationale": "The dashboard must expose that no host-handle round-trip callsites are currently proven below L1."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-first-classification-id",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "classifications.0.callsite_id",
+      "expected_value": "dlopen_bootstrap_passthrough",
+      "rationale": "The dashboard must expose the first below-L1 dlfcn classification."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-first-classification-relevance",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "classifications.0.l1_relevance",
+      "expected_value": "below_l1",
+      "rationale": "The dashboard must expose that bootstrap dlopen is below L1."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-first-classification-proof-kind",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "classifications.0.below_l1_proof_kind",
+      "expected_value": "runtime_policy_bootstrap_only",
+      "rationale": "The dashboard must expose the proof kind for the first below-L1 classification."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-rtld-next-blocker-id",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "classifications.2.callsite_id",
+      "expected_value": "host_dlvsym_next_raw_dlvsym_default_call",
+      "rationale": "The dashboard must expose RTLD_NEXT dlvsym as an L1 blocker."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-rtld-next-blocker-relevance",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "classifications.2.l1_relevance",
+      "expected_value": "l1_blocker",
+      "rationale": "The dashboard must expose RTLD_NEXT dlvsym as L1-relevant."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-dlopen-blocker-id",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "classifications.5.callsite_id",
+      "expected_value": "dlopen_post_bootstrap",
+      "rationale": "The dashboard must expose post-bootstrap dlopen as the central native-loader blocker."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-dlopen-blocker-relevance",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "classifications.5.l1_relevance",
+      "expected_value": "l1_blocker",
+      "rationale": "The dashboard must expose post-bootstrap dlopen as an L1 blocker."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-last-classification-id",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "classifications.7.callsite_id",
+      "expected_value": "dlclose_post_bootstrap_host_handle",
+      "rationale": "The dashboard must expose the final host-handle dlfcn blocker classification."
+    },
+    {
+      "row_id": "dlfcn-l1-burndown-detail-consuming-sentinel",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",
+      "field": "consuming_gates.0",
+      "expected_value": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "rationale": "The dashboard must expose that the burndown classification consumes the sentinel artifact."
     },
     {
       "row_id": "perf-regression-prevention-no-issues",
