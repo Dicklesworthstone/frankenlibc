@@ -1753,6 +1753,179 @@ fn standalone_tls_model_startup_experiment_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn standalone_compiler_runtime_blocker_diagnostics_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-report-only",
+            ("summary.report_only", json!(true)),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-no-promotion",
+            ("report_policy.promotion_allowed", json!(false)),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-no-replacement-level-change",
+            (
+                "report_policy.replacement_level_change_allowed",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-no-default-build-profile-change",
+            (
+                "report_policy.default_build_profile_change_allowed",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-no-panic-strategy-change",
+            ("report_policy.panic_strategy_change_allowed", json!(false)),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-blocker-mapping-count",
+            ("summary.blocker_mapping_count", json!(2)),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-libgcc-needed-count",
+            ("summary.libgcc_needed_library_count", json!(1)),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-unwind-symbol-count",
+            ("summary.undefined_unwind_symbol_count", json!(12)),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-libgcc-version-need-count",
+            ("summary.libgcc_version_need_count", json!(3)),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-current-claim-status",
+            (
+                "current_forge_evidence.latest_probe_claim_status",
+                json!("claim_blocked"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-current-artifact-status",
+            (
+                "current_forge_evidence.latest_probe_artifact_status",
+                json!("current"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-current-failure-signature",
+            (
+                "current_forge_evidence.latest_probe_failure_signature",
+                json!("host_glibc_dependency"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-needed-libgcc",
+            (
+                "current_forge_evidence.evidence_command_results.readelf_dynamic.observed_needed_libraries.0",
+                json!("libgcc_s.so.1"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-ldd-libgcc",
+            (
+                "current_forge_evidence.evidence_command_results.ldd.observed_host_resolved_libraries.2",
+                json!("libgcc_s.so.1"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-first-unwind-symbol",
+            (
+                "current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols.0",
+                json!("_Unwind_Backtrace@GCC_3.3"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-first-libgcc-version-requirement",
+            (
+                "blocker_mappings.0.observed_values.host_version_requirements.0",
+                json!("libgcc_s.so.1:GCC_3.0"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-libgcc-blocker-id",
+            ("blocker_mappings.0.blocker_id", json!("libgcc-runtime-dependency")),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-libgcc-owner-surface",
+            ("blocker_mappings.0.owner_surface", json!("compiler_runtime")),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-libgcc-first-profile-knob",
+            ("blocker_mappings.0.profile_knobs.0", json!("panic strategy")),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-unwind-blocker-id",
+            ("blocker_mappings.1.blocker_id", json!("undefined-unwind-symbols")),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-unwind-owner-surface",
+            ("blocker_mappings.1.owner_surface", json!("unwind_runtime")),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-current-panic-strategy",
+            (
+                "toolchain_profile.panic_strategy.current",
+                json!("implicit-unwind"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-baseline-lane-status",
+            ("experiment_matrix.0.status", json!("observed_baseline")),
+        ),
+        (
+            "standalone-compiler-runtime-blocker-diagnostics-panic-abort-lane-status",
+            ("experiment_matrix.1.status", json!("implemented_report_only")),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-compiler-runtime-blocker-diagnostics-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected compiler runtime blocker diagnostics dashboard row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "forge",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing compiler runtime blocker diagnostics dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn standalone_tls_blocker_diagnostics_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
