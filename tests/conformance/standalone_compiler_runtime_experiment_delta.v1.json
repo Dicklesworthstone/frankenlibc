@@ -1,0 +1,105 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-compiler-runtime-experiment-delta",
+  "bead": "bd-zyck1.96",
+  "source_commit": "current",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_compiler_runtime_experiment_delta",
+    "delta_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_compiler_runtime_experiment_delta"
+  },
+  "purpose": "Report-only record of the live panic-abort compiler-runtime experiment delta. The lane improves the unwind blocker set by removing two undefined _Unwind_* symbols, but it does not remove libgcc_s.so.1, host version requirements, TLS/loader/libc dependencies, or the remaining ten unwind symbols. This file prevents future standalone readiness work from overclaiming the experiment.",
+  "inputs": {
+    "standalone_compiler_runtime_experiment": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+    "standalone_owned_unwinder_symbol_surface": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+    "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json"
+  },
+  "report_policy": {
+    "report_only": true,
+    "promotion_allowed": false,
+    "replacement_level_change_allowed": false,
+    "default_forge_path_change_allowed": false,
+    "default_build_profile_change_allowed": false,
+    "panic_strategy_change_allowed": false,
+    "experiment_delta_claim_status": "report_only",
+    "standalone_claim_status_until_all_blockers_exit": "claim_blocked",
+    "partial_improvement_is_not_standalone_evidence": true,
+    "missing_removed_symbol_result": "fail_closed",
+    "remaining_symbol_drift_result": "fail_closed",
+    "version_requirement_delta_result": "fail_closed",
+    "needed_library_delta_result": "fail_closed"
+  },
+  "observation": {
+    "observed_utc": "2026-05-06T06:40:00Z",
+    "command": [
+      "scripts/check_standalone_replacement_artifact.sh",
+      "--compiler-runtime-experiment"
+    ],
+    "baseline_lane": "baseline-release-standalone",
+    "experiment_lane": "panic-abort-compiler-runtime-minimized",
+    "experiment_env": {
+      "CARGO_PROFILE_RELEASE_PANIC": "abort"
+    },
+    "delta_classification": "improvement",
+    "removed_needed_libraries": [],
+    "added_needed_libraries": [],
+    "needed_libraries_still_present": [
+      "ld-linux-x86-64.so.2",
+      "libgcc_s.so.1"
+    ],
+    "removed_version_requirements": [],
+    "added_version_requirements": [],
+    "version_requirements_still_present": [
+      "ld-linux-x86-64.so.2:GLIBC_2.3",
+      "libgcc_s.so.1:GCC_3.0",
+      "libgcc_s.so.1:GCC_3.3",
+      "libgcc_s.so.1:GCC_4.2.0"
+    ],
+    "removed_undefined_unwind_symbols": [
+      "_Unwind_DeleteException@GCC_3.0",
+      "_Unwind_RaiseException@GCC_3.0"
+    ],
+    "added_undefined_unwind_symbols": [],
+    "remaining_undefined_unwind_symbols": [
+      "_Unwind_Backtrace@GCC_3.3",
+      "_Unwind_GetDataRelBase@GCC_3.0",
+      "_Unwind_GetIP@GCC_3.0",
+      "_Unwind_GetIPInfo@GCC_4.2.0",
+      "_Unwind_GetLanguageSpecificData@GCC_3.0",
+      "_Unwind_GetRegionStart@GCC_3.0",
+      "_Unwind_GetTextRelBase@GCC_3.0",
+      "_Unwind_Resume@GCC_3.0",
+      "_Unwind_SetGR@GCC_3.0",
+      "_Unwind_SetIP@GCC_3.0"
+    ],
+    "remaining_blocking_reasons": [
+      "host_needed_libraries_present",
+      "host_direct_needed_libraries_present",
+      "host_resolved_libraries_present",
+      "host_loader_dependency",
+      "host_libc_dependency",
+      "libgcc_runtime_dependency",
+      "undefined_unwind_symbols",
+      "undefined_glibc_symbols",
+      "undefined_tls_symbols",
+      "host_version_requirements"
+    ],
+    "result_interpretation": "panic-abort is useful as a partial unwind reduction experiment, but it is not standalone replacement evidence and cannot change the default forge path or replacement level."
+  },
+  "summary": {
+    "baseline_unwind_symbol_count": 12,
+    "removed_unwind_symbol_count": 2,
+    "remaining_unwind_symbol_count": 10,
+    "removed_needed_library_count": 0,
+    "remaining_needed_library_count": 2,
+    "removed_version_requirement_count": 0,
+    "remaining_version_requirement_count": 4,
+    "delta_classification": "improvement",
+    "claim_status": "report_only",
+    "standalone_claim_status": "claim_blocked",
+    "promotion_allowed": false,
+    "next_safe_action": "Use this delta to target the ten remaining unwind symbols or a separate compiler-runtime/linkage substitute; do not promote panic-abort alone."
+  }
+}
