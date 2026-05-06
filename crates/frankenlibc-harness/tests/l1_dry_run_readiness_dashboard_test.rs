@@ -3549,6 +3549,105 @@ fn runtime_replay_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn claim_reconciliation_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "claim-reconciliation-status-pass",
+            ("status", json!("pass")),
+        ),
+        (
+            "claim-reconciliation-no-errors",
+            ("summary.errors", json!(0)),
+        ),
+        (
+            "claim-reconciliation-input-support-matrix",
+            ("input_artifacts.0", json!("support_matrix.json")),
+        ),
+        (
+            "claim-reconciliation-input-readme",
+            ("input_artifacts.6", json!("README.md")),
+        ),
+        (
+            "claim-reconciliation-ground-truth-total",
+            ("ground_truth.total", json!(4119)),
+        ),
+        (
+            "claim-reconciliation-ground-truth-implemented",
+            ("ground_truth.Implemented", json!(3705)),
+        ),
+        (
+            "claim-reconciliation-ground-truth-callthrough-zero",
+            ("ground_truth.GlibcCallThrough", json!(0)),
+        ),
+        (
+            "claim-reconciliation-ground-truth-stub-zero",
+            ("ground_truth.Stub", json!(0)),
+        ),
+        (
+            "claim-reconciliation-no-critical",
+            ("summary.critical", json!(0)),
+        ),
+        (
+            "claim-reconciliation-no-warnings",
+            ("summary.warnings", json!(0)),
+        ),
+        (
+            "claim-reconciliation-total-findings-zero",
+            ("summary.total_findings", json!(0)),
+        ),
+        (
+            "claim-reconciliation-owner-summary-empty",
+            ("owner_summary", json!([])),
+        ),
+        (
+            "claim-reconciliation-findings-empty",
+            ("findings", json!([])),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("claim-reconciliation-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected claim reconciliation dashboard row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "claim_control",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/claim_reconciliation_report.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing claim reconciliation dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn every_input_source_commit_freshness_policy_is_exposed() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let rows = as_array(&dashboard["rows"], "rows")?;

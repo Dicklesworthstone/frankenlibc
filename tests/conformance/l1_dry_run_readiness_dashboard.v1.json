@@ -1213,6 +1213,94 @@
       "rationale": "Claim reconciliation must report zero errors."
     },
     {
+      "row_id": "claim-reconciliation-input-support-matrix",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "input_artifacts.0",
+      "expected_value": "support_matrix.json",
+      "rationale": "Dashboard consumers must see that claim reconciliation is grounded in support_matrix.json."
+    },
+    {
+      "row_id": "claim-reconciliation-input-readme",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "input_artifacts.6",
+      "expected_value": "README.md",
+      "rationale": "Dashboard consumers must see that README claims are part of the reconciliation input set."
+    },
+    {
+      "row_id": "claim-reconciliation-ground-truth-total",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "ground_truth.total",
+      "expected_value": 4119,
+      "rationale": "The dashboard must expose the support-matrix symbol count used for claim reconciliation."
+    },
+    {
+      "row_id": "claim-reconciliation-ground-truth-implemented",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "ground_truth.Implemented",
+      "expected_value": 3705,
+      "rationale": "The dashboard must expose the implemented-symbol count that underpins README and feature-parity claims."
+    },
+    {
+      "row_id": "claim-reconciliation-ground-truth-callthrough-zero",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "ground_truth.GlibcCallThrough",
+      "expected_value": 0,
+      "rationale": "Claim reconciliation must keep zero GlibcCallThrough support-matrix truth visible."
+    },
+    {
+      "row_id": "claim-reconciliation-ground-truth-stub-zero",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "ground_truth.Stub",
+      "expected_value": 0,
+      "rationale": "Claim reconciliation must keep zero Stub support-matrix truth visible."
+    },
+    {
+      "row_id": "claim-reconciliation-no-critical",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "summary.critical",
+      "expected_value": 0,
+      "rationale": "Claim reconciliation must report zero critical findings."
+    },
+    {
+      "row_id": "claim-reconciliation-no-warnings",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "summary.warnings",
+      "expected_value": 0,
+      "rationale": "Claim reconciliation must report zero warnings."
+    },
+    {
+      "row_id": "claim-reconciliation-total-findings-zero",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "summary.total_findings",
+      "expected_value": 0,
+      "rationale": "Dashboard consumers must see that reconciliation has no hidden finding backlog."
+    },
+    {
+      "row_id": "claim-reconciliation-owner-summary-empty",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "owner_summary",
+      "expected_value": [],
+      "rationale": "Dashboard consumers must see that reconciliation has no owner-scoped finding groups."
+    },
+    {
+      "row_id": "claim-reconciliation-findings-empty",
+      "row_kind": "claim_control",
+      "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
+      "field": "findings",
+      "expected_value": [],
+      "rationale": "Dashboard consumers must see that reconciliation findings are empty."
+    },
+    {
       "row_id": "ld-preload-smoke-no-fails",
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
