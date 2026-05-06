@@ -4851,6 +4851,220 @@
       "field": "transition_requirements.L0_to_L1.3",
       "expected_value": "Complete the L1 CRT/startup/TLS proof matrix for startup, TLS, init/fini, destructors, errno isolation, secure mode, and diagnostics",
       "rationale": "The dashboard must expose the transition requirement that remains tied to the CRT/startup/TLS blocker."
+    },
+    {
+      "row_id": "replacement-level-l1-objective-gate-reason",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.status_reason",
+      "expected_value": "The evidence bundle is green, but FrankenLibC still claims L0 until current_level and release_tag_policy.current_release_level are promoted together under explicit claim-control.",
+      "rationale": "The dashboard must expose the exact reason the L1 objective gate remains blocked."
+    },
+    {
+      "row_id": "replacement-level-l1-report-path",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.generated_report.report_path",
+      "expected_value": "target/conformance/replacement_levels_l1_gate.report.json",
+      "rationale": "Dashboard consumers must see the generated L1 gate report path."
+    },
+    {
+      "row_id": "replacement-level-l1-log-path",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.generated_report.log_path",
+      "expected_value": "target/conformance/replacement_levels_l1_gate.log.jsonl",
+      "rationale": "Dashboard consumers must see the generated L1 gate log path."
+    },
+    {
+      "row_id": "replacement-level-l1-gate-script",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.generated_report.gate_script",
+      "expected_value": "scripts/check_replacement_levels.sh",
+      "rationale": "The dashboard must expose the script responsible for the replacement-level gate."
+    },
+    {
+      "row_id": "replacement-level-l1-required-log-trace-id",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.required_log_fields.0",
+      "expected_value": "trace_id",
+      "rationale": "The dashboard must expose the trace id field required in replacement-level gate logs."
+    },
+    {
+      "row_id": "replacement-level-l1-required-log-artifact-ref",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.required_log_fields.4",
+      "expected_value": "artifact_ref",
+      "rationale": "The dashboard must expose that each replacement-level obligation log records an artifact reference."
+    },
+    {
+      "row_id": "replacement-level-l1-stub-free-obligation-id",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.0.id",
+      "expected_value": "stub_free_taxonomy",
+      "rationale": "The dashboard must expose the zero-stub taxonomy obligation id."
+    },
+    {
+      "row_id": "replacement-level-l1-stub-free-outcome",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.0.outcome",
+      "expected_value": "pass",
+      "rationale": "The dashboard must expose that zero-stub taxonomy already passes and is not the remaining blocker."
+    },
+    {
+      "row_id": "replacement-level-l1-callthrough-bound-expected",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.1.expected.max_callthrough_pct",
+      "expected_value": 30,
+      "rationale": "The dashboard must expose the L1 call-through percentage ceiling."
+    },
+    {
+      "row_id": "replacement-level-l1-callthrough-bound-actual",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.1.actual.callthrough_pct",
+      "expected_value": 0,
+      "rationale": "The dashboard must expose that call-through percentage already satisfies the L1 bound."
+    },
+    {
+      "row_id": "replacement-level-l1-implemented-floor-expected",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.2.expected.min_implemented_pct",
+      "expected_value": 35,
+      "rationale": "The dashboard must expose the L1 implemented-percentage floor."
+    },
+    {
+      "row_id": "replacement-level-l1-implemented-floor-actual",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.2.actual.implemented_pct",
+      "expected_value": 90,
+      "rationale": "The dashboard must expose that implemented percentage already satisfies the L1 floor."
+    },
+    {
+      "row_id": "replacement-level-l1-smoke-artifact",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.3.artifact_ref",
+      "expected_value": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "rationale": "The dashboard must expose the smoke summary artifact used by the L1 objective gate."
+    },
+    {
+      "row_id": "replacement-level-l1-smoke-strict-status",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.3.actual.strict_status",
+      "expected_value": "green",
+      "rationale": "The dashboard must expose that strict-mode smoke already reports green."
+    },
+    {
+      "row_id": "replacement-level-l1-claim-reconciliation-artifact",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.4.artifact_ref",
+      "expected_value": "tests/conformance/claim_reconciliation_report.v1.json",
+      "rationale": "The dashboard must expose the claim-reconciliation artifact consumed by the L1 objective gate."
+    },
+    {
+      "row_id": "replacement-level-l1-claim-reconciliation-status",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.4.actual.status",
+      "expected_value": "pass",
+      "rationale": "The dashboard must expose that claim reconciliation already passes."
+    },
+    {
+      "row_id": "replacement-level-l1-perf-total-issues",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.5.actual.total_issues",
+      "expected_value": 0,
+      "rationale": "The dashboard must expose that perf-regression prevention has zero current issues."
+    },
+    {
+      "row_id": "replacement-level-l1-promotion-expected-current-level",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.6.expected.current_level",
+      "expected_value": "L1",
+      "rationale": "The dashboard must expose the current_level value required before promotion can pass."
+    },
+    {
+      "row_id": "replacement-level-l1-promotion-expected-contract",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.6.expected",
+      "expected_value": {
+        "current_level": "L1",
+        "release_tag_policy.current_release_level": "L1"
+      },
+      "rationale": "The dashboard must expose the complete level/release-tag contract required before promotion can pass."
+    },
+    {
+      "row_id": "replacement-level-l1-promotion-actual-contract",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.6.actual",
+      "expected_value": {
+        "current_level": "L0",
+        "release_tag_policy.current_release_level": "L0"
+      },
+      "rationale": "The dashboard must expose the complete actual level/release-tag contract that still blocks promotion."
+    },
+    {
+      "row_id": "replacement-level-l1-crt-tls-expected-status",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.7.expected.current_gate_status",
+      "expected_value": "pass",
+      "rationale": "The dashboard must expose the CRT/startup/TLS gate status expected for L1 promotion."
+    },
+    {
+      "row_id": "replacement-level-l1-crt-tls-actual-status",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.obligations.7.actual.current_gate_status",
+      "expected_value": "blocked",
+      "rationale": "The dashboard must expose the actual CRT/startup/TLS gate status that blocks L1."
+    },
+    {
+      "row_id": "replacement-level-l1-evidence-bundle-first-artifact",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.evidence_bundle.artifact_refs.0",
+      "expected_value": "tests/conformance/replacement_levels.json",
+      "rationale": "The dashboard must expose the first artifact in the L1 evidence bundle."
+    },
+    {
+      "row_id": "replacement-level-l1-evidence-bundle-last-artifact",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.evidence_bundle.artifact_refs.5",
+      "expected_value": "tests/conformance/replacement_zero_unapproved_fixtures.v1.json",
+      "rationale": "The dashboard must expose the final artifact in the L1 evidence bundle."
+    },
+    {
+      "row_id": "replacement-level-l1-evidence-bundle-first-command",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.evidence_bundle.required_commands.0",
+      "expected_value": "scripts/check_replacement_levels.sh",
+      "rationale": "The dashboard must expose the primary replacement-level gate command."
+    },
+    {
+      "row_id": "replacement-level-l1-evidence-bundle-last-command",
+      "row_kind": "promotion_state",
+      "evidence_artifact": "tests/conformance/replacement_levels.json",
+      "field": "levels.1.objective_gate.evidence_bundle.required_commands.3",
+      "expected_value": "scripts/check_perf_budget.sh",
+      "rationale": "The dashboard must expose the final required command in the L1 evidence bundle."
     }
   ],
   "minimum_row_kinds": [
