@@ -168,8 +168,9 @@
   "migration_notes": {
     "decision": "Do not force string-only expected_output at the JSON boundary. The canonical boundary contract is tagged expected-value records plus explicit harness adapters into the internal string comparison form.",
     "why_not_string_only": "Current elf_loader and resolver fixtures already carry numbers, objects, and arrays that preserve structured host-observed data. Rewriting them to strings would churn fixtures without improving the harness comparison contract.",
-    "future_fixture_requirement": "Every case must carry exactly one primary expectation tag from expectation_tag_precedence, or the checker fails before the case can be skipped silently.",
-    "supplemental_field_rule": "Extra expected_* fields are allowed only as documented supplemental fields; they do not replace the primary expectation tag.",
+    "future_fixture_requirement": "Every case must carry at least one primary expectation tag from expectation_tag_precedence, or the checker fails before the case can be skipped silently.",
+    "primary_tag_selection_rule": "When a case carries more than one recognized expectation field, the selected primary tag is the first matching tag in expectation_tag_precedence, matching the current harness adapter.",
+    "supplemental_field_rule": "Extra expected_* fields are allowed only as documented supplemental fields; they do not replace the selected primary expectation tag.",
     "no_broad_fixture_rewrite": true
   },
   "report_outputs": {
@@ -183,7 +184,6 @@
     "focus_fixture_missing",
     "fixture_hash_mismatch",
     "fixture_case_unclassified",
-    "ambiguous_expectation_tag",
     "primary_expectation_tag_mismatch",
     "expected_output_kind_mismatch",
     "supplemental_field_mismatch"

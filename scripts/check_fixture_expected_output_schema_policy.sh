@@ -138,13 +138,12 @@ def count_map(counter: Counter) -> dict:
     return {key: counter[key] for key in sorted(counter)}
 
 
-def primary_tags_for_case(case: dict, tag_rows: list[dict]) -> list[str]:
-    tags = []
+def primary_tag_for_case(case: dict, tag_rows: list[dict]) -> str | None:
     for row in tag_rows:
         fields = row.get("fields", [])
         if fields and all(field in case for field in fields):
-            tags.append(str(row.get("tag", "")))
-    return tags
+            return str(row.get("tag", ""))
+    return None
 
 
 def supplemental_expected_fields(case: dict, primary_fields: set[str]) -> list[str]:
@@ -277,20 +276,10 @@ for fixture_id in REQUIRED_FOCUS_IDS:
         if not isinstance(case, dict):
             unclassified_cases.append(f"case[{index}]")
             continue
-        matching_tags = primary_tags_for_case(case, tag_rows)
-        if not matching_tags:
+        tag = primary_tag_for_case(case, tag_rows)
+        if tag is None:
             unclassified_cases.append(str(case.get("name", f"case[{index}]")))
             continue
-        if len(matching_tags) > 1:
-            fail(
-                "ambiguous_expectation_tag",
-                f"{fixture_id}: case has multiple primary expectation tags",
-                source_commit=source_commit,
-                fixture_id=fixture_id,
-                case_name=str(case.get("name", f"case[{index}]")),
-                matching_tags=matching_tags,
-            )
-        tag = matching_tags[0]
         primary_tags[tag] += 1
         global_tag_counter[tag] += 1
         if "expected_output" in case:

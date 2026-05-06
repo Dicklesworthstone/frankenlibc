@@ -1,0 +1,150 @@
+{
+  "schema_version": "fixture_schema_validation.v1",
+  "generated_by_bead": "bd-0agsk.6",
+  "canonical_command": "scripts/check_fixture_schema_validation.sh --validate-only",
+  "fixture_root": "tests/conformance/fixtures",
+  "input_policy_artifact": {
+    "path": "tests/conformance/fixture_expected_output_schema_policy.v1.json",
+    "schema_version": "fixture_expected_output_schema_policy.v1",
+    "policy_id": "adapter_normalized_tagged_values"
+  },
+  "schema_classes": [
+    {
+      "id": "standard_case_fixture",
+      "file_shape": "version/schema_version + family + captured_at + cases[]",
+      "case_required_fields": [
+        "name",
+        "function",
+        "spec_section",
+        "inputs",
+        "mode"
+      ],
+      "mode_values": [
+        "strict",
+        "hardened",
+        "both"
+      ]
+    },
+    {
+      "id": "structured_scenario_fixture",
+      "file_shape": "version/schema_version + family + captured_at + program_scenarios[] or unsupported_scenarios[]",
+      "program_required_fields": [
+        "scenario_id",
+        "source",
+        "expected"
+      ],
+      "unsupported_required_fields": [
+        "scenario_id",
+        "expected_outcome",
+        "expected_errno"
+      ]
+    }
+  ],
+  "expected_errno_policy": {
+    "required_for_schema_class": "standard_case_fixture",
+    "optional_family_exceptions": [
+      {
+        "family": "elf/loader",
+        "current_case_count": 17,
+        "reason": "internal ELF semantic fixture records loader parser and relocation values, not errno-bearing ABI calls"
+      },
+      {
+        "family": "resolv/dns",
+        "current_case_count": 25,
+        "reason": "resolver semantic fixture records config/parser/lookup objects and EAI strings before errno mapping is introduced"
+      }
+    ]
+  },
+  "expectation_value_kind_overrides": {
+    "expected_output": [
+      "array",
+      "boolean",
+      "null",
+      "number",
+      "object",
+      "string"
+    ],
+    "expected_output_bytes": [
+      "array"
+    ],
+    "expected_output_pattern": [
+      "string"
+    ],
+    "expected_return": [
+      "number",
+      "string"
+    ],
+    "expected_values": [
+      "array"
+    ],
+    "expected_n_value": [
+      "number",
+      "string"
+    ]
+  },
+  "allowed_supplemental_expectation_fields": {
+    "expected_return": [
+      "number",
+      "string"
+    ],
+    "expected_n_value": [
+      "number",
+      "string"
+    ],
+    "expected_hex": [
+      "string"
+    ]
+  },
+  "expected_inventory": {
+    "fixture_file_count": 58,
+    "standard_fixture_files": 57,
+    "structured_fixture_files": 1,
+    "standard_case_count": 1282,
+    "structured_program_scenarios": 2,
+    "structured_unsupported_scenarios": 3,
+    "expected_errno_required_cases": 1240,
+    "expected_errno_optional_cases": 42,
+    "primary_expectation_tags": {
+      "expected_output": 1165,
+      "expected_output_bytes": 1,
+      "expected_output_pattern": 8,
+      "expected_return": 2,
+      "expected_return+expected_values": 106
+    },
+    "expected_output_value_kinds": {
+      "array": 6,
+      "boolean": 1,
+      "number": 28,
+      "object": 19,
+      "string": 1111
+    },
+    "supplemental_expectation_fields": {
+      "expected_hex": 2,
+      "expected_n_value": 2,
+      "expected_return": 10
+    }
+  },
+  "report_outputs": {
+    "report_json": "target/conformance/fixture_schema_validation.report.json",
+    "log_jsonl": "target/conformance/fixture_schema_validation.log.jsonl"
+  },
+  "failure_signatures": [
+    "contract_schema_version",
+    "policy_artifact_invalid",
+    "fixture_root_missing",
+    "fixture_file_unclassified",
+    "standard_fixture_schema_invalid",
+    "fixture_case_schema_invalid",
+    "fixture_case_missing_expectation",
+    "fixture_case_invalid_expectation_shape",
+    "fixture_case_missing_expected_errno",
+    "structured_fixture_schema_invalid",
+    "unsupported_scenario_missing_expected_outcome",
+    "fixture_inventory_mismatch"
+  ],
+  "non_goals": [
+    "No fixture file rewrite.",
+    "No host libc execution.",
+    "No support-matrix status changes."
+  ]
+}
