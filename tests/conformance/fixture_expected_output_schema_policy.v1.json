@@ -1,0 +1,191 @@
+{
+  "schema_version": "fixture_expected_output_schema_policy.v1",
+  "generated_by_bead": "bd-0agsk.5",
+  "canonical_command": "scripts/check_fixture_expected_output_schema_policy.sh --validate-only",
+  "canonical_policy": {
+    "id": "adapter_normalized_tagged_values",
+    "json_boundary": "tagged_expected_value_records",
+    "internal_comparison_type": "string",
+    "primary_adapter_source": "crates/frankenlibc-harness/src/fixtures.rs",
+    "adapter_functions": [
+      "expected_output_from_raw_case",
+      "normalize_expected_output_value",
+      "format_return_and_values"
+    ],
+    "preserves_existing_harness_behavior": true
+  },
+  "expectation_tag_precedence": [
+    {
+      "tag": "expected_output",
+      "fields": [
+        "expected_output"
+      ],
+      "adapter": "normalize_expected_output_value",
+      "allowed_json_types": [
+        "array",
+        "boolean",
+        "null",
+        "number",
+        "object",
+        "string"
+      ],
+      "comparison_form": "strings pass through unchanged; non-string JSON values serialize with serde_json-compatible compact JSON"
+    },
+    {
+      "tag": "expected_return+expected_values",
+      "fields": [
+        "expected_return",
+        "expected_values"
+      ],
+      "adapter": "format_return_and_values",
+      "allowed_json_types": [
+        "array",
+        "number",
+        "object",
+        "string"
+      ],
+      "comparison_form": "return value plus sequence values normalize to '<return>:[<values>]'"
+    },
+    {
+      "tag": "expected_output_bytes",
+      "fields": [
+        "expected_output_bytes"
+      ],
+      "adapter": "normalize_expected_output_value",
+      "allowed_json_types": [
+        "array"
+      ],
+      "comparison_form": "byte arrays normalize to compact JSON arrays"
+    },
+    {
+      "tag": "expected_output_pattern",
+      "fields": [
+        "expected_output_pattern"
+      ],
+      "adapter": "normalize_expected_output_value",
+      "allowed_json_types": [
+        "string"
+      ],
+      "comparison_form": "pattern text normalizes to the pattern string"
+    },
+    {
+      "tag": "expected_return",
+      "fields": [
+        "expected_return"
+      ],
+      "adapter": "normalize_expected_output_value",
+      "allowed_json_types": [
+        "number",
+        "string"
+      ],
+      "comparison_form": "return-only contracts normalize to their scalar text"
+    },
+    {
+      "tag": "expected_n_value",
+      "fields": [
+        "expected_n_value"
+      ],
+      "adapter": "normalize_expected_output_value",
+      "allowed_json_types": [
+        "number",
+        "string"
+      ],
+      "comparison_form": "scanf %n contracts normalize to their scalar text"
+    }
+  ],
+  "focus_fixture_inventory": [
+    {
+      "id": "elf_loader",
+      "path": "tests/conformance/fixtures/elf_loader.json",
+      "family": "elf/loader",
+      "case_count": 17,
+      "policy_class": "mixed_json_values",
+      "primary_expectation_tags": {
+        "expected_output": 17
+      },
+      "expected_output_value_kinds": {
+        "number": 5,
+        "object": 4,
+        "string": 8
+      },
+      "expected_errno_cases": 0,
+      "supplemental_expected_like_fields": {
+        "expected_hex": 2
+      },
+      "sha256": "2f838996376ac6a2672c3b3936aa62887bb79923984aa29a8b250e5977e6794d"
+    },
+    {
+      "id": "resolver",
+      "path": "tests/conformance/fixtures/resolver.json",
+      "family": "resolv/dns",
+      "case_count": 25,
+      "policy_class": "mixed_json_values",
+      "primary_expectation_tags": {
+        "expected_output": 25
+      },
+      "expected_output_value_kinds": {
+        "array": 6,
+        "object": 12,
+        "string": 7
+      },
+      "expected_errno_cases": 0,
+      "supplemental_expected_like_fields": {},
+      "sha256": "69eef58330af4cfe9dd7dce47c4f9e329c7987877931591bcc95558fdaa7dfef"
+    },
+    {
+      "id": "time_ops",
+      "path": "tests/conformance/fixtures/time_ops.json",
+      "family": "time_ops",
+      "case_count": 8,
+      "policy_class": "string_only_current_fixture",
+      "primary_expectation_tags": {
+        "expected_output": 8
+      },
+      "expected_output_value_kinds": {
+        "string": 8
+      },
+      "expected_errno_cases": 8,
+      "supplemental_expected_like_fields": {},
+      "sha256": "8d74cf08ab984e541dad57609e7db0b589d025998eb11a1f10699fd414986b1a"
+    },
+    {
+      "id": "termios_ops",
+      "path": "tests/conformance/fixtures/termios_ops.json",
+      "family": "termios_ops",
+      "case_count": 8,
+      "policy_class": "string_only_current_fixture",
+      "primary_expectation_tags": {
+        "expected_output": 8
+      },
+      "expected_output_value_kinds": {
+        "string": 8
+      },
+      "expected_errno_cases": 8,
+      "supplemental_expected_like_fields": {},
+      "sha256": "e6d94ee61fef47d89b07d2f44aeebc6c1e9697ecd95ce333c487d888f2bf77d3"
+    }
+  ],
+  "migration_notes": {
+    "decision": "Do not force string-only expected_output at the JSON boundary. The canonical boundary contract is tagged expected-value records plus explicit harness adapters into the internal string comparison form.",
+    "why_not_string_only": "Current elf_loader and resolver fixtures already carry numbers, objects, and arrays that preserve structured host-observed data. Rewriting them to strings would churn fixtures without improving the harness comparison contract.",
+    "future_fixture_requirement": "Every case must carry exactly one primary expectation tag from expectation_tag_precedence, or the checker fails before the case can be skipped silently.",
+    "supplemental_field_rule": "Extra expected_* fields are allowed only as documented supplemental fields; they do not replace the primary expectation tag.",
+    "no_broad_fixture_rewrite": true
+  },
+  "report_outputs": {
+    "report_json": "target/conformance/fixture_expected_output_schema_policy.report.json",
+    "log_jsonl": "target/conformance/fixture_expected_output_schema_policy.log.jsonl"
+  },
+  "failure_signatures": [
+    "canonical_policy_mismatch",
+    "expectation_tag_contract_invalid",
+    "adapter_source_missing",
+    "focus_fixture_missing",
+    "fixture_hash_mismatch",
+    "fixture_case_unclassified",
+    "ambiguous_expectation_tag",
+    "primary_expectation_tag_mismatch",
+    "expected_output_kind_mismatch",
+    "supplemental_field_mismatch"
+  ]
+}
