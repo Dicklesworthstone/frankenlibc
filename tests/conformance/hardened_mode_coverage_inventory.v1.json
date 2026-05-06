@@ -1,0 +1,389 @@
+{
+  "schema_version": "hardened_mode_coverage_inventory.v1",
+  "generated_by_bead": "bd-0agsk.10",
+  "source_todo_ids": [
+    "TODO-0501",
+    "TODO-0502",
+    "TODO-0503",
+    "TODO-0504",
+    "TODO-0505",
+    "TODO-0506"
+  ],
+  "generated_utc": "2026-05-06T13:08:00Z",
+  "source_commit": "3f9739248083b95cde5c1cd0bf20c04db29b3ca6",
+  "canonical_command": "scripts/check_hardened_mode_coverage_inventory.sh --validate-only",
+  "purpose": "Inventory current conformance fixture depth by family, runtime mode, and risk class before adding individual hardened-mode fixture waves.",
+  "input_artifacts": {
+    "fixture_root": "tests/conformance/fixtures",
+    "fixture_schema_gate": "tests/conformance/fixture_schema_validation.v1.json",
+    "hardened_repair_deny_matrix": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+    "stress_orchard_manifest": "tests/conformance/pthread_malloc_stdio_stress_orchard.v1.json",
+    "support_matrix": "support_matrix.json"
+  },
+  "classification_contract": {
+    "mode_classes": [
+      {
+        "id": "strict_only",
+        "case_mode": "strict",
+        "meaning": "Fixture row is declared for strict mode only."
+      },
+      {
+        "id": "hardened_only",
+        "case_mode": "hardened",
+        "meaning": "Fixture row is declared for hardened mode only."
+      },
+      {
+        "id": "strict_hardened_pair",
+        "case_mode": "both",
+        "meaning": "Fixture row declares the same case for both strict and hardened mode."
+      }
+    ],
+    "claim_strength_values": [
+      "inventory_only",
+      "gap_identified",
+      "fixture_case_declared",
+      "repair_deny_policy_mapped",
+      "stress_manifest_declared"
+    ],
+    "overclaim_guardrails": [
+      "Fixture rows are inventory evidence, not replacement-readiness proof.",
+      "A risk group with missing hardened fixture families must use coverage_status=gap_identified.",
+      "No dashboard row may claim replacement_ready or complete_family_coverage."
+    ]
+  },
+  "expected_inventory": {
+    "fixture_file_count": 58,
+    "standard_case_count": 1282,
+    "family_count": 56,
+    "mode_case_counts": {
+      "strict_only": 631,
+      "hardened_only": 126,
+      "strict_hardened_pair": 525
+    },
+    "effective_mode_case_counts": {
+      "strict": 1156,
+      "hardened": 651
+    },
+    "missing_hardened_family_count": 7,
+    "missing_hardened_families": [
+      "allocator",
+      "elf/loader",
+      "scanf_conformance",
+      "stdlib/conversion",
+      "string/memory",
+      "string/strtok",
+      "string/wide_memory"
+    ],
+    "hardened_repair_deny_matrix": {
+      "entry_count": 15,
+      "repair_count": 9,
+      "deny_count": 6,
+      "invalid_input_class_count": 15,
+      "claimed_api_family_count": 11
+    },
+    "stress_orchard": {
+      "scenario_count": 9,
+      "strict_hardened_pair_scenarios": 7,
+      "hardened_only_scenarios": 2,
+      "hardened_repair_scenarios": 2
+    }
+  },
+  "risk_groups": [
+    {
+      "id": "allocator_anomaly_repairs",
+      "title": "Allocator anomaly repairs",
+      "coverage_status": "gap_identified",
+      "claim_strength": "gap_identified",
+      "fixture_families": [
+        "allocator"
+      ],
+      "support_modules": [
+        "malloc_abi"
+      ],
+      "repair_deny_matrix_classes": [],
+      "stress_scenarios": [
+        "hardened-repair-malloc-overflow"
+      ],
+      "expected_counts": {
+        "fixture_case_count": 5,
+        "strict_only": 5,
+        "hardened_only": 0,
+        "strict_hardened_pair": 0,
+        "effective_hardened": 0,
+        "support_symbol_count": 21,
+        "stress_repair_scenarios": 1
+      },
+      "missing_hardened_families": [
+        "allocator"
+      ],
+      "next_action": "Add direct hardened allocator anomaly fixtures; current repair evidence is stress-orchard manifest scoped."
+    },
+    {
+      "id": "parser_locale_boundary_cases",
+      "title": "Parser and locale boundary cases",
+      "coverage_status": "gap_identified",
+      "claim_strength": "gap_identified",
+      "fixture_families": [
+        "printf_conformance",
+        "scanf_conformance",
+        "regex_glob_ops",
+        "io_internal",
+        "mntent",
+        "locale_ops",
+        "iconv/phase1",
+        "ctype",
+        "string/wide"
+      ],
+      "support_modules": [
+        "stdio_abi",
+        "io_internal_abi",
+        "locale_abi",
+        "iconv_abi",
+        "ctype_abi",
+        "string_abi",
+        "wchar_abi"
+      ],
+      "repair_deny_matrix_classes": [
+        "iconv_unsupported_encoding",
+        "locale_unsupported_fallback",
+        "string_copy_overflow",
+        "string_concat_overflow",
+        "wide_copy_overflow"
+      ],
+      "stress_scenarios": [
+        "hardened-repair-stdio-format-truncation"
+      ],
+      "expected_counts": {
+        "fixture_case_count": 474,
+        "strict_only": 331,
+        "hardened_only": 18,
+        "strict_hardened_pair": 125,
+        "effective_hardened": 143,
+        "support_symbol_count": 600,
+        "stress_repair_scenarios": 1
+      },
+      "missing_hardened_families": [
+        "scanf_conformance"
+      ],
+      "next_action": "Add hardened scanf/parser boundary fixtures before claiming full parser coverage."
+    },
+    {
+      "id": "resolver_retry_cache_cases",
+      "title": "Resolver, passwd, and group retry/cache cases",
+      "coverage_status": "inventory_present",
+      "claim_strength": "fixture_case_declared",
+      "fixture_families": [
+        "resolv/dns",
+        "pwd_ops",
+        "grp_ops"
+      ],
+      "support_modules": [
+        "resolv_abi",
+        "pwd_abi",
+        "grp_abi"
+      ],
+      "repair_deny_matrix_classes": [],
+      "stress_scenarios": [],
+      "expected_counts": {
+        "fixture_case_count": 49,
+        "strict_only": 31,
+        "hardened_only": 18,
+        "strict_hardened_pair": 0,
+        "effective_hardened": 18,
+        "support_symbol_count": 46,
+        "stress_repair_scenarios": 0
+      },
+      "missing_hardened_families": [],
+      "next_action": "Convert inventory rows into retry/cache-specific hardened fixture waves."
+    },
+    {
+      "id": "memory_pointer_hot_path",
+      "title": "Memory and pointer hot-path cases",
+      "coverage_status": "gap_identified",
+      "claim_strength": "gap_identified",
+      "fixture_families": [
+        "memory_ops",
+        "string/memcpy",
+        "string/strlen",
+        "string/memory",
+        "string/wide_memory",
+        "virtual_memory_ops",
+        "membrane/mode-split"
+      ],
+      "support_modules": [
+        "malloc_abi",
+        "mmap_abi",
+        "string_abi",
+        "wchar_abi"
+      ],
+      "repair_deny_matrix_classes": [
+        "memcpy_overflow",
+        "unterminated_scan",
+        "mmap_invalid_protection",
+        "mmap_missing_visibility"
+      ],
+      "stress_scenarios": [
+        "hardened-repair-malloc-overflow"
+      ],
+      "expected_counts": {
+        "fixture_case_count": 61,
+        "strict_only": 47,
+        "hardened_only": 14,
+        "strict_hardened_pair": 0,
+        "effective_hardened": 14,
+        "support_symbol_count": 323,
+        "stress_repair_scenarios": 1
+      },
+      "missing_hardened_families": [
+        "string/memory",
+        "string/wide_memory"
+      ],
+      "next_action": "Add hardened string memory and wide-memory fixtures before high-risk family thresholds are defined."
+    },
+    {
+      "id": "pthread_stdio_stress_hot_path",
+      "title": "Pthread and stdio stress hot paths",
+      "coverage_status": "inventory_present",
+      "claim_strength": "fixture_case_declared",
+      "fixture_families": [
+        "pthread/cond",
+        "pthread/mutex",
+        "pthread/thread",
+        "pthread/tls_keys",
+        "pthread/gnu_extensions",
+        "c11threads/ops",
+        "stdio_file_ops"
+      ],
+      "support_modules": [
+        "pthread_abi",
+        "c11threads_abi",
+        "stdio_abi"
+      ],
+      "repair_deny_matrix_classes": [],
+      "stress_scenarios": [
+        "malloc-concurrent-alloc-free",
+        "stdio-file-buffering-contention",
+        "pthread-mutex-lifecycle",
+        "pthread-condvar-broadcast-signal",
+        "pthread-condvar-timeout-edge",
+        "pthread-rwlock-writer-priority",
+        "pthread-cancellation-adjacent-state",
+        "hardened-repair-stdio-format-truncation"
+      ],
+      "expected_counts": {
+        "fixture_case_count": 167,
+        "strict_only": 38,
+        "hardened_only": 20,
+        "strict_hardened_pair": 109,
+        "effective_hardened": 129,
+        "support_symbol_count": 292,
+        "stress_repair_scenarios": 1
+      },
+      "missing_hardened_families": [],
+      "next_action": "Keep stress-orchard evidence current before promoting coverage in readiness thresholds."
+    },
+    {
+      "id": "high_risk_symbol_families",
+      "title": "High-risk support-matrix symbol families",
+      "coverage_status": "gap_identified",
+      "claim_strength": "gap_identified",
+      "fixture_families": [
+        "allocator",
+        "memory_ops",
+        "string/memcpy",
+        "string/strlen",
+        "printf_conformance",
+        "scanf_conformance",
+        "stdio_file_ops",
+        "locale_ops",
+        "iconv/phase1",
+        "resolv/dns",
+        "pthread/cond",
+        "pthread/mutex",
+        "pthread/thread",
+        "signal_ops",
+        "setjmp_ops",
+        "loader_edges",
+        "virtual_memory_ops"
+      ],
+      "support_modules": [
+        "malloc_abi",
+        "mmap_abi",
+        "string_abi",
+        "wchar_abi",
+        "stdio_abi",
+        "io_internal_abi",
+        "locale_abi",
+        "iconv_abi",
+        "resolv_abi",
+        "pwd_abi",
+        "grp_abi",
+        "pthread_abi",
+        "signal_abi",
+        "setjmp_abi",
+        "dlfcn_abi",
+        "startup_abi"
+      ],
+      "repair_deny_matrix_classes": [
+        "memcpy_overflow",
+        "unterminated_scan",
+        "string_copy_overflow",
+        "string_concat_overflow",
+        "wide_copy_overflow",
+        "iconv_unsupported_encoding",
+        "locale_unsupported_fallback",
+        "mmap_invalid_protection",
+        "mmap_missing_visibility",
+        "invalid_signal_number",
+        "startup_unterminated_auxv"
+      ],
+      "stress_scenarios": [
+        "malloc-concurrent-alloc-free",
+        "stdio-file-buffering-contention",
+        "pthread-mutex-lifecycle",
+        "pthread-condvar-broadcast-signal",
+        "pthread-condvar-timeout-edge",
+        "pthread-rwlock-writer-priority",
+        "pthread-cancellation-adjacent-state",
+        "hardened-repair-malloc-overflow",
+        "hardened-repair-stdio-format-truncation"
+      ],
+      "expected_counts": {
+        "fixture_case_count": 552,
+        "strict_only": 421,
+        "hardened_only": 64,
+        "strict_hardened_pair": 67,
+        "effective_hardened": 131,
+        "support_symbol_count": 815,
+        "stress_repair_scenarios": 2
+      },
+      "missing_hardened_families": [
+        "allocator",
+        "scanf_conformance"
+      ],
+      "next_action": "Define acceptance thresholds only after allocator and scanf hardened gaps have explicit fixture rows."
+    }
+  ],
+  "report_outputs": {
+    "report_json": "target/conformance/hardened_mode_coverage_inventory.report.json",
+    "log_jsonl": "target/conformance/hardened_mode_coverage_inventory.log.jsonl"
+  },
+  "failure_signatures": [
+    "hardened_coverage_contract_missing",
+    "hardened_coverage_contract_invalid_json",
+    "hardened_coverage_contract_wrong_schema",
+    "hardened_coverage_contract_wrong_bead",
+    "hardened_coverage_input_missing",
+    "hardened_coverage_fixture_inventory_mismatch",
+    "hardened_coverage_repair_deny_mismatch",
+    "hardened_coverage_stress_mismatch",
+    "hardened_coverage_support_matrix_mismatch",
+    "hardened_coverage_group_mismatch",
+    "hardened_coverage_group_overclaim"
+  ],
+  "non_goals": [
+    "No fixture files are rewritten in this bead.",
+    "No support-matrix status is promoted.",
+    "No replacement readiness threshold is claimed from inventory-only evidence."
+  ]
+}
