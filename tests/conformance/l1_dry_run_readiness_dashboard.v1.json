@@ -24,6 +24,7 @@
     "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_owned_tls_startup_surface": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+    "standalone_owned_unwinder_symbol_surface": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
     "crt_tls_atexit_direct_link_run_proof_fixtures": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
     "real_program_smoke_suite": "tests/conformance/real_program_smoke_suite.v1.json",
     "dlfcn_replace_boundary_sentinel": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
@@ -1333,6 +1334,110 @@
       "field": "symbol_rows.0.exit_criteria.0",
       "expected_value": "artifact_state.dependency_breakdown.undefined_tls_symbols is empty",
       "rationale": "Dashboard consumers must see a concrete artifact-level exit criterion before any claim can change."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-manifest-id",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "manifest_id",
+      "expected_value": "standalone-owned-unwinder-symbol-surface",
+      "rationale": "L1 dashboard consumers must see that the owned unwinder symbol surface artifact is wired into readiness reporting."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-source-commit-field",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "Owned unwinder surface freshness must be bound to the artifact source_commit field."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-source-commit-comparison-target",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "Owned unwinder surface freshness must compare against the current checkout."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-source-commit-stale-result",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_owned_unwinder_symbol_surface",
+      "rationale": "A stale owned unwinder surface cannot support L1 readiness evidence."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-source-commit-no-evidence",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "source_commit_freshness_policy.owned_unwinder_surface_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Stale owned unwinder surface evidence cannot support dashboard rows."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-source-commit-rejection-kind",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_owned_unwinder_symbol_surface",
+      "rationale": "Dashboard consumers must see stale owned unwinder evidence with its artifact-specific rejection kind."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-no-promotion",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "report_policy.promotion_allowed",
+      "expected_value": false,
+      "rationale": "Owned unwinder surface evidence is report-only and cannot promote standalone replacement claims."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-symbol-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "summary.current_unwind_symbol_count",
+      "expected_value": 12,
+      "rationale": "Dashboard consumers must see that the current owned unwinder blocker surface still has twelve symbols."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-provider-library-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "summary.provider_library_count",
+      "expected_value": 1,
+      "rationale": "Dashboard consumers must see that the owned unwinder blockers still depend on one host provider library."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-provider-version-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "summary.provider_version_requirement_count",
+      "expected_value": 3,
+      "rationale": "Dashboard consumers must see that the owned unwinder surface still depends on three provider version requirements."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-unresolved-symbol-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "summary.unresolved_symbol_count",
+      "expected_value": 12,
+      "rationale": "Dashboard consumers must see the unresolved owned unwinder symbol count before any replacement claim changes."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-ready-false",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "summary.owned_surface_ready",
+      "expected_value": false,
+      "rationale": "The dashboard must preserve the owned unwinder surface as unresolved until artifact-level nm/readelf absence proves otherwise."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-surface-claim-blocked",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "summary.claim_status_until_all_symbols_exit",
+      "expected_value": "claim_blocked",
+      "rationale": "The owned unwinder surface must keep standalone claims blocked until every _Unwind_* symbol exits the current artifact."
     },
     {
       "row_id": "l1-dashboard-source-commit-field",
