@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 
-//! Metamorphic-property tests for `inet_aton(3)` / `inet_ntoa(3)`.
+//! Metamorphic-property tests for `inet_aton(3)`, `inet_addr(3)`,
+//! and `inet_ntoa(3)`.
 //!
 //! These verify algebraic invariants that any correct IPv4
 //! conversion must satisfy:
@@ -10,6 +11,8 @@
 //!   - aton always normalises to the same dotted-quad regardless of
 //!     numeric form chosen on input (decimal, octal, hex, 1/2/3/4
 //!     parts)
+//!   - inet_addr agrees with inet_aton's network-byte-order output
+//!     for every accepted numeric alias
 //!   - byte-order: htonl ∘ ntohl = identity
 //!
 //! Filed under [bd-xn6p8] follow-up.
@@ -79,6 +82,75 @@ fn metamorphic_aton_one_part_form_equals_dotted_quad() {
 }
 
 #[test]
+fn metamorphic_inet_addr_agrees_with_aton_across_numeric_aliases() -> Result<(), std::ffi::NulError>
+{
+    let groups: &[(&str, &[&str])] = &[
+        (
+            "127.0.0.1",
+            &[
+                "127.0.0.1",
+                "0177.0.0.1",
+                "0x7f.0.0.1",
+                "127.1",
+                "2130706433",
+            ],
+        ),
+        (
+            "1.2.3.4",
+            &[
+                "1.2.3.4",
+                "001.002.003.004",
+                "0x1.0x2.0x3.0x4",
+                "1.2.772",
+                "1.131844",
+                "16909060",
+            ],
+        ),
+        (
+            "10.0.0.1",
+            &["10.0.0.1", "012.0.0.1", "0x0a.0.0.1", "10.1", "167772161"],
+        ),
+    ];
+
+    for &(canonical, aliases) in groups {
+        let canonical_cs = CString::new(canonical)?;
+        let mut canonical_aton: u32 = 0;
+        assert_eq!(
+            unsafe { fl::inet_aton(canonical_cs.as_ptr(), &mut canonical_aton) },
+            1,
+            "aton failed for canonical {canonical}"
+        );
+
+        for &alias in aliases {
+            let alias_cs = CString::new(alias)?;
+            let mut alias_aton: u32 = 0;
+            assert_eq!(
+                unsafe { fl::inet_aton(alias_cs.as_ptr(), &mut alias_aton) },
+                1,
+                "aton failed for alias {alias}"
+            );
+            assert_eq!(
+                alias_aton, canonical_aton,
+                "{alias} should normalise to {canonical}"
+            );
+
+            let alias_addr = unsafe { fl::inet_addr(alias_cs.as_ptr()) };
+            assert_eq!(
+                alias_addr, canonical_aton,
+                "inet_addr and inet_aton disagree for {alias}"
+            );
+
+            let rendered = unsafe { CStr::from_ptr(fl::inet_ntoa(alias_addr)) }
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(rendered, canonical, "inet_ntoa canonicalized {alias}");
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn metamorphic_htonl_ntohl_round_trip_identity() {
     // For every random sample, htonl(ntohl(x)) must equal x and
     // vice versa.
@@ -127,6 +199,6 @@ fn metamorphic_aton_never_writes_on_failure() {
 #[test]
 fn inet_aton_ntoa_metamorphic_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libc inet_aton + inet_ntoa + htonl/htons\",\"reference\":\"internal-invariants\",\"properties\":6,\"divergences\":0}}",
+        "{{\"family\":\"libc inet_aton + inet_addr + inet_ntoa + htonl/htons\",\"reference\":\"internal-invariants\",\"properties\":7,\"divergences\":0}}",
     );
 }
