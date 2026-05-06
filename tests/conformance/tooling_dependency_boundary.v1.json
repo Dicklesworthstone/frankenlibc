@@ -1,0 +1,258 @@
+{
+  "schema_version": "tooling_dependency_boundary.v1",
+  "generated_by_bead": "bd-0agsk.13",
+  "source_todo_ids": [
+    "TODO-0901",
+    "TODO-0902",
+    "TODO-0903"
+  ],
+  "canonical_command": "scripts/check_tooling_dependency_boundary.sh --validate-only",
+  "purpose": "Prove asupersync and frankentui remain build/test tooling dependencies and do not enter runtime libc dependency surfaces.",
+  "input_artifacts": [
+    "AGENTS.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/frankenlibc-abi/Cargo.toml",
+    "crates/frankenlibc-core/Cargo.toml",
+    "crates/frankenlibc-membrane/Cargo.toml",
+    "crates/frankenlibc/Cargo.toml",
+    "crates/frankenlibc-harness/Cargo.toml",
+    "crates/frankenlibc_conformance/Cargo.toml",
+    "crates/frankenlibc-fixture-exec/Cargo.toml",
+    "crates/frankenlibc-bench/Cargo.toml",
+    "crates/frankenlibc-harness/src/lib.rs",
+    "crates/frankenlibc-harness/src/asupersync_orchestrator.rs",
+    "crates/frankenlibc-harness/src/diff.rs",
+    "crates/frankenlibc-harness/src/snapshot_diff.rs",
+    "crates/frankenlibc-harness/src/bin/harness.rs",
+    "crates/frankenlibc_conformance/src/lib.rs"
+  ],
+  "workspace_companion_dependencies": {
+    "asupersync-conformance": "0.3.1",
+    "ftui-harness": "0.3.1"
+  },
+  "forbidden_runtime_dependency_names": [
+    "asupersync-conformance",
+    "asupersync_conformance",
+    "ftui-harness",
+    "ftui_harness",
+    "ftui-core",
+    "ftui-layout",
+    "ftui-render",
+    "ftui-style",
+    "ftui-widgets"
+  ],
+  "runtime_crates": [
+    {
+      "crate": "frankenlibc-abi",
+      "manifest": "crates/frankenlibc-abi/Cargo.toml",
+      "runtime_artifact": "libc.so cdylib boundary",
+      "crate_type_requires": [
+        "cdylib"
+      ],
+      "dependency_sections_forbid_tooling": [
+        "dependencies"
+      ]
+    },
+    {
+      "crate": "frankenlibc-core",
+      "manifest": "crates/frankenlibc-core/Cargo.toml",
+      "runtime_artifact": "safe libc implementation crate",
+      "dependency_sections_forbid_tooling": [
+        "dependencies"
+      ]
+    },
+    {
+      "crate": "frankenlibc-membrane",
+      "manifest": "crates/frankenlibc-membrane/Cargo.toml",
+      "runtime_artifact": "transparent safety membrane",
+      "dependency_sections_forbid_tooling": [
+        "dependencies"
+      ],
+      "allowed_tooling_sections": [
+        "dev-dependencies"
+      ]
+    },
+    {
+      "crate": "frankenlibc",
+      "manifest": "crates/frankenlibc/Cargo.toml",
+      "runtime_artifact": "legacy compatibility cdylib",
+      "crate_type_requires": [
+        "cdylib"
+      ],
+      "dependency_sections_forbid_tooling": [
+        "dependencies"
+      ]
+    }
+  ],
+  "tooling_crates": [
+    {
+      "crate": "frankenlibc-harness",
+      "manifest": "crates/frankenlibc-harness/Cargo.toml",
+      "expected_default_features": [
+        "asupersync-tooling"
+      ],
+      "optional_dependencies": [
+        "asupersync-conformance",
+        "ftui-harness",
+        "ftui-core",
+        "ftui-layout",
+        "ftui-render",
+        "ftui-style",
+        "ftui-widgets"
+      ],
+      "features": {
+        "asupersync-tooling": [
+          "dep:asupersync-conformance"
+        ],
+        "frankentui-ui": [
+          "dep:ftui-harness",
+          "dep:ftui-core",
+          "dep:ftui-layout",
+          "dep:ftui-render",
+          "dep:ftui-style",
+          "dep:ftui-widgets"
+        ]
+      }
+    },
+    {
+      "crate": "frankenlibc_conformance",
+      "manifest": "crates/frankenlibc_conformance/Cargo.toml",
+      "expected_default_features": [
+        "asupersync-tooling"
+      ],
+      "optional_dependencies": [
+        "asupersync_conformance",
+        "ftui_harness"
+      ],
+      "features": {
+        "asupersync-tooling": [
+          "dep:asupersync_conformance"
+        ],
+        "frankentui-ui": [
+          "dep:ftui_harness"
+        ]
+      }
+    }
+  ],
+  "runtime_transitive_policy": {
+    "start_crates": [
+      "frankenlibc-abi",
+      "frankenlibc-core",
+      "frankenlibc-membrane",
+      "frankenlibc"
+    ],
+    "forbidden_workspace_crates": [
+      "frankenlibc-harness",
+      "frankenlibc_conformance",
+      "frankenlibc-fixture-exec",
+      "frankenlibc-bench"
+    ],
+    "dependency_sections": [
+      "dependencies"
+    ],
+    "expected_reachable_crates": [
+      "frankenlibc",
+      "frankenlibc-abi",
+      "frankenlibc-core",
+      "frankenlibc-membrane"
+    ]
+  },
+  "feature_path_proofs": [
+    {
+      "id": "harness_asupersync_feature_export",
+      "crate": "frankenlibc-harness",
+      "feature": "asupersync-tooling",
+      "source_path": "crates/frankenlibc-harness/src/lib.rs",
+      "required_tokens": [
+        "#[cfg(feature = \"asupersync-tooling\")]",
+        "pub mod asupersync_orchestrator;"
+      ]
+    },
+    {
+      "id": "harness_asupersync_orchestrator_tooling_comment",
+      "crate": "frankenlibc-harness",
+      "feature": "asupersync-tooling",
+      "source_path": "crates/frankenlibc-harness/src/asupersync_orchestrator.rs",
+      "required_tokens": [
+        "build/test tooling only",
+        "#![cfg(feature = \"asupersync-tooling\")]",
+        "use asupersync_conformance::"
+      ]
+    },
+    {
+      "id": "harness_frankentui_diff_render_path",
+      "crate": "frankenlibc-harness",
+      "feature": "frankentui-ui",
+      "source_path": "crates/frankenlibc-harness/src/diff.rs",
+      "required_tokens": [
+        "#[cfg(feature = \"frankentui-ui\")]",
+        "ftui_harness::diff_text"
+      ]
+    },
+    {
+      "id": "harness_frankentui_snapshot_render_path",
+      "crate": "frankenlibc-harness",
+      "feature": "frankentui-ui",
+      "source_path": "crates/frankenlibc-harness/src/snapshot_diff.rs",
+      "required_tokens": [
+        "#[cfg(feature = \"frankentui-ui\")]",
+        "ftui_harness::buffer_to_text"
+      ]
+    },
+    {
+      "id": "harness_cli_frankentui_runtime_note",
+      "crate": "frankenlibc-harness",
+      "feature": "frankentui-ui",
+      "source_path": "crates/frankenlibc-harness/src/bin/harness.rs",
+      "required_tokens": [
+        "enable `frankentui-ui` feature",
+        "format ftui"
+      ]
+    },
+    {
+      "id": "legacy_conformance_asupersync_path",
+      "crate": "frankenlibc_conformance",
+      "feature": "asupersync-tooling",
+      "source_path": "crates/frankenlibc_conformance/src/lib.rs",
+      "required_tokens": [
+        "#[cfg(feature = \"asupersync-tooling\")]",
+        "TraceabilityMatrixBuilder"
+      ]
+    },
+    {
+      "id": "legacy_conformance_frankentui_path",
+      "crate": "frankenlibc_conformance",
+      "feature": "frankentui-ui",
+      "source_path": "crates/frankenlibc_conformance/src/lib.rs",
+      "required_tokens": [
+        "#[cfg(feature = \"frankentui-ui\")]",
+        "ftui_harness::diff_text"
+      ]
+    }
+  ],
+  "expected_current": {
+    "runtime_crate_count": 4,
+    "tooling_crate_count": 2,
+    "feature_path_proof_count": 7,
+    "runtime_dependency_leakage_count": 0,
+    "runtime_forbidden_workspace_reachable_count": 0,
+    "tooling_optional_dependency_count": 9
+  },
+  "required_failure_signatures": [
+    "runtime_dependency_leakage",
+    "feature_path_proof_missing"
+  ],
+  "negative_tests": [
+    {
+      "id": "runtime_dependency_leakage",
+      "mutation": "Add asupersync-conformance to frankenlibc-abi normal dependencies.",
+      "expected_failure_signature": "runtime_dependency_leakage"
+    },
+    {
+      "id": "feature_path_proof_missing",
+      "mutation": "Remove a feature_path_proofs row from the contract.",
+      "expected_failure_signature": "feature_path_proof_missing"
+    }
+  ]
+}
