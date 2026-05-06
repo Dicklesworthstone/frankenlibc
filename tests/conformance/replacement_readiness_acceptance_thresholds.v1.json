@@ -1,0 +1,119 @@
+{
+  "schema_version": "replacement_readiness_acceptance_thresholds.v1",
+  "generated_by_bead": "bd-0agsk.17",
+  "source_todo_ids": [
+    "TODO-0604"
+  ],
+  "generated_utc": "2026-05-06T13:22:00Z",
+  "canonical_command": "scripts/check_replacement_readiness_acceptance_thresholds.sh --validate-only",
+  "purpose": "Define the per-family acceptance thresholds that must pass before a support-matrix family can contribute to replacement-readiness claims.",
+  "input_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "support_reality_drift_triage": "tests/conformance/support_reality_drift_triage.v1.json",
+    "residual_replacement_callthrough_blockers": "tests/conformance/residual_replacement_callthrough_blockers.v1.json",
+    "hardened_mode_coverage_inventory": "tests/conformance/hardened_mode_coverage_inventory.v1.json",
+    "family_coverage_thresholds": "tests/conformance/family_coverage_thresholds.v1.json"
+  },
+  "input_gates": [
+    "scripts/check_support_reality_drift_triage.sh --validate-only",
+    "scripts/check_residual_replacement_callthrough_blockers.sh --validate-only",
+    "scripts/check_hardened_mode_coverage_inventory.sh --validate-only",
+    "scripts/check_family_coverage_thresholds.sh"
+  ],
+  "readiness_policy": {
+    "claim_gate_decision_when_any_family_fails": "blocked",
+    "aggregate_support_green_not_sufficient": true,
+    "supported_statuses": [
+      "Implemented",
+      "RawSyscall"
+    ],
+    "minimum_supported_status_pct": 100.0,
+    "maximum_missing_exports_per_family": 0,
+    "maximum_residual_callthrough_count": 0,
+    "required_family_coverage_decision": "pass",
+    "required_hardened_coverage_status_for_promotion": "inventory_present_or_better",
+    "required_evidence_freshness": "all_input_gates_pass_on_current_checkout"
+  },
+  "family_decision_contract": {
+    "family_source": "tests/conformance/family_coverage_thresholds.v1.json#threshold_records",
+    "failure_reasons": [
+      "unsupported_status",
+      "missing_version_export",
+      "residual_callthrough",
+      "fixture_threshold_failed",
+      "hardened_coverage_gap"
+    ],
+    "promotion_rule": "A family is promotable only when every failure reason is absent; aggregate support_matrix status cannot override a failing family row."
+  },
+  "expected_current_summary": {
+    "family_count": 40,
+    "family_pass_count": 0,
+    "family_fail_count": 40,
+    "aggregate_support_green": true,
+    "support_symbol_count": 4119,
+    "support_supported_symbol_count": 4119,
+    "missing_export_count": 5,
+    "families_with_missing_exports": [
+      "glibc_internal_abi",
+      "stdio_abi"
+    ],
+    "residual_forbidden_callthrough_count": 0,
+    "family_coverage_fail_count": 40,
+    "hardened_coverage_gap_group_count": 4,
+    "claim_gate_decision": "blocked"
+  },
+  "known_current_blockers": [
+    {
+      "blocker_id": "all_family_fixture_thresholds_fail",
+      "kind": "fixture_depth",
+      "family_count": 40,
+      "evidence": "tests/conformance/family_coverage_thresholds.v1.json#summary.fail_count"
+    },
+    {
+      "blocker_id": "version_script_missing_exports",
+      "kind": "export_parity",
+      "family_count": 2,
+      "symbol_count": 5,
+      "evidence": "tests/conformance/support_reality_drift_triage.v1.json#delta_buckets[classification=missing_export]"
+    },
+    {
+      "blocker_id": "hardened_coverage_inventory_gaps",
+      "kind": "hardened_fixture_depth",
+      "group_count": 4,
+      "evidence": "tests/conformance/hardened_mode_coverage_inventory.v1.json#risk_groups[coverage_status=gap_identified]"
+    }
+  ],
+  "release_gate_consumers": [
+    {
+      "gate_id": "replacement_readiness_acceptance_thresholds",
+      "command": "scripts/check_replacement_readiness_acceptance_thresholds.sh --validate-only",
+      "blocks_on_failure": true,
+      "blocks_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ]
+    }
+  ],
+  "report_outputs": {
+    "report_json": "target/conformance/replacement_readiness_acceptance_thresholds.report.json",
+    "log_jsonl": "target/conformance/replacement_readiness_acceptance_thresholds.log.jsonl"
+  },
+  "failure_signatures": [
+    "replacement_readiness_contract_missing",
+    "replacement_readiness_contract_invalid_json",
+    "replacement_readiness_contract_wrong_schema",
+    "replacement_readiness_contract_wrong_bead",
+    "replacement_readiness_policy_invalid",
+    "replacement_readiness_input_missing",
+    "replacement_readiness_upstream_gate_failed",
+    "replacement_readiness_family_missing",
+    "replacement_readiness_summary_mismatch",
+    "replacement_readiness_aggregate_overclaim"
+  ],
+  "non_goals": [
+    "No support_matrix status changes.",
+    "No replacement-level promotion.",
+    "No fixture implementation work."
+  ]
+}
