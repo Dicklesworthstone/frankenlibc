@@ -5,7 +5,7 @@
   "owner_family_group": "fpg-proof-algebraic-topological",
   "evidence_owner": "runtime_math algebraic/topological monitor owners",
   "generated_utc": "2026-05-03T22:45:00Z",
-  "source_commit": "a4a73d2b375a2eb077e1a97d71cae11ed5498e64",
+  "source_commit": "current",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",

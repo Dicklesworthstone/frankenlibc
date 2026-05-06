@@ -18,6 +18,7 @@ mkdir -p "${OUT_DIR}"
 
 python3 - "${ROOT}" "${GATE}" "${LEDGER}" "${PARITY}" "${GROUPS_PATH}" "${OWNER_GROUPS}" "${REPORT}" "${LOG}" <<'PY'
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -205,6 +206,28 @@ def check_anchor(anchor):
         raise AssertionError(f"unknown_anchor_kind:{kind}")
 
 
+def is_hex_commit(value):
+    return isinstance(value, str) and len(value) == 40 and all(
+        ch in "0123456789abcdefABCDEF" for ch in value
+    )
+
+
+def git_head():
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        text=True,
+    ).strip()
+
+
+def source_commit_is_current(value):
+    if value == "current":
+        return True
+    if is_hex_commit(value):
+        return value == git_head()
+    return False
+
+
 if isinstance(gate, dict):
     before = len(errors)
     if gate.get("schema_version") != "v1":
@@ -217,8 +240,8 @@ if isinstance(gate, dict):
         fail("gate owner_family_group must be fpg-proof-algebraic-topological")
     if gate.get("evidence_owner") != "runtime_math algebraic/topological monitor owners":
         fail("gate evidence_owner mismatch")
-    if not gate.get("source_commit"):
-        fail("gate source_commit must be non-empty")
+    if not source_commit_is_current(gate.get("source_commit")):
+        fail("gate source_commit must be 'current' or match current git HEAD")
     freshness_policy = gate.get("source_commit_freshness_policy", {})
     expected_freshness_policy = {
         "recorded_source_commit_field": "source_commit",
