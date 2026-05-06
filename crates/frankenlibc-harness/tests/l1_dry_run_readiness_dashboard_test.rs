@@ -883,6 +883,126 @@ fn standalone_owned_tls_surface_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn standalone_owned_tls_symbol_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "standalone-owned-tls-symbol-name",
+            ("symbol_rows.0.symbol", json!("__tls_get_addr@GLIBC_2.3")),
+        ),
+        (
+            "standalone-owned-tls-symbol-bare-name",
+            ("symbol_rows.0.bare_symbol", json!("__tls_get_addr")),
+        ),
+        (
+            "standalone-owned-tls-symbol-provider-library",
+            (
+                "symbol_rows.0.provider_library",
+                json!("ld-linux-x86-64.so.2"),
+            ),
+        ),
+        (
+            "standalone-owned-tls-symbol-version-node",
+            ("symbol_rows.0.version_node", json!("GLIBC_2.3")),
+        ),
+        (
+            "standalone-owned-tls-symbol-requirement-id",
+            (
+                "symbol_rows.0.requirement_id",
+                json!("ld-linux-x86-64.so.2:GLIBC_2.3"),
+            ),
+        ),
+        (
+            "standalone-owned-tls-symbol-blocking-reason",
+            (
+                "symbol_rows.0.blocking_reason",
+                json!("undefined_tls_symbols"),
+            ),
+        ),
+        (
+            "standalone-owned-tls-symbol-provider-blocking-reason",
+            (
+                "symbol_rows.0.provider_blocking_reason",
+                json!("host_version_requirements"),
+            ),
+        ),
+        (
+            "standalone-owned-tls-symbol-owner-surface",
+            ("symbol_rows.0.owner_surface", json!("tls_startup")),
+        ),
+        (
+            "standalone-owned-tls-symbol-provider-owner-surface",
+            (
+                "symbol_rows.0.provider_owner_surface",
+                json!("loader_tls_runtime"),
+            ),
+        ),
+        (
+            "standalone-owned-tls-symbol-owned-surface-status",
+            ("symbol_rows.0.owned_surface_status", json!("unresolved")),
+        ),
+        (
+            "standalone-owned-tls-symbol-status-until-exit",
+            ("symbol_rows.0.status_until_exit", json!("claim_blocked")),
+        ),
+        (
+            "standalone-owned-tls-symbol-first-source-hotspot",
+            (
+                "symbol_rows.0.source_surface_hotspots.0",
+                json!("crates/frankenlibc-abi/src/startup_abi.rs"),
+            ),
+        ),
+        (
+            "standalone-owned-tls-symbol-first-exit-criterion",
+            (
+                "symbol_rows.0.exit_criteria.0",
+                json!("artifact_state.dependency_breakdown.undefined_tls_symbols is empty"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-owned-tls-symbol-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected owned TLS symbol dashboard row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "forge",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing owned TLS symbol dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn standalone_smoke_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [

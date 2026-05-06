@@ -1231,6 +1231,110 @@
       "rationale": "Dashboard consumers must see that the TLS surface points at concrete source hotspots for follow-up work."
     },
     {
+      "row_id": "standalone-owned-tls-symbol-name",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.symbol",
+      "expected_value": "__tls_get_addr@GLIBC_2.3",
+      "rationale": "Dashboard consumers must see the exact owned TLS symbol blocking standalone replacement claims."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-bare-name",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.bare_symbol",
+      "expected_value": "__tls_get_addr",
+      "rationale": "Dashboard consumers must see the unversioned symbol name for nm/readelf follow-up controls."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-provider-library",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.provider_library",
+      "expected_value": "ld-linux-x86-64.so.2",
+      "rationale": "Dashboard consumers must see that the current TLS blocker still depends on the host dynamic loader."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-version-node",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.version_node",
+      "expected_value": "GLIBC_2.3",
+      "rationale": "Dashboard consumers must see the exact loader version node attached to the TLS blocker."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-requirement-id",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.requirement_id",
+      "expected_value": "ld-linux-x86-64.so.2:GLIBC_2.3",
+      "rationale": "Dashboard consumers must see the provider/version requirement id that keeps the owned TLS surface unresolved."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-blocking-reason",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.blocking_reason",
+      "expected_value": "undefined_tls_symbols",
+      "rationale": "Dashboard consumers must see the artifact-side blocker class for the owned TLS symbol."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-provider-blocking-reason",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.provider_blocking_reason",
+      "expected_value": "host_version_requirements",
+      "rationale": "Dashboard consumers must see the provider-side blocker class for the owned TLS symbol."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-owner-surface",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.owner_surface",
+      "expected_value": "tls_startup",
+      "rationale": "Dashboard consumers must see the owned source surface responsible for clearing the TLS blocker."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-provider-owner-surface",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.provider_owner_surface",
+      "expected_value": "loader_tls_runtime",
+      "rationale": "Dashboard consumers must see the host-provider surface currently satisfying the TLS runtime requirement."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-owned-surface-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.owned_surface_status",
+      "expected_value": "unresolved",
+      "rationale": "Dashboard consumers must see that the owned TLS substitute is not yet implemented."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-status-until-exit",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.status_until_exit",
+      "expected_value": "claim_blocked",
+      "rationale": "Dashboard consumers must see that this symbol row blocks standalone claims until artifact-level exit evidence appears."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-first-source-hotspot",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.source_surface_hotspots.0",
+      "expected_value": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "rationale": "Dashboard consumers must see a concrete first source hotspot for the owned TLS follow-up."
+    },
+    {
+      "row_id": "standalone-owned-tls-symbol-first-exit-criterion",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "symbol_rows.0.exit_criteria.0",
+      "expected_value": "artifact_state.dependency_breakdown.undefined_tls_symbols is empty",
+      "rationale": "Dashboard consumers must see a concrete artifact-level exit criterion before any claim can change."
+    },
+    {
       "row_id": "l1-dashboard-source-commit-field",
       "row_kind": "gate_meta",
       "evidence_artifact": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
