@@ -7,6 +7,7 @@
   "purpose": "Report-only diagnostic that maps the current standalone forge libgcc and unwind blockers to compiler/runtime profile knobs. It explains the blocker surface for follow-up experiments without changing the replacement artifact, panic strategy, link profile, or replacement level.",
   "inputs": {
     "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "standalone_compiler_runtime_experiment": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "packaging_spec": "tests/conformance/packaging_spec.json",
     "abi_crate_manifest": "crates/frankenlibc-abi/Cargo.toml",
@@ -217,12 +218,13 @@
     },
     {
       "experiment_id": "panic-abort-compiler-runtime-minimized",
-      "status": "proposed_next_bead",
-      "command": "opt-in only; exact command to be owned by bd-zyck1.88",
+      "status": "implemented_report_only",
+      "command": "CARGO_PROFILE_RELEASE_PANIC=abort rch exec -- cargo build -p frankenlibc-abi --release --features=standalone",
       "panic_strategy": "abort",
       "expected_claim_status": "report_only",
       "must_not_change_default_profile": true,
       "validation": [
+        "scripts/check_standalone_replacement_artifact.sh --compiler-runtime-experiment",
         "compare needed_libraries against baseline",
         "compare undefined_unwind_symbols against baseline",
         "compare version_needs against baseline"
@@ -248,6 +250,6 @@
     "undefined_unwind_symbol_count": 12,
     "libgcc_version_need_count": 3,
     "report_only": true,
-    "next_bead": "bd-zyck1.88"
+    "next_bead": "bd-zyck1.89"
   }
 }

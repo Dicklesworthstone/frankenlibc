@@ -4,12 +4,16 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${STANDALONE_REPLACEMENT_MANIFEST:-${ROOT}/tests/conformance/standalone_replacement_artifact.v1.json}"
+COMPILER_RUNTIME_EXPERIMENT_MANIFEST="${STANDALONE_COMPILER_RUNTIME_EXPERIMENT_MANIFEST:-${ROOT}/tests/conformance/standalone_compiler_runtime_experiment.v1.json}"
 PACKAGING="${ROOT}/tests/conformance/packaging_spec.json"
 LEVELS="${ROOT}/tests/conformance/replacement_levels.json"
 OUT_DIR="${STANDALONE_REPLACEMENT_OUT_DIR:-${ROOT}/target/standalone_replacement_artifact}"
 CARGO_TARGET_DIR_VALUE="${STANDALONE_REPLACEMENT_CARGO_TARGET_DIR:-${OUT_DIR}/cargo-target}"
 REPORT="${STANDALONE_REPLACEMENT_REPORT:-${ROOT}/target/conformance/standalone_replacement_artifact.report.json}"
 LOG="${STANDALONE_REPLACEMENT_LOG:-${ROOT}/target/conformance/standalone_replacement_artifact.log.jsonl}"
+COMPILER_RUNTIME_EXPERIMENT_REPORT="${STANDALONE_COMPILER_RUNTIME_EXPERIMENT_REPORT:-${ROOT}/target/conformance/standalone_compiler_runtime_experiment.report.json}"
+COMPILER_RUNTIME_EXPERIMENT_LOG="${STANDALONE_COMPILER_RUNTIME_EXPERIMENT_LOG:-${ROOT}/target/conformance/standalone_compiler_runtime_experiment.log.jsonl}"
+COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT="${STANDALONE_COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT:-${OUT_DIR}/compiler-runtime-experiment-targets}"
 MODE="check"
 
 case "${1:-}" in
@@ -25,15 +29,18 @@ case "${1:-}" in
   --validate-only)
     MODE="validate-only"
     ;;
+  --compiler-runtime-experiment)
+    MODE="compiler-runtime-experiment"
+    ;;
   *)
-    echo "usage: $0 [--check|--forge|--validate-only]" >&2
+    echo "usage: $0 [--check|--forge|--validate-only|--compiler-runtime-experiment]" >&2
     exit 2
     ;;
 esac
 
-mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")" "${CARGO_TARGET_DIR_VALUE}/release"
+mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")" "${CARGO_TARGET_DIR_VALUE}/release" "$(dirname "${COMPILER_RUNTIME_EXPERIMENT_REPORT}")" "$(dirname "${COMPILER_RUNTIME_EXPERIMENT_LOG}")" "${COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT}"
 
-python3 - "${ROOT}" "${MANIFEST}" "${PACKAGING}" "${LEVELS}" "${OUT_DIR}" "${CARGO_TARGET_DIR_VALUE}" "${REPORT}" "${LOG}" "${MODE}" <<'PY'
+python3 - "${ROOT}" "${MANIFEST}" "${PACKAGING}" "${LEVELS}" "${OUT_DIR}" "${CARGO_TARGET_DIR_VALUE}" "${REPORT}" "${LOG}" "${MODE}" "${COMPILER_RUNTIME_EXPERIMENT_MANIFEST}" "${COMPILER_RUNTIME_EXPERIMENT_REPORT}" "${COMPILER_RUNTIME_EXPERIMENT_LOG}" "${COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT}" <<'PY'
 import hashlib
 import json
 import os
@@ -54,6 +61,10 @@ cargo_target_dir = Path(sys.argv[6])
 report_path = Path(sys.argv[7])
 log_path = Path(sys.argv[8])
 mode = sys.argv[9]
+compiler_runtime_manifest_path = Path(sys.argv[10])
+compiler_runtime_report_path = Path(sys.argv[11])
+compiler_runtime_log_path = Path(sys.argv[12])
+compiler_runtime_target_root = Path(sys.argv[13])
 
 REQUIRED_LOG_FIELDS = [
     "trace_id",
@@ -172,6 +183,93 @@ EXPECTED_ARTIFACT_POLICY = {
     "skip_build_env": "STANDALONE_REPLACEMENT_SKIP_BUILD",
     "stale_if_older_than_head": True,
     "ld_preload_substitutes_allowed": False,
+}
+
+EXPECTED_COMPILER_RUNTIME_EXPERIMENT_MANIFEST_ID = "standalone-compiler-runtime-experiment"
+EXPECTED_COMPILER_RUNTIME_EXPERIMENT_POLICY = {
+    "report_only": True,
+    "promotion_allowed": False,
+    "replacement_level_change_allowed": False,
+    "default_forge_path_change_allowed": False,
+    "default_build_profile_change_allowed": False,
+    "non_baseline_lanes_require_explicit_mode": True,
+    "required_mode": "--compiler-runtime-experiment",
+    "stale_result": "block_compiler_runtime_experiment_refresh",
+}
+EXPECTED_COMPILER_RUNTIME_EXPERIMENT_INPUTS = {
+    "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "standalone_compiler_runtime_blocker_diagnostics": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+}
+EXPECTED_COMPILER_RUNTIME_EXPERIMENT_REQUIRED_REPORT_FIELDS = [
+    "lanes.*.lane_id",
+    "lanes.*.build_command",
+    "lanes.*.cargo_target_dir",
+    "lanes.*.needed_libraries",
+    "lanes.*.undefined_unwind_symbols",
+    "lanes.*.version_needs",
+    "lanes.*.claim_status",
+    "comparison.baseline_lane",
+    "comparison.experiment_lane",
+    "comparison.removed_needed_libraries",
+    "comparison.added_needed_libraries",
+    "comparison.removed_undefined_unwind_symbols",
+    "comparison.added_undefined_unwind_symbols",
+    "comparison.removed_version_requirements",
+    "comparison.added_version_requirements",
+    "comparison.delta_classification",
+]
+EXPECTED_COMPILER_RUNTIME_EXPERIMENT_LANES = [
+    {
+        "lane_id": "baseline-release-standalone",
+        "role": "baseline",
+        "cargo_target_dir_suffix": "baseline-release-standalone",
+        "build_command": [
+            "rch",
+            "exec",
+            "--",
+            "cargo",
+            "build",
+            "-p",
+            "frankenlibc-abi",
+            "--release",
+            "--features=standalone",
+        ],
+        "panic_strategy": "implicit-unwind",
+        "env": {},
+        "report_only": True,
+        "expected_claim_status": "claim_blocked",
+        "must_not_change_default_profile": True,
+    },
+    {
+        "lane_id": "panic-abort-compiler-runtime-minimized",
+        "role": "experiment",
+        "cargo_target_dir_suffix": "panic-abort-compiler-runtime-minimized",
+        "build_command": [
+            "rch",
+            "exec",
+            "--",
+            "cargo",
+            "build",
+            "-p",
+            "frankenlibc-abi",
+            "--release",
+            "--features=standalone",
+        ],
+        "panic_strategy": "abort",
+        "env": {"CARGO_PROFILE_RELEASE_PANIC": "abort"},
+        "report_only": True,
+        "expected_claim_status": "report_only",
+        "must_not_change_default_profile": True,
+    },
+]
+EXPECTED_COMPILER_RUNTIME_EXPERIMENT_SUMMARY = {
+    "bead": "bd-zyck1.88",
+    "lane_count": 2,
+    "baseline_lane": "baseline-release-standalone",
+    "experiment_lane": "panic-abort-compiler-runtime-minimized",
+    "report_only": True,
+    "default_forge_path_unchanged": True,
 }
 
 EXPECTED_FAILURE_CLASSIFICATIONS = {
@@ -297,6 +395,11 @@ def load_json(path):
 
 
 manifest = load_json(manifest_path)
+compiler_runtime_manifest = (
+    load_json(compiler_runtime_manifest_path)
+    if mode == "compiler-runtime-experiment"
+    else {}
+)
 packaging = load_json(packaging_path)
 levels = load_json(levels_path)
 
@@ -340,6 +443,27 @@ def sha256(path):
 
 def unique_sorted(values):
     return sorted({value for value in values if value})
+
+
+def env_key_fragment(value):
+    return re.sub(r"[^A-Z0-9]+", "_", str(value).upper()).strip("_")
+
+
+def flatten_version_needs(version_needs):
+    if not isinstance(version_needs, dict):
+        return []
+    return unique_sorted(
+        f"{provider}:{version}"
+        for provider, versions in version_needs.items()
+        if isinstance(versions, list)
+        for version in versions
+    )
+
+
+def set_delta(before, after):
+    before_set = set(before)
+    after_set = set(after)
+    return unique_sorted(before_set - after_set), unique_sorted(after_set - before_set)
 
 
 def env_bounded_int(name, default, *, minimum, maximum):
@@ -714,6 +838,55 @@ def validate_manifest():
     checks["manifest_contract"] = "pass" if not errors else "fail"
 
 
+def validate_compiler_runtime_experiment_manifest():
+    if compiler_runtime_manifest.get("schema_version") != "v1":
+        errors.append("compiler runtime experiment schema_version must be v1")
+    if compiler_runtime_manifest.get("manifest_id") != EXPECTED_COMPILER_RUNTIME_EXPERIMENT_MANIFEST_ID:
+        errors.append("compiler runtime experiment manifest_id does not match script contract")
+    if compiler_runtime_manifest.get("bead") != "bd-zyck1.88":
+        errors.append("compiler runtime experiment manifest must be linked to bd-zyck1.88")
+    manifest_source_commit = compiler_runtime_manifest.get("source_commit")
+    source_commit_policy = compiler_runtime_manifest.get("source_commit_freshness_policy")
+    expected_source_commit_policy = {
+        "recorded_source_commit_field": "source_commit",
+        "comparison_target": "current git HEAD",
+        "stale_result": "block_compiler_runtime_experiment_refresh",
+        "experiment_evidence_allowed_when_stale": False,
+        "rejected_evidence_kind": "stale_compiler_runtime_experiment",
+    }
+    source_commit_policy_ok = (
+        (manifest_source_commit == "current" or full_git_commit(manifest_source_commit))
+        and source_commit_policy == expected_source_commit_policy
+    )
+    checks["compiler_runtime_experiment_source_commit_freshness_policy"] = (
+        "pass" if source_commit_policy_ok else "fail"
+    )
+    checks["compiler_runtime_experiment_recorded_source_commit_freshness"] = (
+        "pass"
+        if source_commit_policy_ok and source_commit_marker_is_current(manifest_source_commit)
+        else "fail"
+    )
+    if not source_commit_policy_ok:
+        errors.append("compiler runtime experiment source_commit_freshness_policy does not match script contract")
+    elif not source_commit_marker_is_current(manifest_source_commit):
+        errors.append("compiler runtime experiment source_commit must be 'current' or match current git HEAD")
+    if compiler_runtime_manifest.get("inputs") != EXPECTED_COMPILER_RUNTIME_EXPERIMENT_INPUTS:
+        errors.append("compiler runtime experiment inputs do not match script contract")
+    if compiler_runtime_manifest.get("report_policy") != EXPECTED_COMPILER_RUNTIME_EXPERIMENT_POLICY:
+        errors.append("compiler runtime experiment report_policy does not match script contract")
+    if compiler_runtime_manifest.get("required_report_fields") != EXPECTED_COMPILER_RUNTIME_EXPERIMENT_REQUIRED_REPORT_FIELDS:
+        errors.append("compiler runtime experiment required_report_fields do not match script contract")
+    if compiler_runtime_manifest.get("experiment_lanes") != EXPECTED_COMPILER_RUNTIME_EXPERIMENT_LANES:
+        errors.append("compiler runtime experiment lanes do not match script contract")
+    if compiler_runtime_manifest.get("summary") != EXPECTED_COMPILER_RUNTIME_EXPERIMENT_SUMMARY:
+        errors.append("compiler runtime experiment summary does not match script contract")
+    checks["compiler_runtime_experiment_manifest_contract"] = (
+        "pass"
+        if not any(error.startswith("compiler runtime experiment") for error in errors)
+        else "fail"
+    )
+
+
 def build_command():
     raw = os.environ.get("STANDALONE_REPLACEMENT_BUILD_CMD")
     if raw:
@@ -778,7 +951,9 @@ def forge_artifact():
     return target
 
 
-def inspect_artifact(artifact):
+def inspect_artifact(artifact, *, evidence_out_dir=out_dir, tool_evidence_sink=None):
+    if tool_evidence_sink is None:
+        tool_evidence_sink = tool_evidence
     refs = []
     if artifact is None or not Path(artifact).exists():
         return {
@@ -795,7 +970,7 @@ def inspect_artifact(artifact):
 
     artifact = Path(artifact)
     artifact_hash = sha256(artifact)
-    hash_path = out_dir / "artifact.sha256"
+    hash_path = evidence_out_dir / "artifact.sha256"
     write_text(hash_path, f"{artifact_hash}  {artifact.name}\n")
     refs.append(rel(hash_path))
 
@@ -825,10 +1000,10 @@ def inspect_artifact(artifact):
         "artifact.ldd.txt": ldd,
     }
     for filename, result in evidence_commands.items():
-        path = out_dir / filename
+        path = evidence_out_dir / filename
         write_text(path, result["stdout"] + result["stderr"])
         refs.append(rel(path))
-        tool_evidence[filename] = {
+        tool_evidence_sink[filename] = {
             "exit_code": result["returncode"],
             "timed_out": result["timed_out"],
             "timeout_secs": inspection_timeout,
@@ -913,6 +1088,223 @@ def inspect_artifact(artifact):
     }
 
 
+def artifact_claim_status(artifact_state):
+    if artifact_state["failure_signature"] == "none" and artifact_state["status"] in {"current", "not_checked"}:
+        return "artifact_current" if artifact_state["status"] == "current" else "schema_validated"
+    if artifact_state["failure_signature"] == "non_elf_artifact":
+        return "failed"
+    return "claim_blocked"
+
+
+def compiler_runtime_source_override(lane_id):
+    specific_env = f"STANDALONE_COMPILER_RUNTIME_{env_key_fragment(lane_id)}_SOURCE_LIB"
+    return os.environ.get(specific_env) or os.environ.get("STANDALONE_REPLACEMENT_SOURCE_LIB")
+
+
+def run_compiler_runtime_lane(lane):
+    lane_id = lane["lane_id"]
+    lane_out_dir = out_dir / "compiler-runtime-experiment" / lane_id
+    lane_target_dir = compiler_runtime_target_root / lane["cargo_target_dir_suffix"]
+    lane_out_dir.mkdir(parents=True, exist_ok=True)
+    (lane_target_dir / "release").mkdir(parents=True, exist_ok=True)
+    command = lane["build_command"]
+    build_stdout = lane_out_dir / "build.stdout.txt"
+    build_stderr = lane_out_dir / "build.stderr.txt"
+    skip_build = os.environ.get("STANDALONE_COMPILER_RUNTIME_EXPERIMENT_SKIP_BUILD") == "1"
+    build_status = "skipped" if skip_build else "not_started"
+    build_exit_code = 0
+
+    if not skip_build:
+        env = os.environ.copy()
+        env["CARGO_TARGET_DIR"] = str(lane_target_dir)
+        for key, value in lane.get("env", {}).items():
+            env[key] = value
+        allowlist = env.get("RCH_ENV_ALLOWLIST", "")
+        allowed = [item for item in allowlist.split(",") if item]
+        for key in ["CARGO_TARGET_DIR", *lane.get("env", {}).keys()]:
+            if key not in allowed:
+                allowed.append(key)
+        env["RCH_ENV_ALLOWLIST"] = ",".join(allowed)
+        result = run_command(command, env=env)
+        build_exit_code = result["returncode"]
+        build_status = "pass" if result["returncode"] == 0 else "fail"
+        write_text(build_stdout, result["stdout"])
+        write_text(build_stderr, result["stderr"])
+    else:
+        write_text(build_stdout, "build skipped by STANDALONE_COMPILER_RUNTIME_EXPERIMENT_SKIP_BUILD=1\n")
+        write_text(build_stderr, "")
+
+    source_override = compiler_runtime_source_override(lane_id)
+    source = Path(source_override) if source_override else lane_target_dir / "release" / "libfrankenlibc_abi.so"
+    target = lane_target_dir / "release" / "libfrankenlibc_replace.so"
+    lane_tool_evidence = {}
+    if build_status == "fail":
+        artifact_state = {
+            "status": "build_failed",
+            "path": str(target),
+            "sha256": None,
+            "mtime": None,
+            "failure_signature": "build_failed",
+            "host_glibc_dependency": None,
+            "sampled_symbols_present": False,
+            "symbol_samples": empty_symbol_samples(),
+            "dependency_breakdown": empty_dependency_breakdown(),
+            "refs": [rel(build_stdout), rel(build_stderr)],
+        }
+    else:
+        if source.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            os.utime(target, None)
+        artifact_state = inspect_artifact(
+            target,
+            evidence_out_dir=lane_out_dir,
+            tool_evidence_sink=lane_tool_evidence,
+        )
+        artifact_state.setdefault("symbol_samples", empty_symbol_samples())
+        artifact_state["refs"] = [rel(build_stdout), rel(build_stderr), *artifact_state.get("refs", [])]
+
+    breakdown = artifact_state.get("dependency_breakdown", empty_dependency_breakdown())
+    artifact_status = artifact_claim_status(artifact_state)
+    lane_claim_status = "report_only" if lane.get("role") != "baseline" else artifact_status
+    lane_report = {
+        "lane_id": lane_id,
+        "role": lane["role"],
+        "status": "pass" if build_status != "fail" and artifact_state["failure_signature"] != "non_elf_artifact" else "fail",
+        "build_status": build_status,
+        "build_exit_code": build_exit_code,
+        "build_command": command,
+        "cargo_target_dir": str(lane_target_dir),
+        "panic_strategy": lane["panic_strategy"],
+        "env": lane.get("env", {}),
+        "report_only": lane["report_only"],
+        "must_not_change_default_profile": lane["must_not_change_default_profile"],
+        "claim_status": lane_claim_status,
+        "artifact_claim_status": artifact_status,
+        "artifact_state": artifact_state,
+        "needed_libraries": breakdown.get("needed_libraries", []),
+        "undefined_unwind_symbols": breakdown.get("undefined_unwind_symbols", []),
+        "version_needs": breakdown.get("version_needs", {}),
+        "version_requirements": flatten_version_needs(breakdown.get("version_needs", {})),
+        "host_version_requirements": breakdown.get("host_version_requirements", []),
+        "blocking_reasons": breakdown.get("blocking_reasons", []),
+        "tool_evidence": lane_tool_evidence,
+    }
+    return lane_report
+
+
+def compiler_runtime_comparison(lanes):
+    by_id = {lane["lane_id"]: lane for lane in lanes}
+    baseline_id = EXPECTED_COMPILER_RUNTIME_EXPERIMENT_SUMMARY["baseline_lane"]
+    experiment_id = EXPECTED_COMPILER_RUNTIME_EXPERIMENT_SUMMARY["experiment_lane"]
+    baseline = by_id.get(baseline_id, {})
+    experiment = by_id.get(experiment_id, {})
+    removed_needed, added_needed = set_delta(
+        baseline.get("needed_libraries", []),
+        experiment.get("needed_libraries", []),
+    )
+    removed_unwind, added_unwind = set_delta(
+        baseline.get("undefined_unwind_symbols", []),
+        experiment.get("undefined_unwind_symbols", []),
+    )
+    removed_versions, added_versions = set_delta(
+        baseline.get("version_requirements", []),
+        experiment.get("version_requirements", []),
+    )
+    if baseline.get("status") != "pass" or experiment.get("status") != "pass":
+        delta = "inconclusive"
+    elif added_needed or added_unwind or added_versions:
+        delta = "regression"
+    elif removed_needed or removed_unwind or removed_versions:
+        delta = "improvement"
+    else:
+        delta = "unchanged"
+    return {
+        "baseline_lane": baseline_id,
+        "experiment_lane": experiment_id,
+        "removed_needed_libraries": removed_needed,
+        "added_needed_libraries": added_needed,
+        "removed_undefined_unwind_symbols": removed_unwind,
+        "added_undefined_unwind_symbols": added_unwind,
+        "removed_version_requirements": removed_versions,
+        "added_version_requirements": added_versions,
+        "delta_classification": delta,
+    }
+
+
+def write_compiler_runtime_experiment_report():
+    validate_compiler_runtime_experiment_manifest()
+    contract_failed = any(error.startswith("compiler runtime experiment") for error in errors)
+    lanes = []
+    if not contract_failed:
+        lanes = [
+            run_compiler_runtime_lane(lane)
+            for lane in compiler_runtime_manifest.get("experiment_lanes", [])
+            if isinstance(lane, dict)
+        ]
+    if len(lanes) != len(EXPECTED_COMPILER_RUNTIME_EXPERIMENT_LANES):
+        errors.append("compiler runtime experiment did not produce every required lane")
+    for lane in lanes:
+        if lane["status"] != "pass":
+            errors.append(f"compiler runtime experiment lane failed: {lane['lane_id']}")
+    comparison = compiler_runtime_comparison(lanes)
+    status = "pass" if not errors else "fail"
+    report = {
+        "schema_version": "v1",
+        "manifest_id": compiler_runtime_manifest.get("manifest_id"),
+        "bead": compiler_runtime_manifest.get("bead"),
+        "mode": mode,
+        "status": status,
+        "claim_status": "report_only",
+        "source_commit": source_commit,
+        "report_policy": compiler_runtime_manifest.get("report_policy", {}),
+        "cargo_target_root": str(compiler_runtime_target_root),
+        "lanes": lanes,
+        "comparison": comparison,
+        "checks": checks,
+        "errors": errors,
+        "required_report_fields": EXPECTED_COMPILER_RUNTIME_EXPERIMENT_REQUIRED_REPORT_FIELDS,
+        "artifact_refs": [
+            rel(compiler_runtime_manifest_path),
+            rel(manifest_path),
+            rel(packaging_path),
+            rel(levels_path),
+            rel(compiler_runtime_report_path),
+            rel(compiler_runtime_log_path),
+            rel(out_dir / "compiler-runtime-experiment"),
+        ],
+    }
+    log_rows = []
+    for lane in lanes:
+        log_rows.append(
+            {
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "level": "info" if lane["status"] == "pass" else "error",
+                "trace_id": f"{compiler_runtime_manifest.get('bead', 'unknown')}::{source_commit}::{lane['lane_id']}",
+                "bead_id": compiler_runtime_manifest.get("bead"),
+                "event": "compiler_runtime_experiment_lane",
+                "mode": mode,
+                "lane_id": lane["lane_id"],
+                "build_command": lane["build_command"],
+                "cargo_target_dir": lane["cargo_target_dir"],
+                "claim_status": lane["claim_status"],
+                "artifact_claim_status": lane["artifact_claim_status"],
+                "source_commit": source_commit,
+                "exit_code": 0 if lane["status"] == "pass" else 1,
+                "failure_signature": lane["artifact_state"].get("failure_signature"),
+                "artifact_refs": lane["artifact_state"].get("refs", []),
+            }
+        )
+    write_text(compiler_runtime_report_path, json.dumps(report, indent=2, sort_keys=True) + "\n")
+    write_text(compiler_runtime_log_path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in log_rows))
+    print(json.dumps(report, indent=2, sort_keys=True))
+    sys.exit(0 if status == "pass" else 1)
+
+
+if mode == "compiler-runtime-experiment":
+    write_compiler_runtime_experiment_report()
+
+
 validate_manifest()
 artifact_path = None
 if mode == "validate-only":
@@ -939,12 +1331,7 @@ artifact_state.setdefault("path", None)
 artifact_state.setdefault("sha256", None)
 artifact_state.setdefault("mtime", None)
 
-if artifact_state["failure_signature"] == "none" and artifact_state["status"] in {"current", "not_checked"}:
-    claim_status = "artifact_current" if artifact_state["status"] == "current" else "schema_validated"
-elif artifact_state["failure_signature"] == "non_elf_artifact":
-    claim_status = "failed"
-else:
-    claim_status = "claim_blocked"
+claim_status = artifact_claim_status(artifact_state)
 
 exit_code = 0 if not errors and artifact_state["failure_signature"] != "non_elf_artifact" else 1
 append_log(

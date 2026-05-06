@@ -1,0 +1,101 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-compiler-runtime-experiment",
+  "bead": "bd-zyck1.88",
+  "source_commit": "current",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_compiler_runtime_experiment_refresh",
+    "experiment_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_compiler_runtime_experiment"
+  },
+  "purpose": "Opt-in report-only forge experiment that compares the baseline standalone release artifact with a panic-abort compiler-runtime-minimized lane. The experiment can explain whether compiler/runtime profile knobs reduce libgcc and unwind blockers, but it cannot change the default forge path, default build profile, replacement level, or promotion policy.",
+  "inputs": {
+    "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "standalone_compiler_runtime_blocker_diagnostics": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json"
+  },
+  "report_policy": {
+    "report_only": true,
+    "promotion_allowed": false,
+    "replacement_level_change_allowed": false,
+    "default_forge_path_change_allowed": false,
+    "default_build_profile_change_allowed": false,
+    "non_baseline_lanes_require_explicit_mode": true,
+    "required_mode": "--compiler-runtime-experiment",
+    "stale_result": "block_compiler_runtime_experiment_refresh"
+  },
+  "required_report_fields": [
+    "lanes.*.lane_id",
+    "lanes.*.build_command",
+    "lanes.*.cargo_target_dir",
+    "lanes.*.needed_libraries",
+    "lanes.*.undefined_unwind_symbols",
+    "lanes.*.version_needs",
+    "lanes.*.claim_status",
+    "comparison.baseline_lane",
+    "comparison.experiment_lane",
+    "comparison.removed_needed_libraries",
+    "comparison.added_needed_libraries",
+    "comparison.removed_undefined_unwind_symbols",
+    "comparison.added_undefined_unwind_symbols",
+    "comparison.removed_version_requirements",
+    "comparison.added_version_requirements",
+    "comparison.delta_classification"
+  ],
+  "experiment_lanes": [
+    {
+      "lane_id": "baseline-release-standalone",
+      "role": "baseline",
+      "cargo_target_dir_suffix": "baseline-release-standalone",
+      "build_command": [
+        "rch",
+        "exec",
+        "--",
+        "cargo",
+        "build",
+        "-p",
+        "frankenlibc-abi",
+        "--release",
+        "--features=standalone"
+      ],
+      "panic_strategy": "implicit-unwind",
+      "env": {},
+      "report_only": true,
+      "expected_claim_status": "claim_blocked",
+      "must_not_change_default_profile": true
+    },
+    {
+      "lane_id": "panic-abort-compiler-runtime-minimized",
+      "role": "experiment",
+      "cargo_target_dir_suffix": "panic-abort-compiler-runtime-minimized",
+      "build_command": [
+        "rch",
+        "exec",
+        "--",
+        "cargo",
+        "build",
+        "-p",
+        "frankenlibc-abi",
+        "--release",
+        "--features=standalone"
+      ],
+      "panic_strategy": "abort",
+      "env": {
+        "CARGO_PROFILE_RELEASE_PANIC": "abort"
+      },
+      "report_only": true,
+      "expected_claim_status": "report_only",
+      "must_not_change_default_profile": true
+    }
+  ],
+  "summary": {
+    "bead": "bd-zyck1.88",
+    "lane_count": 2,
+    "baseline_lane": "baseline-release-standalone",
+    "experiment_lane": "panic-abort-compiler-runtime-minimized",
+    "report_only": true,
+    "default_forge_path_unchanged": true
+  }
+}
