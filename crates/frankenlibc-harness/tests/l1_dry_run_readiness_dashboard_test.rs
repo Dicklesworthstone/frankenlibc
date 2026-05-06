@@ -3073,6 +3073,104 @@ fn perf_waiver_audit_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn perf_regression_prevention_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "perf-regression-prevention-no-issues",
+            ("summary.total_issues", json!(0)),
+        ),
+        (
+            "perf-regression-prevention-total-warnings",
+            ("summary.total_warnings", json!(0)),
+        ),
+        (
+            "perf-regression-prevention-baseline-slot-fill",
+            ("summary.baseline_slot_fill_pct", json!(100.0)),
+        ),
+        (
+            "perf-regression-prevention-hotpath-coverage",
+            ("summary.hotpath_symbol_coverage_pct", json!(59.9)),
+        ),
+        (
+            "perf-regression-prevention-gate-exists",
+            ("gate_wiring.exists", json!(true)),
+        ),
+        (
+            "perf-regression-prevention-event-logging",
+            ("gate_wiring.features.event_logging", json!(true)),
+        ),
+        (
+            "perf-regression-prevention-injection-support",
+            ("gate_wiring.features.injection_support", json!(true)),
+        ),
+        (
+            "perf-regression-prevention-not-covered-count",
+            ("hotpath_symbol_coverage.not_covered", json!(61)),
+        ),
+        (
+            "perf-regression-prevention-first-uncovered-module",
+            (
+                "hotpath_symbol_coverage.uncovered_modules.0",
+                json!("c11threads_abi"),
+            ),
+        ),
+        (
+            "perf-regression-prevention-regression-threshold",
+            ("config_consistency.regression_max_pct", json!(15)),
+        ),
+        (
+            "perf-regression-prevention-active-waivers",
+            ("config_consistency.active_waivers", json!(1)),
+        ),
+        (
+            "perf-regression-prevention-expired-waivers",
+            ("config_consistency.expired_waivers", json!(0)),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("perf-regression-prevention-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected perf regression prevention row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "perf",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/perf_regression_prevention.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing perf regression prevention dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn perf_baseline_spec_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [

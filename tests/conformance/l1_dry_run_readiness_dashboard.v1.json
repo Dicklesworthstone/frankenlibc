@@ -1021,6 +1021,94 @@
       "rationale": "perf_regression_prevention must report zero issues."
     },
     {
+      "row_id": "perf-regression-prevention-total-warnings",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "summary.total_warnings",
+      "expected_value": 0,
+      "rationale": "Perf regression prevention warnings must remain visible to the L1 dashboard instead of being hidden behind total issues."
+    },
+    {
+      "row_id": "perf-regression-prevention-baseline-slot-fill",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "summary.baseline_slot_fill_pct",
+      "expected_value": 100.0,
+      "rationale": "Dashboard consumers must see that the benchmark baseline slots are fully populated."
+    },
+    {
+      "row_id": "perf-regression-prevention-hotpath-coverage",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "summary.hotpath_symbol_coverage_pct",
+      "expected_value": 59.9,
+      "rationale": "Dashboard consumers must see that hotpath symbol coverage is still partial even when perf issues are zero."
+    },
+    {
+      "row_id": "perf-regression-prevention-gate-exists",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "gate_wiring.exists",
+      "expected_value": true,
+      "rationale": "The dashboard must show that the perf regression gate is wired before treating zero issues as meaningful."
+    },
+    {
+      "row_id": "perf-regression-prevention-event-logging",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "gate_wiring.features.event_logging",
+      "expected_value": true,
+      "rationale": "Perf regression prevention must keep event logging wired for auditable gate runs."
+    },
+    {
+      "row_id": "perf-regression-prevention-injection-support",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "gate_wiring.features.injection_support",
+      "expected_value": true,
+      "rationale": "Perf regression prevention must keep injection support wired so negative tests can prove the gate fails closed."
+    },
+    {
+      "row_id": "perf-regression-prevention-not-covered-count",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "hotpath_symbol_coverage.not_covered",
+      "expected_value": 61,
+      "rationale": "The dashboard must expose the remaining unbenchmarked hotpath count instead of allowing zero issues to imply full coverage."
+    },
+    {
+      "row_id": "perf-regression-prevention-first-uncovered-module",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "hotpath_symbol_coverage.uncovered_modules.0",
+      "expected_value": "c11threads_abi",
+      "rationale": "The dashboard must expose a concrete first uncovered ABI module so the next perf slice is actionable."
+    },
+    {
+      "row_id": "perf-regression-prevention-regression-threshold",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "config_consistency.regression_max_pct",
+      "expected_value": 15,
+      "rationale": "Dashboard consumers must see the regression threshold used by the prevention gate."
+    },
+    {
+      "row_id": "perf-regression-prevention-active-waivers",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "config_consistency.active_waivers",
+      "expected_value": 1,
+      "rationale": "The dashboard must expose active waiver count alongside zero issues."
+    },
+    {
+      "row_id": "perf-regression-prevention-expired-waivers",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "field": "config_consistency.expired_waivers",
+      "expected_value": 0,
+      "rationale": "The dashboard must expose expired waiver count so stale waivers cannot silently pass perf readiness."
+    },
+    {
       "row_id": "perf-waiver-audit-narrow",
       "row_kind": "perf",
       "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
