@@ -1,0 +1,197 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-tls-model-startup-experiment",
+  "bead": "bd-84m77",
+  "source_commit": "current",
+  "source_commit_hint": "3998acc30f73",
+  "generated_utc": "2026-05-06T07:06:14Z",
+  "purpose": "Report-only TLS model/startup experiment record for the standalone forge. It compares the committed TLS blocker baseline with live initial-exec and local-exec TLS model probes, while preserving claim_blocked semantics until artifact-level nm/readelf controls prove __tls_get_addr is absent.",
+  "inputs": {
+    "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "standalone_tls_blocker_diagnostics": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+    "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json"
+  },
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_tls_model_startup_experiment",
+    "experiment_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_standalone_tls_model_startup_experiment"
+  },
+  "report_policy": {
+    "report_only": true,
+    "promotion_allowed": false,
+    "replacement_level_change_allowed": false,
+    "default_forge_path_change_allowed": false,
+    "default_tls_model_change_allowed": false,
+    "source_rewrite_allowed": false,
+    "initial_exec_unchanged_result": "claim_blocked",
+    "local_exec_build_failure_result": "not_viable_for_cdylib_lane",
+    "missing_tls_symbol_absence_result": "fail_closed",
+    "version_need_overclaim_result": "fail_closed",
+    "local_exec_promotion_claim_result": "fail_closed",
+    "required_followup_before_clearance": "owned TLS startup/runtime change plus current nm/readelf absence proof"
+  },
+  "artifact_controls": {
+    "required_absence_before_clearance": [
+      "artifact_state.dependency_breakdown.undefined_tls_symbols is empty",
+      "nm -D reports no undefined __tls_get_addr symbol",
+      "readelf -Ws reports no undefined __tls_get_addr symbol",
+      "readelf --version-info has no ld-linux-x86-64.so.2:GLIBC_2.3 need"
+    ],
+    "current_positive_control": [
+      "standalone_tls_blocker_diagnostics baseline reports __tls_get_addr@GLIBC_2.3",
+      "initial-exec TLS model probe still reports __tls_get_addr@GLIBC_2.3",
+      "local-exec whole-workspace probe fails before artifact production"
+    ],
+    "claim_guard": "No TLS model/profile-only lane may promote standalone replacement claims unless current artifact controls prove __tls_get_addr and the ld-linux GLIBC_2.3 version need are absent."
+  },
+  "experiment_lanes": [
+    {
+      "lane_id": "baseline-reference-from-tls-diagnostic",
+      "role": "baseline_reference",
+      "source": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json#current_forge_evidence",
+      "build_status": "not_rerun",
+      "build_exit_code": 0,
+      "build_command": [
+        "scripts/check_standalone_replacement_artifact.sh",
+        "--forge"
+      ],
+      "tls_model": "default",
+      "env": {},
+      "artifact_status": "current",
+      "artifact_claim_status": "claim_blocked",
+      "claim_status": "claim_blocked",
+      "report_only": true,
+      "artifact_sha256": "0caf2f836d1fff38afcdb7d5b5f56b46f2f9e23e7c1dc7af434325e0a1406275",
+      "undefined_tls_symbols": [
+        "__tls_get_addr@GLIBC_2.3"
+      ],
+      "host_version_requirements": [
+        "ld-linux-x86-64.so.2:GLIBC_2.3"
+      ],
+      "version_needs": {
+        "ld-linux-x86-64.so.2": [
+          "GLIBC_2.3"
+        ]
+      },
+      "blocking_reasons": [
+        "undefined_tls_symbols",
+        "undefined_glibc_symbols",
+        "host_version_requirements"
+      ]
+    },
+    {
+      "lane_id": "initial-exec-tls-model-probe",
+      "role": "experiment",
+      "source": "live rch probe on 2026-05-06T07:00:59Z",
+      "build_status": "pass",
+      "build_exit_code": 0,
+      "build_command": [
+        "rch",
+        "exec",
+        "--",
+        "cargo",
+        "build",
+        "-p",
+        "frankenlibc-abi",
+        "--release",
+        "--features=standalone"
+      ],
+      "tls_model": "initial-exec",
+      "env": {
+        "RUSTFLAGS": "-Z tls-model=initial-exec"
+      },
+      "artifact_status": "current",
+      "artifact_claim_status": "claim_blocked",
+      "claim_status": "report_only",
+      "report_only": true,
+      "artifact_sha256": "50a52eefd2c168c70c9b5e4673188904c0544d775b945ecff0856fdb6bd419b6",
+      "undefined_tls_symbols": [
+        "__tls_get_addr@GLIBC_2.3"
+      ],
+      "host_version_requirements": [
+        "ld-linux-x86-64.so.2:GLIBC_2.3"
+      ],
+      "version_needs": {
+        "ld-linux-x86-64.so.2": [
+          "GLIBC_2.3"
+        ],
+        "libgcc_s.so.1": [
+          "GCC_3.0",
+          "GCC_3.3",
+          "GCC_4.2.0"
+        ]
+      },
+      "blocking_reasons": [
+        "undefined_tls_symbols",
+        "undefined_glibc_symbols",
+        "host_version_requirements"
+      ]
+    },
+    {
+      "lane_id": "local-exec-tls-model-probe",
+      "role": "negative_experiment",
+      "source": "live rch probe on 2026-05-06T07:03:31Z",
+      "build_status": "fail",
+      "build_exit_code": 101,
+      "build_command": [
+        "rch",
+        "exec",
+        "--",
+        "cargo",
+        "build",
+        "-p",
+        "frankenlibc-abi",
+        "--release",
+        "--features=standalone"
+      ],
+      "tls_model": "local-exec",
+      "env": {
+        "RUSTFLAGS": "-Z tls-model=local-exec"
+      },
+      "artifact_status": "not_produced",
+      "artifact_claim_status": "claim_blocked",
+      "claim_status": "report_only",
+      "report_only": true,
+      "artifact_produced": false,
+      "failure_signature": "non_pic_tls_relocation_in_shared_dependency",
+      "diagnostic_snippets": [
+        "relocation R_X86_64_TPOFF32",
+        "cannot be used with -shared"
+      ],
+      "undefined_tls_symbols": [],
+      "host_version_requirements": [],
+      "blocking_reasons": [
+        "tls_model_not_viable_for_cdylib_workspace"
+      ]
+    }
+  ],
+  "comparison": {
+    "baseline_lane": "baseline-reference-from-tls-diagnostic",
+    "experiment_lane": "initial-exec-tls-model-probe",
+    "negative_experiment_lane": "local-exec-tls-model-probe",
+    "removed_tls_symbols": [],
+    "added_tls_symbols": [],
+    "removed_tls_version_requirements": [],
+    "added_tls_version_requirements": [],
+    "initial_exec_delta_classification": "unchanged",
+    "local_exec_artifact_comparison": "inapplicable_build_failed",
+    "claim_effect": "none_report_only",
+    "standalone_claim_status": "claim_blocked"
+  },
+  "summary": {
+    "lane_count": 3,
+    "build_pass_count": 1,
+    "build_fail_count": 1,
+    "reference_lane_count": 1,
+    "initial_exec_tls_symbol_count": 1,
+    "initial_exec_tls_version_requirement_count": 1,
+    "local_exec_artifact_produced": false,
+    "initial_exec_delta_classification": "unchanged",
+    "claim_status": "report_only",
+    "standalone_claim_status": "claim_blocked",
+    "promotion_allowed": false,
+    "next_safe_action": "Implement owned TLS startup/runtime support or eliminate dynamic TLS access, then rerun current nm/readelf controls before clearing __tls_get_addr."
+  }
+}
