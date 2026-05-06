@@ -1,0 +1,202 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone_blocker_burndown_progress_rollup",
+  "bead": "bd-zyck1.94",
+  "generated_utc": "2026-05-06T06:09:00Z",
+  "source_commit": "current",
+  "description": "Compact progress rollup for current standalone forge blockers. The manifest keeps references and counts; the checker report materializes current values, owner surfaces, and exit criteria from source artifacts.",
+  "inputs": {
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+    "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
+    "standalone_forge_blocker_owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json"
+  },
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_blocker_burndown_rollup",
+    "rollup_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_standalone_blocker_burndown_rollup"
+  },
+  "rollup_policy": {
+    "source_of_truth": [
+      "standalone_host_dependency_probe_plan.current_forge_blocker_projection.current_forge_blocker_value_snapshot",
+      "standalone_forge_blocker_owner_action_ledger.ledger_rows",
+      "standalone_host_version_requirement_burndown.version_requirement_matrix"
+    ],
+    "duplicate_source_values_in_manifest": false,
+    "checker_report_materializes_values": true,
+    "promotion_allowed": false,
+    "claim_status_until_all_categories_exit": "claim_blocked",
+    "missing_category_result": "fail_closed",
+    "missing_version_provider_result": "fail_closed",
+    "stale_or_partial_source_refresh_result": "fail_closed"
+  },
+  "required_rollup_row_fields": [
+    "category_id",
+    "owner_surfaces",
+    "source_blocking_reasons",
+    "current_reason_count",
+    "last_known_value_count",
+    "value_source",
+    "exit_criteria_source",
+    "status_until_exit"
+  ],
+  "progress_categories": [
+    {
+      "category_id": "runtime_linkage",
+      "owner_surfaces": [
+        "runtime_linkage"
+      ],
+      "source_blocking_reasons": [
+        "host_needed_libraries_present",
+        "host_direct_needed_libraries_present",
+        "host_resolved_libraries_present"
+      ],
+      "current_reason_count": 3,
+      "last_known_value_count": 9,
+      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "category_id": "loader_startup",
+      "owner_surfaces": [
+        "loader_startup"
+      ],
+      "source_blocking_reasons": [
+        "host_loader_dependency"
+      ],
+      "current_reason_count": 1,
+      "last_known_value_count": 2,
+      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "category_id": "libc_surface",
+      "owner_surfaces": [
+        "libc_surface"
+      ],
+      "source_blocking_reasons": [
+        "host_libc_dependency"
+      ],
+      "current_reason_count": 1,
+      "last_known_value_count": 1,
+      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "category_id": "compiler_runtime",
+      "owner_surfaces": [
+        "compiler_runtime"
+      ],
+      "source_blocking_reasons": [
+        "libgcc_runtime_dependency"
+      ],
+      "current_reason_count": 1,
+      "last_known_value_count": 4,
+      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "category_id": "unwind_runtime",
+      "owner_surfaces": [
+        "unwind_runtime"
+      ],
+      "source_blocking_reasons": [
+        "undefined_unwind_symbols"
+      ],
+      "current_reason_count": 1,
+      "last_known_value_count": 12,
+      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "category_id": "glibc_symbol_surface",
+      "owner_surfaces": [
+        "glibc_symbol_surface"
+      ],
+      "source_blocking_reasons": [
+        "undefined_glibc_symbols"
+      ],
+      "current_reason_count": 1,
+      "last_known_value_count": 1,
+      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "category_id": "tls_startup",
+      "owner_surfaces": [
+        "tls_startup"
+      ],
+      "source_blocking_reasons": [
+        "undefined_tls_symbols"
+      ],
+      "current_reason_count": 1,
+      "last_known_value_count": 1,
+      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "category_id": "symbol_versioning",
+      "owner_surfaces": [
+        "symbol_versioning"
+      ],
+      "source_blocking_reasons": [
+        "host_version_requirements"
+      ],
+      "current_reason_count": 1,
+      "last_known_value_count": 4,
+      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "status_until_exit": "claim_blocked"
+    }
+  ],
+  "version_provider_rollup": [
+    {
+      "provider_library": "ld-linux-x86-64.so.2",
+      "source_requirement_ids": [
+        "ld-linux-x86-64.so.2:GLIBC_2.3"
+      ],
+      "requirement_count": 1,
+      "source_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "mapped_progress_categories": [
+        "loader_startup",
+        "tls_startup",
+        "glibc_symbol_surface",
+        "symbol_versioning"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "provider_library": "libgcc_s.so.1",
+      "source_requirement_ids": [
+        "libgcc_s.so.1:GCC_3.0",
+        "libgcc_s.so.1:GCC_3.3",
+        "libgcc_s.so.1:GCC_4.2.0"
+      ],
+      "requirement_count": 3,
+      "source_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "mapped_progress_categories": [
+        "compiler_runtime",
+        "unwind_runtime",
+        "symbol_versioning"
+      ],
+      "status_until_exit": "claim_blocked"
+    }
+  ],
+  "summary": {
+    "current_blocking_reason_count": 10,
+    "progress_category_count": 8,
+    "blocked_progress_category_count": 8,
+    "last_known_value_count": 34,
+    "host_version_requirement_count": 4,
+    "version_provider_count": 2,
+    "promotion_allowed": false
+  }
+}

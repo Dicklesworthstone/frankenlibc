@@ -1,0 +1,366 @@
+#!/usr/bin/env bash
+# check_standalone_blocker_burndown_progress_rollup.sh -- CI gate for bd-zyck1.94
+#
+# Validates the compact standalone blocker progress rollup and emits a report
+# that materializes current values and exit criteria from source artifacts.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROLLUP="${FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP:-${ROOT}/tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json}"
+PLAN="${FRANKENLIBC_STANDALONE_HOST_DEP_PLAN:-${ROOT}/tests/conformance/standalone_host_dependency_probe_plan.v1.json}"
+VERSION_BURNDOWN="${FRANKENLIBC_STANDALONE_VERSION_BURNDOWN:-${ROOT}/tests/conformance/standalone_host_version_requirement_burndown.v1.json}"
+OWNER_LEDGER="${FRANKENLIBC_STANDALONE_BLOCKER_OWNER_LEDGER:-${ROOT}/tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json}"
+OUT_DIR="${ROOT}/target/conformance"
+REPORT="${FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP_REPORT:-${OUT_DIR}/standalone_blocker_burndown_progress_rollup.report.json}"
+
+mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")"
+
+python3 - "${ROOT}" "${ROLLUP}" "${PLAN}" "${VERSION_BURNDOWN}" "${OWNER_LEDGER}" "${REPORT}" <<'PY'
+import json
+import subprocess
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+rollup_path = Path(sys.argv[2])
+plan_path = Path(sys.argv[3])
+version_path = Path(sys.argv[4])
+owner_path = Path(sys.argv[5])
+report_path = Path(sys.argv[6])
+for name in ["rollup_path", "plan_path", "version_path", "owner_path", "report_path"]:
+    path = locals()[name]
+    if not path.is_absolute():
+        locals()[name] = root / path
+
+BEAD_ID = "bd-zyck1.94"
+EXPECTED_INPUTS = {
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+    "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
+    "standalone_forge_blocker_owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json",
+}
+EXPECTED_FRESHNESS_POLICY = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_blocker_burndown_rollup",
+    "rollup_evidence_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_standalone_blocker_burndown_rollup",
+}
+EXPECTED_ROLLUP_POLICY = {
+    "source_of_truth": [
+        "standalone_host_dependency_probe_plan.current_forge_blocker_projection.current_forge_blocker_value_snapshot",
+        "standalone_forge_blocker_owner_action_ledger.ledger_rows",
+        "standalone_host_version_requirement_burndown.version_requirement_matrix",
+    ],
+    "duplicate_source_values_in_manifest": False,
+    "checker_report_materializes_values": True,
+    "promotion_allowed": False,
+    "claim_status_until_all_categories_exit": "claim_blocked",
+    "missing_category_result": "fail_closed",
+    "missing_version_provider_result": "fail_closed",
+    "stale_or_partial_source_refresh_result": "fail_closed",
+}
+REQUIRED_ROLLUP_ROW_FIELDS = {
+    "category_id",
+    "owner_surfaces",
+    "source_blocking_reasons",
+    "current_reason_count",
+    "last_known_value_count",
+    "value_source",
+    "exit_criteria_source",
+    "status_until_exit",
+}
+errors = []
+
+
+def load_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        errors.append(f"{path}: {exc}")
+        return {}
+
+
+def current_commit():
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+def is_hex_commit(value):
+    return (
+        isinstance(value, str)
+        and len(value) == 40
+        and all(ch in "0123456789abcdefABCDEF" for ch in value)
+    )
+
+
+def source_commit_marker_is_current(value, head):
+    return value == "current" or (head != "unknown" and value == head)
+
+
+def string_list(value, context, *, min_len=1):
+    if not isinstance(value, list) or len(value) < min_len:
+        errors.append(f"{context}: must be a list with at least {min_len} entries")
+        return []
+    result = []
+    for idx, item in enumerate(value):
+        if not isinstance(item, str) or not item:
+            errors.append(f"{context}[{idx}]: must be a non-empty string")
+        else:
+            result.append(item)
+    return result
+
+
+def object_value(value, context):
+    if not isinstance(value, dict):
+        errors.append(f"{context}: must be an object")
+        return {}
+    return value
+
+
+def repo_path(ref, context):
+    if not isinstance(ref, str) or not ref:
+        errors.append(f"{context}: path must be a non-empty string")
+        return
+    path = Path(ref)
+    if path.is_absolute() or ".." in path.parts:
+        errors.append(f"{context}: path must stay repo-relative: {ref}")
+        return
+    if not (root / path).exists():
+        errors.append(f"{context}: path does not exist: {ref}")
+
+
+def matrix_requirement_id(row):
+    provider = row.get("provider_library")
+    version = row.get("version_node")
+    if isinstance(provider, str) and isinstance(version, str):
+        return f"{provider}:{version}"
+    return None
+
+
+head = current_commit()
+rollup = load_json(rollup_path)
+plan = load_json(plan_path)
+version_burndown = load_json(version_path)
+owner_ledger = load_json(owner_path)
+for value_name in ["rollup", "plan", "version_burndown", "owner_ledger"]:
+    if not isinstance(locals()[value_name], dict):
+        locals()[value_name] = {}
+
+if rollup.get("schema_version") != "v1" or rollup.get("bead") != BEAD_ID:
+    errors.append("rollup must declare schema_version=v1 and bead=bd-zyck1.94")
+if rollup.get("manifest_id") != "standalone_blocker_burndown_progress_rollup":
+    errors.append("manifest_id must be standalone_blocker_burndown_progress_rollup")
+source_commit = rollup.get("source_commit")
+if not (source_commit == "current" or is_hex_commit(source_commit)):
+    errors.append("rollup source_commit must be 'current' or a 40-hex commit")
+elif not source_commit_marker_is_current(source_commit, head):
+    errors.append("rollup source_commit must be 'current' or match current git HEAD")
+if rollup.get("source_commit_freshness_policy") != EXPECTED_FRESHNESS_POLICY:
+    errors.append("source_commit_freshness_policy must match rollup stale-source contract")
+if rollup.get("rollup_policy") != EXPECTED_ROLLUP_POLICY:
+    errors.append("rollup_policy must match compact fail-closed progress contract")
+inputs = object_value(rollup.get("inputs"), "inputs")
+if inputs != EXPECTED_INPUTS:
+    errors.append("inputs must match standalone blocker rollup input contract")
+for key, ref in EXPECTED_INPUTS.items():
+    repo_path(inputs.get(key), f"inputs.{key}")
+
+declared_fields = set(string_list(rollup.get("required_rollup_row_fields"), "required_rollup_row_fields"))
+if declared_fields != REQUIRED_ROLLUP_ROW_FIELDS:
+    errors.append("required_rollup_row_fields mismatch")
+
+projection = object_value(plan.get("current_forge_blocker_projection"), "current_forge_blocker_projection")
+snapshot = object_value(
+    projection.get("current_forge_blocker_value_snapshot"),
+    "current_forge_blocker_value_snapshot",
+)
+current_reasons = set(string_list(snapshot.get("blocking_reasons"), "snapshot.blocking_reasons", min_len=10))
+if len(current_reasons) != 10:
+    errors.append("current forge snapshot must expose ten unique blocking reasons")
+
+owner_rows = owner_ledger.get("ledger_rows", [])
+if not isinstance(owner_rows, list):
+    errors.append("owner ledger ledger_rows must be an array")
+    owner_rows = []
+owner_by_reason = {}
+reasons_by_owner = defaultdict(list)
+for row in owner_rows:
+    if not isinstance(row, dict):
+        errors.append("owner ledger row must be an object")
+        continue
+    reason = row.get("blocking_reason")
+    owner = row.get("owner_surface")
+    if isinstance(reason, str):
+        owner_by_reason[reason] = row
+    if isinstance(reason, str) and isinstance(owner, str):
+        reasons_by_owner[owner].append(reason)
+for reason in sorted(current_reasons - set(owner_by_reason)):
+    errors.append(f"owner ledger missing current blocker reason {reason}")
+
+progress_rows = rollup.get("progress_categories", [])
+if not isinstance(progress_rows, list):
+    errors.append("progress_categories must be an array")
+    progress_rows = []
+rollup_reason_set = set()
+category_counts = Counter()
+materialized_categories = []
+for row in progress_rows:
+    if not isinstance(row, dict):
+        errors.append("progress category row must be an object")
+        continue
+    category = row.get("category_id")
+    context = f"progress_categories[{category or '<missing>'}]"
+    missing = REQUIRED_ROLLUP_ROW_FIELDS - set(row)
+    for field in sorted(missing):
+        errors.append(f"{context}: missing field {field}")
+    if not isinstance(category, str) or not category:
+        errors.append(f"{context}: category_id must be a non-empty string")
+        continue
+    category_counts[category] += 1
+    if category_counts[category] > 1:
+        errors.append(f"progress_categories duplicate category_id {category}")
+    owner_surfaces = string_list(row.get("owner_surfaces"), f"{context}.owner_surfaces")
+    reasons = string_list(row.get("source_blocking_reasons"), f"{context}.source_blocking_reasons")
+    expected_reasons = sorted(reasons_by_owner.get(category, []))
+    if sorted(reasons) != expected_reasons:
+        errors.append(f"{context}.source_blocking_reasons must match owner ledger rows for {category}")
+    if owner_surfaces != [category]:
+        errors.append(f"{context}.owner_surfaces must contain only {category}")
+    if row.get("current_reason_count") != len(reasons):
+        errors.append(f"{context}.current_reason_count mismatch")
+    values = []
+    exit_criteria = []
+    for reason in reasons:
+        rollup_reason_set.add(reason)
+        owner_row = owner_by_reason.get(reason, {})
+        values.extend(string_list(owner_row.get("current_blocker_values"), f"owner_ledger.{reason}.current_blocker_values"))
+        exit_criteria.extend(string_list(owner_row.get("exit_criteria"), f"owner_ledger.{reason}.exit_criteria"))
+    if row.get("last_known_value_count") != len(values):
+        errors.append(f"{context}.last_known_value_count mismatch")
+    if row.get("value_source") != "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values":
+        errors.append(f"{context}.value_source mismatch")
+    if row.get("exit_criteria_source") != "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria":
+        errors.append(f"{context}.exit_criteria_source mismatch")
+    if row.get("status_until_exit") != "claim_blocked":
+        errors.append(f"{context}.status_until_exit must be claim_blocked")
+    materialized_categories.append(
+        {
+            "category_id": category,
+            "owner_surfaces": owner_surfaces,
+            "source_blocking_reasons": reasons,
+            "current_reason_count": len(reasons),
+            "last_known_values": values,
+            "last_known_value_count": len(values),
+            "target_exit_criteria": exit_criteria,
+            "status_until_exit": "claim_blocked",
+        }
+    )
+
+if rollup_reason_set != current_reasons:
+    errors.append("progress_categories must cover every current blocker reason exactly through owner ledger")
+
+matrix_rows = version_burndown.get("version_requirement_matrix", [])
+if not isinstance(matrix_rows, list):
+    errors.append("version_requirement_matrix must be an array")
+    matrix_rows = []
+requirements_by_provider = defaultdict(list)
+for row in matrix_rows:
+    if not isinstance(row, dict):
+        errors.append("version requirement row must be an object")
+        continue
+    requirement_id = matrix_requirement_id(row)
+    provider = row.get("provider_library")
+    if not isinstance(requirement_id, str) or row.get("requirement_id") != requirement_id:
+        errors.append("version requirement row requirement_id must equal provider:version")
+        continue
+    requirements_by_provider[provider].append(requirement_id)
+
+provider_rows = rollup.get("version_provider_rollup", [])
+if not isinstance(provider_rows, list):
+    errors.append("version_provider_rollup must be an array")
+    provider_rows = []
+provider_seen = set()
+materialized_providers = []
+for row in provider_rows:
+    if not isinstance(row, dict):
+        errors.append("version provider row must be an object")
+        continue
+    provider = row.get("provider_library")
+    context = f"version_provider_rollup[{provider or '<missing>'}]"
+    if not isinstance(provider, str) or not provider:
+        errors.append(f"{context}.provider_library must be a non-empty string")
+        continue
+    if provider in provider_seen:
+        errors.append(f"version_provider_rollup duplicate provider {provider}")
+    provider_seen.add(provider)
+    expected_ids = sorted(requirements_by_provider.get(provider, []))
+    actual_ids = string_list(row.get("source_requirement_ids"), f"{context}.source_requirement_ids")
+    if sorted(actual_ids) != expected_ids:
+        errors.append(f"{context}.source_requirement_ids must match version matrix provider rows")
+    if row.get("requirement_count") != len(expected_ids):
+        errors.append(f"{context}.requirement_count mismatch")
+    if row.get("source_matrix") != "standalone_host_version_requirement_burndown.version_requirement_matrix":
+        errors.append(f"{context}.source_matrix mismatch")
+    mapped_categories = string_list(row.get("mapped_progress_categories"), f"{context}.mapped_progress_categories")
+    for category in mapped_categories:
+        if category not in category_counts:
+            errors.append(f"{context}.mapped_progress_categories references missing category {category}")
+    if row.get("status_until_exit") != "claim_blocked":
+        errors.append(f"{context}.status_until_exit must be claim_blocked")
+    materialized_providers.append(
+        {
+            "provider_library": provider,
+            "source_requirement_ids": actual_ids,
+            "requirement_count": len(expected_ids),
+            "mapped_progress_categories": mapped_categories,
+            "status_until_exit": "claim_blocked",
+        }
+    )
+if provider_seen != set(requirements_by_provider):
+    errors.append("version_provider_rollup must cover every version matrix provider")
+
+summary = object_value(rollup.get("summary"), "summary")
+last_known_value_count = sum(row["last_known_value_count"] for row in materialized_categories)
+summary_expectations = {
+    "current_blocking_reason_count": len(current_reasons),
+    "progress_category_count": len(materialized_categories),
+    "blocked_progress_category_count": len(materialized_categories),
+    "last_known_value_count": last_known_value_count,
+    "host_version_requirement_count": sum(len(ids) for ids in requirements_by_provider.values()),
+    "version_provider_count": len(requirements_by_provider),
+}
+for field, expected in summary_expectations.items():
+    if summary.get(field) != expected:
+        errors.append(f"summary.{field} mismatch")
+if summary.get("promotion_allowed") is not False:
+    errors.append("summary.promotion_allowed must be false")
+
+status = "pass" if not errors else "fail"
+report = {
+    "schema_version": "v1",
+    "bead": BEAD_ID,
+    "status": status,
+    "source_commit": source_commit,
+    "current_head": head,
+    "claim_status": snapshot.get("claim_status"),
+    "progress_categories": materialized_categories,
+    "version_provider_rollup": materialized_providers,
+    "summary": {
+        **summary_expectations,
+        "promotion_allowed": False,
+    },
+    "errors": errors,
+}
+report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(json.dumps(report, indent=2, sort_keys=True))
+if errors:
+    sys.exit(1)
+PY
