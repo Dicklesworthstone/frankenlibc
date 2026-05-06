@@ -1,0 +1,28 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "errno-table-golden",
+  "bead": "bd-nfjj0",
+  "generated_utc": "2026-05-06T00:47:23Z",
+  "source_commit": "01ff34f449afd22c1085982e9e7ed4a3963ff830",
+  "subject": {
+    "module": "crates/frankenlibc-core/src/errno/mod.rs",
+    "constants": "pub const E*: i32 definitions",
+    "message_function": "frankenlibc_core::errno::strerror_message"
+  },
+  "purpose": "Tamper-evident SHA-256 fingerprint of the errno numeric table and strerror message table. Any silent renumber, addition, removal, or message drift fails one of the cited fingerprints with the live value visible alongside the frozen value.",
+  "golden_confidence": {
+    "deterministic": true,
+    "platform_dependent": false,
+    "volatility": 2,
+    "strategy": "exact_sha256_over_canonical_lines"
+  },
+  "total_constant_count": 55,
+  "total_message_count": 56,
+  "constants_sha256": "75e2b19905e918d5c40d98d23581d74be19df22fdf83ce16583dde1dfdfb294e",
+  "messages_sha256": "93e7f7c63ccb704c0732db543809bc3157d16ae5a4bc3830b8ae92e3be9bc35c",
+  "canonicalization": {
+    "constants": "Sort lines lexicographically by errno name, then hash '<NAME>=<number>\\n' for every pub const E* row.",
+    "messages": "Sort rows by numeric errno, then hash '<number>=<strerror_message(number)>\\n' for 0 plus every parsed errno constant value."
+  },
+  "regeneration_note": "If a planned errno compatibility change adds, removes, renumbers, or rewords errno entries, update total_constant_count, total_message_count, constants_sha256, and messages_sha256 atomically with crates/frankenlibc-core/src/errno/mod.rs. Do NOT update one without the others; mismatch is itself a fail-closed signal."
+}
