@@ -929,6 +929,179 @@ fn host_probe_projection_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn host_probe_snapshot_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "standalone-host-probe-snapshot-decision-diagnostic",
+            (
+                "current_forge_blocker_projection.current_forge_blocker_value_snapshot.decision",
+                json!("snapshot_only_claims_remain_blocked"),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-no-promotion",
+            (
+                "current_forge_blocker_projection.current_forge_blocker_value_snapshot.snapshot_policy.promotion_allowed",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-refresh-required",
+            (
+                "current_forge_blocker_projection.current_forge_blocker_value_snapshot.snapshot_policy.refresh_required_on_blocker_delta",
+                json!(true),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-stale-result",
+            (
+                "current_forge_blocker_projection.current_forge_blocker_value_snapshot.snapshot_policy.stale_result",
+                json!("block_standalone_host_dependency_probe_evidence"),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-rejection-kind",
+            (
+                "current_forge_blocker_projection.current_forge_blocker_value_snapshot.snapshot_policy.rejected_evidence_kind",
+                json!("stale_forge_blocker_snapshot"),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-blocking-reason-count",
+            ("summary.forge_blocker_snapshot_blocking_reason_count", json!(10)),
+        ),
+        (
+            "standalone-host-probe-snapshot-needed-library-count",
+            ("summary.forge_blocker_snapshot_needed_library_count", json!(2)),
+        ),
+        (
+            "standalone-host-probe-snapshot-needed-library-values",
+            (
+                "current_forge_blocker_projection.current_forge_blocker_value_snapshot.needed_libraries",
+                json!(["ld-linux-x86-64.so.2", "libgcc_s.so.1"]),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-host-resolved-library-count",
+            (
+                "summary.forge_blocker_snapshot_host_resolved_library_count",
+                json!(3),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-host-resolved-library-values",
+            (
+                "current_forge_blocker_projection.current_forge_blocker_value_snapshot.host_resolved_libraries",
+                json!(["/lib64/ld-linux-x86-64.so.2", "libc.so.6", "libgcc_s.so.1"]),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-undefined-unwind-symbol-values",
+            (
+                "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_unwind_symbols",
+                json!([
+                    "_Unwind_Backtrace@GCC_3.3",
+                    "_Unwind_DeleteException@GCC_3.0",
+                    "_Unwind_GetDataRelBase@GCC_3.0",
+                    "_Unwind_GetIP@GCC_3.0",
+                    "_Unwind_GetIPInfo@GCC_4.2.0",
+                    "_Unwind_GetLanguageSpecificData@GCC_3.0",
+                    "_Unwind_GetRegionStart@GCC_3.0",
+                    "_Unwind_GetTextRelBase@GCC_3.0",
+                    "_Unwind_RaiseException@GCC_3.0",
+                    "_Unwind_Resume@GCC_3.0",
+                    "_Unwind_SetGR@GCC_3.0",
+                    "_Unwind_SetIP@GCC_3.0",
+                ]),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-undefined-glibc-symbol-values",
+            (
+                "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_glibc_symbols",
+                json!(["__tls_get_addr@GLIBC_2.3"]),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-undefined-tls-symbol-values",
+            (
+                "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_tls_symbols",
+                json!(["__tls_get_addr@GLIBC_2.3"]),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-undefined-symbol-count",
+            ("summary.forge_blocker_snapshot_undefined_symbol_count", json!(14)),
+        ),
+        (
+            "standalone-host-probe-snapshot-host-version-requirement-count",
+            (
+                "summary.forge_blocker_snapshot_host_version_requirement_count",
+                json!(4),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-host-version-requirement-values",
+            (
+                "current_forge_blocker_projection.current_forge_blocker_value_snapshot.host_version_requirements",
+                json!([
+                    "ld-linux-x86-64.so.2:GLIBC_2.3",
+                    "libgcc_s.so.1:GCC_3.0",
+                    "libgcc_s.so.1:GCC_3.3",
+                    "libgcc_s.so.1:GCC_4.2.0",
+                ]),
+            ),
+        ),
+        (
+            "standalone-host-probe-snapshot-version-need-provider-count",
+            (
+                "summary.forge_blocker_snapshot_version_need_provider_count",
+                json!(2),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-host-probe-snapshot-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows
+            .remove(row_id)
+            .ok_or_else(|| test_error(format!("unexpected host probe snapshot row: {row_id}")))?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "forge",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing standalone host probe snapshot dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn crt_tls_atexit_direct_link_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [

@@ -249,6 +249,171 @@
       "rationale": "L1 dashboard consumers must see every projected forge failure signature mapped to a negative-control probe."
     },
     {
+      "row_id": "standalone-host-probe-snapshot-decision-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.decision",
+      "expected_value": "snapshot_only_claims_remain_blocked",
+      "rationale": "The committed blocker value snapshot is report-only evidence and must never promote replacement claims."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-no-promotion",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.snapshot_policy.promotion_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that a current blocker snapshot cannot authorize promotion."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-refresh-required",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.snapshot_policy.refresh_required_on_blocker_delta",
+      "expected_value": true,
+      "rationale": "Any blocker-value delta requires an explicit snapshot refresh before dashboard readers trust the rows."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-stale-result",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.snapshot_policy.stale_result",
+      "expected_value": "block_standalone_host_dependency_probe_evidence",
+      "rationale": "A stale forge blocker snapshot must block standalone host dependency evidence."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-rejection-kind",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.snapshot_policy.rejected_evidence_kind",
+      "expected_value": "stale_forge_blocker_snapshot",
+      "rationale": "Dashboard readers must see stale snapshot drift as its own rejected evidence kind."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-blocking-reason-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "summary.forge_blocker_snapshot_blocking_reason_count",
+      "expected_value": 10,
+      "rationale": "Dashboard readers must see the exact current forge blocker reason count, not only a generic claim_blocked state."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-needed-library-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "summary.forge_blocker_snapshot_needed_library_count",
+      "expected_value": 2,
+      "rationale": "Dashboard readers must see the current direct NEEDED host library count."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-needed-library-values",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.needed_libraries",
+      "expected_value": [
+        "ld-linux-x86-64.so.2",
+        "libgcc_s.so.1"
+      ],
+      "rationale": "Dashboard readers must see the representative direct NEEDED host library values."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-host-resolved-library-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "summary.forge_blocker_snapshot_host_resolved_library_count",
+      "expected_value": 3,
+      "rationale": "Dashboard readers must see the current host-resolved runtime library count."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-host-resolved-library-values",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.host_resolved_libraries",
+      "expected_value": [
+        "/lib64/ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libgcc_s.so.1"
+      ],
+      "rationale": "Dashboard readers must see the representative ldd-resolved host runtime libraries."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-undefined-unwind-symbol-values",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_unwind_symbols",
+      "expected_value": [
+        "_Unwind_Backtrace@GCC_3.3",
+        "_Unwind_DeleteException@GCC_3.0",
+        "_Unwind_GetDataRelBase@GCC_3.0",
+        "_Unwind_GetIP@GCC_3.0",
+        "_Unwind_GetIPInfo@GCC_4.2.0",
+        "_Unwind_GetLanguageSpecificData@GCC_3.0",
+        "_Unwind_GetRegionStart@GCC_3.0",
+        "_Unwind_GetTextRelBase@GCC_3.0",
+        "_Unwind_RaiseException@GCC_3.0",
+        "_Unwind_Resume@GCC_3.0",
+        "_Unwind_SetGR@GCC_3.0",
+        "_Unwind_SetIP@GCC_3.0"
+      ],
+      "rationale": "Dashboard readers must see the exact twelve-symbol unwind blocker set."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-undefined-glibc-symbol-values",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_glibc_symbols",
+      "expected_value": [
+        "__tls_get_addr@GLIBC_2.3"
+      ],
+      "rationale": "Dashboard readers must see the exact current GLIBC-versioned symbol blocker."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-undefined-tls-symbol-values",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_tls_symbols",
+      "expected_value": [
+        "__tls_get_addr@GLIBC_2.3"
+      ],
+      "rationale": "Dashboard readers must see the exact current TLS symbol blocker."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-undefined-symbol-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "summary.forge_blocker_snapshot_undefined_symbol_count",
+      "expected_value": 14,
+      "rationale": "Dashboard readers must see the total current unwind, GLIBC, and TLS undefined-symbol blocker count."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-host-version-requirement-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "summary.forge_blocker_snapshot_host_version_requirement_count",
+      "expected_value": 4,
+      "rationale": "Dashboard readers must see the current host-provided ELF version requirement count."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-host-version-requirement-values",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.host_version_requirements",
+      "expected_value": [
+        "ld-linux-x86-64.so.2:GLIBC_2.3",
+        "libgcc_s.so.1:GCC_3.0",
+        "libgcc_s.so.1:GCC_3.3",
+        "libgcc_s.so.1:GCC_4.2.0"
+      ],
+      "rationale": "Dashboard readers must see the current host-provided GLIBC/GCC version requirements."
+    },
+    {
+      "row_id": "standalone-host-probe-snapshot-version-need-provider-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "field": "summary.forge_blocker_snapshot_version_need_provider_count",
+      "expected_value": 2,
+      "rationale": "Dashboard readers must see how many host providers currently own version needs."
+    },
+    {
       "row_id": "standalone-artifact-report-needed-libraries-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
