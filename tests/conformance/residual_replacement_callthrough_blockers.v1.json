@@ -1,0 +1,68 @@
+{
+  "schema_version": "residual_replacement_callthrough_blockers.v1",
+  "generated_by_bead": "bd-0agsk.9",
+  "canonical_command": "scripts/check_residual_replacement_callthrough_blockers.sh --validate-only",
+  "source_guard": {
+    "script": "scripts/check_replacement_guard.sh",
+    "replacement_command": "FRANKENLIBC_REPLACEMENT_GUARD_REPORT=target/conformance/replacement_guard.replacement.report.json FRANKENLIBC_REPLACEMENT_GUARD_LOG=target/conformance/replacement_guard.replacement.log.jsonl scripts/check_replacement_guard.sh replacement",
+    "interpose_command": "FRANKENLIBC_REPLACEMENT_GUARD_REPORT=target/conformance/replacement_guard.interpose.report.json FRANKENLIBC_REPLACEMENT_GUARD_LOG=target/conformance/replacement_guard.interpose.log.jsonl scripts/check_replacement_guard.sh interpose"
+  },
+  "current_truth": {
+    "source_commit": "current",
+    "current_truth_source": "replacement_guard_source_scan",
+    "replacement": {
+      "mode": "replacement",
+      "ok": true,
+      "total_call_throughs": 0,
+      "modules_with_call_throughs": 0,
+      "violations": 0,
+      "mutex_forbidden_count": 0,
+      "forbidden_modules": [],
+      "forbidden_symbols": []
+    },
+    "interpose": {
+      "mode": "interpose",
+      "ok": true,
+      "total_call_throughs": 0,
+      "modules_with_call_throughs": 0,
+      "violations": 0,
+      "mutex_forbidden_count": 0,
+      "forbidden_modules": [],
+      "forbidden_symbols": []
+    },
+    "residual_forbidden_count": 0,
+    "claim_status": "replacement_callthrough_blockers_cleared",
+    "followup_child_beads_created": false
+  },
+  "stale_ledger_reconciliation": {
+    "todo_ids": [
+      "TODO-0203f",
+      "TODO-0204",
+      "TODO-0205",
+      "TODO-0206"
+    ],
+    "stale_claim": "February ledger rows described residual replacement call-through blockers.",
+    "current_classification": "stale_blocker_claim_zero_current_source_scan",
+    "closed_bead_claims_solver": "none_found_in_live_tracker_search",
+    "first_evidence_command": "scripts/check_residual_replacement_callthrough_blockers.sh --validate-only"
+  },
+  "report_outputs": {
+    "report_json": "target/conformance/residual_replacement_callthrough_blockers.report.json",
+    "log_jsonl": "target/conformance/residual_replacement_callthrough_blockers.log.jsonl",
+    "replacement_guard_report": "target/conformance/replacement_guard.replacement.report.json",
+    "interpose_guard_report": "target/conformance/replacement_guard.interpose.report.json"
+  },
+  "failure_signatures": [
+    "contract_schema_version",
+    "replacement_guard_failed",
+    "guard_report_missing",
+    "guard_report_schema_invalid",
+    "residual_callthrough_reintroduced",
+    "stale_reconciliation_invalid"
+  ],
+  "non_goals": [
+    "No support_matrix status changes.",
+    "No replacement-level promotion.",
+    "No new blocker beads when residual_forbidden_count is zero."
+  ]
+}
