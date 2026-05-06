@@ -6,9 +6,9 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use crate::verify::{ExpectedOutputMatch, expected_output_match};
 use crate::{FixtureCase, FixtureSet};
 use frankenlibc_fixture_exec::{DifferentialExecution, execute_fixture_case};
 
@@ -276,19 +276,14 @@ fn run_case_from_execution(
 
     match execution {
         CaseExecution::Completed(run) => {
-            let exact_match = run.impl_output == case.expected_output;
-            let tolerance_match =
-                !exact_match && tolerant_numeric_match(&case.expected_output, &run.impl_output);
-            let pattern_match = !exact_match
-                && !tolerance_match
-                && regex_contract_match(&case.expected_output, &run.impl_output);
-            let passed = exact_match || tolerance_match || pattern_match;
+            let match_kind = expected_output_match(&case.expected_output, &run.impl_output);
+            let passed = match_kind.is_some();
             let diff_offset = if passed {
                 None
             } else {
                 first_diff_offset(&case.expected_output, &run.impl_output)
             };
-            let note = append_match_notes(run.note, tolerance_match, pattern_match);
+            let note = append_match_notes(run.note, match_kind);
             ConformanceCaseRow {
                 trace_id,
                 family: fixture_set.family.clone(),
@@ -446,14 +441,12 @@ fn first_diff_offset(expected: &str, actual: &str) -> Option<u64> {
 
 fn append_match_notes(
     mut note: Option<String>,
-    tolerance_match: bool,
-    pattern_match: bool,
+    match_kind: Option<ExpectedOutputMatch>,
 ) -> Option<String> {
-    if tolerance_match {
-        append_note(&mut note, "numeric_tolerance_match");
-    }
-    if pattern_match {
-        append_note(&mut note, "expected_output_pattern_match");
+    if let Some(kind) = match_kind
+        && let Some(suffix) = crate::verify::expected_output_match_note(kind)
+    {
+        append_note(&mut note, suffix);
     }
     note
 }
@@ -466,96 +459,6 @@ fn append_note(note: &mut Option<String>, suffix: &str) {
         }
         None => *note = Some(suffix.to_string()),
     }
-}
-
-fn regex_contract_match(expected: &str, actual: &str) -> bool {
-    if !expected.starts_with('^') || !expected.ends_with('$') {
-        return false;
-    }
-
-    match Regex::new(expected) {
-        Ok(pattern) => pattern.is_match(actual),
-        Err(_) => false,
-    }
-}
-
-fn tolerant_numeric_match(expected: &str, actual: &str) -> bool {
-    if tolerant_return_values_match(expected, actual) {
-        return true;
-    }
-
-    let exp = match expected.parse::<f64>() {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    let act = match actual.parse::<f64>() {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-
-    if exp.is_nan() && act.is_nan() {
-        return true;
-    }
-    if exp.is_infinite() || act.is_infinite() {
-        return exp == act;
-    }
-
-    let diff = (exp - act).abs();
-    let scale = exp.abs().max(act.abs()).max(1.0);
-    diff <= 1e-12 * scale
-}
-
-fn tolerant_return_values_match(expected: &str, actual: &str) -> bool {
-    let Some((expected_ret, expected_values)) = split_return_values(expected) else {
-        return false;
-    };
-    let Some((actual_ret, actual_values)) = split_return_values(actual) else {
-        return false;
-    };
-    if expected_ret != actual_ret || expected_values.len() != actual_values.len() {
-        return false;
-    }
-    expected_values
-        .iter()
-        .zip(actual_values.iter())
-        .all(|(expected, actual)| tolerant_return_value_match(expected, actual))
-}
-
-fn split_return_values(text: &str) -> Option<(&str, Vec<&str>)> {
-    let (ret, values) = text.split_once(":[")?;
-    let values = values.strip_suffix(']')?;
-    if values.is_empty() {
-        return Some((ret, Vec::new()));
-    }
-    Some((ret, values.split(',').collect()))
-}
-
-fn tolerant_return_value_match(expected: &str, actual: &str) -> bool {
-    if expected == actual {
-        return true;
-    }
-    if !looks_float_like(expected) && !looks_float_like(actual) {
-        return false;
-    }
-    let Ok(exp) = expected.parse::<f64>() else {
-        return false;
-    };
-    let Ok(act) = actual.parse::<f64>() else {
-        return false;
-    };
-    if exp.is_nan() && act.is_nan() {
-        return true;
-    }
-    if exp.is_infinite() || act.is_infinite() {
-        return exp == act;
-    }
-    let diff = (exp - act).abs();
-    let scale = exp.abs().max(act.abs()).max(1.0);
-    diff <= 1e-6 * scale
-}
-
-fn looks_float_like(value: &str) -> bool {
-    value.contains('.') || value.contains('e') || value.contains('E')
 }
 
 #[cfg(test)]
@@ -595,27 +498,48 @@ mod tests {
 
     #[test]
     fn tolerant_numeric_match_accepts_small_rounding_delta() {
-        assert!(tolerant_numeric_match(
-            "2.718281828459045",
-            "2.7182818284590455"
-        ));
-        assert!(tolerant_numeric_match("1.3", "1.2999999999999998"));
-        assert!(!tolerant_numeric_match("1.3", "1.31"));
+        assert_eq!(
+            expected_output_match("2.718281828459045", "2.7182818284590455"),
+            Some(ExpectedOutputMatch::NumericTolerance)
+        );
+        assert_eq!(
+            expected_output_match("1.3", "1.2999999999999998"),
+            Some(ExpectedOutputMatch::NumericTolerance)
+        );
+        assert_eq!(expected_output_match("1.3", "1.31"), None);
     }
 
     #[test]
     fn tolerant_numeric_match_accepts_scanf_float_storage_delta() {
-        assert!(tolerant_numeric_match("1:[1.5e10]", "1:[15000000512]"));
-        assert!(tolerant_numeric_match("1:[123.4]", "1:[123.400002]"));
-        assert!(!tolerant_numeric_match("1:[42]", "1:[43]"));
+        assert_eq!(
+            expected_output_match("1:[1.5e10]", "1:[15000000512]"),
+            Some(ExpectedOutputMatch::NumericTolerance)
+        );
+        assert_eq!(
+            expected_output_match("1:[123.4]", "1:[123.400002]"),
+            Some(ExpectedOutputMatch::NumericTolerance)
+        );
+        assert_eq!(expected_output_match("1:[42]", "1:[43]"), None);
     }
 
     #[test]
     fn regex_contract_match_honors_expected_output_patterns() {
-        assert!(regex_contract_match("^0x[0-9a-f]+$", "0x1234abcd"));
-        assert!(regex_contract_match("^\\(nil\\)$|^0x0+$", "(nil)"));
-        assert!(!regex_contract_match("^0x[0-9a-f]+$", "not-a-pointer"));
-        assert!(!regex_contract_match("literal", "literal"));
+        assert_eq!(
+            expected_output_match("^0x[0-9a-f]+$", "0x1234abcd"),
+            Some(ExpectedOutputMatch::Pattern)
+        );
+        assert_eq!(
+            expected_output_match("^\\(nil\\)$|^0x0+$", "(nil)"),
+            Some(ExpectedOutputMatch::Pattern)
+        );
+        assert_eq!(
+            expected_output_match("^0x[0-9a-f]+$", "not-a-pointer"),
+            None
+        );
+        assert_eq!(
+            expected_output_match("literal", "literal"),
+            Some(ExpectedOutputMatch::Exact)
+        );
     }
 
     #[test]

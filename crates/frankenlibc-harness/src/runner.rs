@@ -1,7 +1,10 @@
 //! Test execution engine.
 
 use crate::fixtures::FixtureSet;
-use crate::verify::VerificationResult;
+use crate::verify::{
+    VerificationResult, expected_output_match, expected_output_match_note, report_actual_output,
+    report_note_output,
+};
 use crate::{FixtureCase, diff};
 use frankenlibc_fixture_exec::execute_fixture_case;
 
@@ -30,7 +33,7 @@ impl TestRunner {
             .iter()
             .filter(|case| mode_matches(&self.mode, &case.mode))
             .map(|case| {
-                let (actual, diff) = execute_case(case, &self.mode);
+                let (actual, diff, passed) = execute_case(case, &self.mode);
                 let case_name = if case.mode.eq_ignore_ascii_case("both") {
                     format!("{} [{}]", case.name, self.mode)
                 } else {
@@ -52,7 +55,7 @@ impl TestRunner {
                     mode: self.mode.clone(),
                     case_name,
                     spec_section: case.spec_section.clone(),
-                    passed: actual == case.expected_output,
+                    passed,
                     expected: case.expected_output.clone(),
                     actual,
                     diff,
@@ -68,7 +71,7 @@ fn mode_matches(active_mode: &str, case_mode: &str) -> bool {
     case == active || case == "both"
 }
 
-fn execute_case(case: &FixtureCase, active_mode: &str) -> (String, Option<String>) {
+fn execute_case(case: &FixtureCase, active_mode: &str) -> (String, Option<String>, bool) {
     // Fixture cases with mode=both should execute under the runner's active mode.
     let execution = execute_fixture_case(&case.function, &case.inputs, active_mode);
     match execution {
@@ -77,26 +80,37 @@ fn execute_case(case: &FixtureCase, active_mode: &str) -> (String, Option<String
             if active_mode.eq_ignore_ascii_case("strict") && !run.host_parity {
                 notes.push(format!(
                     "strict host parity mismatch: host={}, impl={}",
-                    run.host_output, run.impl_output
+                    report_note_output(&run.host_output),
+                    report_note_output(&run.impl_output)
                 ));
             }
             if let Some(note) = run.note.clone() {
                 notes.push(note);
             }
+            let match_kind = expected_output_match(&case.expected_output, &run.impl_output);
+            if let Some(kind) = match_kind
+                && let Some(note) = expected_output_match_note(kind)
+            {
+                notes.push(note.to_string());
+            }
 
             let mut diff_out = None;
-            if run.impl_output != case.expected_output {
+            if match_kind.is_none() {
                 diff_out = Some(diff::render_diff(&case.expected_output, &run.impl_output));
             } else if !notes.is_empty() {
                 diff_out = Some(notes.join("\n"));
             }
 
-            (run.impl_output, diff_out)
+            (
+                report_actual_output(&case.expected_output, &run.impl_output, match_kind),
+                diff_out,
+                match_kind.is_some(),
+            )
         }
         Err(err) => {
             let actual = format!("unsupported:{err}");
             let diff_out = Some(diff::render_diff(&case.expected_output, &actual));
-            (actual, diff_out)
+            (actual, diff_out, false)
         }
     }
 }

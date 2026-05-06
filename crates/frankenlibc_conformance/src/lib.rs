@@ -206,8 +206,8 @@ struct HostHsearchData {
 #[repr(C)]
 struct ImplHsearchDataView {
     table: *mut c_void,
-    size: usize,
-    filled: usize,
+    size: c_uint,
+    filled: c_uint,
 }
 
 #[repr(C)]
@@ -1118,7 +1118,7 @@ fn to_u32(value: u64) -> Result<u32, String> {
 fn impl_hsearch_filled(htab: &frankenlibc_abi::search_abi::HsearchData) -> usize {
     unsafe {
         (*(htab as *const frankenlibc_abi::search_abi::HsearchData).cast::<ImplHsearchDataView>())
-            .filled
+            .filled as usize
     }
 }
 
@@ -12962,6 +12962,13 @@ fn parse_key_alias_to_id(alias: &str) -> Option<u32> {
         .or_else(|| alias.strip_prefix("key_id_"))
         .or_else(|| alias.strip_prefix("out_of_bounds_key_"))
         .and_then(|raw| raw.parse::<u32>().ok())
+        .map(|id| {
+            if id as usize >= frankenlibc_core::pthread::tls::PTHREAD_KEYS_MAX {
+                u32::MAX
+            } else {
+                id
+            }
+        })
 }
 
 #[cfg(target_arch = "x86_64")]

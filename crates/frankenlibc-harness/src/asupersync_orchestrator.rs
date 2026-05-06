@@ -20,7 +20,10 @@ use serde_json::json;
 
 use crate::diff;
 use crate::fixtures::{FixtureCase, FixtureSet};
-use crate::verify::VerificationResult;
+use crate::verify::{
+    VerificationResult, expected_output_match, expected_output_match_note, report_actual_output,
+    report_note_output,
+};
 
 /// Outputs from a deterministic fixture verification run.
 #[derive(Debug)]
@@ -231,15 +234,33 @@ fn execute_case_with_evidence(
             if exec_mode.eq_ignore_ascii_case("strict") && !run.host_parity {
                 notes.push(format!(
                     "strict host parity mismatch: host={}, impl={}",
-                    run.host_output, run.impl_output
+                    report_note_output(&run.host_output),
+                    report_note_output(&run.impl_output)
                 ));
             }
             if let Some(note) = run.note.clone() {
                 notes.push(note);
             }
+            let match_kind = expected_output_match(&case.expected_output, &run.impl_output);
+            if let Some(kind) = match_kind
+                && let Some(note) = expected_output_match_note(kind)
+            {
+                notes.push(note.to_string());
+            }
+            let host_match_kind = expected_output_match(&case.expected_output, &run.host_output);
+            let report_host_output = report_actual_output(
+                &case.expected_output,
+                &report_note_output(&run.host_output),
+                host_match_kind,
+            );
+            let report_impl_output = report_actual_output(
+                &case.expected_output,
+                &report_note_output(&run.impl_output),
+                match_kind,
+            );
 
             let mut diff_out = None;
-            if run.impl_output != case.expected_output {
+            if match_kind.is_none() {
                 diff_out = Some(diff::render_diff(&case.expected_output, &run.impl_output));
             } else if !notes.is_empty() {
                 diff_out = Some(notes.join("\n"));
@@ -248,8 +269,8 @@ fn execute_case_with_evidence(
             checkpoints.push(Checkpoint::new(
                 "execution",
                 json!({
-                    "host_output": &run.host_output,
-                    "impl_output": &run.impl_output,
+                    "host_output": &report_host_output,
+                    "impl_output": &report_impl_output,
                     "host_parity": run.host_parity,
                     "note": &run.note,
                     "notes": notes,
@@ -267,9 +288,9 @@ fn execute_case_with_evidence(
             }
 
             CaseEvidence {
-                actual: run.impl_output.clone(),
+                actual: report_impl_output,
                 diff: diff_out,
-                passed: run.impl_output == case.expected_output,
+                passed: match_kind.is_some(),
                 checkpoints,
             }
         }
