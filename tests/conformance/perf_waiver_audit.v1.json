@@ -4,7 +4,14 @@
   "bead": "bd-b92jd.2.3",
   "owner_bead": "bd-b92jd.2",
   "generated_utc": "2026-05-05T02:50:00Z",
-  "source_commit": "56fdbbe6914cb0e4b5d4c3a0e0b5d44f0b87e5fa",
+  "source_commit": "current",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_perf_waiver_audit",
+    "waiver_audit_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "purpose": "Fail-closed audit binder for tests/conformance/perf_budget_policy.json#active_waivers. Refuses to advertise perf parity unless every active waiver carries (a) a non-broad suite_ids list (no [\"*\"], no [\"all\"]), (b) a non-empty owner bead, (c) a non-empty failure_signature, and (d) an expires_at date that is still in the future as of the harness run. Drift in any of these landings — broad waiver, missing owner, expired waiver, or missing failure_signature — blocks claim advancement at every replacement level.",
   "subject": {
     "policy_artifact": "tests/conformance/perf_budget_policy.json",

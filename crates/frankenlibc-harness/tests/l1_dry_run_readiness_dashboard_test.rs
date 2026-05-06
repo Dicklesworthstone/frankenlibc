@@ -1171,6 +1171,86 @@ fn dlfcn_l1_burndown_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn perf_waiver_audit_source_freshness_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "perf-waiver-audit-source-commit-field",
+            (
+                "source_commit_freshness_policy.recorded_source_commit_field",
+                json!("source_commit"),
+            ),
+        ),
+        (
+            "perf-waiver-audit-source-commit-comparison-target",
+            (
+                "source_commit_freshness_policy.comparison_target",
+                json!("current git HEAD"),
+            ),
+        ),
+        (
+            "perf-waiver-audit-source-commit-stale-result",
+            (
+                "source_commit_freshness_policy.stale_result",
+                json!("block_perf_waiver_audit"),
+            ),
+        ),
+        (
+            "perf-waiver-audit-source-commit-no-waiver-audit",
+            (
+                "source_commit_freshness_policy.waiver_audit_allowed_when_stale",
+                json!(false),
+            ),
+        ),
+        (
+            "perf-waiver-audit-source-commit-rejection-kind",
+            (
+                "source_commit_freshness_policy.rejected_evidence_kind",
+                json!("stale_source_commit"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("perf-waiver-audit-source-commit-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows
+            .remove(row_id)
+            .ok_or_else(|| test_error(format!("unexpected perf waiver audit row: {row_id}")))?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "perf",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/perf_waiver_audit.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing perf waiver audit freshness dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn every_input_source_commit_freshness_policy_is_exposed() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let rows = as_array(&dashboard["rows"], "rows")?;

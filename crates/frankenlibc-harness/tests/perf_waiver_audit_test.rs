@@ -16,10 +16,11 @@
 //! Fail-closed: any drift surfaces as a harness-test failure with a
 //! per-rejection reason naming the offending waiver.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -80,6 +81,70 @@ fn audit_path() -> PathBuf {
 
 fn budget_policy_path() -> PathBuf {
     workspace_root().join("tests/conformance/perf_budget_policy.json")
+}
+
+fn git_head(root: &Path) -> Result<String, Box<dyn Error>> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(root)
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+    let head = String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
+        .trim()
+        .to_owned();
+    ensure(
+        is_hex_commit(&head),
+        format!("git rev-parse HEAD returned invalid commit {head:?}"),
+    )?;
+    Ok(head)
+}
+
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn source_commit_is_current(value: &str, current_head: &str) -> bool {
+    value == "current" || value == current_head
+}
+
+fn expected_source_commit_freshness_policy() -> Value {
+    json!({
+        "recorded_source_commit_field": "source_commit",
+        "comparison_target": "current git HEAD",
+        "stale_result": "block_perf_waiver_audit",
+        "waiver_audit_allowed_when_stale": false,
+        "rejected_evidence_kind": "stale_source_commit",
+    })
+}
+
+fn assert_source_commit_freshness_policy(audit: &Value) -> TestResult {
+    ensure_eq(
+        audit["source_commit_freshness_policy"].clone(),
+        expected_source_commit_freshness_policy(),
+        "source_commit_freshness_policy",
+    )
+}
+
+fn assert_recorded_source_commit_is_current(root: &Path, audit: &Value) -> TestResult {
+    let source_commit = as_str(&audit["source_commit"], "source_commit")?;
+    ensure(
+        source_commit == "current" || is_hex_commit(source_commit),
+        format!("source_commit must be 'current' or a full hex git commit, got {source_commit:?}"),
+    )?;
+    let current_head = git_head(root)?;
+    ensure(
+        source_commit_is_current(source_commit, &current_head),
+        "source_commit must be 'current' or match current git HEAD",
+    )
 }
 
 const REQUIRED_LOG_FIELDS: &[&str] = &[
@@ -155,12 +220,38 @@ fn audit_artifact_is_well_formed() -> TestResult {
         "schema_version",
     )?;
     ensure_eq(audit["bead"].as_str(), Some("bd-b92jd.2.3"), "bead")?;
-    ensure(
-        !audit["source_commit"]
-            .as_str()
-            .unwrap_or_default()
-            .is_empty(),
-        "source_commit must be set",
+    ensure_eq(
+        audit["source_commit"].as_str(),
+        Some("current"),
+        "checked-in perf waiver audit source_commit must use current marker",
+    )?;
+    assert_recorded_source_commit_is_current(&workspace_root(), &audit)?;
+    let freshness_policy = &audit["source_commit_freshness_policy"];
+    assert_source_commit_freshness_policy(&audit)?;
+    ensure_eq(
+        freshness_policy["recorded_source_commit_field"].as_str(),
+        Some("source_commit"),
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        freshness_policy["comparison_target"].as_str(),
+        Some("current git HEAD"),
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    ensure_eq(
+        freshness_policy["stale_result"].as_str(),
+        Some("block_perf_waiver_audit"),
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    ensure_eq(
+        freshness_policy["waiver_audit_allowed_when_stale"].as_bool(),
+        Some(false),
+        "source_commit_freshness_policy.waiver_audit_allowed_when_stale",
+    )?;
+    ensure_eq(
+        freshness_policy["rejected_evidence_kind"].as_str(),
+        Some("stale_source_commit"),
+        "source_commit_freshness_policy.rejected_evidence_kind",
     )?;
 
     let log_fields: Vec<&str> = as_array(&audit["required_log_fields"], "required_log_fields")?
@@ -192,6 +283,40 @@ fn audit_artifact_is_well_formed() -> TestResult {
             format!("rejected_evidence_kinds must include {kind}"),
         )?;
     }
+    Ok(())
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_perf_waiver_audit() -> TestResult {
+    let mut audit = load_json(&audit_path())?;
+    audit["source_commit"] = json!("0000000000000000000000000000000000000000");
+
+    let error = assert_recorded_source_commit_is_current(&workspace_root(), &audit)
+        .expect_err("stale recorded source_commit should be rejected");
+    ensure(
+        error
+            .to_string()
+            .contains("source_commit must be 'current' or match current git HEAD"),
+        format!("unexpected stale source_commit error: {error}"),
+    )?;
+
+    let policy = &audit["source_commit_freshness_policy"];
+    ensure_eq(
+        policy["stale_result"].as_str(),
+        Some("block_perf_waiver_audit"),
+        "stale perf waiver audit source_commit must block waiver audit evidence",
+    )?;
+    ensure_eq(
+        policy["waiver_audit_allowed_when_stale"].as_bool(),
+        Some(false),
+        "stale perf waiver audit source_commit must not allow waiver audit evidence",
+    )?;
+    ensure_eq(
+        policy["rejected_evidence_kind"].as_str(),
+        Some("stale_source_commit"),
+        "stale perf waiver audit source_commit must use stale_source_commit",
+    )?;
+
     Ok(())
 }
 
