@@ -5,7 +5,14 @@
   "owner_family_group": "fpg-gap-summary-evidence-foundation",
   "evidence_owner": "conformance, benchmark, ABI-symbol, and proof-binder owners",
   "generated_utc": "2026-05-03T17:16:41Z",
-  "source_commit": "5df185a7b0403e4ee5d69ad24ec9f382c62c49ed",
+  "source_commit": "current",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_foundation_gate_evidence",
+    "foundation_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "purpose": "Fail-closed gate for the seven foundation rows in the FEATURE_PARITY gap summary. These rows may stay IN_PROGRESS while evidence is partial, but they cannot advance to DONE or replacement level L1/L2/L3 unless every bound fixture, benchmark, version-script, proof-binder, runtime-math, guardrail, and strict/hardened membrane-mode anchor is current and machine-verifiable.",
   "inputs": {
     "feature_parity": "FEATURE_PARITY.md",
