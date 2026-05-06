@@ -1,0 +1,476 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-tls-blocker-diagnostics",
+  "bead": "bd-zyck1.89",
+  "source_commit": "current",
+  "source_commit_hint": "2fadeb011f6e",
+  "generated_utc": "2026-05-06T04:42:22Z",
+  "purpose": "Report-only diagnostic that traces the current standalone forge __tls_get_addr@GLIBC_2.3 blocker back to FrankenLibC TLS source surfaces. It preserves the current replacement claim boundary while giving follow-up work a machine-checkable source and artifact control gate.",
+  "inputs": {
+    "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "standalone_compiler_runtime_blocker_diagnostics": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+    "standalone_compiler_runtime_experiment": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+    "abi_source_dir": "crates/frankenlibc-abi/src",
+    "core_source_dir": "crates/frankenlibc-core/src",
+    "membrane_source_dir": "crates/frankenlibc-membrane/src"
+  },
+  "report_policy": {
+    "promotion_allowed": false,
+    "replacement_level_change_allowed": false,
+    "default_build_profile_change_allowed": false,
+    "default_tls_model_change_allowed": false,
+    "source_rewrite_allowed": false,
+    "stale_result": "block_standalone_tls_blocker_diagnostics",
+    "refresh_required_on_blocker_delta": true,
+    "refresh_required_on_thread_local_inventory_delta": true,
+    "non_baseline_experiments_require_separate_bead": true
+  },
+  "current_forge_evidence": {
+    "source_artifact": "target/conformance/standalone_replacement_artifact.report.json",
+    "source_mode": "forge",
+    "latest_probe_command": "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR=/data/tmp/frankenlibc-SwiftKnoll-bd-zyck1.87-forge-cargo STANDALONE_REPLACEMENT_OUT_DIR=/data/tmp/frankenlibc-SwiftKnoll-bd-zyck1.87-forge-out STANDALONE_REPLACEMENT_REPORT=/data/tmp/frankenlibc-SwiftKnoll-bd-zyck1.87-standalone_replacement_artifact.report.json STANDALONE_REPLACEMENT_LOG=/data/tmp/frankenlibc-SwiftKnoll-bd-zyck1.87-standalone_replacement_artifact.log.jsonl RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_PRIORITY=high scripts/check_standalone_replacement_artifact.sh --forge",
+    "latest_probe_result": "pass",
+    "latest_probe_claim_status": "claim_blocked",
+    "latest_probe_artifact_status": "current",
+    "latest_probe_failure_signature": "host_glibc_dependency",
+    "latest_probe_artifact_sha256": "0caf2f836d1fff38afcdb7d5b5f56b46f2f9e23e7c1dc7af434325e0a1406275",
+    "observed_artifact_symbols": {
+      "undefined_tls_symbols": [
+        "__tls_get_addr@GLIBC_2.3"
+      ],
+      "undefined_glibc_symbols": [
+        "__tls_get_addr@GLIBC_2.3"
+      ],
+      "host_version_requirements": [
+        "ld-linux-x86-64.so.2:GLIBC_2.3"
+      ],
+      "version_needs": {
+        "ld-linux-x86-64.so.2": [
+          "GLIBC_2.3"
+        ]
+      }
+    },
+    "evidence_command_results": {
+      "nm_dynamic": {
+        "command": "nm -D libfrankenlibc_replace.so",
+        "exit_code": 0,
+        "observed_undefined_tls_symbols": [
+          "__tls_get_addr@GLIBC_2.3"
+        ]
+      },
+      "readelf_symbols": {
+        "command": "readelf -Ws libfrankenlibc_replace.so",
+        "exit_code": 0,
+        "observed_undefined_tls_symbols": [
+          "__tls_get_addr@GLIBC_2.3"
+        ]
+      },
+      "readelf_version": {
+        "command": "readelf --version-info libfrankenlibc_replace.so",
+        "exit_code": 0,
+        "observed_tls_version_needs": {
+          "ld-linux-x86-64.so.2": [
+            "GLIBC_2.3"
+          ]
+        }
+      }
+    },
+    "compiler_runtime_experiment_confirmation": {
+      "source": "bd-zyck1.88 live compiler-runtime experiment",
+      "baseline_release_standalone": {
+        "artifact_sha256": "0caf2f836d1fff38afcdb7d5b5f56b46f2f9e23e7c1dc7af434325e0a1406275",
+        "undefined_tls_symbols": [
+          "__tls_get_addr@GLIBC_2.3"
+        ],
+        "nm_dynamic_line": 1010
+      },
+      "panic_abort_compiler_runtime_minimized": {
+        "artifact_sha256": "01b97378034eefec1b11382862c79786e67b10018c022d117cb58a68dec2b21e",
+        "undefined_tls_symbols": [
+          "__tls_get_addr@GLIBC_2.3"
+        ],
+        "nm_dynamic_line": 1008
+      },
+      "classification": "compiler-runtime panic-abort experiment improves unwind blockers but leaves the TLS relocation unchanged, so __tls_get_addr needs a TLS/source-surface follow-up instead of a panic-profile follow-up."
+    }
+  },
+  "source_surface_scan": {
+    "source_scan_command": "rg -n \"^[[:space:]]*(std::)?thread_local!\" crates/frankenlibc-abi/src crates/frankenlibc-core/src crates/frankenlibc-membrane/src -g'*.rs'",
+    "total_thread_local_macro_count": 90,
+    "thread_local_source_file_count": 29,
+    "thread_local_inventory": [
+      {
+        "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+        "owner_surface": "abi_unistd_reentrant_buffers_and_lookup_state",
+        "thread_local_macro_count": 25,
+        "line_numbers": [
+          7114,
+          7480,
+          8049,
+          8220,
+          10060,
+          10339,
+          11620,
+          12367,
+          13265,
+          14451,
+          16175,
+          16259,
+          16316,
+          16461,
+          16644,
+          16806,
+          18771,
+          19293,
+          19643,
+          19892,
+          20226,
+          21978,
+          22248,
+          22409,
+          24769
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/resolv_abi.rs",
+        "owner_surface": "abi_resolver_tls_and_h_errno_state",
+        "thread_local_macro_count": 14,
+        "line_numbers": [
+          277,
+          520,
+          1580,
+          1606,
+          2171,
+          2796,
+          3856,
+          3963,
+          4010,
+          4043,
+          4170,
+          4287,
+          4780,
+          5101
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/rpc_abi.rs",
+        "owner_surface": "abi_rpc_thread_local_buffers",
+        "thread_local_macro_count": 7,
+        "line_numbers": [
+          1393,
+          2327,
+          2352,
+          2496,
+          2512,
+          2526,
+          2540
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "owner_surface": "abi_glibc_internal_process_and_tls_shims",
+        "thread_local_macro_count": 6,
+        "line_numbers": [
+          186,
+          1249,
+          3522,
+          6463,
+          6885,
+          7794
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/string_abi.rs",
+        "owner_surface": "abi_string_membrane_recursion_and_scratch_state",
+        "thread_local_macro_count": 4,
+        "line_numbers": [
+          28,
+          2730,
+          3977,
+          5484
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/malloc_abi.rs",
+        "owner_surface": "abi_malloc_thread_cache_and_recursion_state",
+        "thread_local_macro_count": 4,
+        "line_numbers": [
+          84,
+          577,
+          600,
+          920
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/stdlib_abi.rs",
+        "owner_surface": "abi_stdlib_conversion_and_random_state",
+        "thread_local_macro_count": 3,
+        "line_numbers": [
+          3948,
+          4843,
+          4869
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/pwd_abi.rs",
+        "owner_surface": "abi_passwd_reentrant_storage",
+        "thread_local_macro_count": 3,
+        "line_numbers": [
+          287,
+          708,
+          1023
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
+        "owner_surface": "abi_wchar_locale_and_scan_state",
+        "thread_local_macro_count": 2,
+        "line_numbers": [
+          4363,
+          4849
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
+        "owner_surface": "abi_stdio_error_and_parser_state",
+        "thread_local_macro_count": 2,
+        "line_numbers": [
+          5519,
+          7017
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+        "owner_surface": "abi_startup_tls_destructor_state",
+        "thread_local_macro_count": 2,
+        "line_numbers": [
+          917,
+          942
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-membrane/src/tls_cache.rs",
+        "owner_surface": "membrane_validation_tls_cache",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          217
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+        "owner_surface": "membrane_validator_thread_local_ebr",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          256
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-membrane/src/evidence.rs",
+        "owner_surface": "membrane_evidence_thread_local_guard",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          228
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-membrane/src/bravo.rs",
+        "owner_surface": "membrane_bravo_reader_bias_state",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          36
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-core/src/setjmp/mod.rs",
+        "owner_surface": "core_setjmp_thread_local_jmpbuf_state",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          25
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-core/src/pthread/tls.rs",
+        "owner_surface": "core_pthread_tls_key_storage",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          125
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-core/src/malloc/elimination.rs",
+        "owner_surface": "core_malloc_thread_local_elimination_state",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          24
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-core/src/errno/mod.rs",
+        "owner_surface": "core_errno_thread_local_slot",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          7
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/time_abi.rs",
+        "owner_surface": "abi_time_reentrant_storage",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          745
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/signal_abi.rs",
+        "owner_surface": "abi_signal_thread_local_state",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          350
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+        "owner_surface": "abi_runtime_policy_thread_local_depth",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          798
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+        "owner_surface": "abi_pthread_thread_local_handles",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          177
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/inet_abi.rs",
+        "owner_surface": "abi_inet_thread_local_result_buffers",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          286
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/grp_abi.rs",
+        "owner_surface": "abi_group_reentrant_storage",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          299
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/errno_abi.rs",
+        "owner_surface": "abi_errno_location_tls_slot",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          25
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+        "owner_surface": "abi_dlfcn_thread_local_error_state",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          28
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/dirent_abi.rs",
+        "owner_surface": "abi_dirent_readdir_storage",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          148
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-abi/src/ctype_abi.rs",
+        "owner_surface": "abi_ctype_locale_thread_local_state",
+        "thread_local_macro_count": 1,
+        "line_numbers": [
+          160
+        ]
+      }
+    ]
+  },
+  "source_owner_groups": [
+    {
+      "group_id": "primary_errno_tls",
+      "classification": "direct_tls_symbol_pressure",
+      "paths": [
+        "crates/frankenlibc-abi/src/errno_abi.rs",
+        "crates/frankenlibc-core/src/errno/mod.rs"
+      ],
+      "why_it_matters": "__errno_location is an exported libc ABI accessor backed by thread-local storage. It is the highest-priority owned source surface for proving whether libc-visible TLS can avoid a host __tls_get_addr edge."
+    },
+    {
+      "group_id": "abi_reentrant_storage",
+      "classification": "direct_tls_symbol_pressure",
+      "paths": [
+        "crates/frankenlibc-abi/src/ctype_abi.rs",
+        "crates/frankenlibc-abi/src/dirent_abi.rs",
+        "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+        "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "crates/frankenlibc-abi/src/grp_abi.rs",
+        "crates/frankenlibc-abi/src/inet_abi.rs",
+        "crates/frankenlibc-abi/src/malloc_abi.rs",
+        "crates/frankenlibc-abi/src/pthread_abi.rs",
+        "crates/frankenlibc-abi/src/pwd_abi.rs",
+        "crates/frankenlibc-abi/src/resolv_abi.rs",
+        "crates/frankenlibc-abi/src/rpc_abi.rs",
+        "crates/frankenlibc-abi/src/runtime_policy.rs",
+        "crates/frankenlibc-abi/src/signal_abi.rs",
+        "crates/frankenlibc-abi/src/startup_abi.rs",
+        "crates/frankenlibc-abi/src/stdio_abi.rs",
+        "crates/frankenlibc-abi/src/stdlib_abi.rs",
+        "crates/frankenlibc-abi/src/string_abi.rs",
+        "crates/frankenlibc-abi/src/time_abi.rs",
+        "crates/frankenlibc-abi/src/unistd_abi.rs",
+        "crates/frankenlibc-abi/src/wchar_abi.rs"
+      ],
+      "why_it_matters": "These ABI modules own exported libc behavior with reentrant buffers, resolver state, startup destructor state, and recursion guards. A future TLS dehosting bead must show which of these survive into the standalone dynamic symbol table."
+    },
+    {
+      "group_id": "core_and_membrane_internal_tls",
+      "classification": "possible_cdylib_tls_pressure",
+      "paths": [
+        "crates/frankenlibc-core/src/malloc/elimination.rs",
+        "crates/frankenlibc-core/src/pthread/tls.rs",
+        "crates/frankenlibc-core/src/setjmp/mod.rs",
+        "crates/frankenlibc-membrane/src/bravo.rs",
+        "crates/frankenlibc-membrane/src/evidence.rs",
+        "crates/frankenlibc-membrane/src/ptr_validator.rs",
+        "crates/frankenlibc-membrane/src/tls_cache.rs"
+      ],
+      "why_it_matters": "These are internal implementation TLS sites that can still contribute TLS relocations once linked into the replacement cdylib."
+    }
+  ],
+  "negative_control_gate": {
+    "source_scan_command": "rg -n \"^[[:space:]]*(std::)?thread_local!\" crates/frankenlibc-abi/src crates/frankenlibc-core/src crates/frankenlibc-membrane/src -g'*.rs'",
+    "artifact_nm_command": "nm -D libfrankenlibc_replace.so | rg \"__tls_get_addr(@GLIBC_2.3)?\"",
+    "artifact_readelf_command": "readelf -Ws libfrankenlibc_replace.so | rg \"UND __tls_get_addr(@GLIBC_2.3)?\"",
+    "current_positive_control": [
+      "baseline-release-standalone still reports __tls_get_addr@GLIBC_2.3",
+      "panic-abort-compiler-runtime-minimized still reports __tls_get_addr@GLIBC_2.3"
+    ],
+    "future_pass_conditions": [
+      "artifact_state.dependency_breakdown.undefined_tls_symbols is empty",
+      "nm -D reports no undefined __tls_get_addr symbol",
+      "readelf -Ws reports no undefined __tls_get_addr symbol",
+      "source_surface_scan.thread_local_inventory is refreshed atomically if source TLS macro sites change"
+    ],
+    "claim_guard": "A source-only rewrite, profile-only change, or prose update cannot promote standalone replacement claims unless the artifact-level nm/readelf controls prove __tls_get_addr is absent."
+  },
+  "summary": {
+    "report_only": true,
+    "undefined_tls_symbol_count": 1,
+    "thread_local_macro_count": 90,
+    "thread_local_source_file_count": 29,
+    "abi_thread_local_macro_count": 82,
+    "core_thread_local_macro_count": 4,
+    "membrane_thread_local_macro_count": 4,
+    "next_safe_action": "Add a report-only TLS model/startup experiment that compares the current baseline against owned TLS runtime or explicit TLS model changes, then require nm/readelf absence of __tls_get_addr before changing any replacement claim."
+  }
+}
