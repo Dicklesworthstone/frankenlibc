@@ -91,6 +91,39 @@ fn log_path(root: &Path) -> PathBuf {
     root.join("target/conformance/fpg_online_control_gate.log.jsonl")
 }
 
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn git_head(root: &Path) -> TestResult<String> {
+    let output = Command::new("git")
+        .args([
+            "-C",
+            root.to_str()
+                .ok_or_else(|| test_error("root path must be UTF-8"))?,
+            "rev-parse",
+            "HEAD",
+        ])
+        .output()
+        .map_err(|err| test_error(format!("failed to read git HEAD: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "git rev-parse HEAD failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+    Ok(String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git HEAD was not UTF-8: {err}")))?
+        .trim()
+        .to_owned())
+}
+
+fn source_commit_is_current(root: &Path, value: &str) -> TestResult<bool> {
+    Ok(value == "current" || (is_hex_commit(value) && value == git_head(root)?))
+}
+
 fn load_json(path: &Path) -> TestResult<Value> {
     let content = std::fs::read_to_string(path)
         .map_err(|err| test_error(format!("{} should be readable: {err}", path.display())))?;
@@ -221,6 +254,58 @@ fn gate_artifact_covers_online_control_rows() -> TestResult {
         string_field(&gate, "owner_family_group", "gate")?,
         "fpg-proof-online-control",
         "owner_family_group",
+    )?;
+    let source_commit = string_field(&gate, "source_commit", "gate")?;
+    ensure_eq(source_commit, "current", "gate source_commit marker")?;
+    ensure(
+        source_commit_is_current(&root, source_commit)?,
+        "gate source_commit must be current",
+    )?;
+    let freshness_policy = as_object(
+        field(&gate, "source_commit_freshness_policy", "gate")?,
+        "source_commit_freshness_policy",
+    )?;
+    ensure_eq(
+        freshness_policy
+            .get("recorded_source_commit_field")
+            .and_then(Value::as_str)
+            .ok_or_else(|| test_error("recorded_source_commit_field must be a string"))?,
+        "source_commit",
+        "source commit freshness recorded field",
+    )?;
+    ensure_eq(
+        freshness_policy
+            .get("comparison_target")
+            .and_then(Value::as_str)
+            .ok_or_else(|| test_error("comparison_target must be a string"))?,
+        "current git HEAD",
+        "source commit freshness comparison target",
+    )?;
+    ensure_eq(
+        freshness_policy
+            .get("stale_result")
+            .and_then(Value::as_str)
+            .ok_or_else(|| test_error("stale_result must be a string"))?,
+        "block_online_control_gate_evidence",
+        "source commit freshness stale result",
+    )?;
+    ensure_eq(
+        freshness_policy
+            .get("online_control_evidence_allowed_when_stale")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| {
+                test_error("online_control_evidence_allowed_when_stale must be a boolean")
+            })?,
+        false,
+        "source commit freshness stale allowance",
+    )?;
+    ensure_eq(
+        freshness_policy
+            .get("rejected_evidence_kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| test_error("rejected_evidence_kind must be a string"))?,
+        "stale_source_commit",
+        "source commit freshness rejected evidence kind",
     )?;
 
     let inputs = as_object(field(&gate, "inputs", "gate")?, "inputs")?;
@@ -371,6 +456,31 @@ fn gate_rejects_premature_done_claim() -> TestResult {
     )?;
     let report = run_gate_with_fixture(&root, "premature_done", &gate)?;
     expect_failed_check(&report, "claim_policy")
+}
+
+#[test]
+fn gate_rejects_stale_gate_source_commit() -> TestResult {
+    let root = workspace_root();
+    let mut gate = load_json(&gate_path())?;
+    set_field(
+        &mut gate,
+        "source_commit",
+        Value::String("0000000000000000000000000000000000000000".to_owned()),
+        "gate",
+    )?;
+    let report = run_gate_with_fixture(&root, "stale_source_commit", &gate)?;
+    expect_failed_check(&report, "top_level_shape")?;
+
+    let report_json = load_json(&report)?;
+    let errors = as_array(field(&report_json, "errors", "report")?, "report.errors")?;
+    ensure(
+        errors.iter().any(|entry| {
+            entry.as_str().is_some_and(|text| {
+                text.contains("gate source_commit must be 'current' or match current git HEAD")
+            })
+        }),
+        "stale source_commit error should be reported",
+    )
 }
 
 #[test]

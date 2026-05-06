@@ -19,6 +19,7 @@ mkdir -p "${OUT_DIR}"
 
 python3 - "${ROOT}" "${GATE}" "${LEDGER}" "${PARITY}" "${GROUPS_PATH}" "${OWNER_GROUPS}" "${REPORT}" "${LOG}" <<'PY'
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,6 +79,13 @@ INPUT_KEYS = [
     "risk_pareto_calibration",
     "runtime_math_linkage",
 ]
+EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_online_control_gate_evidence",
+    "online_control_evidence_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
+}
 
 errors = []
 checks = {
@@ -105,6 +113,28 @@ def load_json(path, label):
     except Exception as exc:
         fail(f"{label}: cannot parse {path}: {exc}")
         return None
+
+
+def is_hex_commit(value):
+    return isinstance(value, str) and len(value) == 40 and all(ch in "0123456789abcdef" for ch in value)
+
+
+def git_head():
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+    except Exception:
+        return None
+
+
+def source_commit_is_current(value):
+    head = git_head()
+    return value == "current" or (head is not None and is_hex_commit(value) and value == head)
 
 
 gate = load_json(gate_path, "gate")
@@ -136,8 +166,10 @@ if isinstance(gate, dict):
         fail("gate owner_family_group must be fpg-proof-online-control")
     if gate.get("evidence_owner") != "runtime_math controller owners":
         fail("gate evidence_owner does not match owner-family group")
-    if not gate.get("source_commit"):
-        fail("gate source_commit must be non-empty")
+    if not source_commit_is_current(gate.get("source_commit")):
+        fail("gate source_commit must be 'current' or match current git HEAD")
+    if gate.get("source_commit_freshness_policy") != EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY:
+        fail("source_commit_freshness_policy must match the stale online-control gate block contract")
     if gate.get("required_log_fields") != REQUIRED_LOG_FIELDS:
         fail("gate required_log_fields must match the bd-bp8fl.3.9 contract")
     try:

@@ -5,7 +5,14 @@
   "owner_family_group": "fpg-proof-online-control",
   "evidence_owner": "runtime_math controller owners",
   "generated_utc": "2026-05-03T21:49:55Z",
-  "source_commit": "feee325456d39b89c6974984f0c3f97e75fde3af",
+  "source_commit": "current",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_online_control_gate_evidence",
+    "online_control_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "purpose": "Fail-closed gate for the thirteen online controller, decision, and risk proof rows in FEATURE_PARITY.md. Runtime controller claims may remain PLANNED or IN_PROGRESS, but they cannot advance to DONE or replacement level L1/L2/L3 without deterministic calibration/replay evidence, latency/risk budget policy, current runtime-math source anchors, and missing-proof rejection.",
   "inputs": {
     "feature_parity": "FEATURE_PARITY.md",
