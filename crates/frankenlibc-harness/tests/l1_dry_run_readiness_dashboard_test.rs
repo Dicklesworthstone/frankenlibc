@@ -531,6 +531,38 @@ fn standalone_artifact_report_rows_are_explicit() -> TestResult {
             "artifact_state.mtime",
         ),
         (
+            "standalone-artifact-report-rustc-version-diagnostic",
+            "build_provenance.rustc_version",
+        ),
+        (
+            "standalone-artifact-report-cargo-profile-diagnostic",
+            "build_provenance.cargo_profile",
+        ),
+        (
+            "standalone-artifact-report-target-triple-diagnostic",
+            "build_provenance.target_triple",
+        ),
+        (
+            "standalone-artifact-report-cargo-target-dir-diagnostic",
+            "build_provenance.cargo_target_dir",
+        ),
+        (
+            "standalone-artifact-report-build-command-diagnostic",
+            "build_provenance.build_command",
+        ),
+        (
+            "standalone-artifact-report-sanitized-env-diagnostic",
+            "build_provenance.sanitized_env",
+        ),
+        (
+            "standalone-artifact-report-linker-path-diagnostic",
+            "build_provenance.linker.path",
+        ),
+        (
+            "standalone-artifact-report-linker-version-diagnostic",
+            "build_provenance.linker.version",
+        ),
+        (
             "standalone-artifact-report-undefined-symbols-diagnostic",
             "artifact_state.dependency_breakdown.undefined_symbols",
         ),

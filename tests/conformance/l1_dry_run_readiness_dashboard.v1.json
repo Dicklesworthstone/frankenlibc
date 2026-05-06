@@ -534,6 +534,70 @@
       "rationale": "L1 dashboard consumers must see the artifact mtime used for freshness checks."
     },
     {
+      "row_id": "standalone-artifact-report-rustc-version-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.29",
+      "expected_value": "build_provenance.rustc_version",
+      "rationale": "L1 dashboard consumers must see the rustc version used to produce standalone forge evidence."
+    },
+    {
+      "row_id": "standalone-artifact-report-cargo-profile-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.30",
+      "expected_value": "build_provenance.cargo_profile",
+      "rationale": "L1 dashboard consumers must see the Cargo profile used to produce standalone forge evidence."
+    },
+    {
+      "row_id": "standalone-artifact-report-target-triple-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.31",
+      "expected_value": "build_provenance.target_triple",
+      "rationale": "L1 dashboard consumers must see the target triple behind standalone blocker evidence."
+    },
+    {
+      "row_id": "standalone-artifact-report-cargo-target-dir-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.32",
+      "expected_value": "build_provenance.cargo_target_dir",
+      "rationale": "L1 dashboard consumers must see the effective Cargo target directory behind standalone blocker evidence."
+    },
+    {
+      "row_id": "standalone-artifact-report-build-command-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.33",
+      "expected_value": "build_provenance.build_command",
+      "rationale": "L1 dashboard consumers must see the build argv used for standalone forge evidence."
+    },
+    {
+      "row_id": "standalone-artifact-report-sanitized-env-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.34",
+      "expected_value": "build_provenance.sanitized_env",
+      "rationale": "L1 dashboard consumers must see sanitized Rust/RCH environment provenance without exposing raw sensitive values."
+    },
+    {
+      "row_id": "standalone-artifact-report-linker-path-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.35",
+      "expected_value": "build_provenance.linker.path",
+      "rationale": "L1 dashboard consumers must see the discovered linker path for standalone forge evidence."
+    },
+    {
+      "row_id": "standalone-artifact-report-linker-version-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.36",
+      "expected_value": "build_provenance.linker.version",
+      "rationale": "L1 dashboard consumers must see the discovered linker version for standalone forge evidence."
+    },
+    {
       "row_id": "standalone-artifact-report-undefined-symbols-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",

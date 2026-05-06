@@ -47,6 +47,26 @@
     "reported_field": "artifact_state.sha256",
     "evidence_file": "artifact.sha256"
   },
+  "build_provenance_policy": {
+    "reported_field": "build_provenance",
+    "rustc_version_command": "rustc -Vv",
+    "target_triple_source": "CARGO_BUILD_TARGET or rustc host",
+    "linker_discovery_order": [
+      "CARGO_TARGET_<TRIPLE>_LINKER",
+      "RUSTFLAGS -C linker=<path>",
+      "cc"
+    ],
+    "sanitized_env_keys": [
+      "RUSTFLAGS",
+      "RUSTC_WRAPPER",
+      "RCH_ENV_ALLOWLIST",
+      "RCH_PRIORITY",
+      "RCH_VISIBILITY",
+      "RCH_QUEUE_WHEN_BUSY"
+    ],
+    "sensitive_env_values_redacted": true,
+    "redacted_env_value": "<redacted>"
+  },
   "required_log_fields": [
     "trace_id",
     "bead_id",
@@ -91,7 +111,15 @@
     "artifact_state.host_glibc_dependency",
     "artifact_state.path",
     "artifact_state.sha256",
-    "artifact_state.mtime"
+    "artifact_state.mtime",
+    "build_provenance.rustc_version",
+    "build_provenance.cargo_profile",
+    "build_provenance.target_triple",
+    "build_provenance.cargo_target_dir",
+    "build_provenance.build_command",
+    "build_provenance.sanitized_env",
+    "build_provenance.linker.path",
+    "build_provenance.linker.version"
   ],
   "required_evidence_files": [
     "build.stdout.txt",

@@ -112,6 +112,14 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.path",
     "artifact_state.sha256",
     "artifact_state.mtime",
+    "build_provenance.rustc_version",
+    "build_provenance.cargo_profile",
+    "build_provenance.target_triple",
+    "build_provenance.cargo_target_dir",
+    "build_provenance.build_command",
+    "build_provenance.sanitized_env",
+    "build_provenance.linker.path",
+    "build_provenance.linker.version",
 ]
 
 REQUIRED_TOOLS = ["rch", "cargo", "readelf", "nm", "ldd"]
@@ -158,6 +166,29 @@ EXPECTED_HASH_EVIDENCE_POLICY = {
     "implementation": "python3 hashlib.sha256",
     "reported_field": "artifact_state.sha256",
     "evidence_file": "artifact.sha256",
+}
+
+BUILD_PROVENANCE_ENV_KEYS = [
+    "RUSTFLAGS",
+    "RUSTC_WRAPPER",
+    "RCH_ENV_ALLOWLIST",
+    "RCH_PRIORITY",
+    "RCH_VISIBILITY",
+    "RCH_QUEUE_WHEN_BUSY",
+]
+REDACTED_ENV_VALUE = "<redacted>"
+EXPECTED_BUILD_PROVENANCE_POLICY = {
+    "reported_field": "build_provenance",
+    "rustc_version_command": "rustc -Vv",
+    "target_triple_source": "CARGO_BUILD_TARGET or rustc host",
+    "linker_discovery_order": [
+        "CARGO_TARGET_<TRIPLE>_LINKER",
+        "RUSTFLAGS -C linker=<path>",
+        "cc",
+    ],
+    "sanitized_env_keys": BUILD_PROVENANCE_ENV_KEYS,
+    "sensitive_env_values_redacted": True,
+    "redacted_env_value": REDACTED_ENV_VALUE,
 }
 
 EXPECTED_SYMBOL_SAMPLES = [
@@ -439,6 +470,10 @@ def sha256(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def sha256_text(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def unique_sorted(values):
@@ -727,6 +762,101 @@ def run_command(command, *, env=None, cwd=root, timeout=900):
         }
 
 
+def first_nonempty_line(text):
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def rustc_version_text():
+    result = run_command(["rustc", "-Vv"], timeout=5)
+    return (result["stdout"] + result["stderr"]).strip() or "unknown"
+
+
+def rustc_host_triple(version_text):
+    for line in version_text.splitlines():
+        if line.startswith("host:"):
+            return line.split(":", 1)[1].strip()
+    return "unknown"
+
+
+def rustflags_linker():
+    raw = os.environ.get("RUSTFLAGS", "")
+    if not raw:
+        return None
+    try:
+        parts = shlex.split(raw)
+    except ValueError:
+        return None
+    for idx, part in enumerate(parts):
+        if part == "-C" and idx + 1 < len(parts) and parts[idx + 1].startswith("linker="):
+            return parts[idx + 1].split("=", 1)[1]
+        if part.startswith("-Clinker="):
+            return part.split("=", 1)[1]
+    return None
+
+
+def sanitized_env_snapshot():
+    snapshot = {}
+    for key in BUILD_PROVENANCE_ENV_KEYS:
+        value = os.environ.get(key)
+        if value is None:
+            snapshot[key] = {
+                "present": False,
+                "value": None,
+                "sha256": None,
+                "redacted": False,
+            }
+        else:
+            snapshot[key] = {
+                "present": True,
+                "value": REDACTED_ENV_VALUE,
+                "sha256": sha256_text(value),
+                "redacted": True,
+            }
+    return snapshot
+
+
+def linker_provenance(target_triple):
+    linker_env_key = f"CARGO_TARGET_{env_key_fragment(target_triple)}_LINKER"
+    configured = os.environ.get(linker_env_key) or rustflags_linker() or "cc"
+    try:
+        configured_parts = shlex.split(configured)
+    except ValueError:
+        configured_parts = [configured]
+    executable = configured_parts[0] if configured_parts else "cc"
+    path = shutil.which(executable)
+    version = None
+    command = [executable, "--version"]
+    result = run_command(command, timeout=5)
+    if result["returncode"] == 0:
+        version = first_nonempty_line(result["stdout"] + result["stderr"])
+    return {
+        "env_key": linker_env_key,
+        "configured": configured,
+        "path": path,
+        "version": version,
+        "version_command": command,
+        "discovered": bool(path or version),
+    }
+
+
+def collect_build_provenance():
+    version_text = rustc_version_text()
+    target_triple = os.environ.get("CARGO_BUILD_TARGET") or rustc_host_triple(version_text)
+    return {
+        "rustc_version": version_text,
+        "cargo_profile": manifest.get("artifact_policy", {}).get("cargo_profile"),
+        "target_triple": target_triple,
+        "cargo_target_dir": str(cargo_target_dir),
+        "build_command": build_command(),
+        "sanitized_env": sanitized_env_snapshot(),
+        "linker": linker_provenance(target_triple),
+    }
+
+
 def append_log(event, *, artifact_path, artifact_status, claim_status, artifact_hash, command, exit_code, failure_signature, refs):
     row = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -792,6 +922,8 @@ def validate_manifest():
         errors.append("required_tools do not match script contract")
     if manifest.get("hash_evidence_policy") != EXPECTED_HASH_EVIDENCE_POLICY:
         errors.append("hash_evidence_policy does not match script contract")
+    if manifest.get("build_provenance_policy") != EXPECTED_BUILD_PROVENANCE_POLICY:
+        errors.append("build_provenance_policy does not match script contract")
     if manifest.get("symbol_samples") != EXPECTED_SYMBOL_SAMPLES:
         errors.append("symbol_samples do not match script contract")
     classifications = manifest.get("expected_failure_classifications", [])
@@ -1332,6 +1464,7 @@ artifact_state.setdefault("sha256", None)
 artifact_state.setdefault("mtime", None)
 
 claim_status = artifact_claim_status(artifact_state)
+build_provenance = collect_build_provenance()
 
 exit_code = 0 if not errors and artifact_state["failure_signature"] != "non_elf_artifact" else 1
 append_log(
@@ -1367,6 +1500,7 @@ report = {
     "source_commit": source_commit,
     "head_epoch": head_epoch,
     "cargo_target_dir": str(cargo_target_dir),
+    "build_provenance": build_provenance,
     "checks": checks,
     "artifact_state": artifact_state,
     "blocking_reasons": artifact_state.get("dependency_breakdown", {}).get("blocking_reasons", []),

@@ -52,6 +52,14 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.path",
     "artifact_state.sha256",
     "artifact_state.mtime",
+    "build_provenance.rustc_version",
+    "build_provenance.cargo_profile",
+    "build_provenance.target_triple",
+    "build_provenance.cargo_target_dir",
+    "build_provenance.build_command",
+    "build_provenance.sanitized_env",
+    "build_provenance.linker.path",
+    "build_provenance.linker.version",
 ];
 
 const REQUIRED_EVIDENCE_FILES: &[&str] = &[
@@ -139,6 +147,87 @@ fn symbol_sample_map(value: &serde_json::Value) -> HashSet<String> {
             present.as_bool().unwrap_or(false).then_some(symbol.clone())
         })
         .collect()
+}
+
+fn assert_build_provenance(report: &serde_json::Value) {
+    let provenance = report["build_provenance"]
+        .as_object()
+        .expect("build_provenance should be an object");
+    assert!(
+        provenance
+            .get("rustc_version")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|version| version.contains("rustc")),
+        "build_provenance.rustc_version should record rustc -Vv output"
+    );
+    assert_eq!(
+        provenance
+            .get("cargo_profile")
+            .and_then(serde_json::Value::as_str),
+        Some("release")
+    );
+    assert!(
+        provenance
+            .get("target_triple")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|triple| !triple.is_empty()),
+        "build_provenance.target_triple should not be empty"
+    );
+    assert!(
+        provenance
+            .get("cargo_target_dir")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|dir| !dir.is_empty()),
+        "build_provenance.cargo_target_dir should not be empty"
+    );
+    assert!(
+        provenance
+            .get("build_command")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|command| !command.is_empty()),
+        "build_provenance.build_command should record the effective build argv"
+    );
+    let env = provenance["sanitized_env"]
+        .as_object()
+        .expect("build_provenance.sanitized_env should be an object");
+    for key in [
+        "RUSTFLAGS",
+        "RUSTC_WRAPPER",
+        "RCH_ENV_ALLOWLIST",
+        "RCH_PRIORITY",
+        "RCH_VISIBILITY",
+        "RCH_QUEUE_WHEN_BUSY",
+    ] {
+        let entry = env
+            .get(key)
+            .and_then(serde_json::Value::as_object)
+            .expect("sanitized env entry should be an object");
+        assert!(
+            entry
+                .get("present")
+                .and_then(serde_json::Value::as_bool)
+                .is_some(),
+            "{key}.present should be recorded"
+        );
+        assert!(
+            entry
+                .get("redacted")
+                .and_then(serde_json::Value::as_bool)
+                .is_some(),
+            "{key}.redacted should be recorded"
+        );
+    }
+    let linker = provenance["linker"]
+        .as_object()
+        .expect("build_provenance.linker should be an object");
+    assert!(
+        linker.get("path").is_some(),
+        "build_provenance.linker.path should be present even when not discoverable"
+    );
+    assert!(
+        linker.get("version").is_some(),
+        "build_provenance.linker.version should be present even when not discoverable"
+    );
 }
 
 fn manifest() -> serde_json::Value {
@@ -755,6 +844,29 @@ fn manifest_matches_forge_contract() {
             .get("evidence_file")
             .and_then(serde_json::Value::as_str),
         Some("artifact.sha256")
+    );
+    assert_eq!(
+        manifest["build_provenance_policy"],
+        serde_json::json!({
+            "reported_field": "build_provenance",
+            "rustc_version_command": "rustc -Vv",
+            "target_triple_source": "CARGO_BUILD_TARGET or rustc host",
+            "linker_discovery_order": [
+                "CARGO_TARGET_<TRIPLE>_LINKER",
+                "RUSTFLAGS -C linker=<path>",
+                "cc",
+            ],
+            "sanitized_env_keys": [
+                "RUSTFLAGS",
+                "RUSTC_WRAPPER",
+                "RCH_ENV_ALLOWLIST",
+                "RCH_PRIORITY",
+                "RCH_VISIBILITY",
+                "RCH_QUEUE_WHEN_BUSY",
+            ],
+            "sensitive_env_values_redacted": true,
+            "redacted_env_value": "<redacted>",
+        })
     );
     let symbol_samples: Vec<_> = manifest["symbol_samples"]
         .as_array()
@@ -1471,6 +1583,7 @@ fn validate_only_writes_report_and_required_log_fields() {
     assert!(report["artifact_state"]["path"].is_null());
     assert!(report["artifact_state"]["sha256"].is_null());
     assert!(report["artifact_state"]["mtime"].is_null());
+    assert_build_provenance(&report);
 
     let log = std::fs::read_to_string(log).expect("log should be readable");
     let rows: Vec<serde_json::Value> = log
@@ -1481,6 +1594,54 @@ fn validate_only_writes_report_and_required_log_fields() {
     assert_eq!(rows.len(), 1);
     for field in REQUIRED_LOG_FIELDS {
         assert!(rows[0].get(*field).is_some(), "log row missing {field}");
+    }
+}
+
+#[test]
+fn validate_only_records_sanitized_build_provenance_env() {
+    let sample_rustflags = "--cfg redaction_sample_zyck191";
+    let sample_wrapper = "/tmp/wrapper-redaction-zyck191";
+    let (_temp, report, _log, output) = run_gate_with_env(
+        "--validate-only",
+        "standalone-artifact-provenance",
+        &[
+            ("RUSTFLAGS", sample_rustflags),
+            ("RUSTC_WRAPPER", sample_wrapper),
+            ("RCH_PRIORITY", "high"),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "validate-only failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let raw_report = std::fs::read_to_string(&report).expect("report should be readable");
+    assert!(
+        !raw_report.contains(sample_rustflags),
+        "raw RUSTFLAGS must not be written to report"
+    );
+    assert!(
+        !raw_report.contains(sample_wrapper),
+        "raw RUSTC_WRAPPER must not be written to report"
+    );
+    let report = load_json(&report);
+    assert_build_provenance(&report);
+    let env = &report["build_provenance"]["sanitized_env"];
+    for key in ["RUSTFLAGS", "RUSTC_WRAPPER", "RCH_PRIORITY"] {
+        assert_eq!(env[key]["present"].as_bool(), Some(true), "{key}.present");
+        assert_eq!(
+            env[key]["value"].as_str(),
+            Some("<redacted>"),
+            "{key}.value"
+        );
+        assert_eq!(env[key]["redacted"].as_bool(), Some(true), "{key}.redacted");
+        assert!(
+            env[key]["sha256"].as_str().is_some_and(
+                |hash| hash.len() == 64 && hash.chars().all(|ch| ch.is_ascii_hexdigit())
+            ),
+            "{key}.sha256 should be a hex fingerprint"
+        );
     }
 }
 
@@ -1515,6 +1676,7 @@ fn check_mode_reports_missing_artifact_as_claim_blocked() {
     );
     assert!(report["artifact_state"]["sha256"].is_null());
     assert!(report["artifact_state"]["mtime"].is_null());
+    assert_build_provenance(&report);
 }
 
 #[test]
@@ -1618,6 +1780,7 @@ fn forge_mode_can_materialize_a_supplied_shared_object_for_fast_tests() {
             "{filename}: default inspection timeout should be recorded"
         );
     }
+    assert_build_provenance(&report);
 }
 
 #[test]
