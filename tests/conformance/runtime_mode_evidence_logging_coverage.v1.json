@@ -1,0 +1,241 @@
+{
+  "schema_version": "runtime_mode_evidence_logging_coverage.v1",
+  "generated_by_bead": "bd-0agsk.11",
+  "source_todo_ids": [
+    "TODO-0701",
+    "TODO-0702",
+    "TODO-0703"
+  ],
+  "canonical_command": "scripts/check_runtime_mode_evidence_logging_coverage.sh --validate-only",
+  "purpose": "Fail closed when a subprocess-orchestrated harness campaign can inherit a stale FRANKENLIBC_MODE, omit startup-mode evidence, or lose the trace id needed to diagnose strict/hardened mode mismatch behavior.",
+  "input_artifacts": [
+    "docs/architecture_investigation_todo.md",
+    "tests/conformance/architecture_todo_reconciliation.v1.json",
+    "tests/conformance/runtime_env_inventory.v1.json",
+    "crates/frankenlibc-harness/src/bin/harness.rs",
+    "crates/frankenlibc-harness/src/kernel_regression_report.rs",
+    "crates/frankenlibc-harness/src/shadow_run.rs",
+    "scripts/check_standalone_link_run_smoke.sh",
+    "scripts/c_fixture_suite.sh",
+    "scripts/e2e_suite.sh",
+    "scripts/ld_preload_smoke.sh"
+  ],
+  "coverage_policy": {
+    "env_key": "FRANKENLIBC_MODE",
+    "allowed_modes": [
+      "strict",
+      "hardened"
+    ],
+    "process_immutable_after_startup": true,
+    "subprocess_rows_must_override_inherited_mode": true,
+    "startup_evidence_required": true,
+    "trace_id_required": true,
+    "ambient_tz_dependency_allowed": false,
+    "mismatch_behavior_required": true
+  },
+  "summary": {
+    "coverage_row_count": 7,
+    "subprocess_row_count": 7,
+    "startup_evidence_row_count": 7,
+    "ambient_tz_dependent_row_count": 0,
+    "mismatch_behavior_row_count": 7
+  },
+  "coverage_rows": [
+    {
+      "campaign_id": "harness_conformance_matrix_isolated",
+      "launch_surface": "harness conformance-matrix --isolate -> hidden conformance-matrix-case child",
+      "subprocess_launcher": "ProcCommand::new(exe)",
+      "sets_frankenlibc_mode": true,
+      "logs_startup_mode": true,
+      "startup_evidence_event": "conformance.runtime_mode_startup",
+      "mismatch_behavior": "runtime_mode_startup_mismatch",
+      "evidence_trace_id_template": "{campaign}::runtime-mode-startup::{mode}",
+      "ambient_env_controls": {
+        "tz_dependency": false,
+        "inherited_frankenlibc_mode_is_overridden": true
+      },
+      "source_checks": [
+        {
+          "path": "crates/frankenlibc-harness/src/bin/harness.rs",
+          "tokens": [
+            ".env(\"FRANKENLIBC_MODE\", mode)",
+            "conformance.runtime_mode_startup",
+            "runtime_mode_startup_mismatch",
+            "ambient_tz_dependency"
+          ]
+        }
+      ]
+    },
+    {
+      "campaign_id": "harness_kernel_regression_report",
+      "launch_surface": "harness kernel-regression-report -> kernel-regression-mode strict/hardened children",
+      "subprocess_launcher": "run_kernel_mode_subprocess",
+      "sets_frankenlibc_mode": true,
+      "logs_startup_mode": true,
+      "startup_evidence_event": "kernel-regression-mode metrics mode field",
+      "mismatch_behavior": "collect_mode_metrics rejects expected FRANKENLIBC_MODE mismatch",
+      "evidence_trace_id_template": "kernel-regression-mode::{mode}",
+      "ambient_env_controls": {
+        "tz_dependency": false,
+        "inherited_frankenlibc_mode_is_overridden": true
+      },
+      "source_checks": [
+        {
+          "path": "crates/frankenlibc-harness/src/bin/harness.rs",
+          "tokens": [
+            "run_kernel_mode_subprocess",
+            ".env(\"FRANKENLIBC_MODE\", mode)",
+            "kernel-regression-mode"
+          ]
+        },
+        {
+          "path": "crates/frankenlibc-harness/src/kernel_regression_report.rs",
+          "tokens": [
+            "expected FRANKENLIBC_MODE={expected:?} but config resolved to {got:?}",
+            "pub mode: String",
+            "collect_mode_metrics"
+          ]
+        }
+      ]
+    },
+    {
+      "campaign_id": "shadow_run_candidate_replay",
+      "launch_surface": "harness shadow-run candidate process replay",
+      "subprocess_launcher": "ProcessShadowExecutor",
+      "sets_frankenlibc_mode": true,
+      "logs_startup_mode": true,
+      "startup_evidence_event": "conformance.shadow_run_* log with mode",
+      "mismatch_behavior": "candidate env unconditionally overwrites FRANKENLIBC_MODE before execution",
+      "evidence_trace_id_template": "{bead_id}::{run_id}::{seq}",
+      "ambient_env_controls": {
+        "tz_dependency": false,
+        "inherited_frankenlibc_mode_is_overridden": true
+      },
+      "source_checks": [
+        {
+          "path": "crates/frankenlibc-harness/src/shadow_run.rs",
+          "tokens": [
+            "env.insert(\"FRANKENLIBC_MODE\".to_string(), mode.to_string());",
+            ".with_mode(context.mode.to_string())",
+            "\"decision_path\": \"conformance->shadow_run->compare\""
+          ]
+        }
+      ]
+    },
+    {
+      "campaign_id": "standalone_link_run_smoke",
+      "launch_surface": "scripts/check_standalone_link_run_smoke.sh candidate runtime process",
+      "subprocess_launcher": "subprocess.run",
+      "sets_frankenlibc_mode": true,
+      "logs_startup_mode": true,
+      "startup_evidence_event": "standalone link run smoke structured event runtime_mode",
+      "mismatch_behavior": "runtime_mode loop writes FRANKENLIBC_MODE into the candidate env before launch",
+      "evidence_trace_id_template": "{bead_id}::{run_dir}::{smoke_id}::{runtime_mode}::{event}",
+      "ambient_env_controls": {
+        "tz_dependency": false,
+        "inherited_frankenlibc_mode_is_overridden": true
+      },
+      "source_checks": [
+        {
+          "path": "scripts/check_standalone_link_run_smoke.sh",
+          "tokens": [
+            "env[\"FRANKENLIBC_MODE\"] = runtime_mode",
+            "\"runtime_mode\": runtime_mode",
+            "trace_id = f\"{bead_id or 'unknown'}::{run_dir.name}::{smoke_id}::{runtime_mode}::{event}\""
+          ]
+        }
+      ]
+    },
+    {
+      "campaign_id": "c_fixture_suite",
+      "launch_surface": "scripts/c_fixture_suite.sh strict/hardened LD_PRELOAD fixture binaries",
+      "subprocess_launcher": "env FRANKENLIBC_MODE + LD_PRELOAD",
+      "sets_frankenlibc_mode": true,
+      "logs_startup_mode": true,
+      "startup_evidence_event": "fixture_result trace row mode field",
+      "mismatch_behavior": "per-mode loop prefixes every fixture binary with FRANKENLIBC_MODE",
+      "evidence_trace_id_template": "{bead_id}::{run_id}::{seq}",
+      "ambient_env_controls": {
+        "tz_dependency": false,
+        "inherited_frankenlibc_mode_is_overridden": true
+      },
+      "source_checks": [
+        {
+          "path": "scripts/c_fixture_suite.sh",
+          "tokens": [
+            "env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" \"${bin}\"",
+            "\"mode\":\"%s\"",
+            "trace_id=\"${BEAD_ID}::${RUN_ID}::$(printf '%03d' \"${TRACE_SEQ}\")\""
+          ]
+        }
+      ]
+    },
+    {
+      "campaign_id": "ld_preload_smoke",
+      "launch_surface": "scripts/ld_preload_smoke.sh baseline/preload startup workloads",
+      "subprocess_launcher": "env FRANKENLIBC_MODE + LD_PRELOAD",
+      "sets_frankenlibc_mode": true,
+      "logs_startup_mode": true,
+      "startup_evidence_event": "case_pass/case_fail trace row mode and startup_path fields",
+      "mismatch_behavior": "failure_signature classifies startup failures per mode and label",
+      "evidence_trace_id_template": "{bead_id}::{run_id}::{mode}::{label}",
+      "ambient_env_controls": {
+        "tz_dependency": false,
+        "inherited_frankenlibc_mode_is_overridden": true
+      },
+      "source_checks": [
+        {
+          "path": "scripts/ld_preload_smoke.sh",
+          "tokens": [
+            "env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\"",
+            "local trace_id=\"${BEAD_ID}::${RUN_ID}::${mode}::${label}\"",
+            "\"startup_path\":\"%s\"",
+            "failure_signature"
+          ]
+        }
+      ]
+    },
+    {
+      "campaign_id": "e2e_suite",
+      "launch_surface": "scripts/e2e_suite.sh scenario process runner",
+      "subprocess_launcher": "timeout env FRANKENLIBC_MODE",
+      "sets_frankenlibc_mode": true,
+      "logs_startup_mode": true,
+      "startup_evidence_event": "e2e trace log mode/startup_path/failure_signature fields",
+      "mismatch_behavior": "scenario command receives per-row mode and emits startup_path/failure_signature on mismatch",
+      "evidence_trace_id_template": "bd-2ez::{run_id}::{seq}",
+      "ambient_env_controls": {
+        "tz_dependency": false,
+        "inherited_frankenlibc_mode_is_overridden": true
+      },
+      "source_checks": [
+        {
+          "path": "scripts/e2e_suite.sh",
+          "tokens": [
+            "env FRANKENLIBC_MODE=\"${mode}\"",
+            "local trace_id=\"bd-2ez::${RUN_ID}::$(printf '%03d' ${SEQ})\"",
+            "\\\"startup_path\\\":\\\"${startup_path}\\\"",
+            "\\\"env_fingerprint\\\":\\\"${env_fingerprint}\\\""
+          ]
+        }
+      ]
+    }
+  ],
+  "negative_tests": [
+    {
+      "id": "missing_startup_evidence",
+      "mutation": "Set any coverage_rows[*].logs_startup_mode to false.",
+      "expected_failure_signature": "startup_evidence_missing"
+    },
+    {
+      "id": "ambient_tz_dependency",
+      "mutation": "Set ambient_env_controls.tz_dependency to true.",
+      "expected_failure_signature": "ambient_tz_dependency"
+    },
+    {
+      "id": "missing_source_token",
+      "mutation": "Remove the source token that proves FRANKENLIBC_MODE is set before launching the subprocess.",
+      "expected_failure_signature": "source_token_missing"
+    }
+  ]
+}

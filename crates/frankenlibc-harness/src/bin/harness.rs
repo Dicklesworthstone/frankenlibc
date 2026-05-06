@@ -1,6 +1,6 @@
 //! CLI entrypoint for frankenlibc conformance harness.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
@@ -1668,6 +1668,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &matrix,
                 previous_matrix.as_ref(),
                 perf_budget_ms.max(1),
+                isolate,
             )?;
 
             eprintln!(
@@ -1706,11 +1707,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(134);
             }
 
+            let startup_frankenlibc_mode = std::env::var("FRANKENLIBC_MODE").ok();
             let envelope =
                 match frankenlibc_fixture_exec::execute_fixture_case(&function, &inputs, &mode) {
                     Ok(run) => MatrixCaseEnvelope::ok(run),
                     Err(err) => MatrixCaseEnvelope::error(err),
-                };
+                }
+                .with_startup_mode_evidence(&mode, startup_frankenlibc_mode);
             let payload = serde_json::to_vec(&envelope)?;
             std::io::stdout().write_all(&payload)?;
             std::io::stdout().flush()?;
@@ -1758,6 +1761,12 @@ struct MatrixCaseEnvelope {
     run: Option<frankenlibc_fixture_exec::DifferentialExecution>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    startup_runtime_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    startup_frankenlibc_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    startup_mode_matches: Option<bool>,
 }
 
 impl MatrixCaseEnvelope {
@@ -1766,6 +1775,9 @@ impl MatrixCaseEnvelope {
             kind: "ok".to_string(),
             run: Some(run),
             error: None,
+            startup_runtime_mode: None,
+            startup_frankenlibc_mode: None,
+            startup_mode_matches: None,
         }
     }
 
@@ -1774,7 +1786,22 @@ impl MatrixCaseEnvelope {
             kind: "error".to_string(),
             run: None,
             error: Some(error),
+            startup_runtime_mode: None,
+            startup_frankenlibc_mode: None,
+            startup_mode_matches: None,
         }
+    }
+
+    fn with_startup_mode_evidence(
+        mut self,
+        expected_mode: &str,
+        frankenlibc_mode: Option<String>,
+    ) -> Self {
+        let observed = frankenlibc_mode.unwrap_or_else(|| "<unset>".to_string());
+        self.startup_runtime_mode = Some(expected_mode.to_string());
+        self.startup_mode_matches = Some(observed == expected_mode);
+        self.startup_frankenlibc_mode = Some(observed);
+        self
     }
 }
 
@@ -1851,6 +1878,7 @@ fn run_conformance_case_subprocess(
         .arg(function)
         .arg("--mode")
         .arg(mode)
+        .env("FRANKENLIBC_MODE", mode)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1924,6 +1952,15 @@ fn run_conformance_case_subprocess(
             String::from_utf8_lossy(&stdout)
         ))
     })?;
+    let observed_mode = envelope
+        .startup_frankenlibc_mode
+        .clone()
+        .unwrap_or_else(|| "<missing>".to_string());
+    if envelope.startup_mode_matches != Some(true) {
+        return Err(MatrixCaseSubprocessError::Error(format!(
+            "runtime_mode_startup_mismatch: expected FRANKENLIBC_MODE={mode}, child observed {observed_mode}"
+        )));
+    }
     match envelope.kind.as_str() {
         "ok" => envelope
             .run
@@ -2175,6 +2212,7 @@ fn emit_conformance_matrix_logs(
     matrix: &ConformanceMatrixReport,
     previous: Option<&ConformanceMatrixReport>,
     perf_budget_ms: u64,
+    isolate: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -2189,6 +2227,50 @@ fn emit_conformance_matrix_logs(
     let artifact_refs = vec![matrix_artifact.clone(), log_artifact.clone()];
 
     let mut duration_by_symbol: BTreeMap<(String, String), Vec<u64>> = BTreeMap::new();
+    let mut startup_modes: BTreeSet<String> =
+        matrix.cases.iter().map(|case| case.mode.clone()).collect();
+    if startup_modes.is_empty() {
+        startup_modes.insert(matrix.mode.clone());
+    }
+
+    for active_mode in startup_modes {
+        let startup_trace_id = format!(
+            "{}::runtime-mode-startup::{}",
+            sanitize_trace_component(campaign),
+            sanitize_trace_component(&active_mode)
+        );
+        emitter.emit_entry(
+            LogEntry::new(
+                startup_trace_id,
+                LogLevel::Info,
+                "conformance.runtime_mode_startup",
+            )
+            .with_stream(StreamKind::Conformance)
+            .with_gate(CONFORMANCE_LOG_GATE)
+            .with_mode(active_mode.as_str())
+            .with_api("conformance", "runtime_mode_startup")
+            .with_outcome(Outcome::Pass)
+            .with_errno(0)
+            .with_healing_action("none")
+            .with_artifacts(artifact_refs.clone())
+            .with_details(serde_json::json!({
+                "campaign": matrix.campaign,
+                "env_key": "FRANKENLIBC_MODE",
+                "expected_runtime_mode": active_mode,
+                "process_immutable": true,
+                "subprocess_isolated": isolate,
+                "mode_source": if isolate { "child_process_env" } else { "in_process_mode_argument" },
+                "mismatch_behavior": if isolate {
+                    "runtime_mode_startup_mismatch"
+                } else {
+                    "unsupported CLI modes fail before execution"
+                },
+                "ambient_tz_dependency": false,
+                "ambient_tz_policy": "not read for FRANKENLIBC_MODE selection",
+                "decision_path": "conformance->runtime_mode_startup"
+            })),
+        )?;
+    }
 
     for case in &matrix.cases {
         let duration_ms = case.duration_ms.unwrap_or(0);
@@ -2759,6 +2841,7 @@ mod tests {
             &current,
             Some(&previous),
             100,
+            true,
         )
         .expect("emit log");
 
@@ -2774,6 +2857,10 @@ mod tests {
         assert!(
             body.contains("\"event\":\"conformance.fixture_summary\"")
                 && body.contains("\"level\":\"info\"")
+        );
+        assert!(
+            body.contains("\"event\":\"conformance.runtime_mode_startup\"")
+                && body.contains("\"mismatch_behavior\":\"runtime_mode_startup_mismatch\"")
         );
         assert!(
             body.contains("\"event\":\"conformance.benchmark_result\"")
