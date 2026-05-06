@@ -2061,6 +2061,46 @@
       "rationale": "Dashboard consumers must see the concrete local-exec blocker class."
     },
     {
+      "row_id": "standalone-compiler-runtime-blocker-source-commit-field",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "Dashboard consumers must see which field carries compiler-runtime blocker diagnostic freshness."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-blocker-source-commit-comparison-target",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "Dashboard consumers must see that compiler-runtime blocker diagnostics compare against the current source checkout."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-blocker-source-commit-stale-result",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_compiler_runtime_blocker_diagnostics_refresh",
+      "rationale": "Stale compiler-runtime blocker diagnostics must block refresh-sensitive use."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-blocker-source-commit-no-diagnostic-evidence",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+      "field": "source_commit_freshness_policy.diagnostic_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Stale compiler-runtime blocker diagnostics cannot supply diagnostic evidence."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-blocker-source-commit-rejection-kind",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_compiler_runtime_blocker_diagnostics",
+      "rationale": "Dashboard logs must identify stale compiler-runtime blocker diagnostics with an explicit rejection kind."
+    },
+    {
       "row_id": "standalone-compiler-runtime-blocker-diagnostics-report-only",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
@@ -2251,6 +2291,46 @@
       "field": "experiment_matrix.1.status",
       "expected_value": "implemented_report_only",
       "rationale": "Dashboard consumers must see that the panic-abort compiler-runtime lane stays report-only."
+    },
+    {
+      "row_id": "standalone-tls-blocker-source-commit-field",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "Dashboard consumers must see which field carries TLS blocker diagnostic freshness."
+    },
+    {
+      "row_id": "standalone-tls-blocker-source-commit-comparison-target",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "Dashboard consumers must see that TLS blocker diagnostics compare against the current source checkout."
+    },
+    {
+      "row_id": "standalone-tls-blocker-source-commit-stale-result",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_standalone_tls_blocker_diagnostics_refresh",
+      "rationale": "Stale TLS blocker diagnostics must block refresh-sensitive use."
+    },
+    {
+      "row_id": "standalone-tls-blocker-source-commit-no-diagnostic-evidence",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "source_commit_freshness_policy.diagnostic_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Stale TLS blocker diagnostics cannot supply diagnostic evidence."
+    },
+    {
+      "row_id": "standalone-tls-blocker-source-commit-rejection-kind",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_standalone_tls_blocker_diagnostics",
+      "rationale": "Dashboard logs must identify stale TLS blocker diagnostics with an explicit rejection kind."
     },
     {
       "row_id": "standalone-tls-blocker-diagnostics-report-only",

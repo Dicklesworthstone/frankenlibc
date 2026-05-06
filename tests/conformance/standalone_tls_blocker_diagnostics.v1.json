@@ -4,6 +4,13 @@
   "bead": "bd-zyck1.89",
   "source_commit": "current",
   "source_commit_hint": "2fadeb011f6e",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_tls_blocker_diagnostics_refresh",
+    "diagnostic_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_standalone_tls_blocker_diagnostics"
+  },
   "generated_utc": "2026-05-06T04:42:22Z",
   "purpose": "Report-only diagnostic that traces the current standalone forge __tls_get_addr@GLIBC_2.3 blocker back to FrankenLibC TLS source surfaces. It preserves the current replacement claim boundary while giving follow-up work a machine-checkable source and artifact control gate.",
   "inputs": {

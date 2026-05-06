@@ -3,6 +3,13 @@
   "manifest_id": "standalone-compiler-runtime-blocker-diagnostics",
   "bead": "bd-zyck1.87",
   "source_commit": "current",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_compiler_runtime_blocker_diagnostics_refresh",
+    "diagnostic_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_compiler_runtime_blocker_diagnostics"
+  },
   "generated_utc": "2026-05-06T04:05:00Z",
   "purpose": "Report-only diagnostic that maps the current standalone forge libgcc and unwind blockers to compiler/runtime profile knobs. It explains the blocker surface for follow-up experiments without changing the replacement artifact, panic strategy, link profile, or replacement level.",
   "inputs": {
