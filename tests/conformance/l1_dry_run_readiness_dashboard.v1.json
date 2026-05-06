@@ -609,6 +609,46 @@
       "rationale": "Stale standalone real-program evidence must remain claim_blocked."
     },
     {
+      "row_id": "dlfcn-sentinel-source-commit-field",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "L1 dashboard consumers must see that dlfcn sentinel freshness is bound to the sentinel source_commit."
+    },
+    {
+      "row_id": "dlfcn-sentinel-source-commit-comparison-target",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "L1 dashboard consumers must see that dlfcn sentinel freshness compares against the current source checkout."
+    },
+    {
+      "row_id": "dlfcn-sentinel-source-commit-stale-result",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_dlfcn_replace_boundary_sentinel",
+      "rationale": "A stale dlfcn sentinel source commit must block sentinel evidence."
+    },
+    {
+      "row_id": "dlfcn-sentinel-source-commit-no-evidence",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "source_commit_freshness_policy.sentinel_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Stale dlfcn sentinel evidence cannot support L1 readiness rows."
+    },
+    {
+      "row_id": "dlfcn-sentinel-source-commit-rejection-kind",
+      "row_kind": "dlfcn",
+      "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_source_commit",
+      "rationale": "Dashboard consumers must see stale dlfcn sentinel source drift as stale_source_commit evidence."
+    },
+    {
       "row_id": "dlfcn-l1-burndown-source-commit-field",
       "row_kind": "dlfcn",
       "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_l1_burndown.v1.json",

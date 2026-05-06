@@ -10,10 +10,11 @@
 //! `crate::host_resolve::resolve_host_symbol_raw("dlopen"|"dlsym"|"dlvsym"|"dlclose")`
 //! call appearing in the source is detected as drift.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -81,6 +82,70 @@ fn dlfcn_source_path() -> PathBuf {
     workspace_root().join("crates/frankenlibc-abi/src/dlfcn_abi.rs")
 }
 
+fn git_head(root: &Path) -> Result<String, Box<dyn Error>> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(root)
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+    let head = String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
+        .trim()
+        .to_owned();
+    ensure(
+        is_hex_commit(&head),
+        format!("git rev-parse HEAD returned invalid commit {head:?}"),
+    )?;
+    Ok(head)
+}
+
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn source_commit_is_current(value: &str, current_head: &str) -> bool {
+    value == "current" || value == current_head
+}
+
+fn expected_source_commit_freshness_policy() -> Value {
+    json!({
+        "recorded_source_commit_field": "source_commit",
+        "comparison_target": "current git HEAD",
+        "stale_result": "block_dlfcn_replace_boundary_sentinel",
+        "sentinel_evidence_allowed_when_stale": false,
+        "rejected_evidence_kind": "stale_source_commit",
+    })
+}
+
+fn assert_source_commit_freshness_policy(sentinel: &Value) -> TestResult {
+    ensure_eq(
+        sentinel["source_commit_freshness_policy"].clone(),
+        expected_source_commit_freshness_policy(),
+        "source_commit_freshness_policy",
+    )
+}
+
+fn assert_recorded_source_commit_is_current(root: &Path, sentinel: &Value) -> TestResult {
+    let source_commit = as_str(&sentinel["source_commit"], "source_commit")?;
+    ensure(
+        source_commit == "current" || is_hex_commit(source_commit),
+        format!("source_commit must be 'current' or a full hex git commit, got {source_commit:?}"),
+    )?;
+    let current_head = git_head(root)?;
+    ensure(
+        source_commit_is_current(source_commit, &current_head),
+        "source_commit must be 'current' or match current git HEAD",
+    )
+}
+
 const REQUIRED_LOG_FIELDS: &[&str] = &[
     "trace_id",
     "bead_id",
@@ -103,6 +168,7 @@ const REJECTED_EVIDENCE_KINDS: &[&str] = &[
     "interpose_only_after_L0",
     "missing_native_handle_guard",
     "support_matrix_drift",
+    "stale_source_commit",
     "replacement_level_drift_without_evidence",
 ];
 
@@ -121,12 +187,38 @@ fn sentinel_artifact_is_well_formed() -> TestResult {
         "schema_version",
     )?;
     ensure_eq(sentinel["bead"].as_str(), Some("bd-b92jd.5.2"), "bead")?;
-    ensure(
-        !sentinel["source_commit"]
-            .as_str()
-            .unwrap_or_default()
-            .is_empty(),
-        "source_commit must be set",
+    ensure_eq(
+        sentinel["source_commit"].as_str(),
+        Some("current"),
+        "checked-in dlfcn sentinel source_commit must use current marker",
+    )?;
+    assert_recorded_source_commit_is_current(&workspace_root(), &sentinel)?;
+    let freshness_policy = &sentinel["source_commit_freshness_policy"];
+    assert_source_commit_freshness_policy(&sentinel)?;
+    ensure_eq(
+        freshness_policy["recorded_source_commit_field"].as_str(),
+        Some("source_commit"),
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        freshness_policy["comparison_target"].as_str(),
+        Some("current git HEAD"),
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    ensure_eq(
+        freshness_policy["stale_result"].as_str(),
+        Some("block_dlfcn_replace_boundary_sentinel"),
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    ensure_eq(
+        freshness_policy["sentinel_evidence_allowed_when_stale"].as_bool(),
+        Some(false),
+        "source_commit_freshness_policy.sentinel_evidence_allowed_when_stale",
+    )?;
+    ensure_eq(
+        freshness_policy["rejected_evidence_kind"].as_str(),
+        Some("stale_source_commit"),
+        "source_commit_freshness_policy.rejected_evidence_kind",
     )?;
 
     let subject = &sentinel["subject"];
@@ -203,6 +295,40 @@ fn sentinel_artifact_is_well_formed() -> TestResult {
             format!("rejected_evidence_kinds must include {kind}"),
         )?;
     }
+
+    Ok(())
+}
+
+#[test]
+fn stale_source_commit_policy_blocks_dlfcn_sentinel_evidence() -> TestResult {
+    let mut sentinel = load_json(&sentinel_path())?;
+    sentinel["source_commit"] = json!("0000000000000000000000000000000000000000");
+
+    let error = assert_recorded_source_commit_is_current(&workspace_root(), &sentinel)
+        .expect_err("stale recorded source_commit should be rejected");
+    ensure(
+        error
+            .to_string()
+            .contains("source_commit must be 'current' or match current git HEAD"),
+        format!("unexpected stale source_commit error: {error}"),
+    )?;
+
+    let policy = &sentinel["source_commit_freshness_policy"];
+    ensure_eq(
+        policy["stale_result"].as_str(),
+        Some("block_dlfcn_replace_boundary_sentinel"),
+        "stale dlfcn sentinel source_commit must block sentinel evidence",
+    )?;
+    ensure_eq(
+        policy["sentinel_evidence_allowed_when_stale"].as_bool(),
+        Some(false),
+        "stale dlfcn sentinel source_commit must not allow sentinel evidence",
+    )?;
+    ensure_eq(
+        policy["rejected_evidence_kind"].as_str(),
+        Some("stale_source_commit"),
+        "stale dlfcn sentinel source_commit must use stale_source_commit",
+    )?;
 
     Ok(())
 }
