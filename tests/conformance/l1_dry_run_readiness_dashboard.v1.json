@@ -598,6 +598,86 @@
       "rationale": "L1 dashboard consumers must see the discovered linker version for standalone forge evidence."
     },
     {
+      "row_id": "standalone-artifact-report-blocker-delta-baseline-source-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.37",
+      "expected_value": "blocker_delta.baseline_source",
+      "rationale": "L1 dashboard consumers must see which committed blocker snapshot the live forge report was compared against."
+    },
+    {
+      "row_id": "standalone-artifact-report-blocker-delta-classification-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.38",
+      "expected_value": "blocker_delta.delta_classification",
+      "rationale": "L1 dashboard consumers must see whether live forge blocker deltas are unchanged, regressions, improvements, or refresh-needed changes."
+    },
+    {
+      "row_id": "standalone-artifact-report-blocker-delta-added-host-libraries-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.39",
+      "expected_value": "blocker_delta.added_host_needed_libraries",
+      "rationale": "L1 dashboard consumers must see new host runtime libraries as fail-closed blocker regressions."
+    },
+    {
+      "row_id": "standalone-artifact-report-blocker-delta-added-undefined-symbols-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.40",
+      "expected_value": "blocker_delta.added_undefined_symbols",
+      "rationale": "L1 dashboard consumers must see new unresolved symbols as fail-closed blocker regressions."
+    },
+    {
+      "row_id": "standalone-artifact-report-blocker-delta-added-version-requirements-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.41",
+      "expected_value": "blocker_delta.added_version_requirements",
+      "rationale": "L1 dashboard consumers must see new ELF version needs as fail-closed blocker regressions."
+    },
+    {
+      "row_id": "standalone-artifact-report-blocker-delta-removed-host-libraries-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.42",
+      "expected_value": "blocker_delta.removed_host_needed_libraries",
+      "rationale": "L1 dashboard consumers must see removed host libraries so snapshot refresh work is explicit."
+    },
+    {
+      "row_id": "standalone-artifact-report-blocker-delta-removed-undefined-symbols-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.43",
+      "expected_value": "blocker_delta.removed_undefined_symbols",
+      "rationale": "L1 dashboard consumers must see removed unresolved symbols so snapshot refresh work is explicit."
+    },
+    {
+      "row_id": "standalone-artifact-report-blocker-delta-removed-version-requirements-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.44",
+      "expected_value": "blocker_delta.removed_version_requirements",
+      "rationale": "L1 dashboard consumers must see removed ELF version needs so snapshot refresh work is explicit."
+    },
+    {
+      "row_id": "standalone-artifact-report-blocker-delta-refresh-required-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.45",
+      "expected_value": "blocker_delta.refresh_required",
+      "rationale": "L1 dashboard consumers must see when blocker deltas require a committed snapshot refresh."
+    },
+    {
+      "row_id": "standalone-artifact-report-blocker-delta-refresh-note-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "field": "required_report_fields.46",
+      "expected_value": "blocker_delta.refresh_note_present",
+      "rationale": "L1 dashboard consumers must see whether a blocker-delta improvement run included an explicit refresh note."
+    },
+    {
       "row_id": "standalone-artifact-report-undefined-symbols-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",

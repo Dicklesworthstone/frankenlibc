@@ -563,6 +563,46 @@ fn standalone_artifact_report_rows_are_explicit() -> TestResult {
             "build_provenance.linker.version",
         ),
         (
+            "standalone-artifact-report-blocker-delta-baseline-source-diagnostic",
+            "blocker_delta.baseline_source",
+        ),
+        (
+            "standalone-artifact-report-blocker-delta-classification-diagnostic",
+            "blocker_delta.delta_classification",
+        ),
+        (
+            "standalone-artifact-report-blocker-delta-added-host-libraries-diagnostic",
+            "blocker_delta.added_host_needed_libraries",
+        ),
+        (
+            "standalone-artifact-report-blocker-delta-added-undefined-symbols-diagnostic",
+            "blocker_delta.added_undefined_symbols",
+        ),
+        (
+            "standalone-artifact-report-blocker-delta-added-version-requirements-diagnostic",
+            "blocker_delta.added_version_requirements",
+        ),
+        (
+            "standalone-artifact-report-blocker-delta-removed-host-libraries-diagnostic",
+            "blocker_delta.removed_host_needed_libraries",
+        ),
+        (
+            "standalone-artifact-report-blocker-delta-removed-undefined-symbols-diagnostic",
+            "blocker_delta.removed_undefined_symbols",
+        ),
+        (
+            "standalone-artifact-report-blocker-delta-removed-version-requirements-diagnostic",
+            "blocker_delta.removed_version_requirements",
+        ),
+        (
+            "standalone-artifact-report-blocker-delta-refresh-required-diagnostic",
+            "blocker_delta.refresh_required",
+        ),
+        (
+            "standalone-artifact-report-blocker-delta-refresh-note-diagnostic",
+            "blocker_delta.refresh_note_present",
+        ),
+        (
             "standalone-artifact-report-undefined-symbols-diagnostic",
             "artifact_state.dependency_breakdown.undefined_symbols",
         ),

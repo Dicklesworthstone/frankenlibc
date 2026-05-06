@@ -60,6 +60,16 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "build_provenance.sanitized_env",
     "build_provenance.linker.path",
     "build_provenance.linker.version",
+    "blocker_delta.baseline_source",
+    "blocker_delta.delta_classification",
+    "blocker_delta.added_host_needed_libraries",
+    "blocker_delta.added_undefined_symbols",
+    "blocker_delta.added_version_requirements",
+    "blocker_delta.removed_host_needed_libraries",
+    "blocker_delta.removed_undefined_symbols",
+    "blocker_delta.removed_version_requirements",
+    "blocker_delta.refresh_required",
+    "blocker_delta.refresh_note_present",
 ];
 
 const REQUIRED_EVIDENCE_FILES: &[&str] = &[
@@ -230,6 +240,38 @@ fn assert_build_provenance(report: &serde_json::Value) {
     );
 }
 
+fn assert_blocker_delta_not_checked(report: &serde_json::Value) {
+    let delta = report["blocker_delta"]
+        .as_object()
+        .expect("blocker_delta should be an object");
+    assert_eq!(
+        delta
+            .get("delta_classification")
+            .and_then(serde_json::Value::as_str),
+        Some("not_checked")
+    );
+    assert_eq!(
+        delta
+            .get("baseline_source")
+            .and_then(serde_json::Value::as_str),
+        Some(
+            "tests/conformance/standalone_host_dependency_probe_plan.v1.json#current_forge_blocker_projection.current_forge_blocker_value_snapshot"
+        )
+    );
+    assert_eq!(
+        delta
+            .get("refresh_required")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        delta
+            .get("refresh_note_present")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+}
+
 fn manifest() -> serde_json::Value {
     load_json(&workspace_root().join("tests/conformance/standalone_replacement_artifact.v1.json"))
 }
@@ -290,9 +332,19 @@ if [ "$1" = "-Ws" ]; then
      4: 0000000000001003     1 FUNC    GLOBAL DEFAULT   10 printf
      5: 0000000000001004     1 FUNC    GLOBAL DEFAULT   10 pthread_create
      6: 0000000000001005     1 FUNC    GLOBAL DEFAULT   10 getaddrinfo
-     7: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND printf@GLIBC_2.2.5
-     8: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND __tls_get_addr@GLIBC_2.3
-     9: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_Resume@GCC_3.0
+     7: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_Backtrace@GCC_3.3
+     8: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_DeleteException@GCC_3.0
+     9: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetDataRelBase@GCC_3.0
+    10: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetIP@GCC_3.0
+    11: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetIPInfo@GCC_4.2.0
+    12: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetLanguageSpecificData@GCC_3.0
+    13: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetRegionStart@GCC_3.0
+    14: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetTextRelBase@GCC_3.0
+    15: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_RaiseException@GCC_3.0
+    16: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_Resume@GCC_3.0
+    17: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_SetGR@GCC_3.0
+    18: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_SetIP@GCC_3.0
+    19: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND __tls_get_addr@GLIBC_2.3
 EOF
   exit 0
 fi
@@ -300,9 +352,10 @@ if [ "$1" = "--version-info" ]; then
   cat <<'EOF'
 Version needs section '.gnu.version_r' contains 2 entries:
  Addr: 0x0000000000001000  Offset: 0x00001000  Link: 7 (.dynstr)
-  000000: Version: 1  File: libgcc_s.so.1  Cnt: 2
+  000000: Version: 1  File: libgcc_s.so.1  Cnt: 3
   0x0020:   Name: GCC_3.0  Flags: none  Version: 5
   0x0030:   Name: GCC_3.3  Flags: none  Version: 6
+  0x0050:   Name: GCC_4.2.0  Flags: none  Version: 7
   0x0010: Version: 1  File: ld-linux-x86-64.so.2  Cnt: 1
   0x0040:   Name: GLIBC_2.3  Flags: none  Version: 4
 EOF
@@ -317,9 +370,19 @@ exit 2
         fake_bin.join("nm"),
         r#"#!/bin/sh
 cat <<'EOF'
+                 U _Unwind_Backtrace@GCC_3.3
+                 U _Unwind_DeleteException@GCC_3.0
+                 U _Unwind_GetDataRelBase@GCC_3.0
+                 U _Unwind_GetIP@GCC_3.0
+                 U _Unwind_GetIPInfo@GCC_4.2.0
+                 U _Unwind_GetLanguageSpecificData@GCC_3.0
+                 U _Unwind_GetRegionStart@GCC_3.0
+                 U _Unwind_GetTextRelBase@GCC_3.0
+                 U _Unwind_RaiseException@GCC_3.0
                  U _Unwind_Resume@GCC_3.0
+                 U _Unwind_SetGR@GCC_3.0
+                 U _Unwind_SetIP@GCC_3.0
                  U __tls_get_addr@GLIBC_2.3
-                 U printf@GLIBC_2.2.5
 EOF
 "#,
     )
@@ -352,6 +415,169 @@ EOF
     let mut path = OsString::from(fake_bin);
     path.push(":");
     path.push(std::env::var_os("PATH").unwrap_or_default());
+    path
+}
+
+fn fake_improved_dependency_probe_path(temp: &Path) -> OsString {
+    let path = fake_dependency_probe_path(temp);
+    let fake_bin = temp.join("fake-probe-bin");
+    std::fs::write(
+        fake_bin.join("readelf"),
+        r#"#!/bin/sh
+if [ "$1" = "-d" ]; then
+  cat <<'EOF'
+Dynamic section at offset 0x1000 contains 2 entries:
+ 0x0000000000000001 (NEEDED)             Shared library: [libgcc_s.so.1]
+EOF
+  exit 0
+fi
+if [ "$1" = "-Ws" ]; then
+  cat <<'EOF'
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     1: 0000000000001000     1 FUNC    GLOBAL DEFAULT   10 __libc_start_main
+     2: 0000000000001001     1 FUNC    GLOBAL DEFAULT   10 malloc
+     3: 0000000000001002     1 FUNC    GLOBAL DEFAULT   10 free
+     4: 0000000000001003     1 FUNC    GLOBAL DEFAULT   10 printf
+     5: 0000000000001004     1 FUNC    GLOBAL DEFAULT   10 pthread_create
+     6: 0000000000001005     1 FUNC    GLOBAL DEFAULT   10 getaddrinfo
+     7: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_Resume@GCC_3.0
+     8: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND __tls_get_addr@GLIBC_2.3
+EOF
+  exit 0
+fi
+if [ "$1" = "--version-info" ]; then
+  cat <<'EOF'
+Version needs section '.gnu.version_r' contains 1 entry:
+ Addr: 0x0000000000001000  Offset: 0x00001000  Link: 7 (.dynstr)
+  000000: Version: 1  File: libgcc_s.so.1  Cnt: 1
+  0x0020:   Name: GCC_3.0  Flags: none  Version: 5
+EOF
+  exit 0
+fi
+echo unexpected readelf invocation "$@" >&2
+exit 2
+"#,
+    )
+    .expect("write improved fake readelf");
+    std::fs::write(
+        fake_bin.join("nm"),
+        r#"#!/bin/sh
+cat <<'EOF'
+                 U _Unwind_Resume@GCC_3.0
+                 U __tls_get_addr@GLIBC_2.3
+EOF
+"#,
+    )
+    .expect("write improved fake nm");
+    std::fs::write(
+        fake_bin.join("ldd"),
+        r#"#!/bin/sh
+cat <<'EOF'
+	linux-vdso.so.1 (0x00007fff00000000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007f0000000000)
+EOF
+"#,
+    )
+    .expect("write improved fake ldd");
+    path
+}
+
+fn fake_regression_dependency_probe_path(temp: &Path) -> OsString {
+    let path = fake_dependency_probe_path(temp);
+    let fake_bin = temp.join("fake-probe-bin");
+    std::fs::write(
+        fake_bin.join("readelf"),
+        r#"#!/bin/sh
+if [ "$1" = "-d" ]; then
+  cat <<'EOF'
+Dynamic section at offset 0x1000 contains 4 entries:
+ 0x0000000000000001 (NEEDED)             Shared library: [libgcc_s.so.1]
+ 0x0000000000000001 (NEEDED)             Shared library: [ld-linux-x86-64.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libdl.so.2]
+EOF
+  exit 0
+fi
+if [ "$1" = "-Ws" ]; then
+  cat <<'EOF'
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     1: 0000000000001000     1 FUNC    GLOBAL DEFAULT   10 __libc_start_main
+     2: 0000000000001001     1 FUNC    GLOBAL DEFAULT   10 malloc
+     3: 0000000000001002     1 FUNC    GLOBAL DEFAULT   10 free
+     4: 0000000000001003     1 FUNC    GLOBAL DEFAULT   10 printf
+     5: 0000000000001004     1 FUNC    GLOBAL DEFAULT   10 pthread_create
+     6: 0000000000001005     1 FUNC    GLOBAL DEFAULT   10 getaddrinfo
+     7: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_Backtrace@GCC_3.3
+     8: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_DeleteException@GCC_3.0
+     9: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetDataRelBase@GCC_3.0
+    10: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetIP@GCC_3.0
+    11: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetIPInfo@GCC_4.2.0
+    12: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetLanguageSpecificData@GCC_3.0
+    13: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetRegionStart@GCC_3.0
+    14: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_GetTextRelBase@GCC_3.0
+    15: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_RaiseException@GCC_3.0
+    16: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_Resume@GCC_3.0
+    17: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_SetGR@GCC_3.0
+    18: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_SetIP@GCC_3.0
+    19: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND __tls_get_addr@GLIBC_2.3
+    20: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND dlopen@GLIBC_2.2.5
+EOF
+  exit 0
+fi
+if [ "$1" = "--version-info" ]; then
+  cat <<'EOF'
+Version needs section '.gnu.version_r' contains 3 entries:
+ Addr: 0x0000000000001000  Offset: 0x00001000  Link: 7 (.dynstr)
+  000000: Version: 1  File: libgcc_s.so.1  Cnt: 3
+  0x0020:   Name: GCC_3.0  Flags: none  Version: 5
+  0x0030:   Name: GCC_3.3  Flags: none  Version: 6
+  0x0050:   Name: GCC_4.2.0  Flags: none  Version: 7
+  0x0010: Version: 1  File: ld-linux-x86-64.so.2  Cnt: 1
+  0x0040:   Name: GLIBC_2.3  Flags: none  Version: 4
+  0x0060: Version: 1  File: libc.so.6  Cnt: 1
+  0x0070:   Name: GLIBC_2.17  Flags: none  Version: 8
+EOF
+  exit 0
+fi
+echo unexpected readelf invocation "$@" >&2
+exit 2
+"#,
+    )
+    .expect("write regression fake readelf");
+    std::fs::write(
+        fake_bin.join("nm"),
+        r#"#!/bin/sh
+cat <<'EOF'
+                 U _Unwind_Backtrace@GCC_3.3
+                 U _Unwind_DeleteException@GCC_3.0
+                 U _Unwind_GetDataRelBase@GCC_3.0
+                 U _Unwind_GetIP@GCC_3.0
+                 U _Unwind_GetIPInfo@GCC_4.2.0
+                 U _Unwind_GetLanguageSpecificData@GCC_3.0
+                 U _Unwind_GetRegionStart@GCC_3.0
+                 U _Unwind_GetTextRelBase@GCC_3.0
+                 U _Unwind_RaiseException@GCC_3.0
+                 U _Unwind_Resume@GCC_3.0
+                 U _Unwind_SetGR@GCC_3.0
+                 U _Unwind_SetIP@GCC_3.0
+                 U __tls_get_addr@GLIBC_2.3
+                 U dlopen@GLIBC_2.2.5
+EOF
+"#,
+    )
+    .expect("write regression fake nm");
+    std::fs::write(
+        fake_bin.join("ldd"),
+        r#"#!/bin/sh
+cat <<'EOF'
+	linux-vdso.so.1 (0x00007fff00000000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007f0000000000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f0000000000)
+	libdl.so.2 => /lib/x86_64-linux-gnu/libdl.so.2 (0x00007f0000000000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f0000000000)
+EOF
+"#,
+    )
+    .expect("write regression fake ldd");
     path
 }
 
@@ -764,6 +990,7 @@ fn manifest_matches_forge_contract() {
         serde_json::json!({
             "packaging_spec": "tests/conformance/packaging_spec.json",
             "replacement_levels": "tests/conformance/replacement_levels.json",
+            "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
             "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
         })
     );
@@ -866,6 +1093,26 @@ fn manifest_matches_forge_contract() {
             ],
             "sensitive_env_values_redacted": true,
             "redacted_env_value": "<redacted>",
+        })
+    );
+    assert_eq!(
+        manifest["blocker_delta_policy"],
+        serde_json::json!({
+            "reported_field": "blocker_delta",
+            "baseline_source": "tests/conformance/standalone_host_dependency_probe_plan.v1.json#current_forge_blocker_projection.current_forge_blocker_value_snapshot",
+            "compared_fields": [
+                "host_needed_libraries",
+                "undefined_symbols",
+                "version_needs",
+            ],
+            "added_values_classification": "regression",
+            "added_values_result": "fail_closed",
+            "removed_values_without_note_classification": "expected_refresh_needed",
+            "removed_values_without_note_result": "fail_closed",
+            "removed_values_with_note_classification": "improvement",
+            "refresh_note_env": "STANDALONE_REPLACEMENT_BLOCKER_DELTA_REFRESH_NOTE",
+            "refresh_required_on_blocker_delta": true,
+            "promotion_allowed": false,
         })
     );
     let symbol_samples: Vec<_> = manifest["symbol_samples"]
@@ -1524,6 +1771,42 @@ fn validate_only_rejects_blocker_catalog_contract_drift() {
 }
 
 #[test]
+fn validate_only_rejects_blocker_delta_policy_drift() {
+    let manifest_path = write_manifest_variant(
+        "standalone-artifact-blocker-delta-policy-drift-manifest",
+        |manifest| {
+            manifest["blocker_delta_policy"]["added_values_result"] =
+                serde_json::Value::String("warn_only".to_owned());
+            manifest["blocker_delta_policy"]["promotion_allowed"] = serde_json::Value::Bool(true);
+        },
+    );
+    let manifest_env = manifest_path.to_string_lossy().into_owned();
+    let envs = [("STANDALONE_REPLACEMENT_MANIFEST", manifest_env.as_str())];
+    let (_temp, report, _log, output) = run_gate_with_env(
+        "--validate-only",
+        "standalone-artifact-blocker-delta-policy-drift",
+        &envs,
+    );
+    assert!(
+        !output.status.success(),
+        "blocker_delta_policy drift should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors.iter().any(|error| {
+            error.as_str() == Some("blocker_delta_policy does not match script contract")
+        }),
+        "expected blocker_delta_policy contract error: {errors:?}"
+    );
+}
+
+#[test]
 fn invalid_inspection_timeout_override_fails_validate_only() {
     let (_temp, report, _log, output) = run_gate_with_env(
         "--validate-only",
@@ -1584,6 +1867,7 @@ fn validate_only_writes_report_and_required_log_fields() {
     assert!(report["artifact_state"]["sha256"].is_null());
     assert!(report["artifact_state"]["mtime"].is_null());
     assert_build_provenance(&report);
+    assert_blocker_delta_not_checked(&report);
 
     let log = std::fs::read_to_string(log).expect("log should be readable");
     let rows: Vec<serde_json::Value> = log
@@ -1677,6 +1961,7 @@ fn check_mode_reports_missing_artifact_as_claim_blocked() {
     assert!(report["artifact_state"]["sha256"].is_null());
     assert!(report["artifact_state"]["mtime"].is_null());
     assert_build_provenance(&report);
+    assert_blocker_delta_not_checked(&report);
 }
 
 #[test]
@@ -1781,6 +2066,7 @@ fn forge_mode_can_materialize_a_supplied_shared_object_for_fast_tests() {
         );
     }
     assert_build_provenance(&report);
+    assert_blocker_delta_not_checked(&report);
 }
 
 #[test]
@@ -1966,20 +2252,23 @@ fn forge_mode_reports_host_dependency_breakdown() {
     assert!(host_resolved.contains("/lib64/ld-linux-x86-64.so.2"));
 
     let undefined = string_set(&breakdown["undefined_symbols"]);
+    assert!(undefined.contains("_Unwind_Backtrace@GCC_3.3"));
+    assert!(undefined.contains("_Unwind_DeleteException@GCC_3.0"));
     assert!(undefined.contains("_Unwind_Resume@GCC_3.0"));
     assert!(undefined.contains("__tls_get_addr@GLIBC_2.3"));
-    assert!(undefined.contains("printf@GLIBC_2.2.5"));
 
     let unwind = string_set(&breakdown["undefined_unwind_symbols"]);
+    assert!(unwind.contains("_Unwind_Backtrace@GCC_3.3"));
+    assert!(unwind.contains("_Unwind_DeleteException@GCC_3.0"));
     assert!(unwind.contains("_Unwind_Resume@GCC_3.0"));
     let glibc = string_set(&breakdown["undefined_glibc_symbols"]);
     assert!(glibc.contains("__tls_get_addr@GLIBC_2.3"));
-    assert!(glibc.contains("printf@GLIBC_2.2.5"));
     let tls = string_set(&breakdown["undefined_tls_symbols"]);
     assert!(tls.contains("__tls_get_addr@GLIBC_2.3"));
     let libgcc_versions = string_set(&breakdown["version_needs"]["libgcc_s.so.1"]);
     assert!(libgcc_versions.contains("GCC_3.0"));
     assert!(libgcc_versions.contains("GCC_3.3"));
+    assert!(libgcc_versions.contains("GCC_4.2.0"));
     let loader_versions = string_set(&breakdown["version_needs"]["ld-linux-x86-64.so.2"]);
     assert!(loader_versions.contains("GLIBC_2.3"));
     let host_versions = string_set(&breakdown["host_version_requirements"]);
@@ -2053,6 +2342,240 @@ fn forge_mode_reports_host_dependency_breakdown() {
     assert_eq!(
         catalog["host_version_requirements"]["owner_surface"].as_str(),
         Some("symbol_versioning")
+    );
+    let delta = report_json["blocker_delta"]
+        .as_object()
+        .expect("blocker_delta should be an object");
+    assert_eq!(
+        delta
+            .get("delta_classification")
+            .and_then(serde_json::Value::as_str),
+        Some("unchanged")
+    );
+    assert_eq!(
+        delta
+            .get("refresh_required")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+    assert!(
+        delta["added_host_needed_libraries"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+    assert!(
+        delta["added_undefined_symbols"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+    assert!(
+        delta["added_version_requirements"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+}
+
+#[test]
+fn forge_mode_fails_closed_on_new_blocker_delta() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-artifact-blocker-delta-regression");
+    let source_c = temp.join("sample.c");
+    let source_so = temp.join("libfrankenlibc_abi.so");
+    std::fs::write(
+        &source_c,
+        "int frankenlibc_sample_symbol(void) { return 7; }\n",
+    )
+    .expect("write sample source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source_c)
+        .arg("-o")
+        .arg(&source_so)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+
+    let out_dir = temp.join("out");
+    let cargo_target = temp.join("cargo-target");
+    let report = temp.join("standalone_replacement_artifact.report.json");
+    let log = temp.join("standalone_replacement_artifact.log.jsonl");
+    let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+        .arg("--forge")
+        .current_dir(&root)
+        .env("PATH", fake_regression_dependency_probe_path(&temp))
+        .env("STANDALONE_REPLACEMENT_OUT_DIR", &out_dir)
+        .env("STANDALONE_REPLACEMENT_CARGO_TARGET_DIR", &cargo_target)
+        .env("STANDALONE_REPLACEMENT_REPORT", &report)
+        .env("STANDALONE_REPLACEMENT_LOG", &log)
+        .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
+        .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
+        .env_remove("LD_PRELOAD")
+        .output()
+        .expect("forge mode should run");
+    assert!(
+        !output.status.success(),
+        "new blocker values should fail closed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
+    assert_eq!(report_json["claim_status"].as_str(), Some("claim_blocked"));
+    let delta = &report_json["blocker_delta"];
+    assert_eq!(delta["delta_classification"].as_str(), Some("regression"));
+    assert_eq!(delta["refresh_required"].as_bool(), Some(true));
+    assert!(
+        string_set(&delta["added_host_needed_libraries"]).contains("libdl.so.2"),
+        "new host library should be recorded"
+    );
+    assert!(
+        string_set(&delta["added_undefined_symbols"]).contains("dlopen@GLIBC_2.2.5"),
+        "new undefined symbol should be recorded"
+    );
+    assert!(
+        string_set(&delta["added_version_requirements"]).contains("libc.so.6:GLIBC_2.17"),
+        "new version need should be recorded"
+    );
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors.iter().any(|error| error
+            .as_str()
+            .is_some_and(|message| message.contains("blocker_delta regression"))),
+        "expected blocker_delta regression error: {errors:?}"
+    );
+}
+
+#[test]
+fn forge_mode_requires_refresh_note_for_removed_blockers() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-artifact-blocker-delta-improvement");
+    let source_c = temp.join("sample.c");
+    let source_so = temp.join("libfrankenlibc_abi.so");
+    std::fs::write(
+        &source_c,
+        "int frankenlibc_sample_symbol(void) { return 7; }\n",
+    )
+    .expect("write sample source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source_c)
+        .arg("-o")
+        .arg(&source_so)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+
+    let first_report = temp.join("refresh-needed.report.json");
+    let first_output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+        .arg("--forge")
+        .current_dir(&root)
+        .env("PATH", fake_improved_dependency_probe_path(&temp))
+        .env(
+            "STANDALONE_REPLACEMENT_OUT_DIR",
+            temp.join("refresh-needed-out"),
+        )
+        .env(
+            "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR",
+            temp.join("refresh-needed-cargo-target"),
+        )
+        .env("STANDALONE_REPLACEMENT_REPORT", &first_report)
+        .env(
+            "STANDALONE_REPLACEMENT_LOG",
+            temp.join("refresh-needed.log.jsonl"),
+        )
+        .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
+        .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
+        .env_remove("LD_PRELOAD")
+        .output()
+        .expect("forge mode should run");
+    assert!(
+        !first_output.status.success(),
+        "removed blockers without a refresh note should require snapshot refresh\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&first_output.stdout),
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+    let first = load_json(&first_report);
+    assert_eq!(first["status"].as_str(), Some("fail"));
+    assert_eq!(
+        first["blocker_delta"]["delta_classification"].as_str(),
+        Some("expected_refresh_needed")
+    );
+    assert_eq!(
+        first["blocker_delta"]["refresh_required"].as_bool(),
+        Some(true)
+    );
+    assert!(
+        !string_set(&first["blocker_delta"]["removed_undefined_symbols"]).is_empty(),
+        "removed undefined blockers should be recorded"
+    );
+    assert!(
+        string_set(&first["blocker_delta"]["added_undefined_symbols"]).is_empty(),
+        "improvement path should not add undefined blockers"
+    );
+
+    let second_report = temp.join("improvement.report.json");
+    let second_output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+        .arg("--forge")
+        .current_dir(&root)
+        .env("PATH", fake_improved_dependency_probe_path(&temp))
+        .env(
+            "STANDALONE_REPLACEMENT_OUT_DIR",
+            temp.join("improvement-out"),
+        )
+        .env(
+            "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR",
+            temp.join("improvement-cargo-target"),
+        )
+        .env("STANDALONE_REPLACEMENT_REPORT", &second_report)
+        .env(
+            "STANDALONE_REPLACEMENT_LOG",
+            temp.join("improvement.log.jsonl"),
+        )
+        .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
+        .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
+        .env(
+            "STANDALONE_REPLACEMENT_BLOCKER_DELTA_REFRESH_NOTE",
+            "bd-zyck1.92 synthetic snapshot refresh evidence",
+        )
+        .env_remove("LD_PRELOAD")
+        .output()
+        .expect("forge mode should run");
+    assert!(
+        second_output.status.success(),
+        "refresh note should classify pure removals as improvement\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&second_output.stdout),
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+    let second = load_json(&second_report);
+    assert_eq!(second["status"].as_str(), Some("pass"));
+    assert_eq!(
+        second["blocker_delta"]["delta_classification"].as_str(),
+        Some("improvement")
+    );
+    assert_eq!(
+        second["blocker_delta"]["refresh_note_present"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        second["blocker_delta"]["refresh_required"].as_bool(),
+        Some(false)
     );
 }
 

@@ -15,6 +15,7 @@
   "inputs": {
     "packaging_spec": "tests/conformance/packaging_spec.json",
     "replacement_levels": "tests/conformance/replacement_levels.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json"
   },
   "artifact_policy": {
@@ -66,6 +67,23 @@
     ],
     "sensitive_env_values_redacted": true,
     "redacted_env_value": "<redacted>"
+  },
+  "blocker_delta_policy": {
+    "reported_field": "blocker_delta",
+    "baseline_source": "tests/conformance/standalone_host_dependency_probe_plan.v1.json#current_forge_blocker_projection.current_forge_blocker_value_snapshot",
+    "compared_fields": [
+      "host_needed_libraries",
+      "undefined_symbols",
+      "version_needs"
+    ],
+    "added_values_classification": "regression",
+    "added_values_result": "fail_closed",
+    "removed_values_without_note_classification": "expected_refresh_needed",
+    "removed_values_without_note_result": "fail_closed",
+    "removed_values_with_note_classification": "improvement",
+    "refresh_note_env": "STANDALONE_REPLACEMENT_BLOCKER_DELTA_REFRESH_NOTE",
+    "refresh_required_on_blocker_delta": true,
+    "promotion_allowed": false
   },
   "required_log_fields": [
     "trace_id",
@@ -119,7 +137,17 @@
     "build_provenance.build_command",
     "build_provenance.sanitized_env",
     "build_provenance.linker.path",
-    "build_provenance.linker.version"
+    "build_provenance.linker.version",
+    "blocker_delta.baseline_source",
+    "blocker_delta.delta_classification",
+    "blocker_delta.added_host_needed_libraries",
+    "blocker_delta.added_undefined_symbols",
+    "blocker_delta.added_version_requirements",
+    "blocker_delta.removed_host_needed_libraries",
+    "blocker_delta.removed_undefined_symbols",
+    "blocker_delta.removed_version_requirements",
+    "blocker_delta.refresh_required",
+    "blocker_delta.refresh_note_present"
   ],
   "required_evidence_files": [
     "build.stdout.txt",

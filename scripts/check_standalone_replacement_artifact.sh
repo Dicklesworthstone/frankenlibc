@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${STANDALONE_REPLACEMENT_MANIFEST:-${ROOT}/tests/conformance/standalone_replacement_artifact.v1.json}"
 COMPILER_RUNTIME_EXPERIMENT_MANIFEST="${STANDALONE_COMPILER_RUNTIME_EXPERIMENT_MANIFEST:-${ROOT}/tests/conformance/standalone_compiler_runtime_experiment.v1.json}"
+HOST_DEPENDENCY_PROBE_PLAN="${STANDALONE_HOST_DEPENDENCY_PROBE_PLAN:-${ROOT}/tests/conformance/standalone_host_dependency_probe_plan.v1.json}"
 PACKAGING="${ROOT}/tests/conformance/packaging_spec.json"
 LEVELS="${ROOT}/tests/conformance/replacement_levels.json"
 OUT_DIR="${STANDALONE_REPLACEMENT_OUT_DIR:-${ROOT}/target/standalone_replacement_artifact}"
@@ -40,7 +41,7 @@ esac
 
 mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")" "${CARGO_TARGET_DIR_VALUE}/release" "$(dirname "${COMPILER_RUNTIME_EXPERIMENT_REPORT}")" "$(dirname "${COMPILER_RUNTIME_EXPERIMENT_LOG}")" "${COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT}"
 
-python3 - "${ROOT}" "${MANIFEST}" "${PACKAGING}" "${LEVELS}" "${OUT_DIR}" "${CARGO_TARGET_DIR_VALUE}" "${REPORT}" "${LOG}" "${MODE}" "${COMPILER_RUNTIME_EXPERIMENT_MANIFEST}" "${COMPILER_RUNTIME_EXPERIMENT_REPORT}" "${COMPILER_RUNTIME_EXPERIMENT_LOG}" "${COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT}" <<'PY'
+python3 - "${ROOT}" "${MANIFEST}" "${PACKAGING}" "${LEVELS}" "${OUT_DIR}" "${CARGO_TARGET_DIR_VALUE}" "${REPORT}" "${LOG}" "${MODE}" "${COMPILER_RUNTIME_EXPERIMENT_MANIFEST}" "${COMPILER_RUNTIME_EXPERIMENT_REPORT}" "${COMPILER_RUNTIME_EXPERIMENT_LOG}" "${COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT}" "${HOST_DEPENDENCY_PROBE_PLAN}" <<'PY'
 import hashlib
 import json
 import os
@@ -65,6 +66,7 @@ compiler_runtime_manifest_path = Path(sys.argv[10])
 compiler_runtime_report_path = Path(sys.argv[11])
 compiler_runtime_log_path = Path(sys.argv[12])
 compiler_runtime_target_root = Path(sys.argv[13])
+host_dependency_probe_plan_path = Path(sys.argv[14])
 
 REQUIRED_LOG_FIELDS = [
     "trace_id",
@@ -120,6 +122,16 @@ REQUIRED_REPORT_FIELDS = [
     "build_provenance.sanitized_env",
     "build_provenance.linker.path",
     "build_provenance.linker.version",
+    "blocker_delta.baseline_source",
+    "blocker_delta.delta_classification",
+    "blocker_delta.added_host_needed_libraries",
+    "blocker_delta.added_undefined_symbols",
+    "blocker_delta.added_version_requirements",
+    "blocker_delta.removed_host_needed_libraries",
+    "blocker_delta.removed_undefined_symbols",
+    "blocker_delta.removed_version_requirements",
+    "blocker_delta.refresh_required",
+    "blocker_delta.refresh_note_present",
 ]
 
 REQUIRED_TOOLS = ["rch", "cargo", "readelf", "nm", "ldd"]
@@ -148,6 +160,7 @@ EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY = {
 EXPECTED_INPUTS = {
     "packaging_spec": "tests/conformance/packaging_spec.json",
     "replacement_levels": "tests/conformance/replacement_levels.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
 }
 
@@ -189,6 +202,29 @@ EXPECTED_BUILD_PROVENANCE_POLICY = {
     "sanitized_env_keys": BUILD_PROVENANCE_ENV_KEYS,
     "sensitive_env_values_redacted": True,
     "redacted_env_value": REDACTED_ENV_VALUE,
+}
+
+BLOCKER_DELTA_REFRESH_NOTE_ENV = "STANDALONE_REPLACEMENT_BLOCKER_DELTA_REFRESH_NOTE"
+BLOCKER_DELTA_BASELINE_SOURCE = (
+    "tests/conformance/standalone_host_dependency_probe_plan.v1.json"
+    "#current_forge_blocker_projection.current_forge_blocker_value_snapshot"
+)
+EXPECTED_BLOCKER_DELTA_POLICY = {
+    "reported_field": "blocker_delta",
+    "baseline_source": BLOCKER_DELTA_BASELINE_SOURCE,
+    "compared_fields": [
+        "host_needed_libraries",
+        "undefined_symbols",
+        "version_needs",
+    ],
+    "added_values_classification": "regression",
+    "added_values_result": "fail_closed",
+    "removed_values_without_note_classification": "expected_refresh_needed",
+    "removed_values_without_note_result": "fail_closed",
+    "removed_values_with_note_classification": "improvement",
+    "refresh_note_env": BLOCKER_DELTA_REFRESH_NOTE_ENV,
+    "refresh_required_on_blocker_delta": True,
+    "promotion_allowed": False,
 }
 
 EXPECTED_SYMBOL_SAMPLES = [
@@ -426,6 +462,7 @@ def load_json(path):
 
 
 manifest = load_json(manifest_path)
+host_dependency_probe_plan = load_json(host_dependency_probe_plan_path)
 compiler_runtime_manifest = (
     load_json(compiler_runtime_manifest_path)
     if mode == "compiler-runtime-experiment"
@@ -499,6 +536,142 @@ def set_delta(before, after):
     before_set = set(before)
     after_set = set(after)
     return unique_sorted(before_set - after_set), unique_sorted(after_set - before_set)
+
+
+def string_list(value):
+    if not isinstance(value, list):
+        return []
+    return unique_sorted(str(item) for item in value if isinstance(item, str) and item)
+
+
+def forge_blocker_snapshot():
+    projection = host_dependency_probe_plan.get("current_forge_blocker_projection", {})
+    if not isinstance(projection, dict):
+        return {}
+    snapshot = projection.get("current_forge_blocker_value_snapshot", {})
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+def snapshot_undefined_symbols(snapshot):
+    explicit = string_list(snapshot.get("undefined_symbols"))
+    if explicit:
+        return explicit
+    return unique_sorted(
+        [
+            *string_list(snapshot.get("undefined_unwind_symbols")),
+            *string_list(snapshot.get("undefined_glibc_symbols")),
+            *string_list(snapshot.get("undefined_tls_symbols")),
+        ]
+    )
+
+
+def blocker_delta_not_checked(reason):
+    return {
+        "status": "not_checked",
+        "delta_classification": "not_checked",
+        "reason": reason,
+        "baseline_source": BLOCKER_DELTA_BASELINE_SOURCE,
+        "compared_fields": EXPECTED_BLOCKER_DELTA_POLICY["compared_fields"],
+        "baseline_source_commit": None,
+        "current_source_commit": source_commit,
+        "baseline_host_needed_libraries": [],
+        "current_host_needed_libraries": [],
+        "added_host_needed_libraries": [],
+        "removed_host_needed_libraries": [],
+        "baseline_undefined_symbols": [],
+        "current_undefined_symbols": [],
+        "added_undefined_symbols": [],
+        "removed_undefined_symbols": [],
+        "baseline_version_requirements": [],
+        "current_version_requirements": [],
+        "added_version_requirements": [],
+        "removed_version_requirements": [],
+        "refresh_required": False,
+        "refresh_note_env": BLOCKER_DELTA_REFRESH_NOTE_ENV,
+        "refresh_note_present": False,
+        "promotion_allowed": False,
+    }
+
+
+def build_blocker_delta(artifact_state):
+    active = (
+        artifact_state.get("status") == "current"
+        and artifact_state.get("sampled_symbols_present") is True
+    )
+    if not active:
+        return blocker_delta_not_checked(
+            "artifact must be current with sampled symbol evidence before blocker deltas are comparable"
+        )
+
+    snapshot = forge_blocker_snapshot()
+    if not snapshot:
+        delta = blocker_delta_not_checked("committed forge blocker snapshot is missing")
+        delta["status"] = "fail"
+        delta["delta_classification"] = "snapshot_missing"
+        delta["refresh_required"] = True
+        return delta
+
+    breakdown = artifact_state.get("dependency_breakdown", {})
+    if not isinstance(breakdown, dict):
+        breakdown = {}
+
+    baseline_host = string_list(snapshot.get("host_needed_libraries"))
+    current_host = string_list(breakdown.get("host_needed_libraries"))
+    removed_host, added_host = set_delta(baseline_host, current_host)
+
+    baseline_undefined = snapshot_undefined_symbols(snapshot)
+    current_undefined = string_list(breakdown.get("undefined_symbols"))
+    removed_undefined, added_undefined = set_delta(baseline_undefined, current_undefined)
+
+    baseline_versions = flatten_version_needs(snapshot.get("version_needs"))
+    current_versions = flatten_version_needs(breakdown.get("version_needs"))
+    removed_versions, added_versions = set_delta(baseline_versions, current_versions)
+
+    added_any = bool(added_host or added_undefined or added_versions)
+    removed_any = bool(removed_host or removed_undefined or removed_versions)
+    refresh_note = os.environ.get(BLOCKER_DELTA_REFRESH_NOTE_ENV, "").strip()
+    if added_any:
+        classification = "regression"
+        status_value = "fail"
+        refresh_required = True
+    elif removed_any and not refresh_note:
+        classification = "expected_refresh_needed"
+        status_value = "fail"
+        refresh_required = True
+    elif removed_any:
+        classification = "improvement"
+        status_value = "pass"
+        refresh_required = False
+    else:
+        classification = "unchanged"
+        status_value = "pass"
+        refresh_required = False
+
+    return {
+        "status": status_value,
+        "delta_classification": classification,
+        "reason": "compared live forge blocker values against committed snapshot",
+        "baseline_source": BLOCKER_DELTA_BASELINE_SOURCE,
+        "compared_fields": EXPECTED_BLOCKER_DELTA_POLICY["compared_fields"],
+        "baseline_source_commit": snapshot.get("source_commit"),
+        "current_source_commit": source_commit,
+        "baseline_host_needed_libraries": baseline_host,
+        "current_host_needed_libraries": current_host,
+        "added_host_needed_libraries": added_host,
+        "removed_host_needed_libraries": removed_host,
+        "baseline_undefined_symbols": baseline_undefined,
+        "current_undefined_symbols": current_undefined,
+        "added_undefined_symbols": added_undefined,
+        "removed_undefined_symbols": removed_undefined,
+        "baseline_version_requirements": baseline_versions,
+        "current_version_requirements": current_versions,
+        "added_version_requirements": added_versions,
+        "removed_version_requirements": removed_versions,
+        "refresh_required": refresh_required,
+        "refresh_note_env": BLOCKER_DELTA_REFRESH_NOTE_ENV,
+        "refresh_note_present": bool(refresh_note),
+        "promotion_allowed": False,
+    }
 
 
 def env_bounded_int(name, default, *, minimum, maximum):
@@ -924,6 +1097,8 @@ def validate_manifest():
         errors.append("hash_evidence_policy does not match script contract")
     if manifest.get("build_provenance_policy") != EXPECTED_BUILD_PROVENANCE_POLICY:
         errors.append("build_provenance_policy does not match script contract")
+    if manifest.get("blocker_delta_policy") != EXPECTED_BLOCKER_DELTA_POLICY:
+        errors.append("blocker_delta_policy does not match script contract")
     if manifest.get("symbol_samples") != EXPECTED_SYMBOL_SAMPLES:
         errors.append("symbol_samples do not match script contract")
     classifications = manifest.get("expected_failure_classifications", [])
@@ -1465,6 +1640,13 @@ artifact_state.setdefault("mtime", None)
 
 claim_status = artifact_claim_status(artifact_state)
 build_provenance = collect_build_provenance()
+blocker_delta = build_blocker_delta(artifact_state)
+if blocker_delta.get("delta_classification") == "regression":
+    errors.append("blocker_delta regression: new host libraries, undefined symbols, or version needs observed")
+elif blocker_delta.get("delta_classification") == "expected_refresh_needed":
+    errors.append("blocker_delta expected_refresh_needed: refresh committed blocker snapshot before accepting blocker removals")
+elif blocker_delta.get("delta_classification") == "snapshot_missing":
+    errors.append("blocker_delta snapshot_missing: committed forge blocker snapshot is unavailable")
 
 exit_code = 0 if not errors and artifact_state["failure_signature"] != "non_elf_artifact" else 1
 append_log(
@@ -1501,6 +1683,7 @@ report = {
     "head_epoch": head_epoch,
     "cargo_target_dir": str(cargo_target_dir),
     "build_provenance": build_provenance,
+    "blocker_delta": blocker_delta,
     "checks": checks,
     "artifact_state": artifact_state,
     "blocking_reasons": artifact_state.get("dependency_breakdown", {}).get("blocking_reasons", []),
