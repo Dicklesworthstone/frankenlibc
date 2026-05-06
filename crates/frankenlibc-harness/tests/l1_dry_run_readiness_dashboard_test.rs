@@ -1574,6 +1574,185 @@ fn standalone_compiler_runtime_delta_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn standalone_tls_model_startup_experiment_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "standalone-tls-model-startup-experiment-source-commit-field",
+            (
+                "source_commit_freshness_policy.recorded_source_commit_field",
+                json!("source_commit"),
+            ),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-source-commit-comparison-target",
+            (
+                "source_commit_freshness_policy.comparison_target",
+                json!("current git HEAD"),
+            ),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-source-commit-stale-result",
+            (
+                "source_commit_freshness_policy.stale_result",
+                json!("block_standalone_tls_model_startup_experiment"),
+            ),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-source-commit-no-stale-evidence",
+            (
+                "source_commit_freshness_policy.experiment_evidence_allowed_when_stale",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-source-commit-rejection-kind",
+            (
+                "source_commit_freshness_policy.rejected_evidence_kind",
+                json!("stale_standalone_tls_model_startup_experiment"),
+            ),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-report-only",
+            ("report_policy.report_only", json!(true)),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-no-promotion",
+            ("report_policy.promotion_allowed", json!(false)),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-no-replacement-level-change",
+            (
+                "report_policy.replacement_level_change_allowed",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-no-default-tls-model-change",
+            (
+                "report_policy.default_tls_model_change_allowed",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-local-exec-failure-policy",
+            (
+                "report_policy.local_exec_build_failure_result",
+                json!("not_viable_for_cdylib_lane"),
+            ),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-claim-status",
+            ("summary.claim_status", json!("report_only")),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-standalone-claim-status",
+            ("summary.standalone_claim_status", json!("claim_blocked")),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-lane-count",
+            ("summary.lane_count", json!(3)),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-build-pass-count",
+            ("summary.build_pass_count", json!(1)),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-build-fail-count",
+            ("summary.build_fail_count", json!(1)),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-initial-exec-delta",
+            (
+                "summary.initial_exec_delta_classification",
+                json!("unchanged"),
+            ),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-initial-exec-symbol-count",
+            ("summary.initial_exec_tls_symbol_count", json!(1)),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-baseline-lane-status",
+            ("experiment_lanes.0.claim_status", json!("claim_blocked")),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-initial-exec-lane-status",
+            ("experiment_lanes.1.claim_status", json!("report_only")),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-initial-exec-tls-model",
+            ("experiment_lanes.1.tls_model", json!("initial-exec")),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-initial-exec-symbol",
+            (
+                "experiment_lanes.1.undefined_tls_symbols.0",
+                json!("__tls_get_addr@GLIBC_2.3"),
+            ),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-local-exec-build-status",
+            ("experiment_lanes.2.build_status", json!("fail")),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-local-exec-failure-signature",
+            (
+                "experiment_lanes.2.failure_signature",
+                json!("non_pic_tls_relocation_in_shared_dependency"),
+            ),
+        ),
+        (
+            "standalone-tls-model-startup-experiment-local-exec-blocker",
+            (
+                "experiment_lanes.2.blocking_reasons.0",
+                json!("tls_model_not_viable_for_cdylib_workspace"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-tls-model-startup-experiment-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected TLS model startup experiment dashboard row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "forge",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing TLS model startup experiment dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn standalone_smoke_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [

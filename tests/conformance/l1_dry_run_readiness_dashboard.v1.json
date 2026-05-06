@@ -27,6 +27,7 @@
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_owned_tls_startup_surface": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
     "standalone_owned_unwinder_symbol_surface": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+    "standalone_tls_model_startup_experiment": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
     "crt_tls_atexit_direct_link_run_proof_fixtures": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
     "real_program_smoke_suite": "tests/conformance/real_program_smoke_suite.v1.json",
     "dlfcn_replace_boundary_sentinel": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
@@ -1864,6 +1865,198 @@
       "field": "observation.remaining_blocking_reasons.0",
       "expected_value": "host_needed_libraries_present",
       "rationale": "Dashboard consumers must see that host dependency blockers still lead the remaining blocker set."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-source-commit-field",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "Dashboard consumers must see which field carries the TLS model startup experiment source commit freshness token."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-source-commit-comparison-target",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "Dashboard consumers must see that TLS model startup experiment freshness compares against the current source checkout."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-source-commit-stale-result",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_standalone_tls_model_startup_experiment",
+      "rationale": "Dashboard consumers must see that stale TLS model startup experiment evidence blocks the experiment path."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-source-commit-no-stale-evidence",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "source_commit_freshness_policy.experiment_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that stale TLS model startup experiment evidence cannot clear TLS blockers."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-source-commit-rejection-kind",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_standalone_tls_model_startup_experiment",
+      "rationale": "Dashboard consumers must see stale TLS model startup experiments as a distinct rejection kind."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-report-only",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "report_policy.report_only",
+      "expected_value": true,
+      "rationale": "Dashboard consumers must see that the TLS model startup experiment is report-only."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-no-promotion",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "report_policy.promotion_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that TLS model startup experiments cannot promote standalone replacement."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-no-replacement-level-change",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "report_policy.replacement_level_change_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that TLS model startup experiments cannot change replacement_levels."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-no-default-tls-model-change",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "report_policy.default_tls_model_change_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that the default TLS model cannot change from this report."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-local-exec-failure-policy",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "report_policy.local_exec_build_failure_result",
+      "expected_value": "not_viable_for_cdylib_lane",
+      "rationale": "Dashboard consumers must see how local-exec build failure is interpreted."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-claim-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "summary.claim_status",
+      "expected_value": "report_only",
+      "rationale": "Dashboard consumers must see that the TLS startup experiment claim status remains report-only."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-standalone-claim-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "summary.standalone_claim_status",
+      "expected_value": "claim_blocked",
+      "rationale": "Dashboard consumers must see that standalone claims stay blocked after TLS model probes."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-lane-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "summary.lane_count",
+      "expected_value": 3,
+      "rationale": "Dashboard consumers must see that the TLS model experiment covers baseline, initial-exec, and local-exec lanes."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-build-pass-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "summary.build_pass_count",
+      "expected_value": 1,
+      "rationale": "Dashboard consumers must see that only one live TLS model experiment lane built successfully."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-build-fail-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "summary.build_fail_count",
+      "expected_value": 1,
+      "rationale": "Dashboard consumers must see that one live TLS model experiment lane failed to build."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-initial-exec-delta",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "summary.initial_exec_delta_classification",
+      "expected_value": "unchanged",
+      "rationale": "Dashboard consumers must see that initial-exec did not remove the TLS blocker."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-initial-exec-symbol-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "summary.initial_exec_tls_symbol_count",
+      "expected_value": 1,
+      "rationale": "Dashboard consumers must see that initial-exec still has one undefined TLS symbol."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-baseline-lane-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "experiment_lanes.0.claim_status",
+      "expected_value": "claim_blocked",
+      "rationale": "Dashboard consumers must see that the baseline TLS diagnostic lane remains claim-blocked."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-initial-exec-lane-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "experiment_lanes.1.claim_status",
+      "expected_value": "report_only",
+      "rationale": "Dashboard consumers must see that the initial-exec lane remains report-only."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-initial-exec-tls-model",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "experiment_lanes.1.tls_model",
+      "expected_value": "initial-exec",
+      "rationale": "Dashboard consumers must see the TLS model used for the successful experiment lane."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-initial-exec-symbol",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "experiment_lanes.1.undefined_tls_symbols.0",
+      "expected_value": "__tls_get_addr@GLIBC_2.3",
+      "rationale": "Dashboard consumers must see that initial-exec still leaves __tls_get_addr unresolved."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-local-exec-build-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "experiment_lanes.2.build_status",
+      "expected_value": "fail",
+      "rationale": "Dashboard consumers must see that the local-exec lane fails to build."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-local-exec-failure-signature",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "experiment_lanes.2.failure_signature",
+      "expected_value": "non_pic_tls_relocation_in_shared_dependency",
+      "rationale": "Dashboard consumers must see why the local-exec lane is not viable for the cdylib workspace."
+    },
+    {
+      "row_id": "standalone-tls-model-startup-experiment-local-exec-blocker",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+      "field": "experiment_lanes.2.blocking_reasons.0",
+      "expected_value": "tls_model_not_viable_for_cdylib_workspace",
+      "rationale": "Dashboard consumers must see the concrete local-exec blocker class."
     },
     {
       "row_id": "l1-dashboard-source-commit-field",
