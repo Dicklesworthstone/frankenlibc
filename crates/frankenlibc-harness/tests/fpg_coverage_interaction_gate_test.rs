@@ -91,6 +91,40 @@ fn log_path(root: &Path) -> PathBuf {
     root.join("target/conformance/fpg_coverage_interaction_gate.log.jsonl")
 }
 
+fn git_head(root: &Path) -> TestResult<String> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(root)
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+    Ok(String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
+        .trim()
+        .to_owned())
+}
+
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn source_commit_is_current(root: &Path, value: &str) -> TestResult<bool> {
+    if value == "current" {
+        return Ok(true);
+    }
+    if is_hex_commit(value) {
+        return Ok(value == git_head(root)?);
+    }
+    Ok(false)
+}
+
 fn load_json(path: &Path) -> TestResult<Value> {
     let content = std::fs::read_to_string(path)
         .map_err(|err| test_error(format!("{} should be readable: {err}", path.display())))?;
@@ -233,6 +267,59 @@ fn gate_artifact_covers_coverage_interaction_rows() -> TestResult {
         "fpg-proof-coverage-interaction",
         "owner_family_group",
     )?;
+    let gate_commit = string_field(&gate, "source_commit", "gate")?;
+    ensure_eq(gate_commit, "current", "gate.source_commit")?;
+    ensure(
+        source_commit_is_current(&root, gate_commit)?,
+        "gate source_commit must be current",
+    )?;
+    let freshness_policy = field(&gate, "source_commit_freshness_policy", "gate")?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "recorded_source_commit_field",
+            "source_commit_freshness_policy",
+        )?,
+        "source_commit",
+        "source_commit_freshness_policy.recorded_source_commit_field",
+    )?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "comparison_target",
+            "source_commit_freshness_policy",
+        )?,
+        "current git HEAD",
+        "source_commit_freshness_policy.comparison_target",
+    )?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "stale_result",
+            "source_commit_freshness_policy",
+        )?,
+        "block_coverage_interaction_gate_evidence",
+        "source_commit_freshness_policy.stale_result",
+    )?;
+    ensure_eq(
+        field(
+            freshness_policy,
+            "coverage_interaction_evidence_allowed_when_stale",
+            "source_commit_freshness_policy",
+        )?
+        .as_bool(),
+        Some(false),
+        "source_commit_freshness_policy.coverage_interaction_evidence_allowed_when_stale",
+    )?;
+    ensure_eq(
+        string_field(
+            freshness_policy,
+            "rejected_evidence_kind",
+            "source_commit_freshness_policy",
+        )?,
+        "stale_source_commit",
+        "source_commit_freshness_policy.rejected_evidence_kind",
+    )?;
 
     let inputs = as_object(field(&gate, "inputs", "gate")?, "inputs")?;
     for value in inputs.values() {
@@ -291,6 +378,30 @@ fn gate_artifact_covers_coverage_interaction_rows() -> TestResult {
         actual_ids,
         expected_ids,
         "coverage-interaction gap id coverage",
+    )
+}
+
+#[test]
+fn checker_rejects_stale_gate_source_commit() -> TestResult {
+    let root = workspace_root();
+    let mut gate = load_json(&gate_path(&root))?;
+    set_field(
+        &mut gate,
+        "source_commit",
+        Value::String("0000000000000000000000000000000000000000".to_owned()),
+        "gate",
+    )?;
+    let report = run_gate_with_fixture(&root, "stale_gate_source_commit", &gate)?;
+    expect_failed_check(&report, "top_level_shape")?;
+    let report_json = load_json(&report)?;
+    let errors = as_array(field(&report_json, "errors", "report")?, "report.errors")?;
+    ensure(
+        errors.iter().any(|error| {
+            error.as_str().is_some_and(|message| {
+                message.contains("gate source_commit must be 'current' or match current git HEAD")
+            })
+        }),
+        "stale top-level source_commit should explain the current-HEAD failure",
     )
 }
 

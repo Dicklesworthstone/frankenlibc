@@ -5,7 +5,14 @@
   "owner_family_group": "fpg-proof-coverage-interaction",
   "evidence_owner": "coverage, performance, ABI-layout, and low-level kernel owners",
   "generated_utc": "2026-05-03T22:15:00Z",
-  "source_commit": "e0cb10ffebb5bdd65668fc9f5b4fa283ce5a7c84",
+  "source_commit": "current",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_coverage_interaction_gate_evidence",
+    "coverage_interaction_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "inputs": {
     "feature_parity": "FEATURE_PARITY.md",
     "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
