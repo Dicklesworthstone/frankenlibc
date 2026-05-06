@@ -1,0 +1,253 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-compiler-runtime-blocker-diagnostics",
+  "bead": "bd-zyck1.87",
+  "source_commit": "current",
+  "generated_utc": "2026-05-06T04:05:00Z",
+  "purpose": "Report-only diagnostic that maps the current standalone forge libgcc and unwind blockers to compiler/runtime profile knobs. It explains the blocker surface for follow-up experiments without changing the replacement artifact, panic strategy, link profile, or replacement level.",
+  "inputs": {
+    "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+    "packaging_spec": "tests/conformance/packaging_spec.json",
+    "abi_crate_manifest": "crates/frankenlibc-abi/Cargo.toml",
+    "abi_build_script": "crates/frankenlibc-abi/build.rs",
+    "toolchain": "rust-toolchain.toml"
+  },
+  "report_policy": {
+    "promotion_allowed": false,
+    "replacement_level_change_allowed": false,
+    "default_build_profile_change_allowed": false,
+    "panic_strategy_change_allowed": false,
+    "stale_result": "block_compiler_runtime_blocker_diagnostics",
+    "refresh_required_on_blocker_delta": true,
+    "non_baseline_experiments_require_separate_bead": true
+  },
+  "toolchain_profile": {
+    "cargo_package": "frankenlibc-abi",
+    "crate_type": "cdylib",
+    "cargo_profile": "release",
+    "cargo_features": [
+      "standalone"
+    ],
+    "build_command": [
+      "rch",
+      "exec",
+      "--",
+      "cargo",
+      "build",
+      "-p",
+      "frankenlibc-abi",
+      "--release",
+      "--features=standalone"
+    ],
+    "target_triple": "x86_64-unknown-linux-gnu",
+    "rust_toolchain_channel": "nightly-2026-04-28",
+    "rustc_version": "rustc 1.97.0-nightly (52b6e2c20 2026-04-27)",
+    "cargo_version": "cargo 1.97.0-nightly (eb9b60f1f 2026-04-24)",
+    "panic_strategy": {
+      "current": "implicit-unwind",
+      "evidence": "No workspace [profile.release].panic override is present; x86_64-unknown-linux-gnu release cdylib builds therefore keep Rust's default unwind-capable panic runtime.",
+      "default_change_allowed": false,
+      "abort_candidate_requires_opt_in_experiment": true
+    },
+    "relevant_link_args": [
+      {
+        "source": "crates/frankenlibc-abi/build.rs",
+        "condition": "release cdylib, not fuzzing, version script exists",
+        "arg": "-Wl,--version-script=crates/frankenlibc-abi/version_scripts/libc.map",
+        "purpose": "Bind exported libc symbol versions for the cdylib."
+      }
+    ],
+    "explicit_profile_overrides": []
+  },
+  "current_forge_evidence": {
+    "source_artifact": "target/conformance/standalone_replacement_artifact.report.json",
+    "latest_probe_command": "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR=/data/tmp/frankenlibc-SwiftKnoll-bd-zyck1.87-forge-cargo STANDALONE_REPLACEMENT_OUT_DIR=/data/tmp/frankenlibc-SwiftKnoll-bd-zyck1.87-forge-out STANDALONE_REPLACEMENT_REPORT=/data/tmp/frankenlibc-SwiftKnoll-bd-zyck1.87-standalone_replacement_artifact.report.json STANDALONE_REPLACEMENT_LOG=/data/tmp/frankenlibc-SwiftKnoll-bd-zyck1.87-standalone_replacement_artifact.log.jsonl RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_PRIORITY=high scripts/check_standalone_replacement_artifact.sh --forge",
+    "latest_probe_result": "pass",
+    "latest_probe_claim_status": "claim_blocked",
+    "latest_probe_artifact_status": "current",
+    "latest_probe_failure_signature": "host_glibc_dependency",
+    "latest_probe_artifact_sha256": "0caf2f836d1fff38afcdb7d5b5f56b46f2f9e23e7c1dc7af434325e0a1406275",
+    "evidence_files": [
+      "artifact.readelf.dynamic.txt",
+      "artifact.readelf.version.txt",
+      "artifact.nm.dynamic.txt",
+      "artifact.ldd.txt"
+    ],
+    "evidence_command_results": {
+      "readelf_dynamic": {
+        "command": "readelf -d libfrankenlibc_replace.so",
+        "exit_code": 0,
+        "observed_needed_libraries": [
+          "libgcc_s.so.1",
+          "ld-linux-x86-64.so.2"
+        ]
+      },
+      "readelf_version": {
+        "command": "readelf --version-info libfrankenlibc_replace.so",
+        "exit_code": 0,
+        "observed_version_needs": {
+          "libgcc_s.so.1": [
+            "GCC_3.0",
+            "GCC_3.3",
+            "GCC_4.2.0"
+          ],
+          "ld-linux-x86-64.so.2": [
+            "GLIBC_2.3"
+          ]
+        }
+      },
+      "nm_dynamic": {
+        "command": "nm -D libfrankenlibc_replace.so",
+        "exit_code": 0,
+        "observed_undefined_unwind_symbols": [
+          "_Unwind_Backtrace@GCC_3.3",
+          "_Unwind_DeleteException@GCC_3.0",
+          "_Unwind_GetDataRelBase@GCC_3.0",
+          "_Unwind_GetIP@GCC_3.0",
+          "_Unwind_GetIPInfo@GCC_4.2.0",
+          "_Unwind_GetLanguageSpecificData@GCC_3.0",
+          "_Unwind_GetRegionStart@GCC_3.0",
+          "_Unwind_GetTextRelBase@GCC_3.0",
+          "_Unwind_RaiseException@GCC_3.0",
+          "_Unwind_Resume@GCC_3.0",
+          "_Unwind_SetGR@GCC_3.0",
+          "_Unwind_SetIP@GCC_3.0"
+        ]
+      },
+      "ldd": {
+        "command": "ldd libfrankenlibc_replace.so",
+        "exit_code": 0,
+        "observed_host_resolved_libraries": [
+          "/lib64/ld-linux-x86-64.so.2",
+          "libc.so.6",
+          "libgcc_s.so.1"
+        ]
+      }
+    }
+  },
+  "blocker_mappings": [
+    {
+      "blocker_id": "libgcc-runtime-dependency",
+      "blocking_reason": "libgcc_runtime_dependency",
+      "owner_surface": "compiler_runtime",
+      "observed_values": {
+        "needed_libraries": [
+          "libgcc_s.so.1"
+        ],
+        "host_version_requirements": [
+          "libgcc_s.so.1:GCC_3.0",
+          "libgcc_s.so.1:GCC_3.3",
+          "libgcc_s.so.1:GCC_4.2.0"
+        ],
+        "version_needs": {
+          "libgcc_s.so.1": [
+            "GCC_3.0",
+            "GCC_3.3",
+            "GCC_4.2.0"
+          ]
+        }
+      },
+      "evidence": [
+        "readelf -d reports DT_NEEDED libgcc_s.so.1",
+        "readelf --version-info reports libgcc_s.so.1 version needs GCC_3.0, GCC_3.3, and GCC_4.2.0",
+        "ldd resolves libgcc_s.so.1 from the host runtime"
+      ],
+      "likely_origin": "The release standalone cdylib is still built with the default unwind-capable Rust panic runtime on x86_64-unknown-linux-gnu. That keeps compiler-runtime and unwinder support resolved through host libgcc_s.so.1 rather than through an owned replacement runtime.",
+      "profile_knobs": [
+        "panic strategy",
+        "compiler runtime linkage",
+        "owned unwinder implementation",
+        "linker/runtime support library selection"
+      ],
+      "first_safe_action": "Run an opt-in forge experiment that compares the current release+standalone baseline against a panic-abort/compiler-runtime-minimized lane; keep both lanes report-only."
+    },
+    {
+      "blocker_id": "undefined-unwind-symbols",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "observed_values": {
+        "undefined_unwind_symbols": [
+          "_Unwind_Backtrace@GCC_3.3",
+          "_Unwind_DeleteException@GCC_3.0",
+          "_Unwind_GetDataRelBase@GCC_3.0",
+          "_Unwind_GetIP@GCC_3.0",
+          "_Unwind_GetIPInfo@GCC_4.2.0",
+          "_Unwind_GetLanguageSpecificData@GCC_3.0",
+          "_Unwind_GetRegionStart@GCC_3.0",
+          "_Unwind_GetTextRelBase@GCC_3.0",
+          "_Unwind_RaiseException@GCC_3.0",
+          "_Unwind_Resume@GCC_3.0",
+          "_Unwind_SetGR@GCC_3.0",
+          "_Unwind_SetIP@GCC_3.0"
+        ]
+      },
+      "evidence": [
+        "nm -D reports each _Unwind_* symbol as undefined in libfrankenlibc_replace.so",
+        "readelf --version-info ties the unwind symbols to libgcc_s.so.1 GCC version requirements"
+      ],
+      "likely_origin": "The artifact carries unresolved language-unwind ABI edges. The current project owns libc entrypoints but does not yet own the unwinder/personality/runtime symbols needed to make those edges standalone.",
+      "profile_knobs": [
+        "panic strategy",
+        "unwind table emission",
+        "owned unwinder/personality symbols",
+        "compiler runtime substitution"
+      ],
+      "first_safe_action": "Keep the baseline unchanged, then add a separate experiment lane that proves whether panic-abort or owned-unwinder work removes the _Unwind_* undefined set."
+    }
+  ],
+  "experiment_matrix": [
+    {
+      "experiment_id": "baseline-release-standalone",
+      "status": "observed_baseline",
+      "command": "rch exec -- cargo build -p frankenlibc-abi --release --features=standalone",
+      "panic_strategy": "implicit-unwind",
+      "expected_claim_status": "claim_blocked",
+      "expected_blockers": [
+        "libgcc_runtime_dependency",
+        "undefined_unwind_symbols"
+      ],
+      "validation": [
+        "scripts/check_standalone_replacement_artifact.sh --forge",
+        "readelf -d libfrankenlibc_replace.so",
+        "readelf --version-info libfrankenlibc_replace.so",
+        "nm -D libfrankenlibc_replace.so",
+        "ldd libfrankenlibc_replace.so"
+      ]
+    },
+    {
+      "experiment_id": "panic-abort-compiler-runtime-minimized",
+      "status": "proposed_next_bead",
+      "command": "opt-in only; exact command to be owned by bd-zyck1.88",
+      "panic_strategy": "abort",
+      "expected_claim_status": "report_only",
+      "must_not_change_default_profile": true,
+      "validation": [
+        "compare needed_libraries against baseline",
+        "compare undefined_unwind_symbols against baseline",
+        "compare version_needs against baseline"
+      ]
+    },
+    {
+      "experiment_id": "owned-unwinder-symbol-surface",
+      "status": "proposed_followup",
+      "command": "add no code in this diagnostic; future bead must supply owned symbols or prove no unresolved _Unwind edges",
+      "panic_strategy": "unchanged_until_experiment",
+      "expected_claim_status": "report_only",
+      "must_not_change_default_profile": true,
+      "validation": [
+        "nm -D reports no _Unwind_* undefined symbols",
+        "readelf --version-info reports no libgcc_s.so.1 GCC needs",
+        "standalone forge remains claim_blocked until every host dependency is cleared"
+      ]
+    }
+  ],
+  "summary": {
+    "blocker_mapping_count": 2,
+    "libgcc_needed_library_count": 1,
+    "undefined_unwind_symbol_count": 12,
+    "libgcc_version_need_count": 3,
+    "report_only": true,
+    "next_bead": "bd-zyck1.88"
+  }
+}
