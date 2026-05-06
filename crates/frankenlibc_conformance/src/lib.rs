@@ -18111,11 +18111,14 @@ mod tests {
         }
     }
 
-    // NOTE: time_ops.json uses placeholder outputs (POSITIVE_INT, NON_NEGATIVE, TM_STRUCT)
-    // but executor returns placeholders unchanged - functions not yet implemented in executor
+    // NOTE: time_ops.json uses symbolic outputs (POSITIVE_INT, NON_NEGATIVE,
+    // TM_STRUCT) because wall-clock values are nondeterministic; the executor
+    // calls the live ABI entrypoints and normalizes successful shapes to those
+    // fixture tokens.
 
-    // NOTE: termios_ops.json uses flexible placeholders (0_OR_ENOTTY) and the
-    // shared executor normalizes ENOTTY failures into that fixture contract.
+    // NOTE: termios_ops.json uses the flexible 0_OR_ENOTTY token for terminal
+    // environment variance; the shared executor normalizes ENOTTY failures into
+    // that fixture contract.
 
     #[test]
     fn socket_ops_fixture_cases_match_execute_fixture_case() {

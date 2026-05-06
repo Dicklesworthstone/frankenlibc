@@ -1,0 +1,94 @@
+{
+  "schema_version": "placeholder_fixture_output_triage.v1",
+  "generated_by_bead": "bd-0agsk.14",
+  "source_todo_ids": [
+    "TODO-0401",
+    "TODO-0402",
+    "TODO-0404"
+  ],
+  "canonical_command": "scripts/check_placeholder_fixture_output_triage.sh --validate-only",
+  "source_finding": {
+    "artifact": "tests/conformance/architecture_todo_reconciliation.v1.json",
+    "kind": "placeholder_fixture_output_comment",
+    "source": "crates/frankenlibc_conformance/src/lib.rs",
+    "original_lines": "18114-18118",
+    "target_bead": "bd-0agsk.14"
+  },
+  "input_artifacts": [
+    "tests/conformance/architecture_todo_reconciliation.v1.json",
+    "tests/conformance/fixture_expected_output_schema_policy.v1.json",
+    "tests/conformance/fixture_schema_validation.v1.json",
+    "tests/conformance/fixtures/time_ops.json",
+    "tests/conformance/fixtures/termios_ops.json",
+    "crates/frankenlibc_conformance/src/lib.rs",
+    "crates/frankenlibc-harness/tests/time_ops_conformance_test.rs",
+    "crates/frankenlibc-harness/tests/termios_ops_conformance_test.rs"
+  ],
+  "triage_summary": {
+    "finding_count": 2,
+    "confirmed_real_blocker_count": 0,
+    "intentional_flexible_assertion_count": 1,
+    "intentional_symbolic_assertion_count": 1,
+    "stale_comment_count": 1,
+    "follow_up_beads_created": []
+  },
+  "triage_findings": [
+    {
+      "id": "time_ops_symbolic_nondeterministic_outputs",
+      "classification": "intentional_symbolic_assertion_with_stale_comment",
+      "real_blocker": false,
+      "fixture_file": "tests/conformance/fixtures/time_ops.json",
+      "fixture_placeholder_tokens": [
+        "POSITIVE_INT",
+        "NON_NEGATIVE",
+        "TM_STRUCT"
+      ],
+      "fixture_placeholder_case_count": 4,
+      "executor_source": "crates/frankenlibc_conformance/src/lib.rs",
+      "executor_functions": [
+        "execute_time_case",
+        "execute_clock_case",
+        "execute_localtime_r_case"
+      ],
+      "current_behavior": "The executor calls live FrankenLibC ABI time, clock, and localtime_r entrypoints, then normalizes nondeterministic successful shapes to symbolic fixture tokens. clock_gettime cases use literal return-code expectations.",
+      "harness_evidence": [
+        "crates/frankenlibc-harness/tests/time_ops_conformance_test.rs::time_ops_fixture_cases_match_execute_fixture_case",
+        "crates/frankenlibc-harness/tests/time_ops_conformance_test.rs::time_ops_fixture_executes_with_host_parity_via_harness_matrix"
+      ],
+      "user_visible_risk": "Low for fixture replay and support claims: the tokens intentionally prove success shape, not exact wall-clock value or tm field parity. They should remain L0 fixture evidence until a separate time-value oracle is added.",
+      "next_action": "No implementation bead is required. Keep the symbolic-output explanation and existing direct/subprocess fixture gates; create a future value-parity bead only if the project decides to assert stable time fields."
+    },
+    {
+      "id": "termios_ops_environment_flexible_tcgetattr",
+      "classification": "intentional_flexible_assertion",
+      "real_blocker": false,
+      "fixture_file": "tests/conformance/fixtures/termios_ops.json",
+      "fixture_placeholder_tokens": [
+        "0_OR_ENOTTY"
+      ],
+      "fixture_placeholder_case_count": 2,
+      "executor_source": "crates/frankenlibc_conformance/src/lib.rs",
+      "executor_functions": [
+        "execute_tcgetattr_case"
+      ],
+      "current_behavior": "The executor calls the live tcgetattr ABI entrypoint, clears ABI errno before the call, and normalizes either success or ENOTTY on fd 0 to 0_OR_ENOTTY. Invalid fd fixtures still require the literal -1 result.",
+      "harness_evidence": [
+        "crates/frankenlibc-harness/tests/termios_ops_conformance_test.rs::termios_ops_fixture_executes_with_host_parity_via_harness_matrix"
+      ],
+      "user_visible_risk": "Low and environment-bound: fd 0 may or may not be a terminal in CI or local shells, so exact tcgetattr success cannot be required without a pty fixture harness.",
+      "next_action": "No implementation bead is required. Keep 0_OR_ENOTTY as an explicit flexible contract; add a pty-backed termios fixture bead only when terminal emulation becomes part of the conformance environment."
+    }
+  ],
+  "checker_requirements": {
+    "must_fail_if_source_finding_missing": true,
+    "must_fail_if_fixture_placeholder_counts_drift": true,
+    "must_fail_if_executor_normalization_tokens_missing": true,
+    "must_fail_if_real_blockers_exist_without_follow_up_beads": true
+  },
+  "validation": [
+    "rg -n \"placeholder outputs|flexible placeholders|symbolic outputs|0_OR_ENOTTY\" crates/frankenlibc_conformance/src/lib.rs crates/frankenlibc-harness/tests/time_ops_conformance_test.rs crates/frankenlibc-harness/tests/termios_ops_conformance_test.rs tests/conformance/architecture_todo_reconciliation.v1.json",
+    "jq empty tests/conformance/placeholder_fixture_output_triage.v1.json",
+    "scripts/check_placeholder_fixture_output_triage.sh --validate-only",
+    "br dep cycles --no-db --json"
+  ]
+}
