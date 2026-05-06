@@ -340,4 +340,9 @@ name = "fuzz_mntent"
 path = "fuzz_targets/fuzz_mntent.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_etc_db"
+path = "fuzz_targets/fuzz_etc_db.rs"
+doc = false
+
 [workspace]
