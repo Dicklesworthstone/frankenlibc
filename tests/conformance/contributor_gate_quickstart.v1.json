@@ -1,0 +1,236 @@
+{
+  "schema_version": "contributor_gate_quickstart.v1",
+  "generated_by_bead": "bd-0agsk.15",
+  "source_todo_ids": [
+    "TODO-1004"
+  ],
+  "canonical_command": "scripts/check_contributor_gate_quickstart.sh --validate-only",
+  "purpose": "Deterministic contributor quickstart for running the current live evidence gates without guessing from prose.",
+  "runner_policy": {
+    "default_execution_host": "local",
+    "rch_required": false,
+    "cargo_target_dir": "not_applicable",
+    "report_target_dir": "target/conformance",
+    "notes": [
+      "These commands are shell/Python gate checks and do not compile Rust.",
+      "Use rch only for follow-up cargo validation outside this quickstart."
+    ]
+  },
+  "required_workflows": [
+    {
+      "id": "architecture_ledger_reconciliation",
+      "order": 1,
+      "title": "Architecture ledger reconciliation",
+      "category": "architecture-ledger",
+      "execution_host": "local",
+      "command": "scripts/check_architecture_todo_reconciliation.sh",
+      "script": "scripts/check_architecture_todo_reconciliation.sh",
+      "mode": "default",
+      "primary_artifacts": [
+        "docs/architecture_investigation_todo.md",
+        "tests/conformance/architecture_todo_reconciliation.v1.json"
+      ],
+      "expected_reports": [
+        "target/conformance/architecture_todo_reconciliation.report.json"
+      ],
+      "expected_logs": [
+        "target/conformance/architecture_todo_reconciliation.log.jsonl"
+      ],
+      "target_dir": "target/conformance",
+      "failure_signatures": [
+        "schema_version",
+        "ledger_id_set_mismatch",
+        "row_count_mismatch",
+        "unexpected_unresolved_classification"
+      ],
+      "notes": "Run first so TODO rows, bead mappings, and live classifications agree before downstream support claims are checked."
+    },
+    {
+      "id": "support_reality_regeneration",
+      "order": 2,
+      "title": "Support and reality regeneration",
+      "category": "support-reality",
+      "execution_host": "local",
+      "command": "scripts/check_support_reality_regeneration.sh --validate-only",
+      "script": "scripts/check_support_reality_regeneration.sh",
+      "mode": "validate-only",
+      "primary_artifacts": [
+        "tests/conformance/support_reality_regeneration.v1.json",
+        "support_matrix.json",
+        "tests/conformance/reality_report.v1.json"
+      ],
+      "expected_reports": [
+        "target/conformance/support_reality_regeneration.report.json"
+      ],
+      "expected_logs": [
+        "target/conformance/support_reality_regeneration.log.jsonl"
+      ],
+      "target_dir": "target/conformance",
+      "failure_signatures": [
+        "required_file_missing",
+        "contract_schema_version",
+        "single_artifact_policy_missing",
+        "paired_artifacts_missing"
+      ],
+      "notes": "Validate the paired support-matrix and reality-report contract; do not use single-artifact write modes for quickstart runs."
+    },
+    {
+      "id": "fixture_schema_validation",
+      "order": 3,
+      "title": "Fixture schema validation",
+      "category": "fixtures",
+      "execution_host": "local",
+      "command": "scripts/check_fixture_schema_validation.sh --validate-only",
+      "script": "scripts/check_fixture_schema_validation.sh",
+      "mode": "validate-only",
+      "primary_artifacts": [
+        "tests/conformance/fixture_schema_validation.v1.json",
+        "tests/conformance/fixtures"
+      ],
+      "expected_reports": [
+        "target/conformance/fixture_schema_validation.report.json"
+      ],
+      "expected_logs": [
+        "target/conformance/fixture_schema_validation.log.jsonl"
+      ],
+      "target_dir": "target/conformance",
+      "failure_signatures": [
+        "contract_schema_version",
+        "fixture_root_missing",
+        "fixture_file_unclassified",
+        "fixture_case_schema_invalid",
+        "structured_fixture_schema_invalid"
+      ],
+      "notes": "Validate standard and structured fixture schemas before gates that consume fixture-family coverage."
+    },
+    {
+      "id": "replacement_guard",
+      "order": 4,
+      "title": "Replacement guard",
+      "category": "replacement-readiness",
+      "execution_host": "local",
+      "command": "scripts/check_replacement_guard.sh interpose",
+      "script": "scripts/check_replacement_guard.sh",
+      "mode": "interpose",
+      "primary_artifacts": [
+        "tests/conformance/replacement_profile.json",
+        "support_matrix.json",
+        "tests/conformance/replacement_zero_unapproved_fixtures.v1.json",
+        "crates/frankenlibc-abi/src"
+      ],
+      "expected_reports": [
+        "target/conformance/replacement_guard.report.json"
+      ],
+      "expected_logs": [
+        "target/conformance/replacement_guard.log.jsonl"
+      ],
+      "target_dir": "target/conformance",
+      "failure_signatures": [
+        "forbidden call-through",
+        "pthread_mutex",
+        "fixture summary",
+        "replacement_zero_unapproved_fixtures"
+      ],
+      "notes": "Use interpose mode for contributor quickstart; replacement mode is a stricter follow-up gate."
+    },
+    {
+      "id": "runtime_mode_evidence",
+      "order": 5,
+      "title": "Runtime-mode evidence",
+      "category": "runtime-mode",
+      "execution_host": "local",
+      "command": "scripts/check_runtime_mode_evidence_logging_coverage.sh --validate-only",
+      "script": "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+      "mode": "validate-only",
+      "primary_artifacts": [
+        "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+        "tests/conformance/runtime_env_inventory.v1.json",
+        "crates/frankenlibc-harness/src/bin/harness.rs",
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "expected_reports": [
+        "target/conformance/runtime_mode_evidence_logging_coverage.report.json"
+      ],
+      "expected_logs": [
+        "target/conformance/runtime_mode_evidence_logging_coverage.log.jsonl"
+      ],
+      "target_dir": "target/conformance",
+      "failure_signatures": [
+        "startup_evidence_missing",
+        "ambient_tz_dependency",
+        "source_token_missing",
+        "mode_env_not_set"
+      ],
+      "notes": "Check that strict and hardened subprocess campaigns set FRANKENLIBC_MODE and emit startup evidence instead of inheriting ambient state."
+    },
+    {
+      "id": "hardened_coverage_inventory",
+      "order": 6,
+      "title": "Hardened coverage inventory",
+      "category": "hardened-coverage",
+      "execution_host": "local",
+      "command": "scripts/check_hardened_mode_coverage_inventory.sh --validate-only",
+      "script": "scripts/check_hardened_mode_coverage_inventory.sh",
+      "mode": "validate-only",
+      "primary_artifacts": [
+        "tests/conformance/hardened_mode_coverage_inventory.v1.json",
+        "tests/conformance/fixture_schema_validation.v1.json",
+        "tests/conformance/hardened_repair_deny_matrix.v1.json",
+        "tests/conformance/pthread_malloc_stdio_stress_orchard.v1.json",
+        "support_matrix.json",
+        "tests/conformance/fixtures"
+      ],
+      "expected_reports": [
+        "target/conformance/hardened_mode_coverage_inventory.report.json"
+      ],
+      "expected_logs": [
+        "target/conformance/hardened_mode_coverage_inventory.log.jsonl"
+      ],
+      "target_dir": "target/conformance",
+      "failure_signatures": [
+        "hardened_coverage_input_missing",
+        "hardened_coverage_fixture_inventory_mismatch",
+        "hardened_coverage_group_mismatch",
+        "hardened_coverage_contract_wrong_schema"
+      ],
+      "notes": "Run last because it consumes fixture schema, support-matrix, repair-deny, and stress-orchard evidence."
+    }
+  ],
+  "validation_commands": [
+    "jq . tests/conformance/contributor_gate_quickstart.v1.json",
+    "bash -n scripts/check_contributor_gate_quickstart.sh",
+    "scripts/check_contributor_gate_quickstart.sh --validate-only",
+    "git diff --check",
+    "br dep cycles --no-db"
+  ],
+  "negative_tests": [
+    {
+      "id": "workflow_set_drift",
+      "mutation": "Remove or rename any required_workflows row.",
+      "expected_failure_signature": "workflow_set_drift"
+    },
+    {
+      "id": "missing_referenced_script",
+      "mutation": "Point a workflow script at a nonexistent path.",
+      "expected_failure_signature": "referenced_script_missing"
+    },
+    {
+      "id": "missing_primary_artifact",
+      "mutation": "Point a primary_artifacts entry at a nonexistent file or directory.",
+      "expected_failure_signature": "primary_artifact_missing"
+    },
+    {
+      "id": "failure_signature_unanchored",
+      "mutation": "Declare a failure signature that does not appear in the referenced script.",
+      "expected_failure_signature": "failure_signature_unanchored"
+    }
+  ],
+  "summary": {
+    "workflow_count": 6,
+    "local_command_count": 6,
+    "rch_command_count": 0,
+    "report_target_dir": "target/conformance",
+    "expected_report_count": 6,
+    "expected_log_count": 6
+  }
+}
