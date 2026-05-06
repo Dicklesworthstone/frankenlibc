@@ -84,10 +84,23 @@ fn git_head(root: &Path) -> Result<String, Box<dyn Error>> {
             String::from_utf8_lossy(&output.stderr)
         ),
     )?;
-    Ok(String::from_utf8(output.stdout)
+    let head = String::from_utf8(output.stdout)
         .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
         .trim()
-        .to_owned())
+        .to_owned();
+    ensure(
+        is_hex_commit(&head),
+        format!("git rev-parse HEAD returned invalid commit {head:?}"),
+    )?;
+    Ok(head)
+}
+
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn source_commit_is_current(value: &str, current_head: &str) -> bool {
+    value == "current" || value == current_head
 }
 
 const REQUIRED_LOG_FIELDS: &[&str] = &[
@@ -146,6 +159,19 @@ fn assert_source_commit_freshness_policy(gate: &Value) -> TestResult {
     )
 }
 
+fn assert_recorded_source_commit_is_current(root: &Path, gate: &Value) -> TestResult {
+    let source_commit = as_str(&gate["source_commit"], "source_commit")?;
+    ensure(
+        source_commit == "current" || is_hex_commit(source_commit),
+        format!("source_commit must be 'current' or a full hex git commit, got {source_commit:?}"),
+    )?;
+    let current_head = git_head(root)?;
+    ensure(
+        source_commit_is_current(source_commit, &current_head),
+        "source_commit must be 'current' or match current git HEAD",
+    )
+}
+
 /// Resolve a dotted-path field expression with one supported filter form:
 ///
 ///   `levels[level=L1].blockers`  → find array element where .level == "L1"
@@ -177,13 +203,12 @@ fn gate_artifact_is_well_formed() -> TestResult {
         "schema_version",
     )?;
     ensure_eq(gate["bead"].as_str(), Some("bd-b92jd.1.3"), "bead")?;
-    ensure(
-        !gate["source_commit"]
-            .as_str()
-            .unwrap_or_default()
-            .is_empty(),
-        "source_commit must be set",
+    ensure_eq(
+        gate["source_commit"].as_str(),
+        Some("current"),
+        "checked-in promotion gate source_commit must use current marker",
     )?;
+    assert_recorded_source_commit_is_current(&workspace_root(), &gate)?;
     let freshness_policy = &gate["source_commit_freshness_policy"];
     assert_source_commit_freshness_policy(&gate)?;
     ensure_eq(
@@ -304,33 +329,34 @@ fn malformed_source_commit_policy_blocks_l1_promotion_metadata() -> TestResult {
 
 #[test]
 fn stale_source_commit_policy_blocks_l1_promotion() -> TestResult {
-    let root = workspace_root();
-    let gate = load_json(&gate_path())?;
-    let gate_commit = as_str(&gate["source_commit"], "source_commit")?;
+    let mut gate = load_json(&gate_path())?;
+    gate["source_commit"] = json!("0000000000000000000000000000000000000000");
+
+    let error = assert_recorded_source_commit_is_current(&workspace_root(), &gate)
+        .expect_err("stale recorded source_commit should be rejected");
     ensure(
-        gate_commit.len() == 40 && gate_commit.chars().all(|ch| ch.is_ascii_hexdigit()),
-        "source_commit must be a 40-character git SHA",
+        error
+            .to_string()
+            .contains("source_commit must be 'current' or match current git HEAD"),
+        format!("unexpected stale source_commit error: {error}"),
     )?;
 
-    let current_head = git_head(&root)?;
-    if gate_commit != current_head {
-        let policy = &gate["source_commit_freshness_policy"];
-        ensure_eq(
-            policy["stale_result"].as_str(),
-            Some("block_l1_promotion"),
-            "stale promotion gate source_commit must block L1 promotion",
-        )?;
-        ensure_eq(
-            policy["promotion_allowed_when_stale"].as_bool(),
-            Some(false),
-            "stale promotion gate source_commit must not allow promotion",
-        )?;
-        ensure_eq(
-            policy["rejected_evidence_kind"].as_str(),
-            Some("stale_source_commit"),
-            "stale promotion gate source_commit must use stale_source_commit",
-        )?;
-    }
+    let policy = &gate["source_commit_freshness_policy"];
+    ensure_eq(
+        policy["stale_result"].as_str(),
+        Some("block_l1_promotion"),
+        "stale promotion gate source_commit must block L1 promotion",
+    )?;
+    ensure_eq(
+        policy["promotion_allowed_when_stale"].as_bool(),
+        Some(false),
+        "stale promotion gate source_commit must not allow promotion",
+    )?;
+    ensure_eq(
+        policy["rejected_evidence_kind"].as_str(),
+        Some("stale_source_commit"),
+        "stale promotion gate source_commit must use stale_source_commit",
+    )?;
 
     Ok(())
 }
