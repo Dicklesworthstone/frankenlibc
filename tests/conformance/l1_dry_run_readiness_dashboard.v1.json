@@ -23,6 +23,7 @@
     "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
     "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+    "standalone_owned_tls_startup_surface": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
     "crt_tls_atexit_direct_link_run_proof_fixtures": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
     "real_program_smoke_suite": "tests/conformance/real_program_smoke_suite.v1.json",
     "dlfcn_replace_boundary_sentinel": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
@@ -1132,6 +1133,102 @@
       "field": "summary.overall_failed",
       "expected_value": false,
       "rationale": "ld_preload smoke overall must not be failed."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-manifest-id",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "manifest_id",
+      "expected_value": "standalone-owned-tls-startup-surface",
+      "rationale": "L1 dashboard consumers must see that the owned TLS startup surface artifact is wired into readiness reporting."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-source-commit-field",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "Owned TLS startup surface freshness must be bound to the artifact source_commit field."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-source-commit-comparison-target",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "Owned TLS startup surface freshness must compare against the current checkout."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-source-commit-stale-result",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_owned_tls_startup_surface",
+      "rationale": "A stale owned TLS startup surface cannot support L1 readiness evidence."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-source-commit-no-evidence",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "source_commit_freshness_policy.owned_tls_surface_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Stale owned TLS startup surface evidence cannot support dashboard rows."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-source-commit-rejection-kind",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_owned_tls_startup_surface",
+      "rationale": "Dashboard consumers must see stale owned TLS surface evidence with its artifact-specific rejection kind."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-no-promotion",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "report_policy.promotion_allowed",
+      "expected_value": false,
+      "rationale": "Owned TLS surface evidence is report-only and cannot promote standalone replacement claims."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-symbol-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "summary.current_tls_symbol_count",
+      "expected_value": 1,
+      "rationale": "Dashboard consumers must see that the current owned TLS blocker surface still has one TLS symbol."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-provider-version-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "summary.provider_version_requirement_count",
+      "expected_value": 1,
+      "rationale": "Dashboard consumers must see that the TLS surface still depends on one provider version requirement."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-ready-false",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "summary.owned_surface_ready",
+      "expected_value": false,
+      "rationale": "The dashboard must preserve the owned TLS surface as unresolved until artifact-level nm/readelf absence proves otherwise."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-claim-blocked",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "summary.claim_status_until_symbol_exit",
+      "expected_value": "claim_blocked",
+      "rationale": "The owned TLS surface must keep standalone claims blocked until __tls_get_addr exits the current artifact."
+    },
+    {
+      "row_id": "standalone-owned-tls-surface-hotspot-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+      "field": "summary.source_surface_hotspot_count",
+      "expected_value": 5,
+      "rationale": "Dashboard consumers must see that the TLS surface points at concrete source hotspots for follow-up work."
     },
     {
       "row_id": "l1-dashboard-source-commit-field",

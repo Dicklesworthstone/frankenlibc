@@ -770,6 +770,119 @@ fn standalone_artifact_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn standalone_owned_tls_surface_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "standalone-owned-tls-surface-manifest-id",
+            ("manifest_id", json!("standalone-owned-tls-startup-surface")),
+        ),
+        (
+            "standalone-owned-tls-surface-source-commit-field",
+            (
+                "source_commit_freshness_policy.recorded_source_commit_field",
+                json!("source_commit"),
+            ),
+        ),
+        (
+            "standalone-owned-tls-surface-source-commit-comparison-target",
+            (
+                "source_commit_freshness_policy.comparison_target",
+                json!("current git HEAD"),
+            ),
+        ),
+        (
+            "standalone-owned-tls-surface-source-commit-stale-result",
+            (
+                "source_commit_freshness_policy.stale_result",
+                json!("block_owned_tls_startup_surface"),
+            ),
+        ),
+        (
+            "standalone-owned-tls-surface-source-commit-no-evidence",
+            (
+                "source_commit_freshness_policy.owned_tls_surface_evidence_allowed_when_stale",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-owned-tls-surface-source-commit-rejection-kind",
+            (
+                "source_commit_freshness_policy.rejected_evidence_kind",
+                json!("stale_owned_tls_startup_surface"),
+            ),
+        ),
+        (
+            "standalone-owned-tls-surface-no-promotion",
+            ("report_policy.promotion_allowed", json!(false)),
+        ),
+        (
+            "standalone-owned-tls-surface-symbol-count",
+            ("summary.current_tls_symbol_count", json!(1)),
+        ),
+        (
+            "standalone-owned-tls-surface-provider-version-count",
+            ("summary.provider_version_requirement_count", json!(1)),
+        ),
+        (
+            "standalone-owned-tls-surface-ready-false",
+            ("summary.owned_surface_ready", json!(false)),
+        ),
+        (
+            "standalone-owned-tls-surface-claim-blocked",
+            (
+                "summary.claim_status_until_symbol_exit",
+                json!("claim_blocked"),
+            ),
+        ),
+        (
+            "standalone-owned-tls-surface-hotspot-count",
+            ("summary.source_surface_hotspot_count", json!(5)),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-owned-tls-surface-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected owned TLS surface dashboard row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "forge",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing owned TLS surface dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn standalone_smoke_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
