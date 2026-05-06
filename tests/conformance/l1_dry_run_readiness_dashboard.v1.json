@@ -21,6 +21,7 @@
   "inputs": {
     "replacement_levels": "tests/conformance/replacement_levels.json",
     "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "standalone_compiler_runtime_experiment": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
     "standalone_compiler_runtime_experiment_delta": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
     "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
@@ -1551,6 +1552,158 @@
       "field": "symbol_rows.0.exit_criteria.0",
       "expected_value": "nm -D reports no undefined _Unwind_Backtrace symbol",
       "rationale": "Dashboard consumers must see the artifact-level exit criterion before any claim can change."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-source-commit-field",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "Dashboard consumers must see which field carries the compiler-runtime experiment source commit freshness token."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-source-commit-comparison-target",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "Dashboard consumers must see that compiler-runtime experiment freshness compares against the current source checkout."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-source-commit-stale-result",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_compiler_runtime_experiment_refresh",
+      "rationale": "Dashboard consumers must see that stale compiler-runtime experiment plans require refresh."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-source-commit-no-stale-evidence",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "source_commit_freshness_policy.experiment_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that stale compiler-runtime experiment plans cannot be used as replacement evidence."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-source-commit-rejection-kind",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_compiler_runtime_experiment",
+      "rationale": "Dashboard consumers must see stale compiler-runtime experiment plans as a distinct rejection kind."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-report-only",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "report_policy.report_only",
+      "expected_value": true,
+      "rationale": "Dashboard consumers must see that compiler-runtime experiments are report-only."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-no-promotion",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "report_policy.promotion_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that compiler-runtime experiments cannot promote standalone replacement."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-no-replacement-level-change",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "report_policy.replacement_level_change_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that compiler-runtime experiments cannot change replacement_levels."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-no-default-profile-change",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "report_policy.default_build_profile_change_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that the default build profile stays unchanged by experiment lanes."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-explicit-mode-required",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "report_policy.non_baseline_lanes_require_explicit_mode",
+      "expected_value": true,
+      "rationale": "Dashboard consumers must see that non-baseline compiler-runtime lanes require explicit opt-in."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-required-mode",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "report_policy.required_mode",
+      "expected_value": "--compiler-runtime-experiment",
+      "rationale": "Dashboard consumers must see the explicit checker mode required to produce experiment evidence."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-lane-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "summary.lane_count",
+      "expected_value": 2,
+      "rationale": "Dashboard consumers must see that the experiment plan compares exactly two lanes."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-baseline-lane",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "summary.baseline_lane",
+      "expected_value": "baseline-release-standalone",
+      "rationale": "Dashboard consumers must see the baseline standalone lane name."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-experiment-lane",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "summary.experiment_lane",
+      "expected_value": "panic-abort-compiler-runtime-minimized",
+      "rationale": "Dashboard consumers must see the panic-abort compiler-runtime experiment lane name."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-baseline-claim-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "experiment_lanes.0.expected_claim_status",
+      "expected_value": "claim_blocked",
+      "rationale": "Dashboard consumers must see that the baseline lane remains claim-blocked."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-baseline-panic-strategy",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "experiment_lanes.0.panic_strategy",
+      "expected_value": "implicit-unwind",
+      "rationale": "Dashboard consumers must see the baseline panic strategy."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-abort-claim-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "experiment_lanes.1.expected_claim_status",
+      "expected_value": "report_only",
+      "rationale": "Dashboard consumers must see that the panic-abort lane is report-only."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-abort-panic-strategy",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "experiment_lanes.1.panic_strategy",
+      "expected_value": "abort",
+      "rationale": "Dashboard consumers must see the experiment panic strategy."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-experiment-abort-env",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+      "field": "experiment_lanes.1.env.CARGO_PROFILE_RELEASE_PANIC",
+      "expected_value": "abort",
+      "rationale": "Dashboard consumers must see the environment knob that defines the panic-abort lane."
     },
     {
       "row_id": "standalone-compiler-runtime-delta-source-commit-field",

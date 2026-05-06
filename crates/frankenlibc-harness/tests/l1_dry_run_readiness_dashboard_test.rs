@@ -1246,6 +1246,174 @@ fn standalone_owned_unwinder_symbol_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn standalone_compiler_runtime_experiment_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "standalone-compiler-runtime-experiment-source-commit-field",
+            (
+                "source_commit_freshness_policy.recorded_source_commit_field",
+                json!("source_commit"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-source-commit-comparison-target",
+            (
+                "source_commit_freshness_policy.comparison_target",
+                json!("current git HEAD"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-source-commit-stale-result",
+            (
+                "source_commit_freshness_policy.stale_result",
+                json!("block_compiler_runtime_experiment_refresh"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-source-commit-no-stale-evidence",
+            (
+                "source_commit_freshness_policy.experiment_evidence_allowed_when_stale",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-source-commit-rejection-kind",
+            (
+                "source_commit_freshness_policy.rejected_evidence_kind",
+                json!("stale_compiler_runtime_experiment"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-report-only",
+            ("report_policy.report_only", json!(true)),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-no-promotion",
+            ("report_policy.promotion_allowed", json!(false)),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-no-replacement-level-change",
+            (
+                "report_policy.replacement_level_change_allowed",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-no-default-profile-change",
+            (
+                "report_policy.default_build_profile_change_allowed",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-explicit-mode-required",
+            (
+                "report_policy.non_baseline_lanes_require_explicit_mode",
+                json!(true),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-required-mode",
+            (
+                "report_policy.required_mode",
+                json!("--compiler-runtime-experiment"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-lane-count",
+            ("summary.lane_count", json!(2)),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-baseline-lane",
+            (
+                "summary.baseline_lane",
+                json!("baseline-release-standalone"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-experiment-lane",
+            (
+                "summary.experiment_lane",
+                json!("panic-abort-compiler-runtime-minimized"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-baseline-claim-status",
+            (
+                "experiment_lanes.0.expected_claim_status",
+                json!("claim_blocked"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-baseline-panic-strategy",
+            (
+                "experiment_lanes.0.panic_strategy",
+                json!("implicit-unwind"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-abort-claim-status",
+            (
+                "experiment_lanes.1.expected_claim_status",
+                json!("report_only"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-abort-panic-strategy",
+            ("experiment_lanes.1.panic_strategy", json!("abort")),
+        ),
+        (
+            "standalone-compiler-runtime-experiment-abort-env",
+            (
+                "experiment_lanes.1.env.CARGO_PROFILE_RELEASE_PANIC",
+                json!("abort"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-compiler-runtime-experiment-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected compiler runtime experiment dashboard row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "forge",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_compiler_runtime_experiment.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing compiler runtime experiment dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn standalone_compiler_runtime_delta_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
