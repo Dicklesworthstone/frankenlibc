@@ -1,0 +1,254 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-host-version-requirement-burndown",
+  "bead": "bd-zyck1.90",
+  "owner_bead": "bd-zyck1",
+  "source_commit": "current",
+  "source_commit_hint": "29c7dbc6491e",
+  "generated_utc": "2026-05-06T04:57:13Z",
+  "purpose": "Report-only burn-down matrix for the current standalone forge host-provided ELF version requirements. Every row is tied to the current forge snapshot, an owner surface, an owned-substitute strategy, evidence commands, and exit criteria. This artifact blocks silent promotion when readelf version needs change without an atomic matrix refresh.",
+  "inputs": {
+    "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+    "standalone_compiler_runtime_blocker_diagnostics": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+    "standalone_tls_blocker_diagnostics": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+    "l1_dry_run_readiness_dashboard": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json"
+  },
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_standalone_host_version_requirement_burndown",
+    "version_need_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_version_need_evidence"
+  },
+  "report_policy": {
+    "promotion_allowed": false,
+    "replacement_level_change_allowed": false,
+    "host_version_requirement_claim_allowed": false,
+    "default_build_profile_change_allowed": false,
+    "stale_result": "block_standalone_host_version_requirement_burndown",
+    "refresh_required_on_version_need_delta": true,
+    "refresh_required_on_provider_delta": true,
+    "missing_matrix_row_result": "block_standalone_host_version_requirement_burndown",
+    "extra_matrix_row_result": "block_standalone_host_version_requirement_burndown"
+  },
+  "current_forge_evidence": {
+    "source_artifact": "target/conformance/standalone_replacement_artifact.report.json",
+    "source_mode": "forge",
+    "latest_probe_claim_status": "claim_blocked",
+    "latest_probe_artifact_status": "current",
+    "latest_probe_failure_signature": "host_glibc_dependency",
+    "observed_host_version_requirements": [
+      "ld-linux-x86-64.so.2:GLIBC_2.3",
+      "libgcc_s.so.1:GCC_3.0",
+      "libgcc_s.so.1:GCC_3.3",
+      "libgcc_s.so.1:GCC_4.2.0"
+    ],
+    "observed_version_needs": {
+      "ld-linux-x86-64.so.2": [
+        "GLIBC_2.3"
+      ],
+      "libgcc_s.so.1": [
+        "GCC_3.0",
+        "GCC_3.3",
+        "GCC_4.2.0"
+      ]
+    },
+    "evidence_command_results": {
+      "readelf_version": {
+        "command": "readelf --version-info libfrankenlibc_replace.so",
+        "exit_code": 0,
+        "observed_version_needs": {
+          "ld-linux-x86-64.so.2": [
+            "GLIBC_2.3"
+          ],
+          "libgcc_s.so.1": [
+            "GCC_3.0",
+            "GCC_3.3",
+            "GCC_4.2.0"
+          ]
+        }
+      }
+    }
+  },
+  "provider_burndown": [
+    {
+      "provider_library": "ld-linux-x86-64.so.2",
+      "requirement_count": 1,
+      "owner_surface": "loader_tls_runtime",
+      "blocking_reasons": [
+        "host_loader_dependency",
+        "undefined_tls_symbols",
+        "host_version_requirements"
+      ],
+      "owned_substitute_strategy": "Remove the host dynamic-loader TLS ABI edge by replacing or eliminating every standalone artifact reference that requires host __tls_get_addr resolution.",
+      "first_safe_action": "Continue from bd-zyck1.89 with a report-only TLS model/startup experiment; require nm/readelf absence of __tls_get_addr before clearing the row.",
+      "exit_summary": "Provider clears only when ld-linux-x86-64.so.2 has no GLIBC_2.3 version need and the artifact has no undefined __tls_get_addr symbol."
+    },
+    {
+      "provider_library": "libgcc_s.so.1",
+      "requirement_count": 3,
+      "owner_surface": "compiler_runtime_and_unwind_runtime",
+      "blocking_reasons": [
+        "libgcc_runtime_dependency",
+        "undefined_unwind_symbols",
+        "host_version_requirements"
+      ],
+      "owned_substitute_strategy": "Remove the host compiler-runtime provider by eliminating unresolved _Unwind_* edges through panic/profile proof, owned unwinder/personality symbols, or owned compiler-runtime substitution.",
+      "first_safe_action": "Continue from bd-zyck1.87 and bd-zyck1.88; keep non-baseline lanes report-only until readelf and nm show libgcc_s.so.1 version needs and _Unwind_* undefined symbols are gone.",
+      "exit_summary": "Provider clears only when libgcc_s.so.1 has no GCC version needs, no direct DT_NEEDED edge, no ldd-resolved host libgcc, and no associated _Unwind_* undefined symbols."
+    }
+  ],
+  "version_requirement_matrix": [
+    {
+      "requirement_id": "ld-linux-x86-64.so.2:GLIBC_2.3",
+      "provider_library": "ld-linux-x86-64.so.2",
+      "version_node": "GLIBC_2.3",
+      "blocker_reason": "host_version_requirements",
+      "secondary_blocking_reasons": [
+        "host_loader_dependency",
+        "undefined_tls_symbols",
+        "undefined_glibc_symbols"
+      ],
+      "owner_surface": "loader_tls_runtime",
+      "owned_substitute_strategy": "Own the startup/TLS resolution path or eliminate dynamic TLS access so the replacement artifact no longer needs host ld-linux for __tls_get_addr@GLIBC_2.3.",
+      "evidence_command": "readelf --version-info libfrankenlibc_replace.so",
+      "corroborating_evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"__tls_get_addr(@GLIBC_2.3)?\"",
+        "readelf -Ws libfrankenlibc_replace.so | rg \"UND __tls_get_addr(@GLIBC_2.3)?\"",
+        "ldd libfrankenlibc_replace.so"
+      ],
+      "observed_symbols": [
+        "__tls_get_addr@GLIBC_2.3"
+      ],
+      "source_owner_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "first_safe_action": "Run a TLS model/startup experiment that preserves default forge semantics and proves whether the __tls_get_addr edge can be removed.",
+      "exit_criteria": [
+        "current_forge_evidence.observed_version_needs.ld-linux-x86-64.so.2 no longer contains GLIBC_2.3",
+        "artifact_state.dependency_breakdown.undefined_tls_symbols is empty",
+        "nm -D reports no undefined __tls_get_addr symbol",
+        "readelf -Ws reports no undefined __tls_get_addr symbol"
+      ],
+      "claim_status_until_exit": "claim_blocked"
+    },
+    {
+      "requirement_id": "libgcc_s.so.1:GCC_3.0",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.0",
+      "blocker_reason": "host_version_requirements",
+      "secondary_blocking_reasons": [
+        "libgcc_runtime_dependency",
+        "undefined_unwind_symbols"
+      ],
+      "owner_surface": "compiler_runtime_and_unwind_runtime",
+      "owned_substitute_strategy": "Remove or own the GCC_3.0 unwinder ABI edges by proving a panic/profile change, owned unwinder/personality implementation, or owned compiler-runtime substitution.",
+      "evidence_command": "readelf --version-info libfrankenlibc_replace.so",
+      "corroborating_evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_\"",
+        "readelf -d libfrankenlibc_replace.so | rg \"libgcc_s.so.1\"",
+        "ldd libfrankenlibc_replace.so | rg \"libgcc_s.so.1\""
+      ],
+      "observed_symbols": [
+        "_Unwind_DeleteException@GCC_3.0",
+        "_Unwind_GetDataRelBase@GCC_3.0",
+        "_Unwind_GetIP@GCC_3.0",
+        "_Unwind_GetLanguageSpecificData@GCC_3.0",
+        "_Unwind_GetRegionStart@GCC_3.0",
+        "_Unwind_GetTextRelBase@GCC_3.0",
+        "_Unwind_RaiseException@GCC_3.0",
+        "_Unwind_Resume@GCC_3.0",
+        "_Unwind_SetGR@GCC_3.0",
+        "_Unwind_SetIP@GCC_3.0"
+      ],
+      "source_owner_artifact": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+      "first_safe_action": "Extend the report-only compiler-runtime experiment with an owned-unwinder or compiler-runtime lane; do not change the baseline forge path.",
+      "exit_criteria": [
+        "current_forge_evidence.observed_version_needs.libgcc_s.so.1 no longer contains GCC_3.0",
+        "artifact_state.dependency_breakdown.undefined_unwind_symbols contains no GCC_3.0 symbols",
+        "readelf -d reports no direct DT_NEEDED libgcc_s.so.1",
+        "ldd reports no host-resolved libgcc_s.so.1"
+      ],
+      "claim_status_until_exit": "claim_blocked"
+    },
+    {
+      "requirement_id": "libgcc_s.so.1:GCC_3.3",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.3",
+      "blocker_reason": "host_version_requirements",
+      "secondary_blocking_reasons": [
+        "libgcc_runtime_dependency",
+        "undefined_unwind_symbols"
+      ],
+      "owner_surface": "compiler_runtime_and_unwind_runtime",
+      "owned_substitute_strategy": "Remove or own the backtrace unwinder ABI edge that keeps the GCC_3.3 provider version live.",
+      "evidence_command": "readelf --version-info libfrankenlibc_replace.so",
+      "corroborating_evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_Backtrace\"",
+        "readelf -d libfrankenlibc_replace.so | rg \"libgcc_s.so.1\"",
+        "ldd libfrankenlibc_replace.so | rg \"libgcc_s.so.1\""
+      ],
+      "observed_symbols": [
+        "_Unwind_Backtrace@GCC_3.3"
+      ],
+      "source_owner_artifact": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+      "first_safe_action": "Prove whether owned unwinder/backtrace support or unwind elimination removes _Unwind_Backtrace before clearing the version need.",
+      "exit_criteria": [
+        "current_forge_evidence.observed_version_needs.libgcc_s.so.1 no longer contains GCC_3.3",
+        "artifact_state.dependency_breakdown.undefined_unwind_symbols contains no _Unwind_Backtrace@GCC_3.3",
+        "readelf -d reports no direct DT_NEEDED libgcc_s.so.1",
+        "ldd reports no host-resolved libgcc_s.so.1"
+      ],
+      "claim_status_until_exit": "claim_blocked"
+    },
+    {
+      "requirement_id": "libgcc_s.so.1:GCC_4.2.0",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_4.2.0",
+      "blocker_reason": "host_version_requirements",
+      "secondary_blocking_reasons": [
+        "libgcc_runtime_dependency",
+        "undefined_unwind_symbols"
+      ],
+      "owner_surface": "compiler_runtime_and_unwind_runtime",
+      "owned_substitute_strategy": "Remove or own the modern IP-info unwinder ABI edge that keeps the GCC_4.2.0 provider version live.",
+      "evidence_command": "readelf --version-info libfrankenlibc_replace.so",
+      "corroborating_evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_GetIPInfo\"",
+        "readelf -d libfrankenlibc_replace.so | rg \"libgcc_s.so.1\"",
+        "ldd libfrankenlibc_replace.so | rg \"libgcc_s.so.1\""
+      ],
+      "observed_symbols": [
+        "_Unwind_GetIPInfo@GCC_4.2.0"
+      ],
+      "source_owner_artifact": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+      "first_safe_action": "Prove whether owned unwinder/IP-info support or unwind elimination removes _Unwind_GetIPInfo before clearing the version need.",
+      "exit_criteria": [
+        "current_forge_evidence.observed_version_needs.libgcc_s.so.1 no longer contains GCC_4.2.0",
+        "artifact_state.dependency_breakdown.undefined_unwind_symbols contains no _Unwind_GetIPInfo@GCC_4.2.0",
+        "readelf -d reports no direct DT_NEEDED libgcc_s.so.1",
+        "ldd reports no host-resolved libgcc_s.so.1"
+      ],
+      "claim_status_until_exit": "claim_blocked"
+    }
+  ],
+  "atomic_refresh_contract": {
+    "matrix_rows_must_equal_current_forge_host_version_requirements": true,
+    "evidence_version_needs_must_equal_current_forge_snapshot": true,
+    "provider_burndown_must_cover_every_version_need_provider": true,
+    "stale_or_partial_refresh_result": "block_standalone_host_version_requirement_burndown",
+    "allowed_refresh_modes": [
+      "add row for new provider:version requirement",
+      "remove row only when current forge snapshot and readelf evidence no longer report that requirement",
+      "update owner strategy only with unchanged provider:version identity"
+    ]
+  },
+  "summary": {
+    "report_only": true,
+    "host_version_requirement_count": 4,
+    "version_need_provider_count": 2,
+    "ld_linux_version_need_count": 1,
+    "libgcc_version_need_count": 3,
+    "claim_status_until_all_rows_exit": "claim_blocked",
+    "next_bead": "bd-zyck1.91"
+  }
+}
