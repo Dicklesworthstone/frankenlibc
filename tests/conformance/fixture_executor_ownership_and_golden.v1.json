@@ -16,13 +16,14 @@
         "execute_fixture_case",
         "DifferentialExecution"
       ],
-      "current_implementation_source": "frankenlibc_conformance",
-      "migration_target": "bd-0agsk.8 may move the implementation into frankenlibc-fixture-exec, but must preserve this public API and every golden payload hash in this manifest."
+      "current_implementation_source": "frankenlibc-fixture-exec",
+      "migration_target": "bd-0agsk.8 moved Cargo ownership into frankenlibc-fixture-exec while preserving this public API and every golden payload hash in this manifest."
     },
     "legacy_implementation": {
       "crate": "frankenlibc_conformance",
+      "manifest": "crates/frankenlibc_conformance/Cargo.toml",
       "entrypoint": "crates/frankenlibc_conformance/src/lib.rs",
-      "role": "Current large migration-era implementation body for execute_fixture_case. It is an implementation source, not the harness-owned public boundary."
+      "role": "Compatibility package path retained for older tooling. Its Cargo library target points at the fixture-exec entrypoint; the old source path is retained in the tree because file deletion is not permitted in this workflow."
     },
     "harness_consumer": {
       "crate": "frankenlibc-harness",
@@ -31,6 +32,12 @@
       "forbidden_direct_dependency": "frankenlibc_conformance",
       "role": "Harness tests and conformance matrix code should consume the stable fixture-exec adapter instead of depending directly on legacy migration internals."
     }
+  },
+  "migration_note": {
+    "completed_by_bead": "bd-0agsk.8",
+    "unsafe_boundary_summary": "No new unsafe boundary is introduced by the ownership inversion. The same executor body and host-oracle unsafe calls are compiled behind the frankenlibc-fixture-exec public boundary, while the compatibility package reuses that boundary.",
+    "golden_hashes_must_remain_stable": true,
+    "compatibility_package_retained": true
   },
   "golden_manifest": {
     "hash_algorithm": "sha256",

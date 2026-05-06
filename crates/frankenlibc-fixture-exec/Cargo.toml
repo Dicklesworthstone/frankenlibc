@@ -8,5 +8,19 @@ description = "Fixture execution adapter for frankenlibc harness tooling"
 [lib]
 doctest = false
 
+[features]
+default = ["asupersync-tooling"]
+asupersync-tooling = ["dep:asupersync_conformance"]
+frankentui-ui = ["dep:ftui_harness"]
+
 [dependencies]
-frankenlibc_conformance = { path = "../frankenlibc_conformance" }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+libc = { workspace = true }
+frankenlibc = { path = "../frankenlibc" }
+frankenlibc-core = { path = "../frankenlibc-core" }
+frankenlibc-abi = { workspace = true, features = ["conformance-testing"] }
+asupersync_conformance = { package = "asupersync-conformance", version = "0.3.1", optional = true }
+ftui_harness = { package = "ftui-harness", version = "0.3.1", optional = true }

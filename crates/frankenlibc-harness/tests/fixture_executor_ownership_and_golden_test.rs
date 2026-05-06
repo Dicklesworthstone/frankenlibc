@@ -143,8 +143,17 @@ fn contract_declares_fixture_executor_ownership_boundary() {
         Some("frankenlibc-fixture-exec")
     );
     assert_eq!(
+        contract["ownership_contract"]["stable_public_boundary"]["current_implementation_source"]
+            .as_str(),
+        Some("frankenlibc-fixture-exec")
+    );
+    assert_eq!(
         contract["ownership_contract"]["harness_consumer"]["forbidden_direct_dependency"].as_str(),
         Some("frankenlibc_conformance")
+    );
+    assert_eq!(
+        contract["migration_note"]["completed_by_bead"].as_str(),
+        Some("bd-0agsk.8")
     );
     assert_eq!(
         contract["golden_manifest"]["cases"]

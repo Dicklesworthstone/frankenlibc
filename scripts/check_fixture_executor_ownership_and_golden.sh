@@ -36,7 +36,7 @@ write_json() {
     --arg message "$message" \
     --arg contract "$CONTRACT" \
     --arg stable_boundary "frankenlibc-fixture-exec" \
-    --arg legacy_impl "frankenlibc_conformance" \
+    --arg legacy_impl "frankenlibc_conformance_compat" \
     --arg harness_consumer "frankenlibc-harness" \
     '{
       schema_version: $schema_version,
@@ -94,18 +94,36 @@ bead="$(jq -r '.generated_by_bead // ""' "$CONTRACT")"
 stable_manifest="$(jq -r '.ownership_contract.stable_public_boundary.manifest // ""' "$CONTRACT")"
 stable_entrypoint="$(jq -r '.ownership_contract.stable_public_boundary.entrypoint // ""' "$CONTRACT")"
 legacy_entrypoint="$(jq -r '.ownership_contract.legacy_implementation.entrypoint // ""' "$CONTRACT")"
+legacy_manifest="$(jq -r '.ownership_contract.legacy_implementation.manifest // ""' "$CONTRACT")"
 harness_manifest="$(jq -r '.ownership_contract.harness_consumer.manifest // ""' "$CONTRACT")"
 
-for rel in "$stable_manifest" "$stable_entrypoint" "$legacy_entrypoint" "$harness_manifest"; do
+for rel in "$stable_manifest" "$stable_entrypoint" "$legacy_manifest" "$legacy_entrypoint" "$harness_manifest"; do
   [[ -n "$rel" ]] || fail "fixture_executor_contract_empty_path" "ownership path is empty"
   [[ -e "$ROOT/$rel" ]] || fail "fixture_executor_contract_path_missing" "missing ownership path: $rel"
 done
 
-grep -Fq 'frankenlibc_conformance = { path = "../frankenlibc_conformance" }' "$ROOT/$stable_manifest" || \
-  fail "fixture_executor_adapter_dependency_missing" "fixture-exec no longer declares the current legacy implementation dependency"
+if grep -Fq 'frankenlibc_conformance' "$ROOT/$stable_manifest"; then
+  fail "fixture_executor_adapter_dependency_leak" "fixture-exec must not depend on the legacy conformance crate"
+fi
 
-grep -Fq 'pub use frankenlibc_conformance::{DifferentialExecution, execute_fixture_case};' "$ROOT/$stable_entrypoint" || \
-  fail "fixture_executor_adapter_export_changed" "fixture-exec no longer exposes the current execute_fixture_case adapter seam"
+grep -Fq 'frankenlibc-core' "$ROOT/$stable_manifest" || \
+  fail "fixture_executor_owned_dependency_missing" "fixture-exec must own direct core dependency for executor implementation"
+
+grep -Fq 'frankenlibc-abi' "$ROOT/$stable_manifest" || \
+  fail "fixture_executor_owned_dependency_missing" "fixture-exec must own direct ABI dependency for executor implementation"
+
+grep -Fq '#[path = "../../frankenlibc_conformance/src/lib.rs"]' "$ROOT/$stable_entrypoint" || \
+  fail "fixture_executor_owned_entrypoint_changed" "fixture-exec entrypoint must compile the migrated executor body"
+
+grep -Fq 'pub use implementation::*;' "$ROOT/$stable_entrypoint" || \
+  fail "fixture_executor_owned_entrypoint_changed" "fixture-exec entrypoint must re-export the migrated executor body"
+
+if grep -Fq 'pub use frankenlibc_conformance' "$ROOT/$stable_entrypoint"; then
+  fail "fixture_executor_adapter_export_changed" "fixture-exec must not re-export the legacy conformance crate"
+fi
+
+grep -Fq 'path = "../frankenlibc-fixture-exec/src/lib.rs"' "$ROOT/$legacy_manifest" || \
+  fail "fixture_executor_compat_path_missing" "legacy compatibility package must target the fixture-exec entrypoint"
 
 grep -Fq 'frankenlibc-fixture-exec = { workspace = true }' "$ROOT/$harness_manifest" || \
   fail "fixture_executor_harness_dependency_missing" "harness no longer depends on fixture-exec"
