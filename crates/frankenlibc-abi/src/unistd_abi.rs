@@ -18594,45 +18594,48 @@ pub unsafe extern "C" fn fmtmsg(
     action: *const c_char,
     tag: *const c_char,
 ) -> c_int {
+    let label_bytes = match unsafe { read_optional_c_string_bytes(label) } {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return -1;
+        }
+    };
+    if !frankenlibc_core::fmtmsg::valid_severity(severity)
+        || label_bytes
+            .as_deref()
+            .is_some_and(|label| !frankenlibc_core::fmtmsg::valid_label(label))
+    {
+        return -1;
+    }
     if frankenlibc_core::fmtmsg::should_print(classification) {
-        let label_bytes = match unsafe { read_optional_c_string_bytes(label) } {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => Vec::new(),
-            Err(e) => {
-                unsafe { set_abi_errno(e) };
-                return -1;
-            }
-        };
         let text_bytes = match unsafe { read_optional_c_string_bytes(text) } {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => Vec::new(),
+            Ok(bytes) => bytes,
             Err(e) => {
                 unsafe { set_abi_errno(e) };
                 return -1;
             }
         };
         let action_bytes = match unsafe { read_optional_c_string_bytes(action) } {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => Vec::new(),
+            Ok(bytes) => bytes,
             Err(e) => {
                 unsafe { set_abi_errno(e) };
                 return -1;
             }
         };
         let tag_bytes = match unsafe { read_optional_c_string_bytes(tag) } {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => Vec::new(),
+            Ok(bytes) => bytes,
             Err(e) => {
                 unsafe { set_abi_errno(e) };
                 return -1;
             }
         };
         let out = frankenlibc_core::fmtmsg::format_fmtmsg_message(
-            &label_bytes,
+            label_bytes.as_deref(),
             severity,
-            &text_bytes,
-            &action_bytes,
-            &tag_bytes,
+            text_bytes.as_deref(),
+            action_bytes.as_deref(),
+            tag_bytes.as_deref(),
         );
         unsafe { sys_write_fd(libc::STDERR_FILENO, out.as_ptr().cast(), out.len()) };
     }
