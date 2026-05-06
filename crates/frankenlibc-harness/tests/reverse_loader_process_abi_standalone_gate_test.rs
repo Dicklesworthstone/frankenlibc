@@ -147,6 +147,23 @@ fn git_head(root: &Path) -> TestResult<String> {
     Ok(head)
 }
 
+fn source_commit_is_current(value: &str, current_head: &str) -> bool {
+    value == "current" || value == current_head
+}
+
+fn assert_recorded_source_commit_is_current(root: &Path, gate: &Value) -> TestResult {
+    let source_commit = string_field(gate, "source_commit", "gate")?;
+    ensure(
+        source_commit == "current" || is_hex_commit(source_commit),
+        format!("source_commit must be 'current' or a full hex git commit, got {source_commit:?}"),
+    )?;
+    let current_head = git_head(root)?;
+    ensure(
+        source_commit_is_current(source_commit, &current_head),
+        "source_commit must be 'current' or match current git HEAD",
+    )
+}
+
 fn source_commit_freshness_policy(gate: &Value) -> TestResult<&Value> {
     field(gate, "source_commit_freshness_policy", "gate")
 }
@@ -216,6 +233,10 @@ fn load_json(path: &Path) -> TestResult<Value> {
 fn write_json(path: &Path, value: &Value) -> TestResult {
     let content = serde_json::to_string_pretty(value)
         .map_err(|err| test_error(format!("{} serialization failed: {err}", path.display())))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| test_error(format!("{} mkdir failed: {err}", parent.display())))?;
+    }
     std::fs::write(path, format!("{content}\n"))
         .map_err(|err| test_error(format!("{} write failed: {err}", path.display())))
 }
@@ -372,10 +393,12 @@ fn gate_artifact_preserves_loader_process_gap_contract() -> TestResult {
         "owner_family_group",
     )?;
     let source_commit = string_field(&gate, "source_commit", "gate")?;
-    ensure(
-        is_hex_commit(source_commit),
-        format!("source_commit must be a 40-hex commit, got {source_commit:?}"),
+    ensure_eq(
+        source_commit,
+        "current",
+        "checked-in reverse-loader gate source_commit must use current marker",
     )?;
+    assert_recorded_source_commit_is_current(&root, &gate)?;
     assert_source_commit_freshness_policy(&gate)?;
 
     let claim_policy = field(&gate, "claim_policy", "gate")?;
@@ -478,6 +501,11 @@ fn gate_artifact_preserves_loader_process_gap_contract() -> TestResult {
             {
                 return Err(runtime_mismatch_error(mode));
             }
+            ensure_eq(
+                string_field(evidence, "source_commit", mode)?,
+                source_commit,
+                format!("{mode}.source_commit"),
+            )?;
             if array_field(evidence, "artifact_refs", mode)?.is_empty() {
                 return Err(missing_artifact_refs_error(mode));
             }
@@ -490,41 +518,42 @@ fn gate_artifact_preserves_loader_process_gap_contract() -> TestResult {
 #[test]
 fn stale_source_commit_policy_blocks_reverse_loader_gate_evidence() -> TestResult {
     let root = workspace_root();
-    let gate = load_json(&gate_path(&root))?;
-    let source_commit = string_field(&gate, "source_commit", "gate")?;
+    let mut gate = load_json(&gate_path(&root))?;
+    gate["source_commit"] = json!("0000000000000000000000000000000000000000");
+    let error = assert_recorded_source_commit_is_current(&root, &gate)
+        .expect_err("stale recorded source_commit should be rejected");
     ensure(
-        is_hex_commit(source_commit),
-        format!("source_commit must be a 40-hex commit, got {source_commit:?}"),
+        error
+            .to_string()
+            .contains("source_commit must be 'current' or match current git HEAD"),
+        format!("unexpected stale source_commit error: {error}"),
     )?;
     assert_source_commit_freshness_policy(&gate)?;
-    let current_head = git_head(&root)?;
-    if source_commit != current_head {
-        let policy = source_commit_freshness_policy(&gate)?;
-        ensure_eq(
-            string_field(policy, "stale_result", "source_commit_freshness_policy")?,
-            "block_reverse_loader_standalone_gate_evidence",
-            "stale reverse-loader source_commit must block standalone gate evidence",
-        )?;
-        ensure_eq(
-            field(
-                policy,
-                "standalone_gate_evidence_allowed_when_stale",
-                "source_commit_freshness_policy",
-            )?
-            .as_bool(),
-            Some(false),
-            "stale reverse-loader source_commit must not allow standalone gate evidence",
-        )?;
-        ensure_eq(
-            string_field(
-                policy,
-                "rejected_evidence_kind",
-                "source_commit_freshness_policy",
-            )?,
-            "stale_source_commit",
-            "stale reverse-loader source_commit must use stale_source_commit",
-        )?;
-    }
+    let policy = source_commit_freshness_policy(&gate)?;
+    ensure_eq(
+        string_field(policy, "stale_result", "source_commit_freshness_policy")?,
+        "block_reverse_loader_standalone_gate_evidence",
+        "stale reverse-loader source_commit must block standalone gate evidence",
+    )?;
+    ensure_eq(
+        field(
+            policy,
+            "standalone_gate_evidence_allowed_when_stale",
+            "source_commit_freshness_policy",
+        )?
+        .as_bool(),
+        Some(false),
+        "stale reverse-loader source_commit must not allow standalone gate evidence",
+    )?;
+    ensure_eq(
+        string_field(
+            policy,
+            "rejected_evidence_kind",
+            "source_commit_freshness_policy",
+        )?,
+        "stale_source_commit",
+        "stale reverse-loader source_commit must use stale_source_commit",
+    )?;
     Ok(())
 }
 
@@ -625,7 +654,10 @@ fn checker_rejects_missing_gap_row() -> TestResult {
 fn checker_rejects_stale_source_commit() -> TestResult {
     let root = workspace_root();
     let mut gate = load_json(&gate_path(&root))?;
-    object_mut(&mut gate, "gate")?.insert("source_commit".to_owned(), json!("stale-source"));
+    object_mut(&mut gate, "gate")?.insert(
+        "source_commit".to_owned(),
+        json!("0000000000000000000000000000000000000000"),
+    );
     let bad_gate = unique_temp_path(&root, "reverse-loader-stale-source");
     write_json(&bad_gate, &gate)?;
     let output = run_checker(

@@ -25,6 +25,7 @@ mkdir -p "${OUT_DIR}"
 
 python3 - "${ROOT}" "${GATE}" "${LEDGER}" "${GAP_GROUPS}" "${OWNER_GROUPS}" "${STANDALONE_SMOKE}" "${READINESS}" "${LOADER_AUDIT}" "${FENV_PACK}" "${E2E_MANIFEST}" "${FAILURE_MATRIX}" "${CONFORMANCE_MATRIX}" "${VERSION_SCRIPT}" "${REPORT}" "${LOG}" <<'PY'
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -183,6 +184,33 @@ def string_field(value, key, context):
     return item
 
 
+def is_hex_commit(value):
+    return len(value) == 40 and all(ch in "0123456789abcdefABCDEF" for ch in value)
+
+
+def git_head():
+    try:
+        output = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except Exception as exc:
+        fail(f"cannot resolve current git HEAD: {exc}")
+        return ""
+    head = output.stdout.strip()
+    if not is_hex_commit(head):
+        fail(f"current git HEAD is not a full hex commit: {head!r}")
+        return ""
+    return head
+
+
+def source_commit_is_current(value, current_head):
+    return value == "current" or value == current_head
+
+
 gate = load_json(gate_path, "gate")
 ledger = load_json(ledger_path, "feature_parity_gap_ledger")
 groups = load_json(groups_path, "feature_parity_gap_groups")
@@ -226,8 +254,13 @@ if isinstance(gate, dict):
     if gate.get("owner_family_group") != OWNER_GROUP:
         fail(f"gate owner_family_group must be {OWNER_GROUP}")
     source_commit = gate.get("source_commit")
-    if not isinstance(source_commit, str) or len(source_commit) < 12:
-        fail("gate source_commit must be a non-empty commit-ish string")
+    current_head = git_head()
+    if not isinstance(source_commit, str) or not (
+        source_commit == "current" or is_hex_commit(source_commit)
+    ):
+        fail("gate source_commit must be 'current' or a full hex git commit")
+    elif current_head and not source_commit_is_current(source_commit, current_head):
+        fail("gate source_commit must be 'current' or match current git HEAD")
     if gate.get("source_commit_freshness_policy") != EXPECTED_FRESHNESS_POLICY:
         fail("gate source_commit_freshness_policy must match the stale reverse-loader block contract")
     try:

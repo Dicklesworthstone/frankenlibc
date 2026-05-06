@@ -3,7 +3,7 @@
   "manifest_id": "reverse-loader-process-abi-standalone-gate",
   "bead": "bd-bp8fl.3.7",
   "owner_family_group": "fpg-reverse-loader-process-abi",
-  "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+  "source_commit": "current",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",
@@ -125,7 +125,7 @@
             "tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "claim_blocked_until_current_standalone_artifact"
         },
         "hardened": {
@@ -137,7 +137,7 @@
             "tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "claim_blocked_until_current_standalone_artifact"
         }
       }
@@ -188,7 +188,7 @@
             "tests/conformance/replacement_levels.json",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_time64_layout_bridge_evidence_missing"
         },
         "hardened": {
@@ -200,7 +200,7 @@
             "tests/conformance/replacement_levels.json",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_time64_layout_bridge_evidence_missing"
         }
       }
@@ -256,7 +256,7 @@
             "crates/frankenlibc-abi/src/mmap_abi.rs",
             "crates/frankenlibc-core/src/mmap/mod.rs"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_vm_transition_evidence_missing"
         },
         "hardened": {
@@ -268,7 +268,7 @@
             "crates/frankenlibc-abi/src/mmap_abi.rs",
             "crates/frankenlibc-core/src/mmap/mod.rs"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_vm_transition_evidence_missing"
         }
       }
@@ -319,7 +319,7 @@
             "tests/conformance/e2e_scenario_manifest.v1.json",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_process_bootstrap_evidence_missing"
         },
         "hardened": {
@@ -331,7 +331,7 @@
             "tests/conformance/e2e_scenario_manifest.v1.json",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_process_bootstrap_evidence_missing"
         }
       }
@@ -389,7 +389,7 @@
             "crates/frankenlibc-core/src/syscall/mod.rs",
             "crates/frankenlibc-abi/src/process_abi.rs"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_cross_isa_syscall_evidence_missing"
         },
         "hardened": {
@@ -402,7 +402,7 @@
             "crates/frankenlibc-core/src/syscall/mod.rs",
             "crates/frankenlibc-abi/src/process_abi.rs"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_cross_isa_syscall_evidence_missing"
         }
       }
@@ -457,7 +457,7 @@
             "crates/frankenlibc-harness/tests/sysv_ipc_ops_conformance_test.rs",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_sysv_ipc_lifecycle_evidence_missing"
         },
         "hardened": {
@@ -469,7 +469,7 @@
             "crates/frankenlibc-harness/tests/sysv_ipc_ops_conformance_test.rs",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_sysv_ipc_lifecycle_evidence_missing"
         }
       }
@@ -525,7 +525,7 @@
             "tests/conformance/crash_bundle_spec.json",
             "crates/frankenlibc-harness/tests/backtrace_ops_conformance_test.rs"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_diagnostics_unwinding_evidence_missing"
         },
         "hardened": {
@@ -537,7 +537,7 @@
             "tests/conformance/crash_bundle_spec.json",
             "crates/frankenlibc-harness/tests/backtrace_ops_conformance_test.rs"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_diagnostics_unwinding_evidence_missing"
         }
       }
@@ -592,7 +592,7 @@
             "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_session_accounting_evidence_missing"
         },
         "hardened": {
@@ -604,7 +604,7 @@
             "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_session_accounting_evidence_missing"
         }
       }
@@ -651,7 +651,7 @@
             "tests/conformance/standalone_readiness_proof_matrix.v1.json",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_profiling_hooks_evidence_missing"
         },
         "hardened": {
@@ -663,7 +663,7 @@
             "tests/conformance/standalone_readiness_proof_matrix.v1.json",
             "crates/frankenlibc-abi/version_scripts/libc.map"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_profiling_hooks_evidence_missing"
         }
       }
@@ -719,7 +719,7 @@
             "crates/frankenlibc-abi/src/fenv_abi.rs",
             "crates/frankenlibc-harness/tests/math_fenv_softfp_fixture_pack_test.rs"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_fenv_softfp_evidence_missing"
         },
         "hardened": {
@@ -731,7 +731,7 @@
             "crates/frankenlibc-abi/src/fenv_abi.rs",
             "crates/frankenlibc-harness/tests/math_fenv_softfp_fixture_pack_test.rs"
           ],
-          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "source_commit": "current",
           "failure_signature": "standalone_fenv_softfp_evidence_missing"
         }
       }
