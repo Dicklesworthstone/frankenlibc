@@ -2461,6 +2461,250 @@ fn standalone_smoke_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn standalone_link_run_smoke_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "standalone-link-run-smoke-claim-blocked-policy",
+            (
+                "summary.standalone_claim_status",
+                json!("blocked_until_current_artifact_and_obligations_pass"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-missing-stale-claim-blocked",
+            (
+                "current_claim_policy.missing_or_stale_candidate_result",
+                json!("claim_blocked"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-row-count",
+            ("summary.row_count", json!(10)),
+        ),
+        (
+            "standalone-link-run-smoke-positive-row-count",
+            ("summary.positive_row_count", json!(8)),
+        ),
+        (
+            "standalone-link-run-smoke-negative-row-count",
+            ("summary.negative_row_count", json!(2)),
+        ),
+        (
+            "standalone-link-run-smoke-ld-preload-substitute-rejected",
+            (
+                "summary.ld_preload_smoke_substitutes_for_standalone",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-current-level-still-l0",
+            ("current_claim_policy.current_level_must_remain", json!("L0")),
+        ),
+        (
+            "standalone-link-run-smoke-evidence-starts-at-l2",
+            ("current_claim_policy.standalone_evidence_starts_at", json!("L2")),
+        ),
+        (
+            "standalone-link-run-smoke-no-ld-preload-evidence",
+            ("current_claim_policy.ld_preload_evidence_accepted", json!(false)),
+        ),
+        (
+            "standalone-link-run-smoke-host-dependency-claim-blocked",
+            (
+                "current_claim_policy.host_glibc_dependency_result",
+                json!("claim_blocked"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-positive-policy",
+            (
+                "current_claim_policy.positive_rows_required_for_l2_claim",
+                json!("all strict and hardened candidate runs must pass with a current standalone artifact"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-negative-policy",
+            (
+                "current_claim_policy.negative_rows_required_for_l2_claim",
+                json!("all negative missing-obligation rows must remain claim_blocked"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-library-env",
+            (
+                "artifact_policy.standalone_library_env",
+                json!("FRANKENLIBC_STANDALONE_LIB"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-target-dir-env",
+            (
+                "artifact_policy.target_dir_env",
+                json!("STANDALONE_SMOKE_TARGET_DIR"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-required-artifact",
+            (
+                "artifact_policy.required_artifact_name",
+                json!("libfrankenlibc_replace.so"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-stale-if-older-than-head",
+            ("artifact_policy.stale_if_older_than_head", json!(true)),
+        ),
+        (
+            "standalone-link-run-smoke-first-required-artifact",
+            ("artifact_policy.required_artifacts.0", json!("source.c")),
+        ),
+        (
+            "standalone-link-run-smoke-last-required-artifact",
+            ("artifact_policy.required_artifacts.8", json!("candidate.exit_code")),
+        ),
+        (
+            "standalone-link-run-smoke-required-log-trace",
+            ("required_log_fields.0", json!("trace_id")),
+        ),
+        (
+            "standalone-link-run-smoke-required-log-failure-signature",
+            ("required_log_fields.13", json!("failure_signature")),
+        ),
+        (
+            "standalone-link-run-smoke-missing-artifact-signature",
+            (
+                "expected_failure_classifications.0.failure_signature",
+                json!("standalone_artifact_missing"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-host-dependency-signature",
+            (
+                "expected_failure_classifications.3.failure_signature",
+                json!("host_glibc_dependency"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-loader-startup-fails",
+            ("expected_failure_classifications.6.expected_result", json!("fail")),
+        ),
+        (
+            "standalone-link-run-smoke-owner-family-batch",
+            ("owner_family_groups.0.batch_id", json!("fpg-reverse-loader-process-abi")),
+        ),
+        (
+            "standalone-link-run-smoke-owner-family-first-gap",
+            (
+                "owner_family_groups.0.gap_ids.0",
+                json!("fp-reverse-core-0191894bf973"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-owner-family-first-positive",
+            (
+                "owner_family_groups.0.positive_smoke_rows.0",
+                json!("standalone.loader_symbol_bootstrap"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-owner-family-negative",
+            (
+                "owner_family_groups.0.negative_smoke_rows.0",
+                json!("standalone.loader_process_negative_missing_obligation"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-first-smoke-id",
+            ("smoke_rows.0.smoke_id", json!("standalone.minimal_exit")),
+        ),
+        (
+            "standalone-link-run-smoke-first-symbol-requirement",
+            (
+                "smoke_rows.0.symbol_version_requirements.0.symbol",
+                json!("__libc_start_main"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-stdio-symbol-requirement",
+            (
+                "smoke_rows.1.symbol_version_requirements.0.symbol",
+                json!("tmpfile"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-pthread-extra-flag",
+            ("smoke_rows.2.link_command.extra_flags.0", json!("-pthread")),
+        ),
+        (
+            "standalone-link-run-smoke-first-negative-obligation",
+            ("smoke_rows.4.missing_obligations.0", json!("custom_crt_startup")),
+        ),
+        (
+            "standalone-link-run-smoke-loader-bootstrap-stdout",
+            (
+                "smoke_rows.5.expected_output.stdout_contains",
+                json!("loader-symbol-bootstrap-ok:ok:"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-loader-process-negative-obligation",
+            (
+                "smoke_rows.9.missing_obligations.0",
+                json!("owned_rtld_relocation"),
+            ),
+        ),
+        (
+            "standalone-link-run-smoke-loader-process-negative-claim-blocked",
+            (
+                "smoke_rows.9.expected_output.candidate_status_when_artifact_current",
+                json!("claim_blocked"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-link-run-smoke-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected standalone link-run smoke row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "smoke",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing standalone link-run smoke dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn standalone_host_probe_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [

@@ -813,6 +813,270 @@
       "rationale": "Missing or stale standalone candidates must produce claim_blocked evidence, not a pass."
     },
     {
+      "row_id": "standalone-link-run-smoke-row-count",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "summary.row_count",
+      "expected_value": 10,
+      "rationale": "Dashboard consumers must see the total standalone link-run smoke row count."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-positive-row-count",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "summary.positive_row_count",
+      "expected_value": 8,
+      "rationale": "Dashboard consumers must see how many positive standalone smoke rows are required."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-negative-row-count",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "summary.negative_row_count",
+      "expected_value": 2,
+      "rationale": "Dashboard consumers must see how many negative standalone smoke rows remain fail-closed."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-ld-preload-substitute-rejected",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "summary.ld_preload_smoke_substitutes_for_standalone",
+      "expected_value": false,
+      "rationale": "The dashboard must make clear that LD_PRELOAD smoke cannot substitute for standalone direct-link evidence."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-current-level-still-l0",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "current_claim_policy.current_level_must_remain",
+      "expected_value": "L0",
+      "rationale": "Standalone link-run smoke must keep the current replacement level at L0."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-evidence-starts-at-l2",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "current_claim_policy.standalone_evidence_starts_at",
+      "expected_value": "L2",
+      "rationale": "Dashboard consumers must see that standalone evidence starts at L2, not current L1 promotion."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-no-ld-preload-evidence",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "current_claim_policy.ld_preload_evidence_accepted",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see LD_PRELOAD evidence is rejected for standalone smoke claims."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-host-dependency-claim-blocked",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "current_claim_policy.host_glibc_dependency_result",
+      "expected_value": "claim_blocked",
+      "rationale": "Host glibc dependency findings must keep standalone smoke evidence claim-blocked."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-positive-policy",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "current_claim_policy.positive_rows_required_for_l2_claim",
+      "expected_value": "all strict and hardened candidate runs must pass with a current standalone artifact",
+      "rationale": "Dashboard consumers must see the positive-row policy for L2 standalone smoke claims."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-negative-policy",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "current_claim_policy.negative_rows_required_for_l2_claim",
+      "expected_value": "all negative missing-obligation rows must remain claim_blocked",
+      "rationale": "Dashboard consumers must see the negative-row policy for L2 standalone smoke claims."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-library-env",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "artifact_policy.standalone_library_env",
+      "expected_value": "FRANKENLIBC_STANDALONE_LIB",
+      "rationale": "Dashboard consumers must see the environment input for the standalone library candidate."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-target-dir-env",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "artifact_policy.target_dir_env",
+      "expected_value": "STANDALONE_SMOKE_TARGET_DIR",
+      "rationale": "Dashboard consumers must see the target-dir environment input for standalone smoke evidence."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-required-artifact",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "artifact_policy.required_artifact_name",
+      "expected_value": "libfrankenlibc_replace.so",
+      "rationale": "Dashboard consumers must see the required standalone replacement artifact name."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-stale-if-older-than-head",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "artifact_policy.stale_if_older_than_head",
+      "expected_value": true,
+      "rationale": "Dashboard consumers must see that standalone candidates older than HEAD are stale."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-first-required-artifact",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "artifact_policy.required_artifacts.0",
+      "expected_value": "source.c",
+      "rationale": "Dashboard consumers must see the per-case source artifact requirement."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-last-required-artifact",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "artifact_policy.required_artifacts.8",
+      "expected_value": "candidate.exit_code",
+      "rationale": "Dashboard consumers must see the candidate exit-code artifact requirement."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-required-log-trace",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "required_log_fields.0",
+      "expected_value": "trace_id",
+      "rationale": "Dashboard consumers must see trace_id as a required standalone smoke log field."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-required-log-failure-signature",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "required_log_fields.13",
+      "expected_value": "failure_signature",
+      "rationale": "Dashboard consumers must see failure_signature as a required standalone smoke log field."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-missing-artifact-signature",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "expected_failure_classifications.0.failure_signature",
+      "expected_value": "standalone_artifact_missing",
+      "rationale": "Dashboard consumers must see the missing-artifact failure signature."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-host-dependency-signature",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "expected_failure_classifications.3.failure_signature",
+      "expected_value": "host_glibc_dependency",
+      "rationale": "Dashboard consumers must see host glibc dependency as a standalone smoke blocker."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-loader-startup-fails",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "expected_failure_classifications.6.expected_result",
+      "expected_value": "fail",
+      "rationale": "Dashboard consumers must distinguish real loader startup failures from claim-blocked evidence."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-owner-family-batch",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "owner_family_groups.0.batch_id",
+      "expected_value": "fpg-reverse-loader-process-abi",
+      "rationale": "Dashboard consumers must see the loader/process ABI owner-family batch behind extended smoke rows."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-owner-family-first-gap",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "owner_family_groups.0.gap_ids.0",
+      "expected_value": "fp-reverse-core-0191894bf973",
+      "rationale": "Dashboard consumers must see the first loader/process gap covered by standalone smoke rows."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-owner-family-first-positive",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "owner_family_groups.0.positive_smoke_rows.0",
+      "expected_value": "standalone.loader_symbol_bootstrap",
+      "rationale": "Dashboard consumers must see the first positive owner-family smoke row."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-owner-family-negative",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "owner_family_groups.0.negative_smoke_rows.0",
+      "expected_value": "standalone.loader_process_negative_missing_obligation",
+      "rationale": "Dashboard consumers must see the owner-family negative smoke row that remains claim-blocked."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-first-smoke-id",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "smoke_rows.0.smoke_id",
+      "expected_value": "standalone.minimal_exit",
+      "rationale": "Dashboard consumers must see the minimal direct-link startup smoke row."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-first-symbol-requirement",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "smoke_rows.0.symbol_version_requirements.0.symbol",
+      "expected_value": "__libc_start_main",
+      "rationale": "Dashboard consumers must see the startup symbol requirement for minimal direct-link smoke."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-stdio-symbol-requirement",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "smoke_rows.1.symbol_version_requirements.0.symbol",
+      "expected_value": "tmpfile",
+      "rationale": "Dashboard consumers must see a stdio symbol requirement in standalone smoke."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-pthread-extra-flag",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "smoke_rows.2.link_command.extra_flags.0",
+      "expected_value": "-pthread",
+      "rationale": "Dashboard consumers must see that pthread standalone smoke compiles with -pthread."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-first-negative-obligation",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "smoke_rows.4.missing_obligations.0",
+      "expected_value": "custom_crt_startup",
+      "rationale": "Dashboard consumers must see the first missing obligation that keeps a negative smoke row blocked."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-loader-bootstrap-stdout",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "smoke_rows.5.expected_output.stdout_contains",
+      "expected_value": "loader-symbol-bootstrap-ok:ok:",
+      "rationale": "Dashboard consumers must see the expected loader-symbol bootstrap output witness."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-loader-process-negative-obligation",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "smoke_rows.9.missing_obligations.0",
+      "expected_value": "owned_rtld_relocation",
+      "rationale": "Dashboard consumers must see the owner-family loader/process negative obligation."
+    },
+    {
+      "row_id": "standalone-link-run-smoke-loader-process-negative-claim-blocked",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "field": "smoke_rows.9.expected_output.candidate_status_when_artifact_current",
+      "expected_value": "claim_blocked",
+      "rationale": "Dashboard consumers must see that the loader/process negative smoke row remains claim-blocked even with a current artifact."
+    },
+    {
       "row_id": "crt-tls-atexit-direct-link-source-commit-field",
       "row_kind": "direct_link",
       "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
