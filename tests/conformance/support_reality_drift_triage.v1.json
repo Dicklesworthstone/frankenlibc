@@ -1,0 +1,164 @@
+{
+  "schema_version": "support_reality_drift_triage.v1",
+  "generated_by_bead": "bd-0agsk.4",
+  "claim_status": "triage_report_only",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "reality_report": "tests/conformance/reality_report.v1.json",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
+    "replacement_guard_report": "target/conformance/replacement_guard.report.json"
+  },
+  "classification_policy": {
+    "unclassified_delta": "forbidden",
+    "allowed_classifications": [
+      "taxonomy_mismatch",
+      "missing_fixture",
+      "missing_export",
+      "stale_evidence",
+      "expected_unsupported_surface"
+    ]
+  },
+  "summary": {
+    "support_symbol_count": 4119,
+    "reality_total_exported": 4119,
+    "version_script_export_count": 4184,
+    "delta_symbol_count": 75,
+    "missing_export_count": 5,
+    "expected_unsupported_surface_count": 70,
+    "taxonomy_mismatch_count": 0,
+    "missing_fixture_count": 0,
+    "stale_evidence_count": 0,
+    "replacement_guard_mode": "interpose",
+    "replacement_guard_ok": true,
+    "replacement_guard_total_call_throughs": 0
+  },
+  "delta_buckets": [
+    {
+      "id": "support_symbols_missing_version_exports_stdio_abi",
+      "delta_kind": "support_symbol_missing_version_export",
+      "classification": "missing_export",
+      "owner_family": "stdio_abi",
+      "first_evidence_command": "scripts/check_support_reality_drift_triage.sh --validate-only",
+      "artifact_refs": [
+        "support_matrix.json",
+        "crates/frankenlibc-abi/version_scripts/libc.map"
+      ],
+      "symbols": [
+        "_IO_2_1_stderr_",
+        "_IO_2_1_stdin_",
+        "_IO_2_1_stdout_"
+      ]
+    },
+    {
+      "id": "support_symbols_missing_version_exports_glibc_internal_abi",
+      "delta_kind": "support_symbol_missing_version_export",
+      "classification": "missing_export",
+      "owner_family": "glibc_internal_abi",
+      "first_evidence_command": "scripts/check_support_reality_drift_triage.sh --validate-only",
+      "artifact_refs": [
+        "support_matrix.json",
+        "crates/frankenlibc-abi/version_scripts/libc.map"
+      ],
+      "symbols": [
+        "__ns_name_uncompressed_p",
+        "__ns_samename"
+      ]
+    },
+    {
+      "id": "version_exports_outside_support_matrix",
+      "delta_kind": "version_export_not_in_support_matrix",
+      "classification": "expected_unsupported_surface",
+      "owner_family": "version_script_compatibility_surface",
+      "first_evidence_command": "scripts/check_support_reality_drift_triage.sh --validate-only",
+      "artifact_refs": [
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "support_matrix.json"
+      ],
+      "symbols": [
+        "__cxa_bad_cast",
+        "__cxa_bad_typeid",
+        "__cxa_call_terminate",
+        "__cxa_call_unexpected",
+        "__cxa_deleted_virtual",
+        "__cxa_get_globals",
+        "__cxa_get_globals_fast",
+        "__cxa_guard_abort",
+        "__cxa_guard_acquire",
+        "__cxa_guard_release",
+        "__cxa_pure_virtual",
+        "__cxa_thread_atexit",
+        "__cxa_throw_bad_array_length",
+        "__cxa_throw_bad_array_new_length",
+        "__cxa_tm_cleanup",
+        "__cxa_vec_cctor",
+        "__cxa_vec_cleanup",
+        "__cxa_vec_ctor",
+        "__cxa_vec_delete",
+        "__cxa_vec_delete2",
+        "__cxa_vec_delete3",
+        "__cxa_vec_dtor",
+        "__cxa_vec_new",
+        "__cxa_vec_new2",
+        "__cxa_vec_new3",
+        "__dn_count_labels",
+        "arc4random_addrandom",
+        "arc4random_stir",
+        "dehumanize_number",
+        "expand_number",
+        "fgetln",
+        "flopen",
+        "flopenat",
+        "fparseln",
+        "getmode",
+        "getpeereid",
+        "getprogname",
+        "heapsort",
+        "humanize_number",
+        "mergesort",
+        "ns_datetosecs",
+        "ns_format_ttl",
+        "ns_get16",
+        "ns_get32",
+        "ns_initparse",
+        "ns_makecanon",
+        "ns_msg_getflag",
+        "ns_name_ntol",
+        "ns_name_rollback",
+        "ns_parse_ttl",
+        "ns_parserr",
+        "ns_put16",
+        "ns_put32",
+        "ns_samedomain",
+        "ns_samename",
+        "ns_skiprr",
+        "ns_sprintrr",
+        "ns_sprintrrf",
+        "ns_subdomain",
+        "pidfile_close",
+        "pidfile_fileno",
+        "pidfile_open",
+        "pidfile_remove",
+        "pidfile_write",
+        "radixsort",
+        "reallocf",
+        "setmode",
+        "setprogname",
+        "sradixsort",
+        "strtonum"
+      ]
+    }
+  ],
+  "accepted_expected_unsupported_rows": [
+    {
+      "symbol": "__cxa_bad_cast",
+      "owner_family": "version_script_compatibility_surface",
+      "reason": "exported ABI compatibility surface is present in libc.map but not yet part of support_matrix status taxonomy",
+      "classification": "expected_unsupported_surface"
+    }
+  ],
+  "non_goals": [
+    "No symbol support status changes.",
+    "No version script changes.",
+    "No fixture migration."
+  ]
+}
