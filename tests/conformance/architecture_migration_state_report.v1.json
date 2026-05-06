@@ -1,0 +1,531 @@
+{
+  "schema_version": "architecture_migration_state_report.v1",
+  "generated_by_bead": "bd-0agsk.16",
+  "source_todo_ids": [
+    "TODO-1001",
+    "TODO-1002",
+    "TODO-1003"
+  ],
+  "canonical_command": "scripts/check_architecture_migration_state_report.sh --validate-only",
+  "purpose": "Checked evidence report tying live crate surfaces, artifact flows, replacement-readiness claims, and strict/hardened terminology to current machine artifacts.",
+  "branch_reference_policy": {
+    "default_branch": "main",
+    "legacy_branch_aliases_allowed": false,
+    "checked_by": "scripts/check_architecture_migration_state_report.sh --validate-only"
+  },
+  "source_artifacts": [
+    {
+      "id": "support_matrix",
+      "path": "support_matrix.json",
+      "role": "classified ABI symbol source of truth"
+    },
+    {
+      "id": "reality_report",
+      "path": "tests/conformance/reality_report.v1.json",
+      "role": "current exported-symbol reality snapshot"
+    },
+    {
+      "id": "replacement_levels",
+      "path": "tests/conformance/replacement_levels.json",
+      "role": "interpose and replacement claim-control state"
+    },
+    {
+      "id": "support_matrix_maintenance",
+      "path": "tests/conformance/support_matrix_maintenance_report.v1.json",
+      "role": "support matrix freshness and fixture-linkage diagnostics"
+    },
+    {
+      "id": "ld_preload_smoke",
+      "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "role": "checked strict/hardened interpose smoke summary"
+    },
+    {
+      "id": "runtime_mode_evidence",
+      "path": "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+      "role": "strict/hardened subprocess evidence policy"
+    },
+    {
+      "id": "hardened_coverage_inventory",
+      "path": "tests/conformance/hardened_mode_coverage_inventory.v1.json",
+      "role": "hardened repair/deny fixture coverage inventory"
+    },
+    {
+      "id": "contributor_quickstart",
+      "path": "tests/conformance/contributor_gate_quickstart.v1.json",
+      "role": "ordered contributor gate command quickstart"
+    },
+    {
+      "id": "tooling_boundary",
+      "path": "tests/conformance/tooling_dependency_boundary.v1.json",
+      "role": "tooling-only dependency boundary contract"
+    },
+    {
+      "id": "runtime_math_required_modules",
+      "path": "tests/runtime_math/runtime_math_required_module_gate.v1.json",
+      "role": "runtime math module linkage and governance contract"
+    }
+  ],
+  "relevant_scripts": [
+    "scripts/check_architecture_migration_state_report.sh",
+    "scripts/check_architecture_todo_reconciliation.sh",
+    "scripts/check_contributor_gate_quickstart.sh",
+    "scripts/check_support_reality_regeneration.sh",
+    "scripts/check_fixture_schema_validation.sh",
+    "scripts/check_replacement_guard.sh",
+    "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+    "scripts/check_hardened_mode_coverage_inventory.sh",
+    "scripts/check_tooling_dependency_boundary.sh",
+    "scripts/check_runtime_math_required_module_gate.sh"
+  ],
+  "support_matrix_summary": {
+    "total_exported": 4119,
+    "status_counts": {
+      "Implemented": 3705,
+      "RawSyscall": 414,
+      "WrapsHostLibc": 0,
+      "GlibcCallThrough": 0,
+      "Stub": 0
+    },
+    "native_surface_pct": 100.0,
+    "host_callthrough_surface_pct": 0.0,
+    "taxonomy_source": "support_matrix.json"
+  },
+  "claim_summary": {
+    "current_level": "L0",
+    "current_release_level": "L0",
+    "interpose_claim": "evidence_backed_for_checked_smoke_and_classified_surface",
+    "replacement_claim": "not_promoted",
+    "replacement_blockers": [
+      "claim control still advertises L0",
+      "L1 CRT/startup/TLS proof matrix remains blocked",
+      "standalone dependency policy and broader replacement deployment evidence remain incomplete"
+    ],
+    "ld_preload_smoke_summary": {
+      "total_cases": 64,
+      "passes": 58,
+      "fails": 0,
+      "skips": 6,
+      "strict_status": "green",
+      "hardened_status": "green"
+    }
+  },
+  "crate_to_artifact_flow": [
+    {
+      "crate": "frankenlibc-abi",
+      "crate_path": "crates/frankenlibc-abi",
+      "role": "extern C ABI boundary and interpose shared-library surface",
+      "source_paths": [
+        "crates/frankenlibc-abi/src",
+        "crates/frankenlibc-abi/version_scripts/libc.map"
+      ],
+      "evidence_artifacts": [
+        "support_matrix.json",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/replacement_zero_unapproved_fixtures.v1.json"
+      ],
+      "scripts": [
+        "scripts/check_replacement_guard.sh",
+        "scripts/check_support_reality_regeneration.sh"
+      ],
+      "expected_outputs": [
+        "target/release/libfrankenlibc_abi.so",
+        "target/conformance/replacement_guard.report.json"
+      ]
+    },
+    {
+      "crate": "frankenlibc-core",
+      "crate_path": "crates/frankenlibc-core",
+      "role": "safe Rust semantic kernels used by native ABI paths",
+      "source_paths": [
+        "crates/frankenlibc-core/src"
+      ],
+      "evidence_artifacts": [
+        "support_matrix.json",
+        "tests/conformance/support_matrix_maintenance_report.v1.json",
+        "tests/conformance/fixture_schema_validation.v1.json"
+      ],
+      "scripts": [
+        "scripts/check_fixture_schema_validation.sh",
+        "scripts/check_support_reality_regeneration.sh"
+      ],
+      "expected_outputs": [
+        "target/conformance/fixture_schema_validation.report.json"
+      ]
+    },
+    {
+      "crate": "frankenlibc-membrane",
+      "crate_path": "crates/frankenlibc-membrane",
+      "role": "transparent safety membrane, runtime mode policy, healing evidence, and runtime math controllers",
+      "source_paths": [
+        "crates/frankenlibc-membrane/src",
+        "crates/frankenlibc-membrane/src/runtime_math"
+      ],
+      "evidence_artifacts": [
+        "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+        "tests/conformance/hardened_mode_coverage_inventory.v1.json",
+        "tests/runtime_math/runtime_math_required_module_gate.v1.json"
+      ],
+      "scripts": [
+        "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+        "scripts/check_hardened_mode_coverage_inventory.sh",
+        "scripts/check_runtime_math_required_module_gate.sh"
+      ],
+      "expected_outputs": [
+        "target/conformance/runtime_mode_evidence_logging_coverage.report.json",
+        "target/conformance/hardened_mode_coverage_inventory.report.json"
+      ]
+    },
+    {
+      "crate": "frankenlibc-harness",
+      "crate_path": "crates/frankenlibc-harness",
+      "role": "conformance CLI, report generation, fixture validation, and workload evidence orchestration",
+      "source_paths": [
+        "crates/frankenlibc-harness/src",
+        "crates/frankenlibc-harness/src/bin/harness.rs"
+      ],
+      "evidence_artifacts": [
+        "tests/conformance/reality_report.v1.json",
+        "tests/conformance/contributor_gate_quickstart.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json"
+      ],
+      "scripts": [
+        "scripts/check_contributor_gate_quickstart.sh",
+        "scripts/check_architecture_todo_reconciliation.sh"
+      ],
+      "expected_outputs": [
+        "target/conformance/contributor_gate_quickstart.report.json",
+        "target/conformance/architecture_todo_reconciliation.report.json"
+      ]
+    },
+    {
+      "crate": "frankenlibc-fixture-exec",
+      "crate_path": "crates/frankenlibc-fixture-exec",
+      "role": "fixture execution helper for conformance case evaluation",
+      "source_paths": [
+        "crates/frankenlibc-fixture-exec/src"
+      ],
+      "evidence_artifacts": [
+        "tests/conformance/fixture_schema_validation.v1.json",
+        "tests/conformance/fixtures"
+      ],
+      "scripts": [
+        "scripts/check_fixture_schema_validation.sh"
+      ],
+      "expected_outputs": [
+        "target/conformance/fixture_schema_validation.report.json"
+      ]
+    },
+    {
+      "crate": "frankenlibc-bench",
+      "crate_path": "crates/frankenlibc-bench",
+      "role": "performance benchmark crate tied to strict/hardened latency budget evidence",
+      "source_paths": [
+        "crates/frankenlibc-bench/benches"
+      ],
+      "evidence_artifacts": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/perf_regression_prevention.v1.json"
+      ],
+      "scripts": [
+        "scripts/check_replacement_guard.sh"
+      ],
+      "expected_outputs": [
+        "target/conformance/replacement_guard.report.json"
+      ]
+    }
+  ],
+  "module_family_status": [
+    {
+      "family": "process_startup",
+      "modules": [
+        "startup_abi",
+        "process_abi",
+        "setjmp_abi",
+        "runtime_policy"
+      ],
+      "total_symbols": 42,
+      "status_counts": {
+        "Implemented": 24,
+        "RawSyscall": 18,
+        "WrapsHostLibc": 0,
+        "GlibcCallThrough": 0,
+        "Stub": 0
+      },
+      "interpose_ready": "evidence_backed",
+      "replacement_ready": "blocked_by_startup_tls_proof",
+      "evidence_artifacts": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json"
+      ]
+    },
+    {
+      "family": "memory_string_alloc",
+      "modules": [
+        "malloc_abi",
+        "mmap_abi",
+        "fortify_abi",
+        "string_abi"
+      ],
+      "total_symbols": 255,
+      "status_counts": {
+        "Implemented": 244,
+        "RawSyscall": 11,
+        "WrapsHostLibc": 0,
+        "GlibcCallThrough": 0,
+        "Stub": 0
+      },
+      "interpose_ready": "evidence_backed",
+      "replacement_ready": "taxonomy_clean_claim_blocked",
+      "evidence_artifacts": [
+        "tests/conformance/hardened_mode_coverage_inventory.v1.json",
+        "tests/conformance/replacement_levels.json"
+      ]
+    },
+    {
+      "family": "io_stdio_filesystem",
+      "modules": [
+        "stdio_abi",
+        "io_abi",
+        "io_internal_abi",
+        "dirent_abi",
+        "termios_abi",
+        "poll_abi"
+      ],
+      "total_symbols": 307,
+      "status_counts": {
+        "Implemented": 254,
+        "RawSyscall": 53,
+        "WrapsHostLibc": 0,
+        "GlibcCallThrough": 0,
+        "Stub": 0
+      },
+      "interpose_ready": "evidence_backed",
+      "replacement_ready": "taxonomy_clean_claim_blocked",
+      "evidence_artifacts": [
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/hardened_mode_coverage_inventory.v1.json"
+      ]
+    },
+    {
+      "family": "math_numeric",
+      "modules": [
+        "math_abi",
+        "fenv_abi",
+        "stdbit_abi"
+      ],
+      "total_symbols": 1346,
+      "status_counts": {
+        "Implemented": 1346,
+        "RawSyscall": 0,
+        "WrapsHostLibc": 0,
+        "GlibcCallThrough": 0,
+        "Stub": 0
+      },
+      "interpose_ready": "evidence_backed",
+      "replacement_ready": "taxonomy_clean_claim_blocked",
+      "evidence_artifacts": [
+        "tests/runtime_math/runtime_math_required_module_gate.v1.json",
+        "support_matrix.json"
+      ]
+    },
+    {
+      "family": "threading",
+      "modules": [
+        "pthread_abi",
+        "c11threads_abi"
+      ],
+      "total_symbols": 166,
+      "status_counts": {
+        "Implemented": 166,
+        "RawSyscall": 0,
+        "WrapsHostLibc": 0,
+        "GlibcCallThrough": 0,
+        "Stub": 0
+      },
+      "interpose_ready": "evidence_backed",
+      "replacement_ready": "blocked_by_startup_tls_proof",
+      "evidence_artifacts": [
+        "tests/conformance/hardened_mode_coverage_inventory.v1.json",
+        "tests/conformance/replacement_levels.json"
+      ]
+    },
+    {
+      "family": "locale_encoding_text",
+      "modules": [
+        "locale_abi",
+        "iconv_abi",
+        "wchar_abi",
+        "ctype_abi"
+      ],
+      "total_symbols": 214,
+      "status_counts": {
+        "Implemented": 214,
+        "RawSyscall": 0,
+        "WrapsHostLibc": 0,
+        "GlibcCallThrough": 0,
+        "Stub": 0
+      },
+      "interpose_ready": "evidence_backed",
+      "replacement_ready": "taxonomy_clean_claim_blocked",
+      "evidence_artifacts": [
+        "tests/conformance/fixture_schema_validation.v1.json",
+        "support_matrix.json"
+      ]
+    },
+    {
+      "family": "network_identity_rpc",
+      "modules": [
+        "socket_abi",
+        "inet_abi",
+        "resolv_abi",
+        "rpc_abi",
+        "grp_abi",
+        "pwd_abi"
+      ],
+      "total_symbols": 240,
+      "status_counts": {
+        "Implemented": 222,
+        "RawSyscall": 18,
+        "WrapsHostLibc": 0,
+        "GlibcCallThrough": 0,
+        "Stub": 0
+      },
+      "interpose_ready": "evidence_backed",
+      "replacement_ready": "blocked_by_nss_resolver_backend",
+      "evidence_artifacts": [
+        "support_matrix.json",
+        "tests/conformance/replacement_levels.json"
+      ]
+    },
+    {
+      "family": "system_misc",
+      "modules": [
+        "unistd_abi",
+        "resource_abi",
+        "signal_abi",
+        "time_abi",
+        "errno_abi",
+        "err_abi",
+        "stdlib_abi"
+      ],
+      "total_symbols": 965,
+      "status_counts": {
+        "Implemented": 673,
+        "RawSyscall": 292,
+        "WrapsHostLibc": 0,
+        "GlibcCallThrough": 0,
+        "Stub": 0
+      },
+      "interpose_ready": "evidence_backed",
+      "replacement_ready": "taxonomy_clean_claim_blocked",
+      "evidence_artifacts": [
+        "tests/conformance/reality_report.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json"
+      ]
+    },
+    {
+      "family": "dynamic_compat_internal",
+      "modules": [
+        "dlfcn_abi",
+        "glibc_internal_abi",
+        "isoc_abi",
+        "search_abi"
+      ],
+      "total_symbols": 584,
+      "status_counts": {
+        "Implemented": 562,
+        "RawSyscall": 22,
+        "WrapsHostLibc": 0,
+        "GlibcCallThrough": 0,
+        "Stub": 0
+      },
+      "interpose_ready": "evidence_backed",
+      "replacement_ready": "blocked_by_loader_and_host_independence_evidence",
+      "evidence_artifacts": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/replacement_zero_unapproved_fixtures.v1.json"
+      ]
+    }
+  ],
+  "strict_hardened_glossary": [
+    {
+      "term": "strict_mode",
+      "display": "strict mode",
+      "semantics": "FRANKENLIBC_MODE unset or strict; ABI-compatible behavior is validated without repair rewrites.",
+      "fixture_semantics": "Fixture cases marked strict exercise compatibility outcomes and must not depend on hardened repairs.",
+      "evidence_artifacts": [
+        "support_matrix.json",
+        "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json"
+      ]
+    },
+    {
+      "term": "hardened_mode",
+      "display": "hardened mode",
+      "semantics": "FRANKENLIBC_MODE=hardened enables deterministic TSM repair/deny behavior with evidence logging.",
+      "fixture_semantics": "Fixture cases marked hardened exercise repair/deny semantics and startup-mode evidence.",
+      "evidence_artifacts": [
+        "tests/conformance/hardened_mode_coverage_inventory.v1.json",
+        "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json"
+      ]
+    },
+    {
+      "term": "both_modes",
+      "display": "both modes",
+      "semantics": "A fixture row applies to both strict and hardened mode when compatibility behavior is intentionally shared.",
+      "fixture_semantics": "The fixture schema gate accepts mode values strict, hardened, and both.",
+      "evidence_artifacts": [
+        "tests/conformance/fixture_schema_validation.v1.json"
+      ]
+    },
+    {
+      "term": "startup_evidence",
+      "display": "startup evidence",
+      "semantics": "Subprocess campaigns must log the resolved runtime mode near launch rather than inheriting ambient state silently.",
+      "fixture_semantics": "Runtime-mode evidence rows require startup evidence and explicit mismatch behavior.",
+      "evidence_artifacts": [
+        "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json"
+      ]
+    }
+  ],
+  "validation_commands": [
+    "jq . tests/conformance/architecture_migration_state_report.v1.json",
+    "bash -n scripts/check_architecture_migration_state_report.sh",
+    "scripts/check_architecture_migration_state_report.sh --validate-only",
+    "git diff --check",
+    "br dep cycles --no-db"
+  ],
+  "negative_tests": [
+    {
+      "id": "legacy_branch_reference",
+      "mutation": "Insert the forbidden legacy branch alias into this report.",
+      "expected_failure_signature": "legacy_branch_reference"
+    },
+    {
+      "id": "missing_source_artifact",
+      "mutation": "Point a source_artifacts path at a nonexistent file.",
+      "expected_failure_signature": "source_artifact_missing"
+    },
+    {
+      "id": "module_family_count_drift",
+      "mutation": "Change any module_family_status count without changing support_matrix.json.",
+      "expected_failure_signature": "module_family_count_drift"
+    },
+    {
+      "id": "module_family_coverage_drift",
+      "mutation": "Remove any support_matrix module from all declared module families.",
+      "expected_failure_signature": "module_family_coverage_drift"
+    }
+  ],
+  "summary": {
+    "source_artifact_count": 10,
+    "script_count": 10,
+    "crate_flow_count": 6,
+    "module_family_count": 9,
+    "glossary_term_count": 4,
+    "total_symbols": 4119,
+    "implemented": 3705,
+    "raw_syscall": 414,
+    "host_backed_status_count": 0,
+    "stub_count": 0
+  }
+}
