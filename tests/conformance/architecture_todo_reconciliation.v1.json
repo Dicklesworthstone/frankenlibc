@@ -1,0 +1,483 @@
+{
+  "schema_version": "architecture_todo_reconciliation.v1",
+  "artifact_id": "architecture-todo-reconciliation-2026-05-06",
+  "source_ledger": "docs/architecture_investigation_todo.md",
+  "source_ledger_last_updated": "2026-02-13",
+  "generated_by_bead": "bd-0agsk.1",
+  "generated_at_utc": "2026-05-06T11:39:00Z",
+  "claim_status": "report_only",
+  "promotion_policy": {
+    "replacement_level_change": "forbidden",
+    "tracker_closure_change": "forbidden_without_row_evidence",
+    "purpose": "Map stale architecture-investigation TODO rows to live tracker evidence before implementation work consumes them."
+  },
+  "input_evidence": {
+    "tracker_open_count_before_wave": 0,
+    "tracker_in_progress_count_before_wave": 0,
+    "tracker_closed_count_before_wave": 1764,
+    "new_epic": "bd-0agsk",
+    "new_child_range": "bd-0agsk.1..bd-0agsk.18",
+    "grep_command": "rg -n '`(TODO|NEXT)-[0-9A-Za-z]+' docs/architecture_investigation_todo.md",
+    "overlap_queries": [
+      "br list --all --no-db --json --limit 0 --title-contains architecture",
+      "br list --all --no-db --json --limit 0 --title-contains support",
+      "br list --all --no-db --json --limit 0 --title-contains fixture"
+    ]
+  },
+  "ledger_counts": {
+    "row_count": 73,
+    "status_completed": 30,
+    "status_in_progress": 3,
+    "status_pending": 40
+  },
+  "classification_counts": {
+    "already_closed_by_ledger_or_closed_bead_evidence": 30,
+    "routed_to_new_open_bead": 43,
+    "stale_doc_only": 0,
+    "blocked_by_missing_artifact": 0
+  },
+  "new_beads": [
+    {
+      "id": "bd-0agsk",
+      "role": "container_epic",
+      "title": "EPIC: Architecture ledger live-evidence closure wave"
+    },
+    {
+      "id": "bd-0agsk.1",
+      "role": "foundation",
+      "title": "Reconcile architecture TODO ledger against live tracker evidence"
+    },
+    {
+      "id": "bd-0agsk.2",
+      "role": "gate",
+      "title": "Add architecture TODO reconciliation gate"
+    },
+    {
+      "id": "bd-0agsk.3",
+      "role": "support_reality_regeneration",
+      "title": "Build canonical support-matrix and reality-report regeneration wrapper"
+    },
+    {
+      "id": "bd-0agsk.4",
+      "role": "support_reality_drift",
+      "title": "Emit per-symbol support and reality drift triage report"
+    },
+    {
+      "id": "bd-0agsk.5",
+      "role": "fixture_schema_policy",
+      "title": "Lock fixture expected_output schema policy"
+    },
+    {
+      "id": "bd-0agsk.6",
+      "role": "fixture_schema_gate",
+      "title": "Add full fixture schema validation gate"
+    },
+    {
+      "id": "bd-0agsk.7",
+      "role": "fixture_executor_golden",
+      "title": "Define fixture executor ownership and golden invariant"
+    },
+    {
+      "id": "bd-0agsk.8",
+      "role": "fixture_executor_migration",
+      "title": "Extract fixture execution into owned shared module"
+    },
+    {
+      "id": "bd-0agsk.9",
+      "role": "replacement_callthrough_truth",
+      "title": "Refresh residual replacement call-through blocker truth"
+    },
+    {
+      "id": "bd-0agsk.10",
+      "role": "hardened_coverage",
+      "title": "Add hardened-mode coverage inventory dashboard"
+    },
+    {
+      "id": "bd-0agsk.11",
+      "role": "runtime_mode_logging",
+      "title": "Add runtime-mode evidence logging coverage gate"
+    },
+    {
+      "id": "bd-0agsk.12",
+      "role": "runtime_math_governance",
+      "title": "Refresh runtime_math required-module linkage and classification gate"
+    },
+    {
+      "id": "bd-0agsk.13",
+      "role": "tooling_dependency_audit",
+      "title": "Audit asupersync and frankentui tooling-only boundaries"
+    },
+    {
+      "id": "bd-0agsk.14",
+      "role": "placeholder_fixture_output_triage",
+      "title": "Triage placeholder fixture-output comments into concrete gaps"
+    },
+    {
+      "id": "bd-0agsk.15",
+      "role": "developer_quickstart",
+      "title": "Generate contributor gate quickstart from live scripts"
+    },
+    {
+      "id": "bd-0agsk.16",
+      "role": "architecture_docs_report",
+      "title": "Render architecture and migration-state evidence report"
+    },
+    {
+      "id": "bd-0agsk.17",
+      "role": "replacement_readiness_thresholds",
+      "title": "Define replacement readiness acceptance thresholds by family"
+    },
+    {
+      "id": "bd-0agsk.18",
+      "role": "symbol_coverage_wave_plan",
+      "title": "Plan top-blocker symbol coverage implementation waves"
+    }
+  ],
+  "row_mappings": [
+    {
+      "ids": [
+        "TODO-0001",
+        "TODO-0002",
+        "TODO-0003",
+        "TODO-0004",
+        "TODO-0005",
+        "TODO-0006",
+        "TODO-0007",
+        "TODO-0008",
+        "TODO-0009",
+        "TODO-0010",
+        "TODO-0011",
+        "TODO-0012",
+        "TODO-0013"
+      ],
+      "source_lines": "15-27",
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
+        "AGENTS.md",
+        "README.md",
+        "support_matrix.json",
+        "tests/conformance/fixtures/",
+        "crates/frankenlibc-fixture-exec/",
+        "scripts/conformance_golden_gate.sh"
+      ],
+      "next_action": "No new work created by this reconciliation."
+    },
+    {
+      "ids": [
+        "TODO-0101",
+        "TODO-0103",
+        "TODO-0106"
+      ],
+      "source_lines": "31-36",
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
+        "scripts/check_support_matrix_drift.sh",
+        "scripts/check_support_matrix_maintenance.sh",
+        "bd-3g4p",
+        "bd-2vv.16",
+        "bd-w2c3.10.1"
+      ],
+      "next_action": "Leave closed unless bd-0agsk.3 or bd-0agsk.4 proves drift."
+    },
+    {
+      "ids": [
+        "TODO-0102",
+        "TODO-0104",
+        "TODO-0105"
+      ],
+      "source_lines": "32-35",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.3"
+      ],
+      "next_action": "Define the canonical joint regeneration wrapper before editing support or reality artifacts."
+    },
+    {
+      "ids": [
+        "TODO-0107"
+      ],
+      "source_lines": "37",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.4"
+      ],
+      "next_action": "Emit a per-symbol drift triage artifact after the regeneration wrapper exists."
+    },
+    {
+      "ids": [
+        "TODO-0201",
+        "TODO-0203a",
+        "TODO-0203b",
+        "TODO-0203c",
+        "TODO-0203d",
+        "TODO-0203e"
+      ],
+      "source_lines": "41-59",
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
+        "scripts/check_replacement_guard.sh",
+        "bd-bp8fl.6.5",
+        "bd-bp8fl.6.7",
+        "bd-yioez",
+        "bd-72uda"
+      ],
+      "next_action": "Do not reopen unless bd-0agsk.9 proves a live residual blocker contradicts the closed rows."
+    },
+    {
+      "ids": [
+        "TODO-0202",
+        "TODO-0203",
+        "TODO-0203f",
+        "TODO-0204",
+        "TODO-0205",
+        "TODO-0206",
+        "NEXT-0003"
+      ],
+      "source_lines": "42-68,136",
+      "ledger_status": "in_progress_or_pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.9",
+        "bd-0agsk.17",
+        "bd-0agsk.18"
+      ],
+      "next_action": "Refresh live replacement-guard truth first, then set thresholds and symbol waves from current evidence."
+    },
+    {
+      "ids": [
+        "TODO-0301",
+        "TODO-0302",
+        "TODO-0303",
+        "TODO-0305",
+        "TODO-0307",
+        "NEXT-0001"
+      ],
+      "source_lines": "72-78,134",
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
+        "crates/frankenlibc-harness/src/fixtures.rs",
+        "crates/frankenlibc-fixture-exec/",
+        "bd-uazd",
+        "bd-rftd",
+        "bd-2hh.5"
+      ],
+      "next_action": "No new work from these completed rows."
+    },
+    {
+      "ids": [
+        "TODO-0304"
+      ],
+      "source_lines": "75",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.5"
+      ],
+      "next_action": "Lock the expected_output schema policy before whole-tree schema validation."
+    },
+    {
+      "ids": [
+        "TODO-0306"
+      ],
+      "source_lines": "77",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.6"
+      ],
+      "next_action": "Add the full fixture schema gate after policy is locked."
+    },
+    {
+      "ids": [
+        "TODO-0401"
+      ],
+      "source_lines": "82",
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
+        "crates/frankenlibc-fixture-exec/",
+        "bd-bp8fl.4.2"
+      ],
+      "next_action": "No new work from this completed row."
+    },
+    {
+      "ids": [
+        "TODO-0402",
+        "TODO-0404"
+      ],
+      "source_lines": "83-85",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.7"
+      ],
+      "next_action": "Define ownership and golden invariants before moving executor implementation."
+    },
+    {
+      "ids": [
+        "TODO-0403",
+        "TODO-0405",
+        "TODO-0406"
+      ],
+      "source_lines": "84-87",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.8"
+      ],
+      "next_action": "Extract executor code only after the ownership and golden invariant bead closes."
+    },
+    {
+      "ids": [
+        "TODO-0501",
+        "TODO-0502",
+        "TODO-0503",
+        "TODO-0504",
+        "TODO-0505",
+        "TODO-0506"
+      ],
+      "source_lines": "91-96",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.10"
+      ],
+      "next_action": "Build coverage inventory before adding individual hardened fixture waves."
+    },
+    {
+      "ids": [
+        "TODO-0601",
+        "TODO-0602",
+        "TODO-0603"
+      ],
+      "source_lines": "100-102",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.18"
+      ],
+      "next_action": "Plan implementation waves from drift and threshold evidence instead of directly editing broad symbol surfaces."
+    },
+    {
+      "ids": [
+        "TODO-0604"
+      ],
+      "source_lines": "103",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.17"
+      ],
+      "next_action": "Define per-family replacement readiness thresholds after drift, call-through, and hardened coverage data exist."
+    },
+    {
+      "ids": [
+        "TODO-0701",
+        "TODO-0702",
+        "TODO-0703"
+      ],
+      "source_lines": "107-109",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.11"
+      ],
+      "next_action": "Verify FRANKENLIBC_MODE startup evidence and mismatch handling across harness campaigns."
+    },
+    {
+      "ids": [
+        "TODO-0801",
+        "TODO-0802",
+        "TODO-0803",
+        "TODO-0804",
+        "TODO-0805"
+      ],
+      "source_lines": "113-117",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.12"
+      ],
+      "next_action": "Refresh runtime_math linkage and classification against current AGENTS.md and source inventory."
+    },
+    {
+      "ids": [
+        "TODO-0901",
+        "TODO-0902",
+        "TODO-0903"
+      ],
+      "source_lines": "121-123",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.13"
+      ],
+      "next_action": "Audit asupersync and frankentui as tooling-only dependencies."
+    },
+    {
+      "ids": [
+        "TODO-1001",
+        "TODO-1002",
+        "TODO-1003"
+      ],
+      "source_lines": "127-129",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.16"
+      ],
+      "next_action": "Render architecture and migration-state report after the live-evidence gates exist."
+    },
+    {
+      "ids": [
+        "TODO-1004"
+      ],
+      "source_lines": "130",
+      "ledger_status": "pending",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.15"
+      ],
+      "next_action": "Generate contributor quickstart from live scripts after gate commands stabilize."
+    },
+    {
+      "ids": [
+        "NEXT-0002"
+      ],
+      "source_lines": "135",
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
+        "bd-2vv.16",
+        "bd-w2c3.10.1",
+        "scripts/check_support_matrix_drift.sh"
+      ],
+      "next_action": "Keep closed unless bd-0agsk.3 proves the one-step flow is still incomplete."
+    }
+  ],
+  "scan_findings": [
+    {
+      "kind": "placeholder_fixture_output_comment",
+      "source": "crates/frankenlibc_conformance/src/lib.rs",
+      "lines": "18114-18117",
+      "live_classification": "routed_to_new_open_bead",
+      "target_beads": [
+        "bd-0agsk.14"
+      ],
+      "reason": "Mock-code-finder pass found executor comments for placeholder outputs in time_ops and flexible termios placeholders. This is not a TODO/NEXT row, but it is tied to the fixture-schema rows and should be triaged before new fixture gates overclaim coverage."
+    }
+  ],
+  "validation_requirements": [
+    "jq empty tests/conformance/architecture_todo_reconciliation.v1.json",
+    "jq validates row_count == completed + pending + in_progress",
+    "jq validates row_mappings ids plus scan_findings cover the ledger and mock-code-finder inputs",
+    "git diff --check -- tests/conformance/architecture_todo_reconciliation.v1.json .beads/issues.jsonl",
+    "br dep cycles --no-db --json"
+  ]
+}
