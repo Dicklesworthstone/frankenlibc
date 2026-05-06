@@ -25,6 +25,7 @@
     "standalone_compiler_runtime_experiment_delta": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
     "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+    "standalone_tls_blocker_diagnostics": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
     "standalone_owned_tls_startup_surface": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
     "standalone_owned_unwinder_symbol_surface": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
     "standalone_tls_model_startup_experiment": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
@@ -2057,6 +2058,182 @@
       "field": "experiment_lanes.2.blocking_reasons.0",
       "expected_value": "tls_model_not_viable_for_cdylib_workspace",
       "rationale": "Dashboard consumers must see the concrete local-exec blocker class."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-report-only",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "summary.report_only",
+      "expected_value": true,
+      "rationale": "Dashboard consumers must see that the TLS blocker diagnostic is report-only."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-no-promotion",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "report_policy.promotion_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that TLS diagnostics cannot promote standalone replacement."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-no-replacement-level-change",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "report_policy.replacement_level_change_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that TLS diagnostics cannot change replacement_levels."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-no-default-tls-model-change",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "report_policy.default_tls_model_change_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that diagnostics cannot change the default TLS model."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-symbol-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "summary.undefined_tls_symbol_count",
+      "expected_value": 1,
+      "rationale": "Dashboard consumers must see that one undefined TLS symbol currently blocks standalone claims."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-thread-local-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "summary.thread_local_macro_count",
+      "expected_value": 90,
+      "rationale": "Dashboard consumers must see the source TLS macro inventory size behind the blocker."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-thread-local-file-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "summary.thread_local_source_file_count",
+      "expected_value": 29,
+      "rationale": "Dashboard consumers must see how many source files contribute TLS macro inventory."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-abi-thread-local-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "summary.abi_thread_local_macro_count",
+      "expected_value": 82,
+      "rationale": "Dashboard consumers must see that most TLS macro pressure is in ABI modules."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-current-claim-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "current_forge_evidence.latest_probe_claim_status",
+      "expected_value": "claim_blocked",
+      "rationale": "Dashboard consumers must see that the latest forge probe remains claim-blocked."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-current-artifact-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "current_forge_evidence.latest_probe_artifact_status",
+      "expected_value": "current",
+      "rationale": "Dashboard consumers must see that the blocker diagnostic is based on a current artifact probe."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-current-failure-signature",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "current_forge_evidence.latest_probe_failure_signature",
+      "expected_value": "host_glibc_dependency",
+      "rationale": "Dashboard consumers must see the current forge failure signature associated with the TLS blocker."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-observed-symbol",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "current_forge_evidence.observed_artifact_symbols.undefined_tls_symbols.0",
+      "expected_value": "__tls_get_addr@GLIBC_2.3",
+      "rationale": "Dashboard consumers must see the exact undefined TLS symbol still present in the artifact."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-nm-observed-symbol",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_tls_symbols.0",
+      "expected_value": "__tls_get_addr@GLIBC_2.3",
+      "rationale": "Dashboard consumers must see the nm-derived TLS symbol evidence."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-readelf-observed-symbol",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "current_forge_evidence.evidence_command_results.readelf_symbols.observed_undefined_tls_symbols.0",
+      "expected_value": "__tls_get_addr@GLIBC_2.3",
+      "rationale": "Dashboard consumers must see the readelf symbol-table TLS evidence."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-version-need",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "current_forge_evidence.observed_artifact_symbols.host_version_requirements.0",
+      "expected_value": "ld-linux-x86-64.so.2:GLIBC_2.3",
+      "rationale": "Dashboard consumers must see the host version requirement paired with __tls_get_addr."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-scan-total",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "source_surface_scan.total_thread_local_macro_count",
+      "expected_value": 90,
+      "rationale": "Dashboard consumers must see the source scan total that must be refreshed with blocker movement."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-first-hot-file",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "source_surface_scan.thread_local_inventory.0.path",
+      "expected_value": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "rationale": "Dashboard consumers must see the hottest source file in the TLS macro inventory."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-first-hot-file-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "source_surface_scan.thread_local_inventory.0.thread_local_macro_count",
+      "expected_value": 25,
+      "rationale": "Dashboard consumers must see the first source-surface macro count."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-primary-owner-group",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "source_owner_groups.0.group_id",
+      "expected_value": "primary_errno_tls",
+      "rationale": "Dashboard consumers must see the primary owned source group for TLS blocker work."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-primary-owner-classification",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "source_owner_groups.0.classification",
+      "expected_value": "direct_tls_symbol_pressure",
+      "rationale": "Dashboard consumers must see the owner classification for the primary TLS source group."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-negative-control-nm",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "negative_control_gate.artifact_nm_command",
+      "expected_value": "nm -D libfrankenlibc_replace.so | rg \"__tls_get_addr(@GLIBC_2.3)?\"",
+      "rationale": "Dashboard consumers must see the artifact-level nm command required before clearing the TLS blocker."
+    },
+    {
+      "row_id": "standalone-tls-blocker-diagnostics-negative-control-pass-condition",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+      "field": "negative_control_gate.future_pass_conditions.1",
+      "expected_value": "nm -D reports no undefined __tls_get_addr symbol",
+      "rationale": "Dashboard consumers must see that artifact-level symbol absence is required before any claim can clear."
     },
     {
       "row_id": "l1-dashboard-source-commit-field",

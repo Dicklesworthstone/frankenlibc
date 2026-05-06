@@ -1753,6 +1753,183 @@ fn standalone_tls_model_startup_experiment_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn standalone_tls_blocker_diagnostics_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "standalone-tls-blocker-diagnostics-report-only",
+            ("summary.report_only", json!(true)),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-no-promotion",
+            ("report_policy.promotion_allowed", json!(false)),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-no-replacement-level-change",
+            (
+                "report_policy.replacement_level_change_allowed",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-no-default-tls-model-change",
+            (
+                "report_policy.default_tls_model_change_allowed",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-symbol-count",
+            ("summary.undefined_tls_symbol_count", json!(1)),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-thread-local-count",
+            ("summary.thread_local_macro_count", json!(90)),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-thread-local-file-count",
+            ("summary.thread_local_source_file_count", json!(29)),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-abi-thread-local-count",
+            ("summary.abi_thread_local_macro_count", json!(82)),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-current-claim-status",
+            (
+                "current_forge_evidence.latest_probe_claim_status",
+                json!("claim_blocked"),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-current-artifact-status",
+            (
+                "current_forge_evidence.latest_probe_artifact_status",
+                json!("current"),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-current-failure-signature",
+            (
+                "current_forge_evidence.latest_probe_failure_signature",
+                json!("host_glibc_dependency"),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-observed-symbol",
+            (
+                "current_forge_evidence.observed_artifact_symbols.undefined_tls_symbols.0",
+                json!("__tls_get_addr@GLIBC_2.3"),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-nm-observed-symbol",
+            (
+                "current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_tls_symbols.0",
+                json!("__tls_get_addr@GLIBC_2.3"),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-readelf-observed-symbol",
+            (
+                "current_forge_evidence.evidence_command_results.readelf_symbols.observed_undefined_tls_symbols.0",
+                json!("__tls_get_addr@GLIBC_2.3"),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-version-need",
+            (
+                "current_forge_evidence.observed_artifact_symbols.host_version_requirements.0",
+                json!("ld-linux-x86-64.so.2:GLIBC_2.3"),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-scan-total",
+            ("source_surface_scan.total_thread_local_macro_count", json!(90)),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-first-hot-file",
+            (
+                "source_surface_scan.thread_local_inventory.0.path",
+                json!("crates/frankenlibc-abi/src/unistd_abi.rs"),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-first-hot-file-count",
+            (
+                "source_surface_scan.thread_local_inventory.0.thread_local_macro_count",
+                json!(25),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-primary-owner-group",
+            ("source_owner_groups.0.group_id", json!("primary_errno_tls")),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-primary-owner-classification",
+            (
+                "source_owner_groups.0.classification",
+                json!("direct_tls_symbol_pressure"),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-negative-control-nm",
+            (
+                "negative_control_gate.artifact_nm_command",
+                json!("nm -D libfrankenlibc_replace.so | rg \"__tls_get_addr(@GLIBC_2.3)?\""),
+            ),
+        ),
+        (
+            "standalone-tls-blocker-diagnostics-negative-control-pass-condition",
+            (
+                "negative_control_gate.future_pass_conditions.1",
+                json!("nm -D reports no undefined __tls_get_addr symbol"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-tls-blocker-diagnostics-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected TLS blocker diagnostics dashboard row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "forge",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing TLS blocker diagnostics dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn standalone_smoke_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
