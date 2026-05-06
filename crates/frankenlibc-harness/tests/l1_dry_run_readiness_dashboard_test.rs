@@ -1331,6 +1331,86 @@ fn perf_waiver_audit_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn runtime_replay_source_freshness_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "runtime-replay-source-commit-field",
+            (
+                "source_commit_freshness_policy.recorded_source_commit_field",
+                json!("source_commit"),
+            ),
+        ),
+        (
+            "runtime-replay-source-commit-comparison-target",
+            (
+                "source_commit_freshness_policy.comparison_target",
+                json!("current git HEAD"),
+            ),
+        ),
+        (
+            "runtime-replay-source-commit-stale-result",
+            (
+                "source_commit_freshness_policy.stale_result",
+                json!("block_runtime_evidence_replay_gate"),
+            ),
+        ),
+        (
+            "runtime-replay-source-commit-no-evidence",
+            (
+                "source_commit_freshness_policy.runtime_replay_evidence_allowed_when_stale",
+                json!(false),
+            ),
+        ),
+        (
+            "runtime-replay-source-commit-rejection-kind",
+            (
+                "source_commit_freshness_policy.rejected_evidence_kind",
+                json!("stale_source_commit"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("runtime-replay-source-commit-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows
+            .remove(row_id)
+            .ok_or_else(|| test_error(format!("unexpected runtime replay row: {row_id}")))?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "runtime_evidence",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/runtime_evidence_replay_gate.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing runtime replay freshness dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn every_input_source_commit_freshness_policy_is_exposed() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let rows = as_array(&dashboard["rows"], "rows")?;

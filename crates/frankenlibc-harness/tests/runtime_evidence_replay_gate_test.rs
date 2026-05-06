@@ -35,6 +35,16 @@ const REQUIRED_NEGATIVE_SIGNATURES: &[&str] = &[
     "runtime_replay_decision_mismatch",
 ];
 
+fn expected_source_commit_freshness_policy() -> Value {
+    json!({
+        "recorded_source_commit_field": "source_commit",
+        "comparison_target": "current git HEAD",
+        "stale_result": "block_runtime_evidence_replay_gate",
+        "runtime_replay_evidence_allowed_when_stale": false,
+        "rejected_evidence_kind": "stale_source_commit",
+    })
+}
+
 fn test_error(message: impl Into<String>) -> Box<dyn Error> {
     std::io::Error::other(message.into()).into()
 }
@@ -148,6 +158,49 @@ fn safe_workspace_path(root: &Path, rel: &str) -> TestResult<PathBuf> {
     Ok(root.join(rel_path)) // ubs:ignore - rel_path is rejected unless relative with only normal components.
 }
 
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn git_head(root: &Path) -> TestResult<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
+    ensure(
+        output.status.success(),
+        format!("git rev-parse HEAD failed with status {}", output.status),
+    )?;
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git rev-parse HEAD emitted non-UTF8: {err}")))?;
+    let head = stdout.trim().to_owned();
+    ensure(
+        is_hex_commit(&head),
+        format!("git HEAD must be a 40-hex commit, got {head:?}"),
+    )?;
+    Ok(head)
+}
+
+fn source_commit_is_current(value: &str, current_head: &str) -> bool {
+    value == "current" || value == current_head
+}
+
+fn assert_recorded_source_commit_is_current(root: &Path, gate: &Value) -> TestResult {
+    let source_commit = string_field(gate, "source_commit", "gate")?;
+    ensure(
+        source_commit == "current" || is_hex_commit(source_commit),
+        format!("source_commit must be 'current' or a full hex git commit, got {source_commit:?}"),
+    )?;
+    let current_head = git_head(root)?;
+    ensure(
+        source_commit_is_current(source_commit, &current_head),
+        "source_commit must be 'current' or match current git HEAD",
+    )
+}
+
 fn run_gate(root: &Path) -> TestResult<std::process::Output> {
     Command::new(root.join("scripts/check_runtime_evidence_replay_gate.sh"))
         .current_dir(root)
@@ -211,6 +264,17 @@ fn gate_artifact_covers_runtime_evidence_replay_contract() -> TestResult {
         "schema_version",
     )?;
     ensure_eq(string_field(&gate, "bead", "gate")?, "bd-bp8fl.9.4", "bead")?;
+    ensure_eq(
+        string_field(&gate, "source_commit", "gate")?,
+        "current",
+        "checked-in runtime replay gate source_commit must use current marker",
+    )?;
+    assert_recorded_source_commit_is_current(&root, &gate)?;
+    ensure_eq(
+        field(&gate, "source_commit_freshness_policy", "gate")?.clone(),
+        expected_source_commit_freshness_policy(),
+        "source_commit_freshness_policy",
+    )?;
 
     let inputs = as_object(field(&gate, "inputs", "gate")?, "inputs")?;
     for value in inputs.values() {
@@ -284,6 +348,21 @@ fn gate_artifact_covers_runtime_evidence_replay_contract() -> TestResult {
         signatures,
         expected_signatures,
         "negative signature coverage",
+    )?;
+    let fail_closed_signatures = as_array(
+        field(
+            field(&gate, "claim_policy", "gate")?,
+            "fail_closed_signatures",
+            "claim_policy",
+        )?,
+        "claim_policy.fail_closed_signatures",
+    )?
+    .iter()
+    .filter_map(Value::as_str)
+    .collect::<BTreeSet<_>>();
+    ensure(
+        fail_closed_signatures.contains("stale_source_commit"),
+        "claim_policy.fail_closed_signatures must include stale_source_commit",
     )
 }
 
@@ -385,6 +464,32 @@ fn gate_fails_closed_for_stale_snapshot() -> TestResult {
     set_snapshot_field(record, "snapshot_age_state", json!("stale"))?;
     let report = run_gate_with_fixture(&root, "stale_snapshot", &gate)?;
     expect_error_signature(&report, "runtime_replay_stale_snapshot")
+}
+
+#[test]
+fn gate_fails_closed_for_stale_recorded_source_commit() -> TestResult {
+    let root = workspace_root();
+    let mut gate = load_json(&gate_path(&root))?;
+    set_object_field(
+        &mut gate,
+        "source_commit",
+        json!("0000000000000000000000000000000000000000"),
+        "gate",
+    )?;
+    let error = assert_recorded_source_commit_is_current(&root, &gate)
+        .expect_err("stale recorded source_commit should be rejected");
+    ensure(
+        error
+            .to_string()
+            .contains("source_commit must be 'current' or match current git HEAD"),
+        format!("unexpected stale source_commit error: {error}"),
+    )?;
+
+    let report = run_gate_with_fixture(&root, "stale_source_commit", &gate)?;
+    expect_error_signature(
+        &report,
+        "source_commit must be 'current' or match current git HEAD",
+    )
 }
 
 #[test]

@@ -16,6 +16,7 @@ mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
 
 python3 - "${ROOT}" "${GATE}" "${REPORT}" "${LOG}" <<'PY'
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,6 +53,13 @@ DECISION_TERMINALS = {
     "FullValidate": "full_validate",
     "Repair": "repair",
     "Deny": "deny",
+}
+EXPECTED_FRESHNESS_POLICY = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_runtime_evidence_replay_gate",
+    "runtime_replay_evidence_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
 }
 
 errors = []
@@ -104,6 +112,33 @@ def normalized_path_terminal(record):
     if not path:
         return ""
     return str(path[-1]).replace("-", "_").lower()
+
+
+def is_hex_commit(value):
+    return len(value) == 40 and all(ch in "0123456789abcdefABCDEF" for ch in value)
+
+
+def git_head():
+    try:
+        output = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except Exception as exc:
+        fail(f"cannot resolve current git HEAD: {exc}")
+        return ""
+    head = output.stdout.strip()
+    if not is_hex_commit(head):
+        fail(f"current git HEAD is not a full hex commit: {head!r}")
+        return ""
+    return head
+
+
+def source_commit_is_current(value, current_head):
+    return value == "current" or value == current_head
 
 
 def validate_replay_record(record, policy):
@@ -235,8 +270,16 @@ if isinstance(gate, dict):
         fail("gate manifest_id must be runtime-evidence-replay-gate")
     if gate.get("bead") != BEAD_ID:
         fail(f"gate bead must be {BEAD_ID}")
-    if not gate.get("source_commit"):
-        fail("gate source_commit must be non-empty")
+    source_commit = gate.get("source_commit")
+    current_head = git_head()
+    if not isinstance(source_commit, str) or not (
+        source_commit == "current" or is_hex_commit(source_commit)
+    ):
+        fail("gate source_commit must be 'current' or a full hex git commit")
+    elif current_head and not source_commit_is_current(source_commit, current_head):
+        fail("gate source_commit must be 'current' or match current git HEAD")
+    if gate.get("source_commit_freshness_policy") != EXPECTED_FRESHNESS_POLICY:
+        fail("source_commit_freshness_policy must match the stale runtime replay block contract")
     if gate.get("required_log_fields") != REQUIRED_LOG_FIELDS:
         fail("gate required_log_fields must match bd-bp8fl.9.4")
     try:
@@ -280,6 +323,7 @@ if isinstance(gate, dict):
             fail("claim_policy.required_replay_fields must contain strings")
             policy_ok = False
     for signature in [
+        "stale_source_commit",
         "runtime_replay_missing_event",
         "runtime_replay_stale_snapshot",
         "runtime_replay_out_of_order",

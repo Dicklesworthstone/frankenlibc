@@ -753,6 +753,46 @@
       "rationale": "Dashboard consumers must see stale perf waiver audit source drift as stale_source_commit evidence."
     },
     {
+      "row_id": "runtime-replay-source-commit-field",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "L1 dashboard consumers must see that runtime replay freshness is bound to the replay gate source_commit."
+    },
+    {
+      "row_id": "runtime-replay-source-commit-comparison-target",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "L1 dashboard consumers must see that runtime replay freshness compares against the current source checkout."
+    },
+    {
+      "row_id": "runtime-replay-source-commit-stale-result",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_runtime_evidence_replay_gate",
+      "rationale": "A stale runtime evidence replay gate source commit must block replay evidence."
+    },
+    {
+      "row_id": "runtime-replay-source-commit-no-evidence",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "source_commit_freshness_policy.runtime_replay_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Stale runtime replay evidence cannot support L1 readiness rows."
+    },
+    {
+      "row_id": "runtime-replay-source-commit-rejection-kind",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_source_commit",
+      "rationale": "Dashboard consumers must see stale runtime replay source drift as stale_source_commit evidence."
+    },
+    {
       "row_id": "claim-reconciliation-status-pass",
       "row_kind": "claim_control",
       "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",

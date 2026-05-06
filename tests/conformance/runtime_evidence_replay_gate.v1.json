@@ -3,7 +3,14 @@
   "manifest_id": "runtime-evidence-replay-gate",
   "bead": "bd-bp8fl.9.4",
   "generated_utc": "2026-05-04T08:35:00Z",
-  "source_commit": "bf04cadcb6494dee04c1e1f2bd359f698867201f",
+  "source_commit": "current",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_runtime_evidence_replay_gate",
+    "runtime_replay_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "inputs": {
     "stdio_evidence_module": "crates/frankenlibc-membrane/src/evidence.rs",
     "runtime_symbol_evidence_module": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
@@ -47,6 +54,7 @@
       "decision_mismatch"
     ],
     "fail_closed_signatures": [
+      "stale_source_commit",
       "runtime_replay_missing_event",
       "runtime_replay_stale_snapshot",
       "runtime_replay_out_of_order",
