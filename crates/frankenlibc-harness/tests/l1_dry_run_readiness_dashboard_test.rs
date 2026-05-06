@@ -95,10 +95,31 @@ fn current_git_head(root: &Path) -> Result<String, Box<dyn Error>> {
         .map_err(|err| test_error(format!("git rev-parse HEAD should emit UTF-8: {err}")))?;
     let head = stdout.trim().to_string();
     ensure(
-        !head.is_empty(),
-        "git rev-parse HEAD returned an empty commit",
+        is_hex_commit(&head),
+        format!("git rev-parse HEAD returned invalid commit {head:?}"),
     )?;
     Ok(head)
+}
+
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn source_commit_is_current(value: &str, current_head: &str) -> bool {
+    value == "current" || value == current_head
+}
+
+fn assert_recorded_source_commit_is_current(root: &Path, dashboard: &Value) -> TestResult {
+    let source_commit = as_str(&dashboard["source_commit"], "source_commit")?;
+    ensure(
+        source_commit == "current" || is_hex_commit(source_commit),
+        format!("source_commit must be 'current' or a full hex git commit, got {source_commit:?}"),
+    )?;
+    let current_head = current_git_head(root)?;
+    ensure(
+        source_commit_is_current(source_commit, &current_head),
+        "source_commit must be 'current' or match current git HEAD",
+    )
 }
 
 const REQUIRED_LOG_FIELDS: &[&str] = &[
@@ -175,11 +196,11 @@ fn dashboard_artifact_is_well_formed() -> TestResult {
     )?;
     ensure_eq(dashboard["bead"].as_str(), Some("bd-i90i2"), "bead")?;
     let source_commit = as_str(&dashboard["source_commit"], "source_commit")?;
-    ensure(!source_commit.is_empty(), "source_commit must be set")?;
     ensure(
-        source_commit.len() == 40 && source_commit.chars().all(|ch| ch.is_ascii_hexdigit()),
-        "source_commit must be a full hex git commit",
+        source_commit == "current",
+        "checked-in dashboard source_commit must use current marker",
     )?;
+    assert_recorded_source_commit_is_current(&workspace_root(), &dashboard)?;
     let freshness_policy = &dashboard["source_commit_freshness_policy"];
     ensure_eq(
         freshness_policy,
@@ -217,7 +238,7 @@ fn dashboard_artifact_is_well_formed() -> TestResult {
         "source_commit_freshness_policy.rejected_evidence_kind",
     )?;
     let current_head = current_git_head(&workspace_root())?;
-    if source_commit != current_head {
+    if !source_commit_is_current(source_commit, &current_head) {
         ensure_eq(
             freshness_policy["stale_result"].as_str(),
             Some("report_blockers_no_auto_promotion"),
@@ -283,6 +304,33 @@ fn dashboard_artifact_is_well_formed() -> TestResult {
         )?;
     }
     Ok(())
+}
+
+#[test]
+fn stale_recorded_source_commit_is_rejected_without_promotion() -> TestResult {
+    let mut dashboard = load_json(&dashboard_path())?;
+    dashboard["source_commit"] = json!("0000000000000000000000000000000000000000");
+
+    let error = assert_recorded_source_commit_is_current(&workspace_root(), &dashboard)
+        .expect_err("stale recorded source_commit should be rejected");
+    ensure(
+        error
+            .to_string()
+            .contains("source_commit must be 'current' or match current git HEAD"),
+        format!("unexpected stale source_commit error: {error}"),
+    )?;
+
+    let freshness_policy = &dashboard["source_commit_freshness_policy"];
+    ensure_eq(
+        freshness_policy["stale_result"].as_str(),
+        Some("report_blockers_no_auto_promotion"),
+        "stale dashboard source_commit must remain report-only",
+    )?;
+    ensure_eq(
+        freshness_policy["promotion_allowed_when_stale"].as_bool(),
+        Some(false),
+        "stale dashboard source_commit must not allow promotion",
+    )
 }
 
 #[test]
