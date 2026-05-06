@@ -1123,6 +1123,129 @@ fn standalone_owned_unwinder_surface_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn standalone_owned_unwinder_symbol_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "standalone-owned-unwinder-symbol-name",
+            ("symbol_rows.0.symbol", json!("_Unwind_Backtrace@GCC_3.3")),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-bare-name",
+            ("symbol_rows.0.bare_symbol", json!("_Unwind_Backtrace")),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-provider-library",
+            ("symbol_rows.0.provider_library", json!("libgcc_s.so.1")),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-version-node",
+            ("symbol_rows.0.version_node", json!("GCC_3.3")),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-requirement-id",
+            ("symbol_rows.0.requirement_id", json!("libgcc_s.so.1:GCC_3.3")),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-blocking-reason",
+            (
+                "symbol_rows.0.blocking_reason",
+                json!("undefined_unwind_symbols"),
+            ),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-owner-surface",
+            ("symbol_rows.0.owner_surface", json!("unwind_runtime")),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-source-diagnostic",
+            (
+                "symbol_rows.0.source_diagnostic",
+                json!(
+                    "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols"
+                ),
+            ),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-source-version-matrix",
+            (
+                "symbol_rows.0.source_version_matrix",
+                json!("standalone_host_version_requirement_burndown.version_requirement_matrix"),
+            ),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-semantic-contract",
+            (
+                "symbol_rows.0.semantic_contract_class",
+                json!("stack-trace frame enumeration"),
+            ),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-owned-surface-status",
+            ("symbol_rows.0.owned_surface_status", json!("unresolved")),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-status-until-exit",
+            ("symbol_rows.0.status_until_exit", json!("claim_blocked")),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-first-evidence-command",
+            (
+                "symbol_rows.0.evidence_commands.0",
+                json!("nm -D libfrankenlibc_replace.so | rg \"_Unwind_Backtrace\""),
+            ),
+        ),
+        (
+            "standalone-owned-unwinder-symbol-first-exit-criterion",
+            (
+                "symbol_rows.0.exit_criteria.0",
+                json!("nm -D reports no undefined _Unwind_Backtrace symbol"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-owned-unwinder-symbol-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected owned unwinder symbol dashboard row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "forge",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing owned unwinder symbol dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn standalone_smoke_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [

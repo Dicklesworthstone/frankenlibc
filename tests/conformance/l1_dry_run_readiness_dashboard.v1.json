@@ -1440,6 +1440,118 @@
       "rationale": "The owned unwinder surface must keep standalone claims blocked until every _Unwind_* symbol exits the current artifact."
     },
     {
+      "row_id": "standalone-owned-unwinder-symbol-name",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.symbol",
+      "expected_value": "_Unwind_Backtrace@GCC_3.3",
+      "rationale": "Dashboard consumers must see the first concrete owned unwinder symbol blocking standalone replacement claims."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-bare-name",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.bare_symbol",
+      "expected_value": "_Unwind_Backtrace",
+      "rationale": "Dashboard consumers must see the unversioned unwinder symbol name for nm/readelf follow-up controls."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-provider-library",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.provider_library",
+      "expected_value": "libgcc_s.so.1",
+      "rationale": "Dashboard consumers must see that the current unwinder blocker still depends on the host libgcc provider."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-version-node",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.version_node",
+      "expected_value": "GCC_3.3",
+      "rationale": "Dashboard consumers must see the exact provider version node attached to the first unwinder blocker."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-requirement-id",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.requirement_id",
+      "expected_value": "libgcc_s.so.1:GCC_3.3",
+      "rationale": "Dashboard consumers must see the provider/version requirement id that keeps the first unwinder row unresolved."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-blocking-reason",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.blocking_reason",
+      "expected_value": "undefined_unwind_symbols",
+      "rationale": "Dashboard consumers must see the artifact-side blocker class for the first unwinder symbol."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-owner-surface",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.owner_surface",
+      "expected_value": "unwind_runtime",
+      "rationale": "Dashboard consumers must see the owned source surface responsible for clearing the unwinder blocker."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-source-diagnostic",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.source_diagnostic",
+      "expected_value": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "rationale": "Dashboard consumers must see the upstream diagnostic path that proves the current unwinder blocker."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-source-version-matrix",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.source_version_matrix",
+      "expected_value": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "rationale": "Dashboard consumers must see the version-burndown source matrix for the first unwinder blocker."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-semantic-contract",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.semantic_contract_class",
+      "expected_value": "stack-trace frame enumeration",
+      "rationale": "Dashboard consumers must see the semantic contract class for owned unwinder follow-up work."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-owned-surface-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.owned_surface_status",
+      "expected_value": "unresolved",
+      "rationale": "Dashboard consumers must see that the owned unwinder substitute is not yet implemented."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-status-until-exit",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.status_until_exit",
+      "expected_value": "claim_blocked",
+      "rationale": "Dashboard consumers must see that this unwinder row blocks standalone claims until artifact-level exit evidence appears."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-first-evidence-command",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.evidence_commands.0",
+      "expected_value": "nm -D libfrankenlibc_replace.so | rg \"_Unwind_Backtrace\"",
+      "rationale": "Dashboard consumers must see the concrete nm command for proving the first unwinder symbol exit."
+    },
+    {
+      "row_id": "standalone-owned-unwinder-symbol-first-exit-criterion",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+      "field": "symbol_rows.0.exit_criteria.0",
+      "expected_value": "nm -D reports no undefined _Unwind_Backtrace symbol",
+      "rationale": "Dashboard consumers must see the artifact-level exit criterion before any claim can change."
+    },
+    {
       "row_id": "l1-dashboard-source-commit-field",
       "row_kind": "gate_meta",
       "evidence_artifact": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
