@@ -2509,6 +2509,158 @@
       "rationale": "Dashboard consumers must see that artifact-level symbol absence is required before any claim can clear."
     },
     {
+      "row_id": "perf-baseline-spec-total-suites",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_baseline_spec.json",
+      "field": "summary.total_suites",
+      "expected_value": 5,
+      "rationale": "Dashboard consumers must see the total performance baseline suite inventory."
+    },
+    {
+      "row_id": "perf-baseline-spec-total-benchmarks",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_baseline_spec.json",
+      "field": "summary.total_benchmarks",
+      "expected_value": 25,
+      "rationale": "Dashboard consumers must see the benchmark count represented by the baseline spec."
+    },
+    {
+      "row_id": "perf-baseline-spec-enforced-suites",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_baseline_spec.json",
+      "field": "summary.enforced_suites",
+      "expected_value": 3,
+      "rationale": "Dashboard consumers must see how many perf suites are currently enforced."
+    },
+    {
+      "row_id": "perf-baseline-spec-primary-gate-metric",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_baseline_spec.json",
+      "field": "percentile_targets.primary_gate_metric",
+      "expected_value": "p50",
+      "rationale": "Dashboard consumers must see that p50 is the primary perf gate metric."
+    },
+    {
+      "row_id": "perf-baseline-spec-baseline-file",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_baseline_spec.json",
+      "field": "baseline_format.file",
+      "expected_value": "scripts/perf_baseline.json",
+      "rationale": "Dashboard consumers must see the machine baseline file path that backs perf gates."
+    },
+    {
+      "row_id": "perf-baseline-spec-max-cv",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_baseline_spec.json",
+      "field": "regeneration.validation.max_cv_pct",
+      "expected_value": 15,
+      "rationale": "Dashboard consumers must see the allowed coefficient-of-variation threshold for baseline refreshes."
+    },
+    {
+      "row_id": "perf-baseline-spec-regression-threshold",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_baseline_spec.json",
+      "field": "regression_detection.max_regression_pct",
+      "expected_value": 15,
+      "rationale": "Dashboard consumers must see the regression threshold enforced against baseline p50."
+    },
+    {
+      "row_id": "perf-baseline-spec-profile-required-files",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_baseline_spec.json",
+      "field": "summary.profile_required_files",
+      "expected_value": 6,
+      "rationale": "Dashboard consumers must see the required profiling artifact file count."
+    },
+    {
+      "row_id": "perf-budget-policy-strict-hotpath-strict-ns",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_budget_policy.json",
+      "field": "budgets.strict_hotpath.strict_mode_ns",
+      "expected_value": 20,
+      "rationale": "Dashboard consumers must see the strict-mode hotpath latency budget."
+    },
+    {
+      "row_id": "perf-budget-policy-strict-hotpath-hardened-ns",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_budget_policy.json",
+      "field": "budgets.strict_hotpath.hardened_mode_ns",
+      "expected_value": 200,
+      "rationale": "Dashboard consumers must see the hardened-mode hotpath latency budget."
+    },
+    {
+      "row_id": "perf-budget-policy-repeat-runs",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_budget_policy.json",
+      "field": "variance_guardrails.min_repeat_runs",
+      "expected_value": 3,
+      "rationale": "Dashboard consumers must see the minimum repeat-run policy for perf samples."
+    },
+    {
+      "row_id": "perf-budget-policy-max-cv",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_budget_policy.json",
+      "field": "variance_guardrails.max_coefficient_of_variation_pct",
+      "expected_value": 15,
+      "rationale": "Dashboard consumers must see the perf variance guardrail."
+    },
+    {
+      "row_id": "perf-budget-policy-regression-threshold",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_budget_policy.json",
+      "field": "regression_policy.max_regression_pct",
+      "expected_value": 15,
+      "rationale": "Dashboard consumers must see the maximum allowed perf regression."
+    },
+    {
+      "row_id": "perf-budget-policy-current-proof-required",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_budget_policy.json",
+      "field": "workload_budget_extension.performance_claims_require_current_behavior_proof",
+      "expected_value": true,
+      "rationale": "Dashboard consumers must see that performance claims require current behavior proof."
+    },
+    {
+      "row_id": "perf-budget-policy-user-workload-decision",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_budget_policy.json",
+      "field": "workload_performance_budgets.0.decision",
+      "expected_value": "claim_blocked",
+      "rationale": "Dashboard consumers must see that the user workload performance claim remains blocked."
+    },
+    {
+      "row_id": "perf-budget-policy-membrane-failure-signature",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_budget_policy.json",
+      "field": "workload_performance_budgets.1.failure_signature",
+      "expected_value": "membrane_perf_missing_current_baseline",
+      "rationale": "Dashboard consumers must see the missing-current-baseline membrane perf failure signature."
+    },
+    {
+      "row_id": "perf-budget-policy-microbench-only-blocks-claim",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_budget_policy.json",
+      "field": "performance_claim_blocking_tests.2.failure_signature",
+      "expected_value": "perf_claim_microbench_only",
+      "rationale": "Dashboard consumers must see that microbench-only evidence cannot support user workload claims."
+    },
+    {
+      "row_id": "perf-budget-policy-active-waiver-expiry",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_budget_policy.json",
+      "field": "active_waivers.0.expires_at",
+      "expected_value": "2026-05-11",
+      "rationale": "Dashboard consumers must see the expiry for the active string/malloc perf waiver."
+    },
+    {
+      "row_id": "perf-budget-policy-first-unbenched-module",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_budget_policy.json",
+      "field": "current_assessment.benchmark_coverage.not_yet_benched.0",
+      "expected_value": "ctype_abi",
+      "rationale": "Dashboard consumers must see at least one strict-hotpath module still missing ABI bench coverage."
+    },
+    {
       "row_id": "l1-dashboard-source-commit-field",
       "row_kind": "gate_meta",
       "evidence_artifact": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",

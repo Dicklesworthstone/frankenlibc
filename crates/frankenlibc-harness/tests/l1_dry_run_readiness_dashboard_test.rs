@@ -3073,6 +3073,190 @@ fn perf_waiver_audit_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn perf_baseline_spec_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "perf-baseline-spec-total-suites",
+            ("summary.total_suites", json!(5)),
+        ),
+        (
+            "perf-baseline-spec-total-benchmarks",
+            ("summary.total_benchmarks", json!(25)),
+        ),
+        (
+            "perf-baseline-spec-enforced-suites",
+            ("summary.enforced_suites", json!(3)),
+        ),
+        (
+            "perf-baseline-spec-primary-gate-metric",
+            ("percentile_targets.primary_gate_metric", json!("p50")),
+        ),
+        (
+            "perf-baseline-spec-baseline-file",
+            ("baseline_format.file", json!("scripts/perf_baseline.json")),
+        ),
+        (
+            "perf-baseline-spec-max-cv",
+            ("regeneration.validation.max_cv_pct", json!(15)),
+        ),
+        (
+            "perf-baseline-spec-regression-threshold",
+            ("regression_detection.max_regression_pct", json!(15)),
+        ),
+        (
+            "perf-baseline-spec-profile-required-files",
+            ("summary.profile_required_files", json!(6)),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("perf-baseline-spec-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows
+            .remove(row_id)
+            .ok_or_else(|| test_error(format!("unexpected perf baseline spec row: {row_id}")))?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "perf",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/perf_baseline_spec.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing perf baseline spec dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
+fn perf_budget_policy_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "perf-budget-policy-strict-hotpath-strict-ns",
+            ("budgets.strict_hotpath.strict_mode_ns", json!(20)),
+        ),
+        (
+            "perf-budget-policy-strict-hotpath-hardened-ns",
+            ("budgets.strict_hotpath.hardened_mode_ns", json!(200)),
+        ),
+        (
+            "perf-budget-policy-repeat-runs",
+            ("variance_guardrails.min_repeat_runs", json!(3)),
+        ),
+        (
+            "perf-budget-policy-max-cv",
+            (
+                "variance_guardrails.max_coefficient_of_variation_pct",
+                json!(15),
+            ),
+        ),
+        (
+            "perf-budget-policy-regression-threshold",
+            ("regression_policy.max_regression_pct", json!(15)),
+        ),
+        (
+            "perf-budget-policy-current-proof-required",
+            (
+                "workload_budget_extension.performance_claims_require_current_behavior_proof",
+                json!(true),
+            ),
+        ),
+        (
+            "perf-budget-policy-user-workload-decision",
+            (
+                "workload_performance_budgets.0.decision",
+                json!("claim_blocked"),
+            ),
+        ),
+        (
+            "perf-budget-policy-membrane-failure-signature",
+            (
+                "workload_performance_budgets.1.failure_signature",
+                json!("membrane_perf_missing_current_baseline"),
+            ),
+        ),
+        (
+            "perf-budget-policy-microbench-only-blocks-claim",
+            (
+                "performance_claim_blocking_tests.2.failure_signature",
+                json!("perf_claim_microbench_only"),
+            ),
+        ),
+        (
+            "perf-budget-policy-active-waiver-expiry",
+            ("active_waivers.0.expires_at", json!("2026-05-11")),
+        ),
+        (
+            "perf-budget-policy-first-unbenched-module",
+            (
+                "current_assessment.benchmark_coverage.not_yet_benched.0",
+                json!("ctype_abi"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("perf-budget-policy-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows
+            .remove(row_id)
+            .ok_or_else(|| test_error(format!("unexpected perf budget policy row: {row_id}")))?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "perf",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/perf_budget_policy.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing perf budget policy dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn runtime_replay_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
@@ -3201,6 +3385,24 @@ fn every_input_source_commit_freshness_policy_is_exposed() -> TestResult {
             exposed_fields,
             policy_fields,
             format!("{input_key} dashboard source freshness fields"),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn every_declared_input_has_dashboard_rows() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let rows = as_array(&dashboard["rows"], "rows")?;
+    let inputs = dashboard["inputs"]
+        .as_object()
+        .ok_or_else(|| test_error("inputs must be an object"))?;
+    for (input_key, input_path_value) in inputs {
+        let input_path = as_str(input_path_value, "inputs value")?;
+        ensure(
+            rows.iter()
+                .any(|row| row["evidence_artifact"].as_str() == Some(input_path)),
+            format!("{input_key} input {input_path} has no dashboard rows"),
         )?;
     }
     Ok(())
