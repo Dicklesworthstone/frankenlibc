@@ -1,0 +1,128 @@
+{
+  "schema_version": "fixture_executor_ownership_and_golden.v1",
+  "generated_by_bead": "bd-0agsk.7",
+  "purpose": "Freeze the current fixture-executor ownership boundary and byte-for-byte representative execute_fixture_case outputs before implementation ownership is moved out of the legacy conformance crate.",
+  "source_todo_ids": [
+    "TODO-0402",
+    "TODO-0404"
+  ],
+  "canonical_command": "scripts/check_fixture_executor_ownership_and_golden.sh --validate-only",
+  "ownership_contract": {
+    "stable_public_boundary": {
+      "crate": "frankenlibc-fixture-exec",
+      "manifest": "crates/frankenlibc-fixture-exec/Cargo.toml",
+      "entrypoint": "crates/frankenlibc-fixture-exec/src/lib.rs",
+      "public_items": [
+        "execute_fixture_case",
+        "DifferentialExecution"
+      ],
+      "current_implementation_source": "frankenlibc_conformance",
+      "migration_target": "bd-0agsk.8 may move the implementation into frankenlibc-fixture-exec, but must preserve this public API and every golden payload hash in this manifest."
+    },
+    "legacy_implementation": {
+      "crate": "frankenlibc_conformance",
+      "entrypoint": "crates/frankenlibc_conformance/src/lib.rs",
+      "role": "Current large migration-era implementation body for execute_fixture_case. It is an implementation source, not the harness-owned public boundary."
+    },
+    "harness_consumer": {
+      "crate": "frankenlibc-harness",
+      "manifest": "crates/frankenlibc-harness/Cargo.toml",
+      "required_dependency": "frankenlibc-fixture-exec",
+      "forbidden_direct_dependency": "frankenlibc_conformance",
+      "role": "Harness tests and conformance matrix code should consume the stable fixture-exec adapter instead of depending directly on legacy migration internals."
+    }
+  },
+  "golden_manifest": {
+    "hash_algorithm": "sha256",
+    "canonicalization": "UTF-8 text with one field per line: fixture, case, function, mode, JSON-quoted host_output, JSON-quoted impl_output, host_parity, and JSON note.",
+    "selected_fixture_families": [
+      "string_memory_full",
+      "wide_memory",
+      "stdlib_conversion",
+      "inet_ops"
+    ],
+    "cases": [
+      {
+        "fixture": "string_memory_full",
+        "case": "strcmp_equal",
+        "function": "strcmp",
+        "mode": "strict",
+        "expected_host_output": "0",
+        "expected_impl_output": "0",
+        "expected_host_parity": true,
+        "expected_note": null,
+        "canonical_sha256": "4e4b533eadddf0759da34c3701b4f794f76c94bc460a13955f65a2dbcdae8bb4"
+      },
+      {
+        "fixture": "string_memory_full",
+        "case": "strcmp_less",
+        "function": "strcmp",
+        "mode": "strict",
+        "expected_host_output": "-1",
+        "expected_impl_output": "-1",
+        "expected_host_parity": true,
+        "expected_note": null,
+        "canonical_sha256": "5b5740ec0ba2a02dfbd7a7f73f1ce3de699a1c8539923cc1f243dbfb79ffa591"
+      },
+      {
+        "fixture": "wide_memory",
+        "case": "wmemcpy_basic",
+        "function": "wmemcpy",
+        "mode": "strict",
+        "expected_host_output": "[1, 2, 3, 4]",
+        "expected_impl_output": "[1, 2, 3, 4]",
+        "expected_host_parity": true,
+        "expected_note": null,
+        "canonical_sha256": "f32966d864be0ae5c06e6a2e74e03c0f8245bf7cce3187ee21bbb4508ff6d91c"
+      },
+      {
+        "fixture": "wide_memory",
+        "case": "wmemset_basic",
+        "function": "wmemset",
+        "mode": "strict",
+        "expected_host_output": "[42, 42, 42, 42]",
+        "expected_impl_output": "[42, 42, 42, 42]",
+        "expected_host_parity": true,
+        "expected_note": null,
+        "canonical_sha256": "514d379cbcee7081b32031b3cdc1f10b494ac8f161ceaedafbe5d5615c66016e"
+      },
+      {
+        "fixture": "stdlib_conversion",
+        "case": "strtol_hex",
+        "function": "strtol",
+        "mode": "strict",
+        "expected_host_output": "255",
+        "expected_impl_output": "255",
+        "expected_host_parity": true,
+        "expected_note": null,
+        "canonical_sha256": "b57de10324e741edd01a62e1ec559af9d59938ea672643a5176c6675fb9665e2"
+      },
+      {
+        "fixture": "inet_ops",
+        "case": "htons_80",
+        "function": "htons",
+        "mode": "strict",
+        "expected_host_output": "20480",
+        "expected_impl_output": "20480",
+        "expected_host_parity": true,
+        "expected_note": null,
+        "canonical_sha256": "c85850bd25fe4f107f570fd528e17ecdd651a79f3aeb6900c304d2a8358f6c3d"
+      },
+      {
+        "fixture": "inet_ops",
+        "case": "htons_80",
+        "function": "htons",
+        "mode": "hardened",
+        "expected_host_output": "20480",
+        "expected_impl_output": "20480",
+        "expected_host_parity": true,
+        "expected_note": null,
+        "canonical_sha256": "507f56ee9572f8401b719389bd9f987f57a036447b393d9d9ae627c0959f2b0d"
+      }
+    ]
+  },
+  "limitations": [
+    "This bead freezes the current API boundary and representative outputs only; bd-0agsk.8 owns the implementation extraction.",
+    "The manifest intentionally uses a small deterministic representative set rather than replaying the full fixture corpus."
+  ]
+}
