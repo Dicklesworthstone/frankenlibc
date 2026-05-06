@@ -1,0 +1,395 @@
+//! Integration test: standalone owned TLS startup surface (bd-w1c58).
+//!
+//! The surface is report-only planning evidence. It must stay locked to the
+//! current __tls_get_addr blocker, provider version row, owner ledger entry,
+//! and TLS model experiment while keeping replacement claims blocked.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde_json::Value;
+
+type TestResult<T = ()> = Result<T, String>;
+
+const SURFACE_PATH: &str = "tests/conformance/standalone_owned_tls_startup_surface.v1.json";
+const TLS_DIAGNOSTIC_PATH: &str = "tests/conformance/standalone_tls_blocker_diagnostics.v1.json";
+const TLS_EXPERIMENT_PATH: &str =
+    "tests/conformance/standalone_tls_model_startup_experiment.v1.json";
+const VERSION_BURNDOWN_PATH: &str =
+    "tests/conformance/standalone_host_version_requirement_burndown.v1.json";
+const OWNER_LEDGER_PATH: &str =
+    "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json";
+const ROLLUP_PATH: &str = "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json";
+const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
+const TLS_REQUIREMENT: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
+
+fn workspace_root() -> TestResult<PathBuf> {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    Path::new(manifest)
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("could not derive workspace root from {manifest}"))
+}
+
+fn checker_path(root: &Path) -> PathBuf {
+    root.join("scripts/check_standalone_owned_tls_startup_surface.sh")
+}
+
+fn load_json(root: &Path, rel: &str) -> TestResult<Value> {
+    let path = match rel {
+        value if value == SURFACE_PATH => {
+            root.join("tests/conformance/standalone_owned_tls_startup_surface.v1.json")
+        }
+        value if value == TLS_DIAGNOSTIC_PATH => {
+            root.join("tests/conformance/standalone_tls_blocker_diagnostics.v1.json")
+        }
+        value if value == TLS_EXPERIMENT_PATH => {
+            root.join("tests/conformance/standalone_tls_model_startup_experiment.v1.json")
+        }
+        value if value == VERSION_BURNDOWN_PATH => {
+            root.join("tests/conformance/standalone_host_version_requirement_burndown.v1.json")
+        }
+        value if value == OWNER_LEDGER_PATH => {
+            root.join("tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json")
+        }
+        value if value == ROLLUP_PATH => {
+            root.join("tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json")
+        }
+        _ => return Err(format!("unknown repo-relative fixture path: {rel}")),
+    };
+    load_json_path(&path)
+}
+
+fn load_json_path(path: &Path) -> TestResult<Value> {
+    let content =
+        std::fs::read_to_string(path).map_err(|err| format!("{}: {err}", path.display()))?;
+    serde_json::from_str(&content).map_err(|err| format!("{}: {err}", path.display()))
+}
+
+fn json_field<'a>(value: &'a Value, field: &str) -> TestResult<&'a Value> {
+    value
+        .get(field)
+        .ok_or_else(|| format!("{field} must be present"))
+}
+
+fn json_array<'a>(value: &'a Value, field: &str) -> TestResult<&'a Vec<Value>> {
+    json_field(value, field)?
+        .as_array()
+        .ok_or_else(|| format!("{field} must be an array"))
+}
+
+fn json_string<'a>(value: &'a Value, field: &str) -> TestResult<&'a str> {
+    json_field(value, field)?
+        .as_str()
+        .ok_or_else(|| format!("{field} must be a string"))
+}
+
+fn require(condition: bool, message: impl Into<String>) -> TestResult {
+    if condition {
+        Ok(())
+    } else {
+        Err(message.into())
+    }
+}
+
+fn get_path<'a>(mut value: &'a Value, dotted: &str) -> TestResult<&'a Value> {
+    let mut missing = false;
+    for segment in dotted.split('.') {
+        if let Some(next) = value.get(segment) {
+            value = next;
+        } else {
+            missing = true;
+            break;
+        }
+    }
+    if missing {
+        Err("JSON path segment missing".to_string())
+    } else {
+        Ok(value)
+    }
+}
+
+fn string_values(value: &Value, field: &str) -> TestResult<Vec<String>> {
+    json_array(value, field)?
+        .iter()
+        .map(|entry| {
+            entry
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{field} entries must be strings"))
+        })
+        .collect()
+}
+
+fn run_checker(root: &Path, surface: &Path, label: &str) -> TestResult<(Output, PathBuf)> {
+    let report = root.join("target/conformance").join(format!(
+        "standalone_owned_tls_startup_surface.{label}.report.json"
+    ));
+    let output = Command::new("bash")
+        .arg(checker_path(root))
+        .env("FRANKENLIBC_STANDALONE_OWNED_TLS_SURFACE", surface)
+        .env("FRANKENLIBC_STANDALONE_OWNED_TLS_SURFACE_REPORT", &report)
+        .current_dir(root)
+        .output()
+        .map_err(|err| format!("failed to run owned TLS checker: {err}"))?;
+    Ok((output, report))
+}
+
+fn format_output(output: &Output) -> String {
+    format!(
+        "status={}\nstdout={}\nstderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn expect_checker_failure(surface: &Path, label: &str, expected_error: &str) -> TestResult {
+    let root = workspace_root()?;
+    let (output, report) = run_checker(&root, surface, label)?;
+    require(
+        !output.status.success(),
+        format!("checker unexpectedly passed\n{}", format_output(&output)),
+    )?;
+    let report_json = load_json_path(&report)?;
+    let errors = json_array(&report_json, "errors")?;
+    require(
+        errors
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|error| error.contains(expected_error)),
+        format!("expected error {expected_error:?}; report={report_json:?}"),
+    )
+}
+
+fn unique_label(prefix: &str) -> TestResult<String> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("system time before UNIX_EPOCH: {err}"))?
+        .as_nanos();
+    Ok(format!("{prefix}-{}-{nanos}", std::process::id()))
+}
+
+fn write_mutated_surface(
+    label: &str,
+    mutate: impl FnOnce(&mut Value) -> TestResult,
+) -> TestResult<PathBuf> {
+    let root = workspace_root()?;
+    let mut surface = load_json(&root, SURFACE_PATH)?;
+    mutate(&mut surface)?;
+    let dir = root.join("target/conformance/mutated-owned-tls-surfaces");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    let path = dir.join(format!("{}.json", unique_label(label)?));
+    let content = serde_json::to_string_pretty(&surface)
+        .map_err(|err| format!("failed to serialize mutated surface: {err}"))?;
+    std::fs::write(&path, format!("{content}\n"))
+        .map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok(path)
+}
+
+fn first_symbol_row_mut(surface: &mut Value) -> TestResult<&mut Value> {
+    surface
+        .get_mut("symbol_rows")
+        .and_then(Value::as_array_mut)
+        .and_then(|rows| rows.first_mut())
+        .ok_or_else(|| "symbol_rows[0] must exist".to_string())
+}
+
+fn set_object_field(value: &mut Value, field: &str, replacement: Value) -> TestResult {
+    value
+        .as_object_mut()
+        .ok_or_else(|| "value must be an object".to_string())?
+        .insert(field.to_owned(), replacement);
+    Ok(())
+}
+
+#[test]
+fn surface_manifest_covers_current_tls_diagnostics() -> TestResult {
+    let root = workspace_root()?;
+    let surface = load_json(&root, SURFACE_PATH)?;
+    let diagnostic = load_json(&root, TLS_DIAGNOSTIC_PATH)?;
+    let experiment = load_json(&root, TLS_EXPERIMENT_PATH)?;
+    let burndown = load_json(&root, VERSION_BURNDOWN_PATH)?;
+    let owner_ledger = load_json(&root, OWNER_LEDGER_PATH)?;
+    let rollup = load_json(&root, ROLLUP_PATH)?;
+
+    require(
+        json_string(&surface, "manifest_id")? == "standalone-owned-tls-startup-surface",
+        "manifest id",
+    )?;
+    require(json_string(&surface, "bead")? == "bd-w1c58", "bead")?;
+    require(
+        json_field(&surface, "report_policy")?
+            .get("promotion_allowed")
+            .and_then(Value::as_bool)
+            == Some(false),
+        "surface must not allow promotion",
+    )?;
+
+    let diagnostic_symbols = string_values(
+        get_path(
+            &diagnostic,
+            "current_forge_evidence.observed_artifact_symbols",
+        )?,
+        "undefined_tls_symbols",
+    )?;
+    let expected_tls_symbol = vec![TLS_SYMBOL.to_owned()];
+    require(
+        diagnostic_symbols == expected_tls_symbol,
+        "TLS diagnostic must expose the current TLS blocker",
+    )?;
+
+    let rows = json_array(&surface, "symbol_rows")?;
+    require(rows.len() == 1, "exactly one TLS symbol row")?;
+    let row = rows
+        .first()
+        .ok_or_else(|| "surface must have one symbol row".to_string())?;
+    require(
+        json_string(row, "symbol")? == TLS_SYMBOL,
+        "surface symbol row",
+    )?;
+    require(
+        json_string(row, "requirement_id")? == TLS_REQUIREMENT,
+        "surface requirement id",
+    )?;
+    require(
+        json_string(row, "owner_surface")? == "tls_startup",
+        "surface owner",
+    )?;
+    require(
+        json_string(row, "provider_owner_surface")? == "loader_tls_runtime",
+        "provider owner",
+    )?;
+
+    let version_rows = json_array(&burndown, "version_requirement_matrix")?;
+    let tls_version_row = version_rows
+        .iter()
+        .find(|candidate| {
+            candidate.get("requirement_id").and_then(Value::as_str) == Some(TLS_REQUIREMENT)
+        })
+        .ok_or_else(|| "missing TLS version burndown row".to_string())?;
+    require(
+        string_values(tls_version_row, "observed_symbols")? == expected_tls_symbol,
+        "version row observes TLS symbol",
+    )?;
+
+    let owner_row = json_array(&owner_ledger, "ledger_rows")?
+        .iter()
+        .find(|candidate| {
+            candidate.get("blocking_reason").and_then(Value::as_str)
+                == Some("undefined_tls_symbols")
+        })
+        .ok_or_else(|| "missing owner ledger TLS row".to_string())?;
+    require(
+        string_values(owner_row, "current_blocker_values")? == expected_tls_symbol,
+        "owner ledger current TLS value",
+    )?;
+
+    let rollup_row = json_array(&rollup, "progress_categories")?
+        .iter()
+        .find(|candidate| {
+            candidate.get("category_id").and_then(Value::as_str) == Some("tls_startup")
+        })
+        .ok_or_else(|| "missing tls_startup rollup row".to_string())?;
+    require(
+        rollup_row
+            .get("last_known_value_count")
+            .and_then(Value::as_u64)
+            == Some(1),
+        "rollup TLS count",
+    )?;
+
+    require(
+        get_path(&experiment, "comparison")?
+            .get("initial_exec_delta_classification")
+            .and_then(Value::as_str)
+            == Some("unchanged"),
+        "TLS experiment must keep initial-exec unchanged",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn checker_materializes_owned_tls_surface_report() -> TestResult {
+    let root = workspace_root()?;
+    let (output, report) = run_checker(&root, Path::new(SURFACE_PATH), "ok")?;
+    require(
+        output.status.success(),
+        format!("checker failed\n{}", format_output(&output)),
+    )?;
+    let report_json = load_json_path(&report)?;
+    require(
+        json_string(&report_json, "status")? == "pass",
+        "report status",
+    )?;
+    require(
+        json_string(&report_json, "claim_status")? == "claim_blocked",
+        "claim status",
+    )?;
+    require(
+        json_array(&report_json, "symbol_rows")?.len() == 1,
+        "report symbol rows",
+    )
+}
+
+#[test]
+fn checker_rejects_stale_source_commit() -> TestResult {
+    let mutated = write_mutated_surface("stale-source", |surface| {
+        set_object_field(
+            surface,
+            "source_commit",
+            Value::String("0000000000000000000000000000000000000000".to_owned()),
+        )
+    })?;
+    expect_checker_failure(&mutated, "stale-source", "source_commit")
+}
+
+#[test]
+fn checker_rejects_missing_tls_row() -> TestResult {
+    let mutated = write_mutated_surface("missing-row", |surface| {
+        set_object_field(surface, "symbol_rows", Value::Array(vec![]))
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "missing-row",
+        "symbol_rows must contain exactly one TLS row",
+    )
+}
+
+#[test]
+fn checker_rejects_provider_version_drift() -> TestResult {
+    let mutated = write_mutated_surface("provider-drift", |surface| {
+        let row = first_symbol_row_mut(surface)?;
+        set_object_field(
+            row,
+            "requirement_id",
+            Value::String("ld-linux-x86-64.so.2:GLIBC_2.4".to_owned()),
+        )
+    })?;
+    expect_checker_failure(&mutated, "provider-drift", "requirement_id")
+}
+
+#[test]
+fn checker_rejects_ready_and_promotion_overclaims() -> TestResult {
+    let mutated = write_mutated_surface("ready-overclaim", |surface| {
+        {
+            let row = first_symbol_row_mut(surface)?;
+            set_object_field(
+                row,
+                "owned_surface_status",
+                Value::String("ready".to_owned()),
+            )?;
+        }
+        let summary = surface
+            .get_mut("summary")
+            .ok_or_else(|| "summary must exist".to_string())?;
+        set_object_field(summary, "owned_surface_ready", Value::Bool(true))?;
+        let policy = surface
+            .get_mut("report_policy")
+            .ok_or_else(|| "report_policy must exist".to_string())?;
+        set_object_field(policy, "promotion_allowed", Value::Bool(true))
+    })?;
+    expect_checker_failure(&mutated, "ready-overclaim", "report_policy")
+}
