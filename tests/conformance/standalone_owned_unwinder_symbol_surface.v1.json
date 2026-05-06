@@ -1,0 +1,350 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-owned-unwinder-symbol-surface",
+  "bead": "bd-zyck1.95",
+  "source_commit": "current",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_owned_unwinder_symbol_surface",
+    "owned_unwinder_surface_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_owned_unwinder_symbol_surface"
+  },
+  "purpose": "Report-only ownership contract for the current standalone forge _Unwind_* blockers. This maps each undefined unwind symbol to the libgcc_s provider/version row, owner surface, semantic contract class, evidence commands, and exit criteria so future owned-unwinder work can prove real blocker removal instead of hiding the dependency in prose.",
+  "inputs": {
+    "standalone_compiler_runtime_blocker_diagnostics": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+    "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
+    "standalone_forge_blocker_owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json",
+    "standalone_blocker_burndown_progress_rollup": "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json"
+  },
+  "report_policy": {
+    "report_only": true,
+    "promotion_allowed": false,
+    "replacement_level_change_allowed": false,
+    "default_forge_path_change_allowed": false,
+    "default_build_profile_change_allowed": false,
+    "panic_strategy_change_allowed": false,
+    "missing_symbol_result": "fail_closed",
+    "extra_symbol_result": "fail_closed",
+    "provider_version_drift_result": "fail_closed",
+    "ready_claim_with_current_undefined_symbol_result": "fail_closed",
+    "claim_status_until_all_symbols_exit": "claim_blocked"
+  },
+  "required_symbol_row_fields": [
+    "symbol",
+    "bare_symbol",
+    "provider_library",
+    "version_node",
+    "requirement_id",
+    "blocking_reason",
+    "owner_surface",
+    "source_diagnostic",
+    "source_version_matrix",
+    "semantic_contract_class",
+    "owned_substitute_strategy",
+    "owned_surface_status",
+    "evidence_commands",
+    "exit_criteria",
+    "status_until_exit"
+  ],
+  "symbol_rows": [
+    {
+      "symbol": "_Unwind_Backtrace@GCC_3.3",
+      "bare_symbol": "_Unwind_Backtrace",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.3",
+      "requirement_id": "libgcc_s.so.1:GCC_3.3",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "stack-trace frame enumeration",
+      "owned_substitute_strategy": "Provide an owned backtrace enumerator or prove this symbol is absent from the standalone artifact.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_Backtrace\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_3.3\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_Backtrace symbol",
+        "readelf --version-info no longer reports libgcc_s.so.1:GCC_3.3 for _Unwind_Backtrace",
+        "standalone_host_version_requirement_burndown removes libgcc_s.so.1:GCC_3.3 when the current artifact proves it absent"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "symbol": "_Unwind_DeleteException@GCC_3.0",
+      "bare_symbol": "_Unwind_DeleteException",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.0",
+      "requirement_id": "libgcc_s.so.1:GCC_3.0",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "exception object lifetime",
+      "owned_substitute_strategy": "Own exception-object cleanup semantics or eliminate this unwind ABI edge from the artifact.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_DeleteException\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_3.0\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_DeleteException symbol",
+        "readelf --version-info no longer ties _Unwind_DeleteException to libgcc_s.so.1:GCC_3.0",
+        "owned unwinder cleanup behavior has a dedicated follow-up proof before any replacement claim changes"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "symbol": "_Unwind_GetDataRelBase@GCC_3.0",
+      "bare_symbol": "_Unwind_GetDataRelBase",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.0",
+      "requirement_id": "libgcc_s.so.1:GCC_3.0",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "DWARF data-relative base access",
+      "owned_substitute_strategy": "Own or remove data-relative unwind metadata access for standalone execution.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_GetDataRelBase\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_3.0\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_GetDataRelBase symbol",
+        "readelf --version-info no longer ties _Unwind_GetDataRelBase to libgcc_s.so.1:GCC_3.0",
+        "standalone unwind metadata access is either owned or absent"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "symbol": "_Unwind_GetIP@GCC_3.0",
+      "bare_symbol": "_Unwind_GetIP",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.0",
+      "requirement_id": "libgcc_s.so.1:GCC_3.0",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "instruction pointer recovery",
+      "owned_substitute_strategy": "Own instruction-pointer extraction for unwind contexts or remove the dependency.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_GetIP@\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_3.0\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_GetIP@GCC_3.0 symbol",
+        "readelf --version-info no longer ties _Unwind_GetIP to libgcc_s.so.1:GCC_3.0",
+        "instruction-pointer unwind access has owned semantics or no remaining artifact edge"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "symbol": "_Unwind_GetIPInfo@GCC_4.2.0",
+      "bare_symbol": "_Unwind_GetIPInfo",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_4.2.0",
+      "requirement_id": "libgcc_s.so.1:GCC_4.2.0",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "instruction pointer metadata recovery",
+      "owned_substitute_strategy": "Own instruction-pointer metadata extraction or prove the standalone artifact no longer emits this edge.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_GetIPInfo\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_4.2.0\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_GetIPInfo symbol",
+        "readelf --version-info no longer reports libgcc_s.so.1:GCC_4.2.0",
+        "standalone_host_version_requirement_burndown removes libgcc_s.so.1:GCC_4.2.0 when the current artifact proves it absent"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "symbol": "_Unwind_GetLanguageSpecificData@GCC_3.0",
+      "bare_symbol": "_Unwind_GetLanguageSpecificData",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.0",
+      "requirement_id": "libgcc_s.so.1:GCC_3.0",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "language-specific unwind metadata",
+      "owned_substitute_strategy": "Own language-specific-data access or remove the need for language unwind metadata.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_GetLanguageSpecificData\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_3.0\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_GetLanguageSpecificData symbol",
+        "readelf --version-info no longer ties language-specific unwind data to libgcc_s.so.1:GCC_3.0",
+        "owned language-specific unwind metadata behavior is proven or absent"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "symbol": "_Unwind_GetRegionStart@GCC_3.0",
+      "bare_symbol": "_Unwind_GetRegionStart",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.0",
+      "requirement_id": "libgcc_s.so.1:GCC_3.0",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "function region boundary recovery",
+      "owned_substitute_strategy": "Own region-start recovery for unwind contexts or eliminate the runtime symbol reference.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_GetRegionStart\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_3.0\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_GetRegionStart symbol",
+        "readelf --version-info no longer ties _Unwind_GetRegionStart to libgcc_s.so.1:GCC_3.0",
+        "region boundary unwind behavior is owned or absent"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "symbol": "_Unwind_GetTextRelBase@GCC_3.0",
+      "bare_symbol": "_Unwind_GetTextRelBase",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.0",
+      "requirement_id": "libgcc_s.so.1:GCC_3.0",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "DWARF text-relative base access",
+      "owned_substitute_strategy": "Own or remove text-relative unwind metadata access for standalone execution.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_GetTextRelBase\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_3.0\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_GetTextRelBase symbol",
+        "readelf --version-info no longer ties _Unwind_GetTextRelBase to libgcc_s.so.1:GCC_3.0",
+        "standalone unwind text-relative metadata access is either owned or absent"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "symbol": "_Unwind_RaiseException@GCC_3.0",
+      "bare_symbol": "_Unwind_RaiseException",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.0",
+      "requirement_id": "libgcc_s.so.1:GCC_3.0",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "exception raise control transfer",
+      "owned_substitute_strategy": "Own exception-raise control flow or prove panic-abort/standalone build removes this dependency.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_RaiseException\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_3.0\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_RaiseException symbol",
+        "readelf --version-info no longer ties exception raise control transfer to libgcc_s.so.1:GCC_3.0",
+        "exception-raise semantics are owned, forbidden by profile, or absent from the artifact"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "symbol": "_Unwind_Resume@GCC_3.0",
+      "bare_symbol": "_Unwind_Resume",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.0",
+      "requirement_id": "libgcc_s.so.1:GCC_3.0",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "exception resume control transfer",
+      "owned_substitute_strategy": "Own resume control flow or eliminate resumable unwinding from the standalone artifact.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_Resume\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_3.0\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_Resume symbol",
+        "readelf --version-info no longer ties exception resume to libgcc_s.so.1:GCC_3.0",
+        "resume semantics are owned, forbidden by profile, or absent from the artifact"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "symbol": "_Unwind_SetGR@GCC_3.0",
+      "bare_symbol": "_Unwind_SetGR",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.0",
+      "requirement_id": "libgcc_s.so.1:GCC_3.0",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "general register restoration",
+      "owned_substitute_strategy": "Own unwind-context register writes or remove this runtime edge.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_SetGR\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_3.0\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_SetGR symbol",
+        "readelf --version-info no longer ties _Unwind_SetGR to libgcc_s.so.1:GCC_3.0",
+        "general-register unwind mutation is owned or absent"
+      ],
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "symbol": "_Unwind_SetIP@GCC_3.0",
+      "bare_symbol": "_Unwind_SetIP",
+      "provider_library": "libgcc_s.so.1",
+      "version_node": "GCC_3.0",
+      "requirement_id": "libgcc_s.so.1:GCC_3.0",
+      "blocking_reason": "undefined_unwind_symbols",
+      "owner_surface": "unwind_runtime",
+      "source_diagnostic": "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence.evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols",
+      "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "semantic_contract_class": "instruction pointer restoration",
+      "owned_substitute_strategy": "Own unwind-context instruction-pointer writes or remove this runtime edge.",
+      "owned_surface_status": "unresolved",
+      "evidence_commands": [
+        "nm -D libfrankenlibc_replace.so | rg \"_Unwind_SetIP\"",
+        "readelf --version-info libfrankenlibc_replace.so | rg \"GCC_3.0\""
+      ],
+      "exit_criteria": [
+        "nm -D reports no undefined _Unwind_SetIP symbol",
+        "readelf --version-info no longer ties _Unwind_SetIP to libgcc_s.so.1:GCC_3.0",
+        "instruction-pointer unwind mutation is owned or absent"
+      ],
+      "status_until_exit": "claim_blocked"
+    }
+  ],
+  "summary": {
+    "current_unwind_symbol_count": 12,
+    "provider_library_count": 1,
+    "provider_version_requirement_count": 3,
+    "unresolved_symbol_count": 12,
+    "owned_surface_ready": false,
+    "promotion_allowed": false,
+    "claim_status_until_all_symbols_exit": "claim_blocked",
+    "next_safe_action": "Implement or experimentally remove one owned unwinder surface, then refresh the current forge evidence and this manifest atomically."
+  }
+}
