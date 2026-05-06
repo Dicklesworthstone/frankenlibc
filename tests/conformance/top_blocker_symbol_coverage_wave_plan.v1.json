@@ -1,0 +1,541 @@
+{
+  "schema_version": "top_blocker_symbol_coverage_wave_plan.v1",
+  "generated_by_bead": "bd-0agsk.18",
+  "source_todo_ids": [
+    "TODO-0601",
+    "TODO-0602",
+    "TODO-0603"
+  ],
+  "canonical_command": "scripts/check_top_blocker_symbol_coverage_wave_plan.sh --validate-only",
+  "purpose": "Plan the next implementation and fixture-proof waves from live support/reality drift, replacement readiness thresholds, family coverage thresholds, and fixture coverage prioritizer evidence without promoting support status in this bead.",
+  "input_artifacts": [
+    "support_matrix.json",
+    "crates/frankenlibc-abi/version_scripts/libc.map",
+    "tests/conformance/support_reality_drift_triage.v1.json",
+    "tests/conformance/replacement_readiness_acceptance_thresholds.v1.json",
+    "tests/conformance/family_coverage_thresholds.v1.json",
+    "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "tests/conformance/hardened_mode_coverage_inventory.v1.json",
+    "tests/conformance/symbol_fixture_coverage.v1.json",
+    "tests/conformance/per_symbol_fixture_tests.v1.json"
+  ],
+  "selection_policy": {
+    "primary_rank_source": "tests/conformance/fixture_coverage_prioritizer.v1.json#campaigns",
+    "coverage_wave_count": 8,
+    "coverage_wave_order": "campaign rank ascending",
+    "export_parity_precedes_coverage_waves": true,
+    "allowed_candidate_statuses": [
+      "Implemented",
+      "RawSyscall"
+    ],
+    "status_target_rule": "Preserve the current support_matrix status for first-wave symbols. Future implementation beads may only advance a symbol to Implemented or RawSyscall after code, version-script, fixture, expected-output, and strict+hardened evidence are updated together.",
+    "readiness_blocker_inputs": [
+      "version_script_missing_exports",
+      "all_family_fixture_thresholds_fail",
+      "hardened_coverage_inventory_gaps"
+    ]
+  },
+  "current_gate_context": {
+    "claim_gate_decision": "blocked",
+    "family_count": 40,
+    "family_fail_count": 40,
+    "family_coverage_fail_count": 40,
+    "missing_export_count": 5,
+    "families_with_missing_exports": [
+      "glibc_internal_abi",
+      "stdio_abi"
+    ],
+    "residual_forbidden_callthrough_count": 0,
+    "hardened_coverage_gap_group_count": 4
+  },
+  "export_parity_wave": {
+    "wave_id": "wave-00-version-script-export-parity",
+    "rank": 0,
+    "blocker_id": "version_script_missing_exports",
+    "module_families": [
+      "stdio_abi",
+      "glibc_internal_abi"
+    ],
+    "symbols": [
+      "_IO_2_1_stderr_",
+      "_IO_2_1_stdin_",
+      "_IO_2_1_stdout_",
+      "__ns_name_uncompressed_p",
+      "__ns_samename"
+    ],
+    "implementation_surface": [
+      "crates/frankenlibc-abi/version_scripts/libc.map",
+      "support_matrix.json",
+      "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+    ],
+    "fixture_files": [
+      "tests/conformance/fixtures/stdio_file_ops.json",
+      "tests/conformance/fixtures/io_internal_ops.json",
+      "tests/conformance/fixtures/resolver.json"
+    ],
+    "required_evidence": [
+      "version script exports each listed support symbol",
+      "per-symbol fixture expected_output exists for each promoted export",
+      "support/reality drift checker reports zero missing exports"
+    ],
+    "validation_commands": [
+      "scripts/check_support_reality_drift_triage.sh --validate-only",
+      "scripts/check_replacement_readiness_acceptance_thresholds.sh --validate-only",
+      "rch exec -- cargo test -p frankenlibc-harness --test libc_map_export_golden_test"
+    ],
+    "non_goals": [
+      "Do not add version-script-only exports for symbols without an ABI implementation and fixture plan.",
+      "Do not count version script parity as full semantic coverage."
+    ]
+  },
+  "coverage_waves": [
+    {
+      "wave_id": "wave-01-unistd-process-filesystem",
+      "campaign_id": "fcq-unistd-process-filesystem",
+      "rank": 1,
+      "module_family": "unistd_abi",
+      "track": "unistd/syscall",
+      "title": "unistd/process/filesystem syscall fixture wave",
+      "current_coverage_pct": 4.45,
+      "expected_coverage_after_first_wave_pct": 6.06,
+      "target_total": 742,
+      "target_covered": 33,
+      "target_uncovered": 709,
+      "candidate_status_counts": {
+        "Implemented": 10,
+        "RawSyscall": 2
+      },
+      "first_wave_symbols": [
+        "_Exit",
+        "_Fork",
+        "__cxa_atexit",
+        "__cxa_finalize",
+        "__fxstat",
+        "__fxstat64",
+        "__fxstatat",
+        "__fxstatat64",
+        "__gmtime_r",
+        "__lxstat",
+        "__lxstat64",
+        "__progname"
+      ],
+      "implementation_surface": [
+        "crates/frankenlibc-abi/src/unistd_abi.rs",
+        "crates/frankenlibc-abi/src/process_abi.rs",
+        "crates/frankenlibc-core/src/unistd/",
+        "crates/frankenlibc-core/src/process/"
+      ],
+      "fixture_files": [
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/fixtures/process_ops.json",
+        "tests/conformance/fixtures/startup_ops.json"
+      ],
+      "required_evidence": [
+        "strict and hardened fixture rows for each first-wave symbol",
+        "expected_output and expected_errno where applicable",
+        "version-script exports stay synchronized for ABI-visible symbols"
+      ]
+    },
+    {
+      "wave_id": "wave-02-string-memory-hotpaths",
+      "campaign_id": "fcq-string-memory-hotpaths",
+      "rank": 2,
+      "module_family": "string_abi",
+      "track": "string",
+      "title": "string and memory hot-path fixture wave",
+      "current_coverage_pct": 25.34,
+      "expected_coverage_after_first_wave_pct": 33.56,
+      "target_total": 146,
+      "target_covered": 37,
+      "target_uncovered": 109,
+      "candidate_status_counts": {
+        "Implemented": 12
+      },
+      "first_wave_symbols": [
+        "__strcspn_c2",
+        "__strcspn_c3",
+        "__strdup",
+        "__strerror_r",
+        "__strfmon_l",
+        "__strftime_l",
+        "__strncasecmp_l",
+        "__strndup",
+        "__strpbrk_c2",
+        "__strpbrk_c3",
+        "__strsep_1c",
+        "__strsep_2c"
+      ],
+      "implementation_surface": [
+        "crates/frankenlibc-abi/src/string_abi.rs",
+        "crates/frankenlibc-core/src/string/",
+        "crates/frankenlibc-core/src/locale/"
+      ],
+      "fixture_files": [
+        "tests/conformance/fixtures/string_ops.json",
+        "tests/conformance/fixtures/string_memory_full.json",
+        "tests/conformance/fixtures/errno_ops.json"
+      ],
+      "required_evidence": [
+        "boundary, overlap, empty, locale, and errno rows",
+        "hardened repair rows where buffer boundaries are involved",
+        "hot-path fixture output stays byte-for-byte stable"
+      ]
+    },
+    {
+      "wave_id": "wave-03-stdio-libio",
+      "campaign_id": "fcq-stdio-libio",
+      "rank": 3,
+      "module_family": "stdio_abi",
+      "track": "stdio",
+      "title": "stdio/libio stream semantics fixture wave",
+      "current_coverage_pct": 23.02,
+      "expected_coverage_after_first_wave_pct": 32.54,
+      "target_total": 126,
+      "target_covered": 29,
+      "target_uncovered": 97,
+      "candidate_status_counts": {
+        "Implemented": 12
+      },
+      "first_wave_symbols": [
+        "_IO_2_1_stderr_",
+        "_IO_2_1_stdin_",
+        "_IO_2_1_stdout_",
+        "_IO_feof",
+        "_IO_ferror",
+        "_IO_flockfile",
+        "_IO_ftrylockfile",
+        "_IO_funlockfile",
+        "_IO_getc",
+        "_IO_padn",
+        "_IO_peekc_locked",
+        "_IO_putc"
+      ],
+      "implementation_surface": [
+        "crates/frankenlibc-abi/src/stdio_abi.rs",
+        "crates/frankenlibc-core/src/stdio/",
+        "crates/frankenlibc-abi/version_scripts/libc.map"
+      ],
+      "fixture_files": [
+        "tests/conformance/fixtures/stdio_file_ops.json",
+        "tests/conformance/fixtures/printf_conformance.json",
+        "tests/conformance/fixtures/scanf_conformance.json"
+      ],
+      "required_evidence": [
+        "stream state and _IO alias fixtures",
+        "stdout/stdin/stderr export parity",
+        "strict+hardened formatted I/O truncation evidence"
+      ]
+    },
+    {
+      "wave_id": "wave-04-pthread-sync",
+      "campaign_id": "fcq-pthread-sync",
+      "rank": 4,
+      "module_family": "pthread_abi",
+      "track": "threading",
+      "title": "pthread synchronization and cancellation fixture wave",
+      "current_coverage_pct": 19.15,
+      "expected_coverage_after_first_wave_pct": 27.66,
+      "target_total": 141,
+      "target_covered": 27,
+      "target_uncovered": 114,
+      "candidate_status_counts": {
+        "Implemented": 12
+      },
+      "first_wave_symbols": [
+        "__pthread_cleanup_routine",
+        "__pthread_get_minstack",
+        "__pthread_getspecific",
+        "__pthread_key_create",
+        "__pthread_mutex_destroy",
+        "__pthread_mutex_init",
+        "__pthread_mutex_lock",
+        "__pthread_mutexattr_destroy",
+        "__pthread_mutexattr_init",
+        "__pthread_mutexattr_settype",
+        "__pthread_once",
+        "__pthread_register_cancel"
+      ],
+      "implementation_surface": [
+        "crates/frankenlibc-abi/src/pthread_abi.rs",
+        "crates/frankenlibc-core/src/pthread/"
+      ],
+      "fixture_files": [
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/fixtures/pthread_thread.json",
+        "tests/conformance/fixtures/pthread_tls_keys.json"
+      ],
+      "required_evidence": [
+        "deterministic mode-pair lifecycle tests",
+        "timeout/deadlock guards for blocking primitives",
+        "cancellation-adjacent cleanup evidence"
+      ]
+    },
+    {
+      "wave_id": "wave-05-malloc-membrane",
+      "campaign_id": "fcq-malloc-membrane",
+      "rank": 5,
+      "module_family": "malloc_abi",
+      "track": "allocator",
+      "title": "allocator ownership and membrane fixture wave",
+      "current_coverage_pct": 19.05,
+      "expected_coverage_after_first_wave_pct": 76.19,
+      "target_total": 21,
+      "target_covered": 4,
+      "target_uncovered": 17,
+      "candidate_status_counts": {
+        "Implemented": 12
+      },
+      "first_wave_symbols": [
+        "__libc_allocate_rtsig",
+        "__libc_freeres",
+        "__libc_init_first",
+        "__libc_sa_len",
+        "aligned_alloc",
+        "cfree",
+        "mallinfo",
+        "mallinfo2",
+        "malloc_info",
+        "malloc_stats",
+        "malloc_trim",
+        "malloc_usable_size"
+      ],
+      "implementation_surface": [
+        "crates/frankenlibc-abi/src/malloc_abi.rs",
+        "crates/frankenlibc-core/src/malloc/",
+        "crates/frankenlibc-membrane/src/arena.rs",
+        "crates/frankenlibc-membrane/src/ptr_validator.rs"
+      ],
+      "fixture_files": [
+        "tests/conformance/fixtures/allocator.json",
+        "tests/conformance/hardened_mode_coverage_inventory.v1.json"
+      ],
+      "required_evidence": [
+        "allocator parity fixtures",
+        "hardened invalid-pointer and ownership fixtures",
+        "malloc stats/usable-size expected_output rows"
+      ]
+    },
+    {
+      "wave_id": "wave-06-process-spawn",
+      "campaign_id": "fcq-process-spawn",
+      "rank": 6,
+      "module_family": "process_abi",
+      "track": "process",
+      "title": "process spawn and privilege-sensitive fixture wave",
+      "current_coverage_pct": 13.33,
+      "expected_coverage_after_first_wave_pct": 53.33,
+      "target_total": 30,
+      "target_covered": 4,
+      "target_uncovered": 26,
+      "candidate_status_counts": {
+        "Implemented": 4,
+        "RawSyscall": 8
+      },
+      "first_wave_symbols": [
+        "_exit",
+        "acct",
+        "chroot",
+        "clone",
+        "closefrom",
+        "execvp",
+        "execvpe",
+        "getresgid",
+        "getresuid",
+        "posix_spawn_file_actions_addchdir_np",
+        "posix_spawn_file_actions_addclose",
+        "posix_spawn_file_actions_adddup2"
+      ],
+      "implementation_surface": [
+        "crates/frankenlibc-abi/src/process_abi.rs",
+        "crates/frankenlibc-core/src/process/",
+        "crates/frankenlibc-core/src/unistd/"
+      ],
+      "fixture_files": [
+        "tests/conformance/fixtures/process_ops.json",
+        "tests/conformance/fixtures/spawn_exec_ops.json"
+      ],
+      "required_evidence": [
+        "exact status and errno rows",
+        "spawn file-action diagnostics",
+        "strict+hardened mode-pair process replay"
+      ]
+    },
+    {
+      "wave_id": "wave-07-resolver-nss-core",
+      "campaign_id": "fcq-resolver-nss-core",
+      "rank": 7,
+      "module_family": "resolv_abi",
+      "track": "resolver",
+      "title": "resolver service lookup fixture wave",
+      "current_coverage_pct": 27.27,
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "target_total": 11,
+      "target_covered": 3,
+      "target_uncovered": 8,
+      "candidate_status_counts": {
+        "Implemented": 8
+      },
+      "first_wave_symbols": [
+        "__h_errno_location",
+        "gai_strerror",
+        "gethostbyaddr",
+        "getnameinfo",
+        "getprotobyname",
+        "getprotobynumber",
+        "getservbyname",
+        "getservbyport"
+      ],
+      "implementation_surface": [
+        "crates/frankenlibc-abi/src/resolv_abi.rs",
+        "crates/frankenlibc-core/src/resolv/",
+        "crates/frankenlibc-core/src/inet/"
+      ],
+      "fixture_files": [
+        "tests/conformance/fixtures/resolver.json"
+      ],
+      "required_evidence": [
+        "localhost, invalid, service, protocol, reverse, and h_errno rows",
+        "deterministic timeout policy evidence",
+        "no ambient DNS dependency for core fixture rows"
+      ]
+    },
+    {
+      "wave_id": "wave-08-dlfcn-loader",
+      "campaign_id": "fcq-dlfcn-loader",
+      "rank": 8,
+      "module_family": "dlfcn_abi",
+      "track": "rtld/dlfcn",
+      "title": "loader symbol versioning fixture wave",
+      "current_coverage_pct": 71.43,
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "target_total": 7,
+      "target_covered": 5,
+      "target_uncovered": 2,
+      "candidate_status_counts": {
+        "Implemented": 2
+      },
+      "first_wave_symbols": [
+        "dl_iterate_phdr",
+        "dlvsym"
+      ],
+      "implementation_surface": [
+        "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+        "crates/frankenlibc-core/src/dlfcn/",
+        "tests/conformance/fixtures/loader_edges.json"
+      ],
+      "fixture_files": [
+        "tests/conformance/fixtures/dlfcn_ops.json",
+        "tests/conformance/fixtures/loader_edges.json"
+      ],
+      "required_evidence": [
+        "versioned-symbol fixture rows",
+        "phdr iteration fixture rows",
+        "standalone loader smoke proof before replacement claim promotion"
+      ]
+    }
+  ],
+  "hardened_gap_prerequisites": [
+    {
+      "risk_group_id": "allocator_anomaly_repairs",
+      "support_modules": [
+        "malloc_abi"
+      ],
+      "missing_hardened_families": [
+        "allocator"
+      ],
+      "paired_wave_ids": [
+        "wave-05-malloc-membrane"
+      ],
+      "next_action": "Add direct hardened allocator anomaly fixtures before allocator wave completion."
+    },
+    {
+      "risk_group_id": "parser_locale_boundary_cases",
+      "support_modules": [
+        "stdio_abi",
+        "io_internal_abi",
+        "locale_abi",
+        "iconv_abi",
+        "ctype_abi",
+        "string_abi",
+        "wchar_abi"
+      ],
+      "missing_hardened_families": [
+        "scanf_conformance"
+      ],
+      "paired_wave_ids": [
+        "wave-02-string-memory-hotpaths",
+        "wave-03-stdio-libio"
+      ],
+      "next_action": "Add hardened scanf/parser boundary fixtures before parser coverage claims advance."
+    },
+    {
+      "risk_group_id": "memory_pointer_hot_path",
+      "support_modules": [
+        "malloc_abi",
+        "mmap_abi",
+        "string_abi",
+        "wchar_abi"
+      ],
+      "missing_hardened_families": [
+        "string/memory",
+        "string/wide_memory"
+      ],
+      "paired_wave_ids": [
+        "wave-02-string-memory-hotpaths",
+        "wave-05-malloc-membrane"
+      ],
+      "next_action": "Add hardened string-memory and wide-memory fixtures before high-risk family thresholds are met."
+    },
+    {
+      "risk_group_id": "high_risk_symbol_families",
+      "support_modules": [
+        "malloc_abi",
+        "mmap_abi",
+        "string_abi",
+        "wchar_abi",
+        "stdio_abi",
+        "io_internal_abi",
+        "locale_abi",
+        "iconv_abi",
+        "resolv_abi",
+        "pwd_abi",
+        "grp_abi",
+        "pthread_abi",
+        "signal_abi",
+        "setjmp_abi",
+        "dlfcn_abi",
+        "startup_abi"
+      ],
+      "missing_hardened_families": [
+        "allocator",
+        "scanf_conformance"
+      ],
+      "paired_wave_ids": [
+        "wave-03-stdio-libio",
+        "wave-04-pthread-sync",
+        "wave-05-malloc-membrane",
+        "wave-08-dlfcn-loader"
+      ],
+      "next_action": "Keep allocator and scanf hardened rows explicit before raising replacement thresholds."
+    }
+  ],
+  "wave_validation_contract": {
+    "required_per_wave_commands": [
+      "scripts/check_fixture_coverage_prioritizer.sh",
+      "scripts/check_family_coverage_thresholds.sh",
+      "scripts/check_replacement_readiness_acceptance_thresholds.sh --validate-only",
+      "AGENT_NAME=<agent> br dep cycles --no-db --json"
+    ],
+    "cargo_validation_policy": "Use rch cargo test/check/clippy only in future implementation beads that touch Rust code or harness tests.",
+    "version_script_lockstep": "Any wave touching ABI exports must update crates/frankenlibc-abi/version_scripts/libc.map and run the libc map export golden test.",
+    "fixture_lockstep": "Every wave symbol requires fixture row, expected_output or approved tagged expectation, strict+hardened mode policy, and freshness in family_coverage_thresholds."
+  },
+  "non_goals": [
+    "Do not promote support_matrix rows in this planning bead.",
+    "Do not change ABI behavior or version scripts in this planning bead.",
+    "Do not create broad implementation beads that mix unrelated module families.",
+    "Do not treat aggregate support_matrix green as replacement readiness while family thresholds, export parity, or hardened coverage gaps still fail."
+  ]
+}
