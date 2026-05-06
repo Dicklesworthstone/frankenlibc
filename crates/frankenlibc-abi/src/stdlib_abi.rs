@@ -6478,58 +6478,13 @@ unsafe fn read_pid_from_path(path: *const c_char) -> Result<libc::pid_t, c_int> 
 }
 
 fn parse_decimal_pid(input: &[u8]) -> Option<libc::pid_t> {
-    let mut i = 0usize;
-    while i < input.len() && input[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    let negative = if i < input.len() && (input[i] == b'+' || input[i] == b'-') {
-        let is_negative = input[i] == b'-';
-        i += 1;
-        is_negative
-    } else {
-        false
-    };
-
-    let start = i;
-    let mut value: i64 = 0;
-    while i < input.len() && input[i].is_ascii_digit() {
-        value = value
-            .checked_mul(10)?
-            .checked_add((input[i] - b'0') as i64)?;
-        i += 1;
-    }
-    if i == start || i != input.len() {
-        return None;
-    }
-    let value = if negative {
-        value.checked_neg()?
-    } else {
-        value
-    };
-    if value < i32::MIN as i64 || value > i32::MAX as i64 {
-        return None;
-    }
-    Some(value as libc::pid_t)
+    // Lifted to frankenlibc_core::stdlib::pidfile (bd-jdq6k); the
+    // libc::pid_t cast is preserved here so abi callers stay typed
+    // against the platform pid type.
+    frankenlibc_core::stdlib::pidfile::parse_decimal_pid(input).map(|v| v as libc::pid_t)
 }
 
 fn render_pid_decimal(pid: i64, out: &mut [u8]) -> usize {
-    let mut tmp = [0u8; 24];
-    let mut len = 0usize;
-    let mut v = pid as u64;
-    if v == 0 {
-        tmp[0] = b'0';
-        len = 1;
-    } else {
-        while v > 0 {
-            tmp[len] = b'0' + (v % 10) as u8;
-            len += 1;
-            v /= 10;
-        }
-    }
-    let mut o = 0usize;
-    for i in 0..len {
-        out[o] = tmp[len - 1 - i];
-        o += 1;
-    }
-    o
+    // Lifted to frankenlibc_core::stdlib::pidfile (bd-jdq6k).
+    frankenlibc_core::stdlib::pidfile::render_pid_decimal(pid, out)
 }

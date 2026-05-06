@@ -15,6 +15,7 @@ pub mod fmtcheck;
 pub mod getbsize;
 pub mod humanize_number;
 pub mod math;
+pub mod pidfile;
 pub mod random;
 pub mod random48;
 pub mod random_sv;
