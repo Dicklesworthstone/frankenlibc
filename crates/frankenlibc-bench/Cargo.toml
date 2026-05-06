@@ -72,3 +72,7 @@ harness = false
 [[bench]]
 name = "errno_bench"
 harness = false
+
+[[bench]]
+name = "resolv_parsers_bench"
+harness = false
