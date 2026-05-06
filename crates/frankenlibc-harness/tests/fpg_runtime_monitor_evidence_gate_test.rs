@@ -114,6 +114,20 @@ fn git_head(root: &Path) -> TestResult<String> {
         .to_owned())
 }
 
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn source_commit_is_current(root: &Path, value: &str) -> TestResult<bool> {
+    if value == "current" {
+        return Ok(true);
+    }
+    if is_hex_commit(value) {
+        return Ok(value == git_head(root)?);
+    }
+    Ok(false)
+}
+
 fn load_json(path: &Path) -> TestResult<Value> {
     let content = std::fs::read_to_string(path)
         .map_err(|err| test_error(format!("{} should be readable: {err}", path.display())))?;
@@ -253,6 +267,12 @@ fn gate_artifact_covers_runtime_monitor_rows() -> TestResult {
         "owner_family_group",
     )?;
     let freshness_policy = field(&gate, "source_commit_freshness_policy", "gate")?;
+    let gate_commit = string_field(&gate, "source_commit", "gate")?;
+    ensure_eq(gate_commit, "current", "gate.source_commit")?;
+    ensure(
+        source_commit_is_current(&root, gate_commit)?,
+        "gate source_commit must be current",
+    )?;
     ensure_eq(
         string_field(
             freshness_policy,
@@ -377,39 +397,37 @@ fn stale_source_commit_policy_blocks_runtime_monitor_gate_evidence() -> TestResu
     let root = workspace_root();
     let gate = load_json(&gate_path(&root))?;
     let gate_commit = string_field(&gate, "source_commit", "gate")?;
+    ensure_eq(gate_commit, "current", "checked-in gate source_commit")?;
     ensure(
-        gate_commit.len() == 40 && gate_commit.chars().all(|ch| ch.is_ascii_hexdigit()),
-        "source_commit must be a 40-character git SHA",
+        source_commit_is_current(&root, gate_commit)?,
+        "checked-in gate source_commit must be current",
     )?;
 
-    let current_head = git_head(&root)?;
-    if gate_commit != current_head {
-        let policy = field(&gate, "source_commit_freshness_policy", "gate")?;
-        ensure_eq(
-            string_field(policy, "stale_result", "source_commit_freshness_policy")?,
-            "block_runtime_monitor_gate_evidence",
-            "stale runtime-monitor source_commit must block gate evidence",
-        )?;
-        ensure_eq(
-            field(
-                policy,
-                "runtime_monitor_evidence_allowed_when_stale",
-                "source_commit_freshness_policy",
-            )?
-            .as_bool(),
-            Some(false),
-            "stale runtime-monitor source_commit must not allow gate evidence",
-        )?;
-        ensure_eq(
-            string_field(
-                policy,
-                "rejected_evidence_kind",
-                "source_commit_freshness_policy",
-            )?,
-            "stale_source_commit",
-            "stale runtime-monitor source_commit must use stale_source_commit",
-        )?;
-    }
+    let policy = field(&gate, "source_commit_freshness_policy", "gate")?;
+    ensure_eq(
+        string_field(policy, "stale_result", "source_commit_freshness_policy")?,
+        "block_runtime_monitor_gate_evidence",
+        "stale runtime-monitor source_commit must block gate evidence",
+    )?;
+    ensure_eq(
+        field(
+            policy,
+            "runtime_monitor_evidence_allowed_when_stale",
+            "source_commit_freshness_policy",
+        )?
+        .as_bool(),
+        Some(false),
+        "stale runtime-monitor source_commit must not allow gate evidence",
+    )?;
+    ensure_eq(
+        string_field(
+            policy,
+            "rejected_evidence_kind",
+            "source_commit_freshness_policy",
+        )?,
+        "stale_source_commit",
+        "stale runtime-monitor source_commit must use stale_source_commit",
+    )?;
 
     Ok(())
 }
@@ -508,6 +526,37 @@ fn gate_rejects_stale_replay_source_commit() -> TestResult {
     );
     let report = run_gate_with_fixture(&root, "stale_replay_source", &gate)?;
     expect_failed_check(&report, "replay_calibration")
+}
+
+#[test]
+fn checker_rejects_stale_gate_source_commit() -> TestResult {
+    let root = workspace_root();
+    let mut gate = load_json(&gate_path(&root))?;
+    let stale_commit = "0000000000000000000000000000000000000000";
+    set_field(&mut gate, "source_commit", json!(stale_commit), "gate")?;
+    for row in mutable_rows(&mut gate)? {
+        let replay = row
+            .get_mut("replay_artifact")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| test_error("replay_artifact must be an object"))?;
+        let source_commit = replay
+            .get_mut("source_commit")
+            .ok_or_else(|| test_error("replay_artifact.source_commit is missing"))?;
+        *source_commit = json!(stale_commit);
+    }
+
+    let report = run_gate_with_fixture(&root, "stale_gate_source_commit", &gate)?;
+    expect_failed_check(&report, "top_level_shape")?;
+    let report_json = load_json(&report)?;
+    let errors = as_array(field(&report_json, "errors", "report")?, "report.errors")?;
+    ensure(
+        errors.iter().any(|error| {
+            error.as_str().is_some_and(|message| {
+                message.contains("gate source_commit must be 'current' or match current git HEAD")
+            })
+        }),
+        "stale top-level source_commit should explain the current-HEAD failure",
+    )
 }
 
 #[test]

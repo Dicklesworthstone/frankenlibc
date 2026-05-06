@@ -5,7 +5,7 @@
   "owner_family_group": "fpg-gap-summary-runtime-monitor-evidence",
   "evidence_owner": "runtime_math monitor owners",
   "generated_utc": "2026-05-03T23:05:00Z",
-  "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946",
+  "source_commit": "current",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",
@@ -67,7 +67,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/tropical_latency.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:min_plus_latency_bound", "hardened_decision_path": "hardened:min_plus_latency_bound"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/tropical_latency.jsonl", "source_commit": "current", "strict_decision_path": "strict:min_plus_latency_bound", "hardened_decision_path": "hardened:min_plus_latency_bound"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/tropical_latency.json", "state": "bounded", "threshold": "worst_case_bound_present"},
       "failure_signature": "tropical_latency_bound_missing_or_stale",
       "evidence_anchors": [
@@ -87,7 +87,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/spectral_monitor.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:eigen_edge_replay", "hardened_decision_path": "hardened:eigen_edge_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/spectral_monitor.jsonl", "source_commit": "current", "strict_decision_path": "strict:eigen_edge_replay", "hardened_decision_path": "hardened:eigen_edge_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/spectral_monitor.json", "state": "calibrated", "threshold": "phase_edge_threshold_present"},
       "failure_signature": "spectral_phase_calibration_missing_or_stale",
       "evidence_anchors": [
@@ -107,7 +107,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/rough_path.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:path_signature_replay", "hardened_decision_path": "hardened:path_signature_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/rough_path.jsonl", "source_commit": "current", "strict_decision_path": "strict:path_signature_replay", "hardened_decision_path": "hardened:path_signature_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/rough_path.json", "state": "calibrated", "threshold": "signature_radius_present"},
       "failure_signature": "rough_path_signature_replay_missing_or_stale",
       "evidence_anchors": [
@@ -126,7 +126,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/persistence.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:betti_zero_replay", "hardened_decision_path": "hardened:betti_zero_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/persistence.jsonl", "source_commit": "current", "strict_decision_path": "strict:betti_zero_replay", "hardened_decision_path": "hardened:betti_zero_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/persistence.json", "state": "calibrated", "threshold": "betti_fragmentation_threshold_present"},
       "failure_signature": "persistent_homology_replay_missing_or_stale",
       "evidence_anchors": [
@@ -145,7 +145,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/schrodinger_bridge.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:sinkhorn_transition_replay", "hardened_decision_path": "hardened:sinkhorn_transition_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/schrodinger_bridge.jsonl", "source_commit": "current", "strict_decision_path": "strict:sinkhorn_transition_replay", "hardened_decision_path": "hardened:sinkhorn_transition_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/schrodinger_bridge.json", "state": "bounded", "threshold": "transport_cost_bound_present"},
       "failure_signature": "schrodinger_bridge_replay_missing_or_stale",
       "evidence_anchors": [
@@ -164,7 +164,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/large_deviations.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:rate_function_replay", "hardened_decision_path": "hardened:rate_function_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/large_deviations.jsonl", "source_commit": "current", "strict_decision_path": "strict:rate_function_replay", "hardened_decision_path": "hardened:rate_function_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/large_deviations.json", "state": "bounded", "threshold": "catastrophe_probability_bound_present"},
       "failure_signature": "large_deviation_rate_replay_missing_or_stale",
       "evidence_anchors": [
@@ -183,7 +183,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/hji_reachability.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:minimax_viability_replay", "hardened_decision_path": "hardened:minimax_viability_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/hji_reachability.jsonl", "source_commit": "current", "strict_decision_path": "strict:minimax_viability_replay", "hardened_decision_path": "hardened:minimax_viability_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/hji_reachability.json", "state": "replay_locked", "threshold": "viability_grid_locked"},
       "failure_signature": "hji_viability_replay_missing_or_stale",
       "evidence_anchors": [
@@ -202,7 +202,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/mean_field_game.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:picard_equilibrium_replay", "hardened_decision_path": "hardened:picard_equilibrium_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/mean_field_game.jsonl", "source_commit": "current", "strict_decision_path": "strict:picard_equilibrium_replay", "hardened_decision_path": "hardened:picard_equilibrium_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/mean_field_game.json", "state": "calibrated", "threshold": "congestion_collapse_threshold_present"},
       "failure_signature": "mean_field_game_replay_missing_or_stale",
       "evidence_anchors": [
@@ -221,7 +221,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/design.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:d_optimal_probe_replay", "hardened_decision_path": "hardened:d_optimal_probe_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/design.jsonl", "source_commit": "current", "strict_decision_path": "strict:d_optimal_probe_replay", "hardened_decision_path": "hardened:d_optimal_probe_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/design.json", "state": "calibrated", "threshold": "information_gain_budget_present"},
       "failure_signature": "design_probe_calibration_missing_or_stale",
       "evidence_anchors": [
@@ -240,7 +240,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/sparse.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:ista_fault_replay", "hardened_decision_path": "hardened:ista_fault_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/sparse.jsonl", "source_commit": "current", "strict_decision_path": "strict:ista_fault_replay", "hardened_decision_path": "hardened:ista_fault_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/sparse.json", "state": "bounded", "threshold": "latent_fault_l1_threshold_present"},
       "failure_signature": "sparse_recovery_replay_missing_or_stale",
       "evidence_anchors": [
@@ -259,7 +259,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/fusion.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:fusion_bonus_replay", "hardened_decision_path": "hardened:fusion_bonus_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/fusion.jsonl", "source_commit": "current", "strict_decision_path": "strict:fusion_bonus_replay", "hardened_decision_path": "hardened:fusion_bonus_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/fusion.json", "state": "calibrated", "threshold": "coherent_signal_threshold_present"},
       "failure_signature": "fusion_replay_missing_or_stale",
       "evidence_anchors": [
@@ -278,7 +278,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/equivariant.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:orbit_transport_replay", "hardened_decision_path": "hardened:orbit_transport_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/equivariant.jsonl", "source_commit": "current", "strict_decision_path": "strict:orbit_transport_replay", "hardened_decision_path": "hardened:orbit_transport_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/equivariant.json", "state": "calibrated", "threshold": "symmetry_break_threshold_present"},
       "failure_signature": "equivariant_transport_replay_missing_or_stale",
       "evidence_anchors": [
@@ -297,7 +297,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/padic_valuation.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:valuation_regime_replay", "hardened_decision_path": "hardened:valuation_regime_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/padic_valuation.jsonl", "source_commit": "current", "strict_decision_path": "strict:valuation_regime_replay", "hardened_decision_path": "hardened:valuation_regime_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/padic_valuation.json", "state": "bounded", "threshold": "ultrametric_regime_threshold_present"},
       "failure_signature": "padic_valuation_replay_missing_or_stale",
       "evidence_anchors": [
@@ -316,7 +316,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/symplectic_reduction.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:moment_map_replay", "hardened_decision_path": "hardened:moment_map_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/symplectic_reduction.jsonl", "source_commit": "current", "strict_decision_path": "strict:moment_map_replay", "hardened_decision_path": "hardened:moment_map_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/symplectic_reduction.json", "state": "replay_locked", "threshold": "ipc_quotient_policy_locked"},
       "failure_signature": "symplectic_reduction_replay_missing_or_stale",
       "evidence_anchors": [
@@ -335,7 +335,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/higher_topos.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:descent_state_replay", "hardened_decision_path": "hardened:descent_state_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/higher_topos.jsonl", "source_commit": "current", "strict_decision_path": "strict:descent_state_replay", "hardened_decision_path": "hardened:descent_state_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/higher_topos.json", "state": "calibrated", "threshold": "descent_violation_ewma_present"},
       "failure_signature": "higher_topos_replay_missing_or_stale",
       "evidence_anchors": [
@@ -354,7 +354,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/commitment_audit.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:hash_chain_replay", "hardened_decision_path": "hardened:hash_chain_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/commitment_audit.jsonl", "source_commit": "current", "strict_decision_path": "strict:hash_chain_replay", "hardened_decision_path": "hardened:hash_chain_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/commitment_audit.json", "state": "replay_locked", "threshold": "session_ring_size_locked"},
       "failure_signature": "commitment_audit_replay_missing_or_stale",
       "evidence_anchors": [
@@ -373,7 +373,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/changepoint.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:bocpd_replay", "hardened_decision_path": "hardened:bocpd_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/changepoint.jsonl", "source_commit": "current", "strict_decision_path": "strict:bocpd_replay", "hardened_decision_path": "hardened:bocpd_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/changepoint.json", "state": "calibrated", "threshold": "hazard_posterior_threshold_present"},
       "failure_signature": "changepoint_replay_missing_or_stale",
       "evidence_anchors": [
@@ -392,7 +392,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/conformal.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:conformal_coverage_replay", "hardened_decision_path": "hardened:conformal_coverage_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/conformal.jsonl", "source_commit": "current", "strict_decision_path": "strict:conformal_coverage_replay", "hardened_decision_path": "hardened:conformal_coverage_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/conformal.json", "state": "calibrated", "threshold": "miscoverage_window_present"},
       "failure_signature": "conformal_replay_missing_or_stale",
       "evidence_anchors": [
@@ -418,7 +418,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/distribution_shift_bundle.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:distribution_shift_bundle_replay", "hardened_decision_path": "hardened:distribution_shift_bundle_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/distribution_shift_bundle.jsonl", "source_commit": "current", "strict_decision_path": "strict:distribution_shift_bundle_replay", "hardened_decision_path": "hardened:distribution_shift_bundle_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/distribution_shift_bundle.json", "state": "calibrated", "threshold": "multi_monitor_shift_thresholds_present"},
       "failure_signature": "distribution_shift_bundle_replay_missing_or_stale",
       "evidence_anchors": [
@@ -438,7 +438,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/stein_discrepancy.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:kl_score_replay", "hardened_decision_path": "hardened:kl_score_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/stein_discrepancy.jsonl", "source_commit": "current", "strict_decision_path": "strict:kl_score_replay", "hardened_decision_path": "hardened:kl_score_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/stein_discrepancy.json", "state": "calibrated", "threshold": "frozen_model_kl_threshold_present"},
       "failure_signature": "stein_discrepancy_replay_missing_or_stale",
       "evidence_anchors": [
@@ -462,7 +462,7 @@
       "replacement_level": "L0",
       "runtime_modes": ["strict", "hardened"],
       "expected_decision": "keep_visible_block_promotion",
-      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/verified_monitor_bundle.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:verified_monitor_bundle_replay", "hardened_decision_path": "hardened:verified_monitor_bundle_replay"},
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/verified_monitor_bundle.jsonl", "source_commit": "current", "strict_decision_path": "strict:verified_monitor_bundle_replay", "hardened_decision_path": "hardened:verified_monitor_bundle_replay"},
       "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/verified_monitor_bundle.json", "state": "replay_locked", "threshold": "verified_monitor_sources_locked"},
       "failure_signature": "verified_monitor_bundle_replay_missing_or_stale",
       "evidence_anchors": [
