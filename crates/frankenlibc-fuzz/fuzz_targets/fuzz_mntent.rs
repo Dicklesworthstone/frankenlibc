@@ -15,7 +15,7 @@
 //!
 //! Bead: bd-owyne
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use frankenlibc_core::mntent::{
     MntFields, format_mntent_line, has_mnt_opt, parse_mntent_freq_passno, parse_mntent_line,
 };
@@ -35,7 +35,18 @@ struct MntentFuzzInput {
     op: u8,
 }
 
-fuzz_target!(|input: MntentFuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    if data.len() > MAX_LINE + MAX_OPTS + (MAX_FIELD * 3) + 64 {
+        return;
+    }
+
+    if let Ok(input) = MntentFuzzInput::arbitrary(&mut Unstructured::new(data)) {
+        fuzz_structured_input(&input);
+    }
+    fuzz_raw_seed(data);
+});
+
+fn fuzz_structured_input(input: &MntentFuzzInput) {
     if input.line.len() > MAX_LINE
         || input.opts.len() > MAX_OPTS
         || input.needle.len() > MAX_FIELD
@@ -44,15 +55,38 @@ fuzz_target!(|input: MntentFuzzInput| {
     {
         return;
     }
-
     match input.op % 4 {
         0 => fuzz_parse_line(&input.line),
         1 => fuzz_option_lookup(&input.opts, &input.needle),
         2 => fuzz_freq_passno(&input.freq, &input.passno),
-        3 => fuzz_all_paths(&input),
+        3 => fuzz_all_paths(input),
         _ => unreachable!(),
     }
-});
+}
+
+fn fuzz_raw_seed(data: &[u8]) {
+    if data.len() <= MAX_LINE {
+        fuzz_parse_line(data);
+    }
+    if let Some((opts, needle)) = split_option_seed(data) {
+        fuzz_option_lookup(opts, needle);
+    }
+}
+
+fn split_option_seed(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    let marker = b"\n---\n";
+    let split_at = data
+        .windows(marker.len())
+        .position(|window| public_bytes_equal(window, marker))?;
+    let needle_start = split_at.checked_add(marker.len())?;
+    let opts = data.get(..split_at)?;
+    let needle = data.get(needle_start..)?;
+    let needle = needle.strip_suffix(b"\n").unwrap_or(needle);
+    if opts.len() > MAX_OPTS || needle.len() > MAX_FIELD {
+        return None;
+    }
+    Some((opts, needle))
+}
 
 fn fuzz_parse_line(line: &[u8]) {
     let parsed = parse_mntent_line(line);
@@ -79,7 +113,11 @@ fn fuzz_parse_line(line: &[u8]) {
 fn assert_format_roundtrip(fields: MntFields<'_>) {
     let mut out = Vec::new();
     format_mntent_line(&fields, &mut out);
-    let reparsed = parse_mntent_line(&out).expect("formatted mntent row must parse");
+    let reparsed = parse_mntent_line(&out);
+    assert!(reparsed.is_some(), "formatted mntent row must parse");
+    let Some(reparsed) = reparsed else {
+        return;
+    };
     assert_eq!(
         reparsed.fsname, fields.fsname,
         "fsname changed after format"
