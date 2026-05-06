@@ -1246,6 +1246,166 @@ fn standalone_owned_unwinder_symbol_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn standalone_compiler_runtime_delta_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "standalone-compiler-runtime-delta-source-commit-field",
+            (
+                "source_commit_freshness_policy.recorded_source_commit_field",
+                json!("source_commit"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-delta-source-commit-comparison-target",
+            (
+                "source_commit_freshness_policy.comparison_target",
+                json!("current git HEAD"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-delta-source-commit-stale-result",
+            (
+                "source_commit_freshness_policy.stale_result",
+                json!("block_compiler_runtime_experiment_delta"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-delta-source-commit-no-stale-evidence",
+            (
+                "source_commit_freshness_policy.delta_evidence_allowed_when_stale",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-delta-source-commit-rejection-kind",
+            (
+                "source_commit_freshness_policy.rejected_evidence_kind",
+                json!("stale_compiler_runtime_experiment_delta"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-delta-report-only",
+            ("report_policy.report_only", json!(true)),
+        ),
+        (
+            "standalone-compiler-runtime-delta-no-promotion",
+            ("report_policy.promotion_allowed", json!(false)),
+        ),
+        (
+            "standalone-compiler-runtime-delta-no-replacement-level-change",
+            (
+                "report_policy.replacement_level_change_allowed",
+                json!(false),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-delta-claim-status",
+            ("summary.claim_status", json!("report_only")),
+        ),
+        (
+            "standalone-compiler-runtime-delta-standalone-claim-status",
+            ("summary.standalone_claim_status", json!("claim_blocked")),
+        ),
+        (
+            "standalone-compiler-runtime-delta-classification",
+            ("summary.delta_classification", json!("improvement")),
+        ),
+        (
+            "standalone-compiler-runtime-delta-removed-unwind-symbol-count",
+            ("summary.removed_unwind_symbol_count", json!(2)),
+        ),
+        (
+            "standalone-compiler-runtime-delta-remaining-unwind-symbol-count",
+            ("summary.remaining_unwind_symbol_count", json!(10)),
+        ),
+        (
+            "standalone-compiler-runtime-delta-remaining-needed-library-count",
+            ("summary.remaining_needed_library_count", json!(2)),
+        ),
+        (
+            "standalone-compiler-runtime-delta-remaining-version-requirement-count",
+            ("summary.remaining_version_requirement_count", json!(4)),
+        ),
+        (
+            "standalone-compiler-runtime-delta-experiment-lane",
+            (
+                "observation.experiment_lane",
+                json!("panic-abort-compiler-runtime-minimized"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-delta-panic-strategy",
+            (
+                "observation.experiment_env.CARGO_PROFILE_RELEASE_PANIC",
+                json!("abort"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-delta-first-removed-unwind-symbol",
+            (
+                "observation.removed_undefined_unwind_symbols.0",
+                json!("_Unwind_DeleteException@GCC_3.0"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-delta-second-removed-unwind-symbol",
+            (
+                "observation.removed_undefined_unwind_symbols.1",
+                json!("_Unwind_RaiseException@GCC_3.0"),
+            ),
+        ),
+        (
+            "standalone-compiler-runtime-delta-first-remaining-blocker",
+            (
+                "observation.remaining_blocking_reasons.0",
+                json!("host_needed_libraries_present"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("standalone-compiler-runtime-delta-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected compiler runtime delta dashboard row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "forge",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing compiler runtime delta dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn standalone_smoke_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [

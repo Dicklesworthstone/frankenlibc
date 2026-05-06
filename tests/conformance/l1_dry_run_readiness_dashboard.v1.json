@@ -21,6 +21,7 @@
   "inputs": {
     "replacement_levels": "tests/conformance/replacement_levels.json",
     "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "standalone_compiler_runtime_experiment_delta": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
     "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_owned_tls_startup_surface": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
@@ -1550,6 +1551,166 @@
       "field": "symbol_rows.0.exit_criteria.0",
       "expected_value": "nm -D reports no undefined _Unwind_Backtrace symbol",
       "rationale": "Dashboard consumers must see the artifact-level exit criterion before any claim can change."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-source-commit-field",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "source_commit_freshness_policy.recorded_source_commit_field",
+      "expected_value": "source_commit",
+      "rationale": "Dashboard consumers must see which field carries the compiler-runtime experiment delta source commit freshness token."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-source-commit-comparison-target",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "source_commit_freshness_policy.comparison_target",
+      "expected_value": "current git HEAD",
+      "rationale": "Dashboard consumers must see that compiler-runtime experiment delta freshness compares against the current source checkout."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-source-commit-stale-result",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "source_commit_freshness_policy.stale_result",
+      "expected_value": "block_compiler_runtime_experiment_delta",
+      "rationale": "Dashboard consumers must see that stale compiler-runtime experiment deltas block the delta evidence path."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-source-commit-no-stale-evidence",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "source_commit_freshness_policy.delta_evidence_allowed_when_stale",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that stale compiler-runtime experiment deltas cannot be used as replacement evidence."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-source-commit-rejection-kind",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "source_commit_freshness_policy.rejected_evidence_kind",
+      "expected_value": "stale_compiler_runtime_experiment_delta",
+      "rationale": "Dashboard consumers must see stale compiler-runtime experiment deltas as a distinct rejection kind."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-report-only",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "report_policy.report_only",
+      "expected_value": true,
+      "rationale": "Dashboard consumers must see that the panic-abort compiler-runtime experiment delta is report-only."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-no-promotion",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "report_policy.promotion_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that this partial compiler-runtime improvement cannot promote standalone replacement."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-no-replacement-level-change",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "report_policy.replacement_level_change_allowed",
+      "expected_value": false,
+      "rationale": "Dashboard consumers must see that the compiler-runtime delta cannot change replacement_levels by itself."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-claim-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "summary.claim_status",
+      "expected_value": "report_only",
+      "rationale": "Dashboard consumers must see that the delta claim status remains report-only."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-standalone-claim-status",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "summary.standalone_claim_status",
+      "expected_value": "claim_blocked",
+      "rationale": "Dashboard consumers must see that standalone claims stay blocked despite the partial unwind reduction."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-classification",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "summary.delta_classification",
+      "expected_value": "improvement",
+      "rationale": "Dashboard consumers must see that panic-abort is a partial improvement rather than standalone evidence."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-removed-unwind-symbol-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "summary.removed_unwind_symbol_count",
+      "expected_value": 2,
+      "rationale": "Dashboard consumers must see the exact number of unwind symbols removed by the experiment."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-remaining-unwind-symbol-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "summary.remaining_unwind_symbol_count",
+      "expected_value": 10,
+      "rationale": "Dashboard consumers must see the remaining unwind-symbol blocker count after the experiment."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-remaining-needed-library-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "summary.remaining_needed_library_count",
+      "expected_value": 2,
+      "rationale": "Dashboard consumers must see that needed host-library dependencies still remain."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-remaining-version-requirement-count",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "summary.remaining_version_requirement_count",
+      "expected_value": 4,
+      "rationale": "Dashboard consumers must see that host version requirements still remain."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-experiment-lane",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "observation.experiment_lane",
+      "expected_value": "panic-abort-compiler-runtime-minimized",
+      "rationale": "Dashboard consumers must see which compiler-runtime experiment produced the delta."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-panic-strategy",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "observation.experiment_env.CARGO_PROFILE_RELEASE_PANIC",
+      "expected_value": "abort",
+      "rationale": "Dashboard consumers must see that the delta came from the panic=abort experiment."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-first-removed-unwind-symbol",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "observation.removed_undefined_unwind_symbols.0",
+      "expected_value": "_Unwind_DeleteException@GCC_3.0",
+      "rationale": "Dashboard consumers must see one of the concrete unwind symbols removed by panic-abort."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-second-removed-unwind-symbol",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "observation.removed_undefined_unwind_symbols.1",
+      "expected_value": "_Unwind_RaiseException@GCC_3.0",
+      "rationale": "Dashboard consumers must see the second unwind symbol removed by panic-abort."
+    },
+    {
+      "row_id": "standalone-compiler-runtime-delta-first-remaining-blocker",
+      "row_kind": "forge",
+      "evidence_artifact": "tests/conformance/standalone_compiler_runtime_experiment_delta.v1.json",
+      "field": "observation.remaining_blocking_reasons.0",
+      "expected_value": "host_needed_libraries_present",
+      "rationale": "Dashboard consumers must see that host dependency blockers still lead the remaining blocker set."
     },
     {
       "row_id": "l1-dashboard-source-commit-field",
