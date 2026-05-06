@@ -5,7 +5,7 @@
   "owner_family_group": "fpg-reverse-runtime-core",
   "evidence_owner": "frankenlibc-core and frankenlibc-abi subsystem owners",
   "generated_utc": "2026-05-04T14:02:27Z",
-  "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+  "source_commit": "current",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",
@@ -104,7 +104,7 @@
             "tests/conformance/symbol_fixture_coverage.v1.json",
             "tests/conformance/per_symbol_fixture_tests.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         },
         "hardened": {
@@ -116,7 +116,7 @@
             "tests/conformance/mode_semantics_matrix.json",
             "tests/conformance/hardened_repair_deny_matrix.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         }
       }
@@ -155,7 +155,7 @@
             "tests/conformance/fixtures/membrane_mode_split.json",
             "tests/conformance/per_symbol_fixture_tests.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         },
         "hardened": {
@@ -167,7 +167,7 @@
             "tests/conformance/fixtures/membrane_mode_split.json",
             "tests/conformance/hardened_repair_deny_matrix.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         }
       }
@@ -208,7 +208,7 @@
             "tests/conformance/pthread_cancellation_robust_mutex_tls.v1.json",
             "tests/conformance/semantic_contract_inventory.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         },
         "hardened": {
@@ -221,7 +221,7 @@
             "tests/conformance/pthread_cancellation_robust_mutex_tls.v1.json",
             "tests/conformance/semantic_contract_inventory.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         }
       }
@@ -258,7 +258,7 @@
             "tests/conformance/fixtures/stdio_file_ops.json",
             "tests/conformance/per_symbol_fixture_tests.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         },
         "hardened": {
@@ -271,7 +271,7 @@
             "tests/conformance/stdio_libio_buffering_fixture_pack.v1.json",
             "tests/conformance/semantic_contract_inventory.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         }
       }
@@ -308,7 +308,7 @@
             "tests/conformance/fixtures/locale_ops.json",
             "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         },
         "hardened": {
@@ -321,7 +321,7 @@
             "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json",
             "tests/conformance/hardened_repair_deny_matrix.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         }
       }
@@ -363,7 +363,7 @@
             "tests/conformance/fixtures/setjmp_ops.json",
             "tests/conformance/semantic_contract_inventory.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         },
         "hardened": {
@@ -376,7 +376,7 @@
             "tests/conformance/hardened_repair_deny_matrix.v1.json",
             "tests/conformance/semantic_contract_inventory.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         }
       }
@@ -410,7 +410,7 @@
             "tests/conformance/fixtures/time_ops.json",
             "tests/conformance/per_symbol_fixture_tests.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         },
         "hardened": {
@@ -422,7 +422,7 @@
             "tests/conformance/fixtures/time_ops.json",
             "tests/conformance/mode_semantics_matrix.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         }
       }
@@ -464,7 +464,7 @@
             "tests/conformance/resolver_nss_hard_parts.v1.json",
             "tests/conformance/semantic_contract_inventory.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         },
         "hardened": {
@@ -477,7 +477,7 @@
             "tests/conformance/mode_semantics_matrix.json",
             "tests/conformance/semantic_contract_inventory.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         }
       }
@@ -519,7 +519,7 @@
             "tests/conformance/iconv_codec_scope_ledger.v1.json",
             "tests/conformance/semantic_contract_inventory.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         },
         "hardened": {
@@ -532,7 +532,7 @@
             "tests/conformance/iconv_stateful_codec_fixture_pack.v1.json",
             "tests/conformance/hardened_repair_deny_matrix.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         }
       }
@@ -574,7 +574,7 @@
             "tests/conformance/fixtures/membrane_mode_split.json",
             "tests/conformance/mode_semantics_matrix.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         },
         "hardened": {
@@ -587,7 +587,7 @@
             "tests/conformance/mode_semantics_matrix.json",
             "tests/conformance/hardened_repair_deny_matrix.v1.json"
           ],
-          "source_commit": "b05206b2571dd9c4d2246992c9c73226096216ea",
+          "source_commit": "current",
           "failure_signature": "none"
         }
       }

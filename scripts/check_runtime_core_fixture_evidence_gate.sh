@@ -22,6 +22,7 @@ mkdir -p "${OUT_DIR}"
 
 python3 - "${ROOT}" "${GATE}" "${GAP_GROUPS}" "${OWNER_GROUPS}" "${RECON}" "${SYMBOL_COVERAGE}" "${PER_SYMBOL}" "${SEMANTIC_INVENTORY}" "${MODE_MATRIX}" "${REPAIR_MATRIX}" "${REPORT}" "${LOG}" <<'PY'
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -149,6 +150,28 @@ def artifact_refs_exist(refs, context):
     return ok
 
 
+def is_hex_commit(value):
+    return isinstance(value, str) and len(value) == 40 and all(
+        ch in "0123456789abcdefABCDEF" for ch in value
+    )
+
+
+def git_head():
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        text=True,
+    ).strip()
+
+
+def source_commit_is_current(value):
+    if value == "current":
+        return True
+    if is_hex_commit(value):
+        return value == git_head()
+    return False
+
+
 gate = load_json(gate_path, "gate")
 groups = load_json(groups_path, "feature_parity_gap_groups")
 recon = load_json(recon_path, "reality_bridge_import_reconciliation")
@@ -185,8 +208,8 @@ if isinstance(gate, dict):
     if gate.get("owner_family_group") != OWNER_GROUP:
         fail(f"gate owner_family_group must be {OWNER_GROUP}")
     source_commit = gate.get("source_commit")
-    if not isinstance(source_commit, str) or len(source_commit) < 12:
-        fail("gate source_commit must be non-empty")
+    if not source_commit_is_current(source_commit):
+        fail("gate source_commit must be 'current' or match current git HEAD")
     freshness_policy = gate.get("source_commit_freshness_policy", {})
     expected_freshness_policy = {
         "recorded_source_commit_field": "source_commit",
