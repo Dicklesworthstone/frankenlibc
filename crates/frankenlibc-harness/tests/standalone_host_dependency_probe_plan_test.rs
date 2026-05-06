@@ -99,6 +99,61 @@ const FORGE_FAILURE_SIGNATURE_MAPPINGS: &[(&str, &str)] = &[
     ("symbol_evidence_missing", "missing_symbol_evidence"),
 ];
 
+const FORGE_BLOCKER_SNAPSHOT_BLOCKING_REASONS: &[&str] = &[
+    "host_needed_libraries_present",
+    "host_direct_needed_libraries_present",
+    "host_resolved_libraries_present",
+    "host_loader_dependency",
+    "host_libc_dependency",
+    "libgcc_runtime_dependency",
+    "undefined_unwind_symbols",
+    "undefined_glibc_symbols",
+    "undefined_tls_symbols",
+    "host_version_requirements",
+];
+
+const FORGE_BLOCKER_SNAPSHOT_NEEDED_LIBRARIES: &[&str] = &["ld-linux-x86-64.so.2", "libgcc_s.so.1"];
+
+const FORGE_BLOCKER_SNAPSHOT_HOST_RESOLVED_LIBRARIES: &[&str] =
+    &["/lib64/ld-linux-x86-64.so.2", "libc.so.6", "libgcc_s.so.1"];
+
+const FORGE_BLOCKER_SNAPSHOT_HOST_NEEDED_LIBRARIES: &[&str] = &[
+    "/lib64/ld-linux-x86-64.so.2",
+    "ld-linux-x86-64.so.2",
+    "libc.so.6",
+    "libgcc_s.so.1",
+];
+
+const FORGE_BLOCKER_SNAPSHOT_UNDEFINED_UNWIND_SYMBOLS: &[&str] = &[
+    "_Unwind_Backtrace@GCC_3.3",
+    "_Unwind_DeleteException@GCC_3.0",
+    "_Unwind_GetDataRelBase@GCC_3.0",
+    "_Unwind_GetIP@GCC_3.0",
+    "_Unwind_GetIPInfo@GCC_4.2.0",
+    "_Unwind_GetLanguageSpecificData@GCC_3.0",
+    "_Unwind_GetRegionStart@GCC_3.0",
+    "_Unwind_GetTextRelBase@GCC_3.0",
+    "_Unwind_RaiseException@GCC_3.0",
+    "_Unwind_Resume@GCC_3.0",
+    "_Unwind_SetGR@GCC_3.0",
+    "_Unwind_SetIP@GCC_3.0",
+];
+
+const FORGE_BLOCKER_SNAPSHOT_UNDEFINED_GLIBC_SYMBOLS: &[&str] = &["__tls_get_addr@GLIBC_2.3"];
+const FORGE_BLOCKER_SNAPSHOT_UNDEFINED_TLS_SYMBOLS: &[&str] = &["__tls_get_addr@GLIBC_2.3"];
+
+const FORGE_BLOCKER_SNAPSHOT_HOST_VERSION_REQUIREMENTS: &[&str] = &[
+    "ld-linux-x86-64.so.2:GLIBC_2.3",
+    "libgcc_s.so.1:GCC_3.0",
+    "libgcc_s.so.1:GCC_3.3",
+    "libgcc_s.so.1:GCC_4.2.0",
+];
+
+const FORGE_BLOCKER_SNAPSHOT_VERSION_NEEDS: &[(&str, &[&str])] = &[
+    ("ld-linux-x86-64.so.2", &["GLIBC_2.3"]),
+    ("libgcc_s.so.1", &["GCC_3.0", "GCC_3.3", "GCC_4.2.0"]),
+];
+
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest)
@@ -213,6 +268,162 @@ fn assert_recorded_source_commit_is_current(root: &Path, plan: &Value) -> TestRe
     require(
         source_commit_is_current(source_commit, &current_head),
         "source_commit must be 'current' or match current git HEAD",
+    )
+}
+
+fn assert_string_array_eq(value: &Value, field: &str, expected: &[&str]) -> TestResult {
+    let actual = json_array(value, field)?
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .ok_or_else(|| format!("{field} must contain only strings"))
+        })
+        .collect::<TestResult<Vec<_>>>()?;
+    require(
+        actual.as_slice().eq(expected),
+        format!("{field} must match current live forge blocker snapshot"),
+    )
+}
+
+fn assert_forge_blocker_value_snapshot(
+    root: &Path,
+    projection: &Value,
+    expected_reason_set: &HashSet<String>,
+) -> TestResult {
+    let snapshot = json_field(projection, "current_forge_blocker_value_snapshot")?;
+    require(
+        json_string(snapshot, "source_artifact")?
+            == "target/conformance/standalone_replacement_artifact.report.json",
+        "snapshot source_artifact",
+    )?;
+    require(
+        json_string(snapshot, "source_mode")? == "forge",
+        "snapshot source_mode",
+    )?;
+    let snapshot_source_commit = json_string(snapshot, "source_commit")?;
+    let current_head = git_head(root)?;
+    require(
+        source_commit_is_current(snapshot_source_commit, &current_head),
+        "current_forge_blocker_value_snapshot.source_commit must be 'current' or match current git HEAD",
+    )?;
+    require(
+        json_string(snapshot, "decision")? == "snapshot_only_claims_remain_blocked",
+        "snapshot decision must not promote claims",
+    )?;
+    require(
+        json_string(snapshot, "claim_status")? == "claim_blocked",
+        "snapshot claim_status",
+    )?;
+    require(
+        json_string(snapshot, "artifact_status")? == "current",
+        "snapshot artifact_status",
+    )?;
+    require(
+        json_string(snapshot, "failure_signature")?.eq("host_glibc_dependency"),
+        "snapshot failure_signature",
+    )?;
+    require(
+        json_field(snapshot, "host_glibc_dependency")?.as_bool() == Some(true),
+        "snapshot host_glibc_dependency",
+    )?;
+    require(
+        json_field(snapshot, "sampled_symbols_present")?.as_bool() == Some(true),
+        "snapshot sampled_symbols_present",
+    )?;
+
+    assert_string_array_eq(
+        snapshot,
+        "blocking_reasons",
+        FORGE_BLOCKER_SNAPSHOT_BLOCKING_REASONS,
+    )?;
+    require(
+        string_set(snapshot, "blocking_reasons")? == *expected_reason_set,
+        "snapshot blocking_reasons must match projected forge reasons",
+    )?;
+    assert_string_array_eq(
+        snapshot,
+        "needed_libraries",
+        FORGE_BLOCKER_SNAPSHOT_NEEDED_LIBRARIES,
+    )?;
+    assert_string_array_eq(
+        snapshot,
+        "host_direct_needed_libraries",
+        FORGE_BLOCKER_SNAPSHOT_NEEDED_LIBRARIES,
+    )?;
+    assert_string_array_eq(
+        snapshot,
+        "host_resolved_libraries",
+        FORGE_BLOCKER_SNAPSHOT_HOST_RESOLVED_LIBRARIES,
+    )?;
+    assert_string_array_eq(
+        snapshot,
+        "host_needed_libraries",
+        FORGE_BLOCKER_SNAPSHOT_HOST_NEEDED_LIBRARIES,
+    )?;
+    assert_string_array_eq(
+        snapshot,
+        "undefined_unwind_symbols",
+        FORGE_BLOCKER_SNAPSHOT_UNDEFINED_UNWIND_SYMBOLS,
+    )?;
+    assert_string_array_eq(
+        snapshot,
+        "undefined_glibc_symbols",
+        FORGE_BLOCKER_SNAPSHOT_UNDEFINED_GLIBC_SYMBOLS,
+    )?;
+    assert_string_array_eq(
+        snapshot,
+        "undefined_tls_symbols",
+        FORGE_BLOCKER_SNAPSHOT_UNDEFINED_TLS_SYMBOLS,
+    )?;
+    assert_string_array_eq(
+        snapshot,
+        "host_version_requirements",
+        FORGE_BLOCKER_SNAPSHOT_HOST_VERSION_REQUIREMENTS,
+    )?;
+
+    let version_needs = json_field(snapshot, "version_needs")?
+        .as_object()
+        .ok_or_else(|| "snapshot version_needs must be object".to_string())?;
+    require(
+        version_needs.len() == FORGE_BLOCKER_SNAPSHOT_VERSION_NEEDS.len(),
+        "snapshot version_needs provider count",
+    )?;
+    for (provider, expected_versions) in FORGE_BLOCKER_SNAPSHOT_VERSION_NEEDS {
+        let versions = version_needs
+            .get(*provider)
+            .ok_or_else(|| "snapshot version_needs missing provider".to_string())?;
+        let actual_versions = versions
+            .as_array()
+            .ok_or_else(|| "snapshot version_needs provider must be an array".to_string())?
+            .iter()
+            .map(|item| {
+                item.as_str().ok_or_else(|| {
+                    "snapshot version_needs provider must contain only strings".to_string()
+                })
+            })
+            .collect::<TestResult<Vec<_>>>()?;
+        require(
+            actual_versions.as_slice().eq(*expected_versions),
+            "snapshot version_needs provider mismatch",
+        )?;
+    }
+
+    let policy = json_field(snapshot, "snapshot_policy")?;
+    require(
+        json_field(policy, "promotion_allowed")?.as_bool() == Some(false),
+        "snapshot policy promotion_allowed",
+    )?;
+    require(
+        json_field(policy, "refresh_required_on_blocker_delta")?.as_bool() == Some(true),
+        "snapshot policy refresh_required_on_blocker_delta",
+    )?;
+    require(
+        json_string(policy, "stale_result")? == "block_standalone_host_dependency_probe_evidence",
+        "snapshot policy stale_result",
+    )?;
+    require(
+        json_string(policy, "rejected_evidence_kind")? == "stale_forge_blocker_snapshot",
+        "snapshot policy rejected_evidence_kind",
     )
 }
 
@@ -546,6 +757,11 @@ fn plan_has_required_shape_and_probe_coverage() -> TestResult {
             format!("mapped negative test missing: {test_id}"),
         )?;
     }
+    let expected_snapshot_reason_set: HashSet<String> = FORGE_BLOCKING_REASON_MAPPINGS
+        .iter()
+        .map(|(reason, _)| (*reason).to_string())
+        .collect();
+    assert_forge_blocker_value_snapshot(&root, projection, &expected_snapshot_reason_set)?;
     Ok(())
 }
 
@@ -695,6 +911,39 @@ fn checker_emits_report_and_required_jsonl_rows() -> TestResult {
             ));
         }
     }
+    require(
+        json_u64(summary, "forge_blocker_snapshot_blocking_reason_count")? == 10,
+        "forge blocker snapshot reason count must be 10",
+    )?;
+    require(
+        json_u64(summary, "forge_blocker_snapshot_needed_library_count")? == 2,
+        "forge blocker snapshot needed library count must be 2",
+    )?;
+    require(
+        json_u64(
+            summary,
+            "forge_blocker_snapshot_host_resolved_library_count",
+        )? == 3,
+        "forge blocker snapshot host resolved library count must be 3",
+    )?;
+    require(
+        json_u64(summary, "forge_blocker_snapshot_undefined_symbol_count")? == 14,
+        "forge blocker snapshot undefined symbol count must be 14",
+    )?;
+    require(
+        json_u64(
+            summary,
+            "forge_blocker_snapshot_host_version_requirement_count",
+        )? == 4,
+        "forge blocker snapshot host version requirement count must be 4",
+    )?;
+    require(
+        json_u64(
+            summary,
+            "forge_blocker_snapshot_version_need_provider_count",
+        )? == 2,
+        "forge blocker snapshot version need provider count must be 2",
+    )?;
     require(
         json_string(&report, "source_commit")?.len() == 40,
         "report source_commit must be current git SHA",
@@ -959,5 +1208,46 @@ fn checker_rejects_forge_blocker_catalog_contract_drift() -> TestResult {
         &mutated,
         "standalone-host-probe-plan-catalog-drift",
         "blocker_catalog_required_rows.undefined_tls_symbols does not match standalone manifest contract",
+    )
+}
+
+#[test]
+fn checker_rejects_missing_forge_blocker_value_snapshot() -> TestResult {
+    let mutated = write_mutated_plan("standalone-host-probe-plan-missing-snapshot", |plan| {
+        let projection = plan
+            .get_mut("current_forge_blocker_projection")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing current_forge_blocker_projection".to_string())?;
+        projection.remove("current_forge_blocker_value_snapshot");
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "standalone-host-probe-plan-missing-snapshot",
+        "current_forge_blocker_value_snapshot must be an object",
+    )
+}
+
+#[test]
+fn checker_rejects_forge_blocker_value_snapshot_drift() -> TestResult {
+    let mutated = write_mutated_plan("standalone-host-probe-plan-snapshot-drift", |plan| {
+        let projection = plan
+            .get_mut("current_forge_blocker_projection")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing current_forge_blocker_projection".to_string())?;
+        let snapshot = projection
+            .get_mut("current_forge_blocker_value_snapshot")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing current_forge_blocker_value_snapshot".to_string())?;
+        snapshot.insert(
+            "undefined_tls_symbols".to_string(),
+            Value::Array(Vec::new()),
+        );
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "standalone-host-probe-plan-snapshot-drift",
+        "current_forge_blocker_value_snapshot.undefined_tls_symbols must match current live forge blockers",
     )
 }

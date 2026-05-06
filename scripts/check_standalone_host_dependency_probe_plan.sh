@@ -125,6 +125,90 @@ REQUIRED_FORGE_FAILURE_SIGNATURE_TO_NEGATIVE_TEST = {
     "artifact_dependency_inspection_failed": "dependency_inspection_failed",
     "symbol_evidence_missing": "missing_symbol_evidence",
 }
+EXPECTED_FORGE_BLOCKER_SNAPSHOT = {
+    "source_artifact": "target/conformance/standalone_replacement_artifact.report.json",
+    "source_mode": "forge",
+    "source_commit": "current",
+    "decision": "snapshot_only_claims_remain_blocked",
+    "claim_status": "claim_blocked",
+    "artifact_status": "current",
+    "failure_signature": "host_glibc_dependency",
+    "host_glibc_dependency": True,
+    "sampled_symbols_present": True,
+    "blocking_reasons": [
+        "host_needed_libraries_present",
+        "host_direct_needed_libraries_present",
+        "host_resolved_libraries_present",
+        "host_loader_dependency",
+        "host_libc_dependency",
+        "libgcc_runtime_dependency",
+        "undefined_unwind_symbols",
+        "undefined_glibc_symbols",
+        "undefined_tls_symbols",
+        "host_version_requirements",
+    ],
+    "needed_libraries": [
+        "ld-linux-x86-64.so.2",
+        "libgcc_s.so.1",
+    ],
+    "host_direct_needed_libraries": [
+        "ld-linux-x86-64.so.2",
+        "libgcc_s.so.1",
+    ],
+    "host_resolved_libraries": [
+        "/lib64/ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libgcc_s.so.1",
+    ],
+    "host_needed_libraries": [
+        "/lib64/ld-linux-x86-64.so.2",
+        "ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libgcc_s.so.1",
+    ],
+    "undefined_unwind_symbols": [
+        "_Unwind_Backtrace@GCC_3.3",
+        "_Unwind_DeleteException@GCC_3.0",
+        "_Unwind_GetDataRelBase@GCC_3.0",
+        "_Unwind_GetIP@GCC_3.0",
+        "_Unwind_GetIPInfo@GCC_4.2.0",
+        "_Unwind_GetLanguageSpecificData@GCC_3.0",
+        "_Unwind_GetRegionStart@GCC_3.0",
+        "_Unwind_GetTextRelBase@GCC_3.0",
+        "_Unwind_RaiseException@GCC_3.0",
+        "_Unwind_Resume@GCC_3.0",
+        "_Unwind_SetGR@GCC_3.0",
+        "_Unwind_SetIP@GCC_3.0",
+    ],
+    "undefined_glibc_symbols": [
+        "__tls_get_addr@GLIBC_2.3",
+    ],
+    "undefined_tls_symbols": [
+        "__tls_get_addr@GLIBC_2.3",
+    ],
+    "host_version_requirements": [
+        "ld-linux-x86-64.so.2:GLIBC_2.3",
+        "libgcc_s.so.1:GCC_3.0",
+        "libgcc_s.so.1:GCC_3.3",
+        "libgcc_s.so.1:GCC_4.2.0",
+    ],
+    "version_needs": {
+        "ld-linux-x86-64.so.2": [
+            "GLIBC_2.3",
+        ],
+        "libgcc_s.so.1": [
+            "GCC_3.0",
+            "GCC_3.3",
+            "GCC_4.2.0",
+        ],
+    },
+    "snapshot_policy": {
+        "promotion_allowed": False,
+        "refresh_required_on_blocker_delta": True,
+        "stale_result": "block_standalone_host_dependency_probe_evidence",
+        "rejected_evidence_kind": "stale_forge_blocker_snapshot",
+    },
+}
 EXPECTED_FRESHNESS_POLICY = {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",
@@ -194,6 +278,66 @@ def load_json(path):
     except Exception as exc:
         errors.append(f"{path}: {exc}")
         return {}
+
+
+def validate_current_forge_blocker_snapshot(projection):
+    snapshot = projection.get("current_forge_blocker_value_snapshot")
+    if not isinstance(snapshot, dict):
+        errors.append("current_forge_blocker_value_snapshot must be an object")
+        return {}
+
+    expected_keys = set(EXPECTED_FORGE_BLOCKER_SNAPSHOT)
+    actual_keys = set(snapshot)
+    for missing_key in sorted(expected_keys - actual_keys):
+        errors.append(f"current_forge_blocker_value_snapshot missing {missing_key}")
+    for unexpected_key in sorted(actual_keys - expected_keys):
+        errors.append(f"current_forge_blocker_value_snapshot has unexpected field {unexpected_key}")
+
+    for key, expected_value in EXPECTED_FORGE_BLOCKER_SNAPSHOT.items():
+        actual_value = snapshot.get(key)
+        if key == "source_commit":
+            if not source_commit_marker_is_current(actual_value):
+                errors.append(
+                    "current_forge_blocker_value_snapshot.source_commit must be 'current' or match current git HEAD"
+                )
+            continue
+        if actual_value != expected_value:
+            errors.append(f"current_forge_blocker_value_snapshot.{key} must match current live forge blockers")
+
+    blocking_reasons = snapshot.get("blocking_reasons", [])
+    if not isinstance(blocking_reasons, list) or not all(isinstance(reason, str) for reason in blocking_reasons):
+        errors.append("current_forge_blocker_value_snapshot.blocking_reasons must be a string array")
+    elif set(blocking_reasons) != set(REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE):
+        errors.append("current_forge_blocker_value_snapshot.blocking_reasons must match projected forge reasons")
+
+    version_needs = snapshot.get("version_needs", {})
+    if not isinstance(version_needs, dict):
+        errors.append("current_forge_blocker_value_snapshot.version_needs must be an object")
+    else:
+        for provider, versions in version_needs.items():
+            if not isinstance(provider, str) or not provider:
+                errors.append("current_forge_blocker_value_snapshot.version_needs providers must be non-empty strings")
+            if not isinstance(versions, list) or not all(isinstance(version, str) and version for version in versions):
+                errors.append(
+                    f"current_forge_blocker_value_snapshot.version_needs.{provider} must be a non-empty string array"
+                )
+
+    policy = snapshot.get("snapshot_policy", {})
+    if not isinstance(policy, dict):
+        errors.append("current_forge_blocker_value_snapshot.snapshot_policy must be an object")
+    else:
+        if policy.get("promotion_allowed") is not False:
+            errors.append("current_forge_blocker_value_snapshot.snapshot_policy.promotion_allowed must be false")
+        if policy.get("refresh_required_on_blocker_delta") is not True:
+            errors.append(
+                "current_forge_blocker_value_snapshot.snapshot_policy.refresh_required_on_blocker_delta must be true"
+            )
+        if policy.get("stale_result") != "block_standalone_host_dependency_probe_evidence":
+            errors.append("current_forge_blocker_value_snapshot.snapshot_policy.stale_result mismatch")
+        if policy.get("rejected_evidence_kind") != "stale_forge_blocker_snapshot":
+            errors.append("current_forge_blocker_value_snapshot.snapshot_policy.rejected_evidence_kind mismatch")
+
+    return snapshot
 
 
 source_commit = current_commit()
@@ -435,6 +579,12 @@ forge_projection_field_count = 0
 forge_projection_blocking_reason_count = 0
 forge_projection_blocker_catalog_row_count = 0
 forge_projection_failure_signature_count = 0
+forge_blocker_snapshot_blocking_reason_count = 0
+forge_blocker_snapshot_needed_library_count = 0
+forge_blocker_snapshot_host_resolved_library_count = 0
+forge_blocker_snapshot_undefined_symbol_count = 0
+forge_blocker_snapshot_host_version_requirement_count = 0
+forge_blocker_snapshot_version_need_provider_count = 0
 if not isinstance(projection, dict):
     errors.append("current_forge_blocker_projection must be an object")
 else:
@@ -570,6 +720,21 @@ else:
             )
     forge_projection_failure_signature_count = len(failure_map)
 
+    snapshot = validate_current_forge_blocker_snapshot(projection)
+    if isinstance(snapshot, dict):
+        forge_blocker_snapshot_blocking_reason_count = len(snapshot.get("blocking_reasons", []))
+        forge_blocker_snapshot_needed_library_count = len(snapshot.get("needed_libraries", []))
+        forge_blocker_snapshot_host_resolved_library_count = len(snapshot.get("host_resolved_libraries", []))
+        forge_blocker_snapshot_undefined_symbol_count = (
+            len(snapshot.get("undefined_unwind_symbols", []))
+            + len(snapshot.get("undefined_glibc_symbols", []))
+            + len(snapshot.get("undefined_tls_symbols", []))
+        )
+        forge_blocker_snapshot_host_version_requirement_count = len(snapshot.get("host_version_requirements", []))
+        version_needs = snapshot.get("version_needs", {})
+        if isinstance(version_needs, dict):
+            forge_blocker_snapshot_version_need_provider_count = len(version_needs)
+
 summary = {
     "probe_count": len(probe_rows),
     "required_probe_type_count": len(REQUIRED_PROBE_TYPES),
@@ -580,6 +745,12 @@ summary = {
     "forge_projection_blocking_reason_count": forge_projection_blocking_reason_count,
     "forge_projection_blocker_catalog_row_count": forge_projection_blocker_catalog_row_count,
     "forge_projection_failure_signature_count": forge_projection_failure_signature_count,
+    "forge_blocker_snapshot_blocking_reason_count": forge_blocker_snapshot_blocking_reason_count,
+    "forge_blocker_snapshot_needed_library_count": forge_blocker_snapshot_needed_library_count,
+    "forge_blocker_snapshot_host_resolved_library_count": forge_blocker_snapshot_host_resolved_library_count,
+    "forge_blocker_snapshot_undefined_symbol_count": forge_blocker_snapshot_undefined_symbol_count,
+    "forge_blocker_snapshot_host_version_requirement_count": forge_blocker_snapshot_host_version_requirement_count,
+    "forge_blocker_snapshot_version_need_provider_count": forge_blocker_snapshot_version_need_provider_count,
     "tool_count": len(tool_counts),
     "probe_counts_by_type": dict(sorted(probe_types_seen.items())),
     "decision_counts": dict(sorted((str(key), value) for key, value in decision_counts.items())),
@@ -597,6 +768,12 @@ for key in [
     "forge_projection_blocking_reason_count",
     "forge_projection_blocker_catalog_row_count",
     "forge_projection_failure_signature_count",
+    "forge_blocker_snapshot_blocking_reason_count",
+    "forge_blocker_snapshot_needed_library_count",
+    "forge_blocker_snapshot_host_resolved_library_count",
+    "forge_blocker_snapshot_undefined_symbol_count",
+    "forge_blocker_snapshot_host_version_requirement_count",
+    "forge_blocker_snapshot_version_need_provider_count",
     "tool_count",
 ]:
     if declared_summary.get(key) != summary[key]:
