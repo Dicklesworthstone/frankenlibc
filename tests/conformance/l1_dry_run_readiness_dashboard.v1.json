@@ -1197,6 +1197,174 @@
       "rationale": "Dashboard consumers must see stale runtime replay source drift as stale_source_commit evidence."
     },
     {
+      "row_id": "runtime-replay-gate-default-decision",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "claim_policy.default_decision",
+      "expected_value": "block_done_until_runtime_evidence_replay_gate_passes",
+      "rationale": "Dashboard consumers must see that runtime evidence replay blocks done claims until the replay gate passes."
+    },
+    {
+      "row_id": "runtime-replay-gate-record-count",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "summary.replay_record_count",
+      "expected_value": 4,
+      "rationale": "Dashboard consumers must see the number of checked runtime replay records."
+    },
+    {
+      "row_id": "runtime-replay-gate-required-decision-count",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "summary.required_decision_count",
+      "expected_value": 4,
+      "rationale": "Dashboard consumers must see that the runtime replay gate covers all required runtime decisions."
+    },
+    {
+      "row_id": "runtime-replay-gate-negative-case-count",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "summary.negative_case_count",
+      "expected_value": 5,
+      "rationale": "Dashboard consumers must see the fail-closed negative replay case count."
+    },
+    {
+      "row_id": "runtime-replay-gate-required-log-field-count",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "summary.required_log_field_count",
+      "expected_value": 11,
+      "rationale": "Dashboard consumers must see the required log field count for replayable runtime evidence."
+    },
+    {
+      "row_id": "runtime-replay-gate-required-mode-strict",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "claim_policy.required_modes.0",
+      "expected_value": "strict",
+      "rationale": "Runtime replay evidence must cover strict mode."
+    },
+    {
+      "row_id": "runtime-replay-gate-required-mode-hardened",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "claim_policy.required_modes.1",
+      "expected_value": "hardened",
+      "rationale": "Runtime replay evidence must cover hardened mode."
+    },
+    {
+      "row_id": "runtime-replay-gate-required-decision-allow",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "claim_policy.required_decisions.0",
+      "expected_value": "Allow",
+      "rationale": "Dashboard consumers must see Allow as an explicitly required runtime decision."
+    },
+    {
+      "row_id": "runtime-replay-gate-required-decision-fullvalidate",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "claim_policy.required_decisions.1",
+      "expected_value": "FullValidate",
+      "rationale": "Dashboard consumers must see FullValidate as an explicitly required runtime decision."
+    },
+    {
+      "row_id": "runtime-replay-gate-required-decision-repair",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "claim_policy.required_decisions.2",
+      "expected_value": "Repair",
+      "rationale": "Dashboard consumers must see Repair as an explicitly required runtime decision."
+    },
+    {
+      "row_id": "runtime-replay-gate-required-decision-deny",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "claim_policy.required_decisions.3",
+      "expected_value": "Deny",
+      "rationale": "Dashboard consumers must see Deny as an explicitly required runtime decision."
+    },
+    {
+      "row_id": "runtime-replay-gate-allow-strict-id",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "replay_records.0.replay_id",
+      "expected_value": "runtime-replay-allow-strict",
+      "rationale": "Dashboard consumers must see the strict Allow replay record backing the gate."
+    },
+    {
+      "row_id": "runtime-replay-gate-allow-strict-decision",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "replay_records.0.actual_decision",
+      "expected_value": "Allow",
+      "rationale": "Dashboard consumers must see that the strict Allow replay record matched its actual decision."
+    },
+    {
+      "row_id": "runtime-replay-gate-fullvalidate-hardened-decision",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "replay_records.1.actual_decision",
+      "expected_value": "FullValidate",
+      "rationale": "Dashboard consumers must see the hardened FullValidate replay decision."
+    },
+    {
+      "row_id": "runtime-replay-gate-repair-hardened-healing-action",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "replay_records.2.healing_action",
+      "expected_value": "IgnoreDoubleFree",
+      "rationale": "Dashboard consumers must see the repair replay's healing action."
+    },
+    {
+      "row_id": "runtime-replay-gate-deny-strict-symbol",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "replay_records.3.symbol",
+      "expected_value": "longjmp",
+      "rationale": "Dashboard consumers must see the strict Deny replay symbol."
+    },
+    {
+      "row_id": "runtime-replay-gate-current-snapshot",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "replay_records.0.evidence_snapshot.snapshot_age_state",
+      "expected_value": "current",
+      "rationale": "Dashboard consumers must see that replay evidence uses a current ring-buffer snapshot."
+    },
+    {
+      "row_id": "runtime-replay-gate-no-redaction",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "replay_records.0.evidence_snapshot.redaction_state",
+      "expected_value": "none",
+      "rationale": "Dashboard consumers must see that the representative replay evidence has no redacted required fields."
+    },
+    {
+      "row_id": "runtime-replay-gate-first-negative-signature",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "negative_replay_cases.0.expected_failure_signature",
+      "expected_value": "runtime_replay_missing_event",
+      "rationale": "Dashboard consumers must see that a missing runtime replay event fails closed."
+    },
+    {
+      "row_id": "runtime-replay-gate-stale-snapshot-negative-signature",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "negative_replay_cases.1.expected_failure_signature",
+      "expected_value": "runtime_replay_stale_snapshot",
+      "rationale": "Dashboard consumers must see that stale runtime replay snapshots fail closed."
+    },
+    {
+      "row_id": "runtime-replay-gate-decision-mismatch-negative-signature",
+      "row_kind": "runtime_evidence",
+      "evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "field": "negative_replay_cases.4.expected_failure_signature",
+      "expected_value": "runtime_replay_decision_mismatch",
+      "rationale": "Dashboard consumers must see that runtime replay decision mismatches fail closed."
+    },
+    {
       "row_id": "claim-reconciliation-status-pass",
       "row_kind": "claim_control",
       "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",

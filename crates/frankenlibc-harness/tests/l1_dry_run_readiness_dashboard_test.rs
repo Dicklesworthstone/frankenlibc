@@ -3549,6 +3549,156 @@ fn runtime_replay_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn runtime_replay_gate_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "runtime-replay-gate-default-decision",
+            (
+                "claim_policy.default_decision",
+                json!("block_done_until_runtime_evidence_replay_gate_passes"),
+            ),
+        ),
+        (
+            "runtime-replay-gate-record-count",
+            ("summary.replay_record_count", json!(4)),
+        ),
+        (
+            "runtime-replay-gate-required-decision-count",
+            ("summary.required_decision_count", json!(4)),
+        ),
+        (
+            "runtime-replay-gate-negative-case-count",
+            ("summary.negative_case_count", json!(5)),
+        ),
+        (
+            "runtime-replay-gate-required-log-field-count",
+            ("summary.required_log_field_count", json!(11)),
+        ),
+        (
+            "runtime-replay-gate-required-mode-strict",
+            ("claim_policy.required_modes.0", json!("strict")),
+        ),
+        (
+            "runtime-replay-gate-required-mode-hardened",
+            ("claim_policy.required_modes.1", json!("hardened")),
+        ),
+        (
+            "runtime-replay-gate-required-decision-allow",
+            ("claim_policy.required_decisions.0", json!("Allow")),
+        ),
+        (
+            "runtime-replay-gate-required-decision-fullvalidate",
+            ("claim_policy.required_decisions.1", json!("FullValidate")),
+        ),
+        (
+            "runtime-replay-gate-required-decision-repair",
+            ("claim_policy.required_decisions.2", json!("Repair")),
+        ),
+        (
+            "runtime-replay-gate-required-decision-deny",
+            ("claim_policy.required_decisions.3", json!("Deny")),
+        ),
+        (
+            "runtime-replay-gate-allow-strict-id",
+            (
+                "replay_records.0.replay_id",
+                json!("runtime-replay-allow-strict"),
+            ),
+        ),
+        (
+            "runtime-replay-gate-allow-strict-decision",
+            ("replay_records.0.actual_decision", json!("Allow")),
+        ),
+        (
+            "runtime-replay-gate-fullvalidate-hardened-decision",
+            ("replay_records.1.actual_decision", json!("FullValidate")),
+        ),
+        (
+            "runtime-replay-gate-repair-hardened-healing-action",
+            ("replay_records.2.healing_action", json!("IgnoreDoubleFree")),
+        ),
+        (
+            "runtime-replay-gate-deny-strict-symbol",
+            ("replay_records.3.symbol", json!("longjmp")),
+        ),
+        (
+            "runtime-replay-gate-current-snapshot",
+            (
+                "replay_records.0.evidence_snapshot.snapshot_age_state",
+                json!("current"),
+            ),
+        ),
+        (
+            "runtime-replay-gate-no-redaction",
+            (
+                "replay_records.0.evidence_snapshot.redaction_state",
+                json!("none"),
+            ),
+        ),
+        (
+            "runtime-replay-gate-first-negative-signature",
+            (
+                "negative_replay_cases.0.expected_failure_signature",
+                json!("runtime_replay_missing_event"),
+            ),
+        ),
+        (
+            "runtime-replay-gate-stale-snapshot-negative-signature",
+            (
+                "negative_replay_cases.1.expected_failure_signature",
+                json!("runtime_replay_stale_snapshot"),
+            ),
+        ),
+        (
+            "runtime-replay-gate-decision-mismatch-negative-signature",
+            (
+                "negative_replay_cases.4.expected_failure_signature",
+                json!("runtime_replay_decision_mismatch"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("runtime-replay-gate-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows
+            .remove(row_id)
+            .ok_or_else(|| test_error(format!("unexpected runtime replay gate row: {row_id}")))?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "runtime_evidence",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/runtime_evidence_replay_gate.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing runtime replay gate dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn ld_preload_smoke_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
