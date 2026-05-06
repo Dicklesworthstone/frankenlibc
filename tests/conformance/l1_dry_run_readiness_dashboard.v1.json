@@ -1317,6 +1317,142 @@
       "rationale": "ld_preload smoke overall must not be failed."
     },
     {
+      "row_id": "ld-preload-smoke-run-id",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "run_id",
+      "expected_value": "20260404T011731Z",
+      "rationale": "Dashboard consumers must see the checked LD_PRELOAD smoke run id behind the summary."
+    },
+    {
+      "row_id": "ld-preload-smoke-lib-path",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "lib_path",
+      "expected_value": "target/release/libfrankenlibc_abi.so",
+      "rationale": "Dashboard consumers must see which library artifact the checked smoke summary covers."
+    },
+    {
+      "row_id": "ld-preload-smoke-timeout-seconds",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "timeout_seconds",
+      "expected_value": 10,
+      "rationale": "The dashboard must expose the per-case timeout budget used by LD_PRELOAD smoke evidence."
+    },
+    {
+      "row_id": "ld-preload-smoke-stress-iters",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "stress_iters",
+      "expected_value": 5,
+      "rationale": "The dashboard must expose the stress iteration count used by LD_PRELOAD smoke evidence."
+    },
+    {
+      "row_id": "ld-preload-smoke-total-cases",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "summary.total_cases",
+      "expected_value": 64,
+      "rationale": "Dashboard consumers must see the total LD_PRELOAD smoke case count."
+    },
+    {
+      "row_id": "ld-preload-smoke-passes",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "summary.passes",
+      "expected_value": 58,
+      "rationale": "Dashboard consumers must see the LD_PRELOAD smoke pass count."
+    },
+    {
+      "row_id": "ld-preload-smoke-skips",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "summary.skips",
+      "expected_value": 6,
+      "rationale": "Dashboard consumers must see optional-binary smoke skips instead of treating the run as full coverage."
+    },
+    {
+      "row_id": "ld-preload-smoke-no-signature-guard-failures",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "summary.signature_guard_failures",
+      "expected_value": 0,
+      "rationale": "LD_PRELOAD smoke evidence must expose signature guard failures independently from total failures."
+    },
+    {
+      "row_id": "ld-preload-smoke-no-perf-failures",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "summary.perf_failures",
+      "expected_value": 0,
+      "rationale": "LD_PRELOAD smoke evidence must expose perf failures independently from total failures."
+    },
+    {
+      "row_id": "ld-preload-smoke-no-valgrind-failures",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "summary.valgrind_failures",
+      "expected_value": 0,
+      "rationale": "LD_PRELOAD smoke evidence must expose valgrind failures independently from total failures."
+    },
+    {
+      "row_id": "ld-preload-smoke-strict-status",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "modes.strict.status",
+      "expected_value": "green",
+      "rationale": "Dashboard consumers must see that strict-mode LD_PRELOAD smoke is green."
+    },
+    {
+      "row_id": "ld-preload-smoke-strict-passes",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "modes.strict.passes",
+      "expected_value": 29,
+      "rationale": "Dashboard consumers must see the strict-mode smoke pass count."
+    },
+    {
+      "row_id": "ld-preload-smoke-strict-skips",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "modes.strict.skips",
+      "expected_value": 3,
+      "rationale": "Dashboard consumers must see the strict-mode optional-binary skip count."
+    },
+    {
+      "row_id": "ld-preload-smoke-hardened-status",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "modes.hardened.status",
+      "expected_value": "green",
+      "rationale": "Dashboard consumers must see that hardened-mode LD_PRELOAD smoke is green."
+    },
+    {
+      "row_id": "ld-preload-smoke-hardened-passes",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "modes.hardened.passes",
+      "expected_value": 29,
+      "rationale": "Dashboard consumers must see the hardened-mode smoke pass count."
+    },
+    {
+      "row_id": "ld-preload-smoke-hardened-skips",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "modes.hardened.skips",
+      "expected_value": 3,
+      "rationale": "Dashboard consumers must see the hardened-mode optional-binary skip count."
+    },
+    {
+      "row_id": "ld-preload-smoke-first-optional-skip",
+      "row_kind": "smoke",
+      "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "field": "optional_skip_binaries.0",
+      "expected_value": "sqlite3",
+      "rationale": "Dashboard consumers must see the optional binary set responsible for the skip count."
+    },
+    {
       "row_id": "standalone-owned-tls-surface-manifest-id",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",

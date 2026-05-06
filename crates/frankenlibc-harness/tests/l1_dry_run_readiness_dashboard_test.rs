@@ -3549,6 +3549,117 @@ fn runtime_replay_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn ld_preload_smoke_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        ("ld-preload-smoke-no-fails", ("summary.fails", json!(0))),
+        (
+            "ld-preload-smoke-no-overall-failure",
+            ("summary.overall_failed", json!(false)),
+        ),
+        (
+            "ld-preload-smoke-run-id",
+            ("run_id", json!("20260404T011731Z")),
+        ),
+        (
+            "ld-preload-smoke-lib-path",
+            ("lib_path", json!("target/release/libfrankenlibc_abi.so")),
+        ),
+        (
+            "ld-preload-smoke-timeout-seconds",
+            ("timeout_seconds", json!(10)),
+        ),
+        ("ld-preload-smoke-stress-iters", ("stress_iters", json!(5))),
+        (
+            "ld-preload-smoke-total-cases",
+            ("summary.total_cases", json!(64)),
+        ),
+        ("ld-preload-smoke-passes", ("summary.passes", json!(58))),
+        ("ld-preload-smoke-skips", ("summary.skips", json!(6))),
+        (
+            "ld-preload-smoke-no-signature-guard-failures",
+            ("summary.signature_guard_failures", json!(0)),
+        ),
+        (
+            "ld-preload-smoke-no-perf-failures",
+            ("summary.perf_failures", json!(0)),
+        ),
+        (
+            "ld-preload-smoke-no-valgrind-failures",
+            ("summary.valgrind_failures", json!(0)),
+        ),
+        (
+            "ld-preload-smoke-strict-status",
+            ("modes.strict.status", json!("green")),
+        ),
+        (
+            "ld-preload-smoke-strict-passes",
+            ("modes.strict.passes", json!(29)),
+        ),
+        (
+            "ld-preload-smoke-strict-skips",
+            ("modes.strict.skips", json!(3)),
+        ),
+        (
+            "ld-preload-smoke-hardened-status",
+            ("modes.hardened.status", json!("green")),
+        ),
+        (
+            "ld-preload-smoke-hardened-passes",
+            ("modes.hardened.passes", json!(29)),
+        ),
+        (
+            "ld-preload-smoke-hardened-skips",
+            ("modes.hardened.skips", json!(3)),
+        ),
+        (
+            "ld-preload-smoke-first-optional-skip",
+            ("optional_skip_binaries.0", json!("sqlite3")),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("ld-preload-smoke-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected LD_PRELOAD smoke dashboard row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "smoke",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/ld_preload_smoke_summary.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing LD_PRELOAD smoke dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn claim_reconciliation_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
