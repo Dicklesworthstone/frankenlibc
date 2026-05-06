@@ -4224,6 +4224,164 @@ fn perf_waiver_audit_source_freshness_rows_are_explicit() -> TestResult {
 }
 
 #[test]
+fn perf_waiver_audit_policy_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "perf-waiver-audit-narrow",
+            (
+                "policy.default_decision",
+                json!("block_until_waivers_narrow_and_unexpired"),
+            ),
+        ),
+        (
+            "perf-waiver-audit-policy-waiver-cap",
+            ("policy.max_total_waivers", json!(3)),
+        ),
+        (
+            "perf-waiver-audit-policy-first-broad-pattern",
+            ("policy.broad_symbol_patterns.0", json!("*")),
+        ),
+        (
+            "perf-waiver-audit-policy-last-broad-pattern",
+            ("policy.broad_symbol_patterns.2", json!("any")),
+        ),
+        (
+            "perf-waiver-audit-policy-required-bead-field",
+            ("policy.required_waiver_fields.0", json!("bead_id")),
+        ),
+        (
+            "perf-waiver-audit-policy-required-suite-field",
+            ("policy.required_waiver_fields.2", json!("suite_ids")),
+        ),
+        (
+            "perf-waiver-audit-policy-required-signature-field",
+            (
+                "policy.required_waiver_fields.4",
+                json!("failure_signature"),
+            ),
+        ),
+        (
+            "perf-waiver-audit-policy-reject-broad-wildcard",
+            (
+                "policy.rejected_evidence_kinds.0",
+                json!("broad_symbol_wildcard"),
+            ),
+        ),
+        (
+            "perf-waiver-audit-policy-reject-expired-waiver",
+            ("policy.rejected_evidence_kinds.4", json!("expired_waiver")),
+        ),
+        (
+            "perf-waiver-audit-policy-reject-duplicate-bead",
+            (
+                "policy.rejected_evidence_kinds.6",
+                json!("duplicate_bead_id"),
+            ),
+        ),
+        (
+            "perf-waiver-audit-policy-active-waiver-bead",
+            ("expected_active_waivers.0.bead_id", json!("bd-242")),
+        ),
+        (
+            "perf-waiver-audit-policy-active-waiver-owner",
+            ("expected_active_waivers.0.owner", json!("bd-b92jd.5")),
+        ),
+        (
+            "perf-waiver-audit-policy-active-waiver-first-suite",
+            ("expected_active_waivers.0.suite_ids.0", json!("string")),
+        ),
+        (
+            "perf-waiver-audit-policy-active-waiver-last-suite",
+            ("expected_active_waivers.0.suite_ids.1", json!("malloc")),
+        ),
+        (
+            "perf-waiver-audit-policy-active-waiver-expiry",
+            ("expected_active_waivers.0.expires_at", json!("2026-05-11")),
+        ),
+        (
+            "perf-waiver-audit-policy-active-waiver-scope",
+            (
+                "expected_active_waivers.0.scope",
+                json!("target_violation_only"),
+            ),
+        ),
+        (
+            "perf-waiver-audit-policy-active-waiver-signature",
+            (
+                "expected_active_waivers.0.failure_signature",
+                json!("perf_gate::target_violation_within_threshold"),
+            ),
+        ),
+        (
+            "perf-waiver-audit-policy-expiry-horizon",
+            ("max_expires_at_horizon_days", json!(90)),
+        ),
+        (
+            "perf-waiver-audit-policy-first-log-field",
+            ("required_log_fields.0", json!("trace_id")),
+        ),
+        (
+            "perf-waiver-audit-policy-last-log-field",
+            ("required_log_fields.10", json!("source_commit")),
+        ),
+        (
+            "perf-waiver-audit-policy-first-consuming-gate",
+            (
+                "consuming_gates.0",
+                json!("tests/conformance/perf_budget_policy.json"),
+            ),
+        ),
+        (
+            "perf-waiver-audit-policy-last-consuming-gate",
+            (
+                "consuming_gates.3",
+                json!("tests/conformance/replacement_levels.json"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if row_id != "perf-waiver-audit-narrow" && !row_id.starts_with("perf-waiver-audit-policy-")
+        {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!("unexpected perf waiver audit policy row: {row_id}"))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "perf",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/perf_waiver_audit.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing perf waiver audit policy dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn perf_regression_prevention_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [

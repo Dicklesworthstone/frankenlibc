@@ -2253,6 +2253,174 @@
       "rationale": "Perf waiver audit must remain wired with the fail-closed default."
     },
     {
+      "row_id": "perf-waiver-audit-policy-waiver-cap",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "policy.max_total_waivers",
+      "expected_value": 3,
+      "rationale": "Dashboard consumers must see the maximum active perf waiver count accepted by the audit."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-first-broad-pattern",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "policy.broad_symbol_patterns.0",
+      "expected_value": "*",
+      "rationale": "The dashboard must expose wildcard waiver scopes as broad patterns rejected by the audit."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-last-broad-pattern",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "policy.broad_symbol_patterns.2",
+      "expected_value": "any",
+      "rationale": "The dashboard must expose the last broad waiver scope sentinel rejected by the audit."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-required-bead-field",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "policy.required_waiver_fields.0",
+      "expected_value": "bead_id",
+      "rationale": "The dashboard must expose that every active perf waiver is tied to a bead id."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-required-suite-field",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "policy.required_waiver_fields.2",
+      "expected_value": "suite_ids",
+      "rationale": "The dashboard must expose that every perf waiver carries a narrow suite list."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-required-signature-field",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "policy.required_waiver_fields.4",
+      "expected_value": "failure_signature",
+      "rationale": "The dashboard must expose that every perf waiver is tied to a concrete failure signature."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-reject-broad-wildcard",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "policy.rejected_evidence_kinds.0",
+      "expected_value": "broad_symbol_wildcard",
+      "rationale": "Dashboard consumers must see that broad wildcard waivers block perf readiness."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-reject-expired-waiver",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "policy.rejected_evidence_kinds.4",
+      "expected_value": "expired_waiver",
+      "rationale": "Dashboard consumers must see expired perf waivers as rejected evidence."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-reject-duplicate-bead",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "policy.rejected_evidence_kinds.6",
+      "expected_value": "duplicate_bead_id",
+      "rationale": "Dashboard consumers must see duplicate waiver bead ids as rejected audit evidence."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-active-waiver-bead",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "expected_active_waivers.0.bead_id",
+      "expected_value": "bd-242",
+      "rationale": "The dashboard must expose the active waiver bead identity instead of only a waiver count."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-active-waiver-owner",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "expected_active_waivers.0.owner",
+      "expected_value": "bd-b92jd.5",
+      "rationale": "The dashboard must expose the active waiver owner bead for audit handoff."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-active-waiver-first-suite",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "expected_active_waivers.0.suite_ids.0",
+      "expected_value": "string",
+      "rationale": "The dashboard must expose the first narrow suite covered by the active perf waiver."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-active-waiver-last-suite",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "expected_active_waivers.0.suite_ids.1",
+      "expected_value": "malloc",
+      "rationale": "The dashboard must expose the last narrow suite covered by the active perf waiver."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-active-waiver-expiry",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "expected_active_waivers.0.expires_at",
+      "expected_value": "2026-05-11",
+      "rationale": "The dashboard must expose active waiver expiry so stale waiver risk is visible."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-active-waiver-scope",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "expected_active_waivers.0.scope",
+      "expected_value": "target_violation_only",
+      "rationale": "The dashboard must expose that the active waiver scope is limited to target violations."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-active-waiver-signature",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "expected_active_waivers.0.failure_signature",
+      "expected_value": "perf_gate::target_violation_within_threshold",
+      "rationale": "The dashboard must expose the active waiver failure signature for fail-closed audit matching."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-expiry-horizon",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "max_expires_at_horizon_days",
+      "expected_value": 90,
+      "rationale": "The dashboard must expose the maximum future waiver expiry horizon."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-first-log-field",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "required_log_fields.0",
+      "expected_value": "trace_id",
+      "rationale": "The dashboard must expose the first required waiver audit log field."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-last-log-field",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "required_log_fields.10",
+      "expected_value": "source_commit",
+      "rationale": "The dashboard must expose the source-commit log field required for waiver audit traceability."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-first-consuming-gate",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "consuming_gates.0",
+      "expected_value": "tests/conformance/perf_budget_policy.json",
+      "rationale": "The dashboard must expose the primary perf budget consumer of waiver audit evidence."
+    },
+    {
+      "row_id": "perf-waiver-audit-policy-last-consuming-gate",
+      "row_kind": "perf",
+      "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
+      "field": "consuming_gates.3",
+      "expected_value": "tests/conformance/replacement_levels.json",
+      "rationale": "The dashboard must expose that replacement-level promotion consumes waiver audit evidence."
+    },
+    {
       "row_id": "perf-waiver-audit-source-commit-field",
       "row_kind": "perf",
       "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
