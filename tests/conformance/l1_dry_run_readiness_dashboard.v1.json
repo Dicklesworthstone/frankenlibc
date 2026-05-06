@@ -1133,6 +1133,326 @@
       "rationale": "The dashboard must expose all eight currently blocked direct-link proof fixtures."
     },
     {
+      "row_id": "crt-tls-atexit-direct-link-proof-fixture-count",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "summary.fixture_count",
+      "expected_value": 8,
+      "rationale": "The dashboard must expose the number of CRT/TLS/atexit direct-link fixture rows."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-required-scenario-count",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "summary.required_scenario_count",
+      "expected_value": 8,
+      "rationale": "The dashboard must expose the number of required direct-link scenario kinds."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-mode-count",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "summary.strict_hardened_mode_count",
+      "expected_value": 2,
+      "rationale": "The dashboard must expose strict and hardened direct-link proof mode coverage."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-blocker-reason",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "summary.blocker_reason",
+      "expected_value": "All direct link-run CRT/TLS/atexit proof fixtures remain claim_blocked until a current libfrankenlibc_replace.so artifact and per-row source_commit/artifact_refs evidence exist.",
+      "rationale": "The dashboard must expose why CRT/TLS/atexit direct-link evidence remains blocked."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-replace-artifact",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "replacement_artifact_policy.replace_artifact",
+      "expected_value": "target/release/libfrankenlibc_replace.so",
+      "rationale": "The dashboard must expose the exact replacement artifact required for direct-link proof."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-missing-artifact-blocked",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "replacement_artifact_policy.missing_artifact_result",
+      "expected_value": "claim_blocked",
+      "rationale": "The dashboard must show missing replacement artifacts remain claim-blocked."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-host-dependency-blocked",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "replacement_artifact_policy.host_glibc_dependency_result",
+      "expected_value": "claim_blocked",
+      "rationale": "The dashboard must show host-glibc-dependent artifacts remain claim-blocked."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-ld-preload-not-inferred",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "replacement_artifact_policy.direct_link_evidence_cannot_be_inferred_from_ld_preload",
+      "expected_value": true,
+      "rationale": "The dashboard must show LD_PRELOAD evidence cannot substitute for direct-link CRT/TLS/atexit proof."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-runner-artifact-env",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "execution_runner.artifact_env",
+      "expected_value": "FLC_CRT_TLS_PROOF_REPLACE_ARTIFACT",
+      "rationale": "The dashboard must expose the runner environment variable for the replacement artifact."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-runner-fallback-env",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "execution_runner.fallback_artifact_env",
+      "expected_value": "FRANKENLIBC_STANDALONE_LIB",
+      "rationale": "The dashboard must expose the fallback environment variable accepted by the proof runner."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-runner-forge-report-env",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "execution_runner.forge_report_env",
+      "expected_value": "FLC_CRT_TLS_STANDALONE_ARTIFACT_REPORT",
+      "rationale": "The dashboard must expose the forge-report environment variable consumed by the proof runner."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-runner-case-count",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "execution_runner.proof_case_count",
+      "expected_value": 5,
+      "rationale": "The dashboard must expose the direct-link runner proof-case count."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-first-probe-id",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "execution_runner.probe_ids.0",
+      "expected_value": "crt.startup.direct_link.main",
+      "rationale": "The dashboard must expose the first direct-link proof probe id."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-last-probe-id",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "execution_runner.probe_ids.4",
+      "expected_value": "stdio.string.direct_link",
+      "rationale": "The dashboard must expose the final direct-link proof probe id."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-runner-claim-policy",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "execution_runner.claim_policy",
+      "expected_value": "Execution rows may record pass/fail for a current forged artifact, but replacement promotion remains blocked until the artifact forge reports host_glibc_dependency=false and all downstream direct-link obligations pass.",
+      "rationale": "The dashboard must expose the runner's claim policy for direct-link proof rows."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-first-scenario-kind",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "required_scenario_kinds.0",
+      "expected_value": "crt_startup",
+      "rationale": "The dashboard must expose CRT startup as a required direct-link proof scenario."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-last-scenario-kind",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "required_scenario_kinds.7",
+      "expected_value": "secure_mode_diagnostics",
+      "rationale": "The dashboard must expose secure-mode diagnostics as a required direct-link proof scenario."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-required-strict-mode",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "required_runtime_modes.0",
+      "expected_value": "strict",
+      "rationale": "The dashboard must expose strict-mode proof coverage."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-required-hardened-mode",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "required_runtime_modes.1",
+      "expected_value": "hardened",
+      "rationale": "The dashboard must expose hardened-mode proof coverage."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-direct-link-model",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "required_execution_models.0",
+      "expected_value": "direct_link_run",
+      "rationale": "The dashboard must expose the direct-link run execution model."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-replace-simulated-model",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "required_execution_models.1",
+      "expected_value": "replace_mode_simulated",
+      "rationale": "The dashboard must expose the replace-mode simulated execution model."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-required-log-trace",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "required_log_fields.0",
+      "expected_value": "trace_id",
+      "rationale": "The dashboard must expose trace_id as a required proof log field."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-required-log-failure-signature",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "required_log_fields.14",
+      "expected_value": "failure_signature",
+      "rationale": "The dashboard must expose failure_signature as a required proof log field."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-required-exec-log-command",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "required_execution_log_fields.16",
+      "expected_value": "command",
+      "rationale": "The dashboard must expose command capture as a required execution log field."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-required-exec-log-claim-status",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "required_execution_log_fields.24",
+      "expected_value": "claim_status",
+      "rationale": "The dashboard must expose claim_status as a required execution log field."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-first-diagnostic",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "diagnostic_signatures.0.id",
+      "expected_value": "missing_field",
+      "rationale": "The dashboard must expose the missing-field diagnostic contract."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-last-diagnostic",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "diagnostic_signatures.13.id",
+      "expected_value": "direct_link_claim_conflict",
+      "rationale": "The dashboard must expose direct-link claim conflicts as a diagnostic signature."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-first-negative-signature",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "negative_claim_tests.0.failure_signature",
+      "expected_value": "replace_artifact_missing",
+      "rationale": "The dashboard must expose the missing replacement artifact negative claim test."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-last-negative-signature",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "negative_claim_tests.9.failure_signature",
+      "expected_value": "strict_hardened_expectation_missing",
+      "rationale": "The dashboard must expose the strict/hardened expectation negative claim test."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-startup-fixture-id",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "fixture_rows.0.fixture_id",
+      "expected_value": "crt.startup.direct_link.strict_hardened",
+      "rationale": "The dashboard must expose the CRT startup direct-link fixture id."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-startup-claim-blocked",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "fixture_rows.0.actual_decision",
+      "expected_value": "claim_blocked",
+      "rationale": "The dashboard must expose that the startup fixture remains claim-blocked."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-startup-missing-evidence",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "fixture_rows.0.missing_evidence.0",
+      "expected_value": "current libfrankenlibc_replace.so",
+      "rationale": "The dashboard must expose the missing replacement artifact evidence for startup proof."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-tls-initialization",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "fixture_rows.1.scenario_kind",
+      "expected_value": "tls_initialization",
+      "rationale": "The dashboard must expose the TLS initialization fixture row."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-tls-destructor",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "fixture_rows.2.scenario_kind",
+      "expected_value": "tls_destructor",
+      "rationale": "The dashboard must expose the TLS destructor fixture row."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-init-fini-direct-link",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "fixture_rows.3.execution_model",
+      "expected_value": "direct_link_run",
+      "rationale": "The dashboard must expose the init/fini fixture as a real direct-link run model."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-atexit-on-exit",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "fixture_rows.4.scenario_kind",
+      "expected_value": "atexit_on_exit",
+      "rationale": "The dashboard must expose the atexit/on_exit direct-link proof fixture."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-errno-isolation",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "fixture_rows.5.scenario_kind",
+      "expected_value": "errno_tls_isolation",
+      "rationale": "The dashboard must expose the errno TLS isolation proof fixture."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-env-ownership",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "fixture_rows.6.scenario_kind",
+      "expected_value": "env_ownership",
+      "rationale": "The dashboard must expose the startup environment ownership proof fixture."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-secure-mode",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "fixture_rows.7.scenario_kind",
+      "expected_value": "secure_mode_diagnostics",
+      "rationale": "The dashboard must expose the secure-mode diagnostics proof fixture."
+    },
+    {
+      "row_id": "crt-tls-atexit-direct-link-proof-secure-getenv-order",
+      "row_kind": "direct_link",
+      "evidence_artifact": "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+      "field": "fixture_rows.7.expected_order.3",
+      "expected_value": "secure_getenv_denies_when_secure",
+      "rationale": "The dashboard must expose the secure_getenv direct-link ordering obligation."
+    },
+    {
       "row_id": "real-program-smoke-source-commit-field",
       "row_kind": "real_program",
       "evidence_artifact": "tests/conformance/real_program_smoke_suite.v1.json",

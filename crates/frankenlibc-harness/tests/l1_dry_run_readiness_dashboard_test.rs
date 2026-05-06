@@ -3111,6 +3111,272 @@ fn crt_tls_atexit_direct_link_source_freshness_rows_are_explicit() -> TestResult
 }
 
 #[test]
+fn crt_tls_atexit_direct_link_proof_rows_are_explicit() -> TestResult {
+    let dashboard = load_json(&dashboard_path())?;
+    let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
+        (
+            "crt-tls-atexit-direct-link-proof-blocked-status",
+            ("summary.current_gate_status", json!("blocked")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-blocked-count",
+            ("summary.claim_blocked_count", json!(8)),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-fixture-count",
+            ("summary.fixture_count", json!(8)),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-required-scenario-count",
+            ("summary.required_scenario_count", json!(8)),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-mode-count",
+            ("summary.strict_hardened_mode_count", json!(2)),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-blocker-reason",
+            (
+                "summary.blocker_reason",
+                json!("All direct link-run CRT/TLS/atexit proof fixtures remain claim_blocked until a current libfrankenlibc_replace.so artifact and per-row source_commit/artifact_refs evidence exist."),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-replace-artifact",
+            (
+                "replacement_artifact_policy.replace_artifact",
+                json!("target/release/libfrankenlibc_replace.so"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-missing-artifact-blocked",
+            (
+                "replacement_artifact_policy.missing_artifact_result",
+                json!("claim_blocked"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-host-dependency-blocked",
+            (
+                "replacement_artifact_policy.host_glibc_dependency_result",
+                json!("claim_blocked"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-ld-preload-not-inferred",
+            (
+                "replacement_artifact_policy.direct_link_evidence_cannot_be_inferred_from_ld_preload",
+                json!(true),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-runner-artifact-env",
+            (
+                "execution_runner.artifact_env",
+                json!("FLC_CRT_TLS_PROOF_REPLACE_ARTIFACT"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-runner-fallback-env",
+            (
+                "execution_runner.fallback_artifact_env",
+                json!("FRANKENLIBC_STANDALONE_LIB"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-runner-forge-report-env",
+            (
+                "execution_runner.forge_report_env",
+                json!("FLC_CRT_TLS_STANDALONE_ARTIFACT_REPORT"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-runner-case-count",
+            ("execution_runner.proof_case_count", json!(5)),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-first-probe-id",
+            (
+                "execution_runner.probe_ids.0",
+                json!("crt.startup.direct_link.main"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-last-probe-id",
+            (
+                "execution_runner.probe_ids.4",
+                json!("stdio.string.direct_link"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-runner-claim-policy",
+            (
+                "execution_runner.claim_policy",
+                json!("Execution rows may record pass/fail for a current forged artifact, but replacement promotion remains blocked until the artifact forge reports host_glibc_dependency=false and all downstream direct-link obligations pass."),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-first-scenario-kind",
+            ("required_scenario_kinds.0", json!("crt_startup")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-last-scenario-kind",
+            ("required_scenario_kinds.7", json!("secure_mode_diagnostics")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-required-strict-mode",
+            ("required_runtime_modes.0", json!("strict")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-required-hardened-mode",
+            ("required_runtime_modes.1", json!("hardened")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-direct-link-model",
+            ("required_execution_models.0", json!("direct_link_run")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-replace-simulated-model",
+            ("required_execution_models.1", json!("replace_mode_simulated")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-required-log-trace",
+            ("required_log_fields.0", json!("trace_id")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-required-log-failure-signature",
+            ("required_log_fields.14", json!("failure_signature")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-required-exec-log-command",
+            ("required_execution_log_fields.16", json!("command")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-required-exec-log-claim-status",
+            ("required_execution_log_fields.24", json!("claim_status")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-first-diagnostic",
+            ("diagnostic_signatures.0.id", json!("missing_field")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-last-diagnostic",
+            (
+                "diagnostic_signatures.13.id",
+                json!("direct_link_claim_conflict"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-first-negative-signature",
+            (
+                "negative_claim_tests.0.failure_signature",
+                json!("replace_artifact_missing"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-last-negative-signature",
+            (
+                "negative_claim_tests.9.failure_signature",
+                json!("strict_hardened_expectation_missing"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-startup-fixture-id",
+            (
+                "fixture_rows.0.fixture_id",
+                json!("crt.startup.direct_link.strict_hardened"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-startup-claim-blocked",
+            ("fixture_rows.0.actual_decision", json!("claim_blocked")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-startup-missing-evidence",
+            (
+                "fixture_rows.0.missing_evidence.0",
+                json!("current libfrankenlibc_replace.so"),
+            ),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-tls-initialization",
+            ("fixture_rows.1.scenario_kind", json!("tls_initialization")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-tls-destructor",
+            ("fixture_rows.2.scenario_kind", json!("tls_destructor")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-init-fini-direct-link",
+            ("fixture_rows.3.execution_model", json!("direct_link_run")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-atexit-on-exit",
+            ("fixture_rows.4.scenario_kind", json!("atexit_on_exit")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-errno-isolation",
+            ("fixture_rows.5.scenario_kind", json!("errno_tls_isolation")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-env-ownership",
+            ("fixture_rows.6.scenario_kind", json!("env_ownership")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-secure-mode",
+            ("fixture_rows.7.scenario_kind", json!("secure_mode_diagnostics")),
+        ),
+        (
+            "crt-tls-atexit-direct-link-proof-secure-getenv-order",
+            (
+                "fixture_rows.7.expected_order.3",
+                json!("secure_getenv_denies_when_secure"),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    for row in as_array(&dashboard["rows"], "rows")? {
+        let row_id = as_str(&row["row_id"], "row.row_id")?;
+        if !row_id.starts_with("crt-tls-atexit-direct-link-proof-") {
+            continue;
+        }
+        let (expected_field, expected_value) = expected_rows.remove(row_id).ok_or_else(|| {
+            test_error(format!(
+                "unexpected CRT/TLS/atexit direct-link proof row: {row_id}"
+            ))
+        })?;
+        ensure_eq(
+            as_str(&row["row_kind"], "row.row_kind")?,
+            "direct_link",
+            format!("row {row_id}: row_kind"),
+        )?;
+        ensure_eq(
+            as_str(&row["evidence_artifact"], "row.evidence_artifact")?,
+            "tests/conformance/crt_tls_atexit_direct_link_run_proof_fixtures.v1.json",
+            format!("row {row_id}: evidence_artifact"),
+        )?;
+        ensure_eq(
+            as_str(&row["field"], "row.field")?,
+            expected_field,
+            format!("row {row_id}: field"),
+        )?;
+        ensure_eq(
+            &row["expected_value"],
+            &expected_value,
+            format!("row {row_id}: expected_value"),
+        )?;
+    }
+    ensure(
+        expected_rows.is_empty(),
+        format!(
+            "missing CRT/TLS/atexit direct-link proof dashboard rows: {:?}",
+            expected_rows.keys().collect::<Vec<_>>()
+        ),
+    )
+}
+
+#[test]
 fn real_program_smoke_source_freshness_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
