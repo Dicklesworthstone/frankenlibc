@@ -1,0 +1,214 @@
+{
+  "schema_version": "runtime_math_required_module_gate.v1",
+  "generated_by_bead": "bd-0agsk.12",
+  "source_todo_ids": [
+    "TODO-0801",
+    "TODO-0802",
+    "TODO-0803",
+    "TODO-0804",
+    "TODO-0805"
+  ],
+  "canonical_command": "scripts/check_runtime_math_required_module_gate.sh --validate-only",
+  "purpose": "Reconcile AGENTS.md runtime_math requirements with the live runtime_math source tree, linkage ledger, classification matrix, production manifest, and prior gates without duplicating the already-closed linkage/classification artifacts.",
+  "input_artifacts": [
+    "AGENTS.md",
+    "docs/architecture_investigation_todo.md",
+    "tests/conformance/architecture_todo_reconciliation.v1.json",
+    "crates/frankenlibc-membrane/src/lib.rs",
+    "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+    "tests/runtime_math/runtime_math_linkage.v1.json",
+    "tests/runtime_math/runtime_math_classification_matrix.v1.json",
+    "tests/runtime_math/production_kernel_manifest.v1.json",
+    "tests/conformance/math_governance.json",
+    "tests/conformance/math_retirement_policy.json"
+  ],
+  "prior_gate_inventory": [
+    {
+      "gate_id": "runtime_math_linkage",
+      "bead": "bd-35a",
+      "artifact": "tests/runtime_math/runtime_math_linkage.v1.json",
+      "checker": "scripts/check_runtime_math_linkage.sh",
+      "covers": [
+        "mod_rs_pub_mod_to_linkage_row",
+        "required_linkage_fields",
+        "production_decision_targets"
+      ],
+      "current_gate_adds": [
+        "AGENTS mandatory-module stale-doc classification",
+        "cross-artifact module-set equality proof"
+      ],
+      "duplicates_current_gate": false
+    },
+    {
+      "gate_id": "runtime_math_classification_matrix",
+      "bead": "bd-2k6b",
+      "artifact": "tests/runtime_math/runtime_math_classification_matrix.v1.json",
+      "checker": "scripts/check_runtime_math_classification_matrix.sh",
+      "covers": [
+        "module classification rows",
+        "governance rationale refs",
+        "production/research manifest consistency"
+      ],
+      "current_gate_adds": [
+        "mandatory-doc reconciliation",
+        "mutation proof for missing, unlinked, and production-leaked modules"
+      ],
+      "duplicates_current_gate": false
+    },
+    {
+      "gate_id": "runtime_math_linkage_proofs",
+      "bead": "bd-7dw2",
+      "artifact": "target/conformance/runtime_math_linkage_proofs.report.json",
+      "checker": "scripts/check_runtime_math_linkage_proofs.sh",
+      "covers": [
+        "production module decision-law proof rows",
+        "structured proof logs"
+      ],
+      "current_gate_adds": [
+        "required-module source-of-truth join",
+        "stale-doc classification"
+      ],
+      "duplicates_current_gate": false
+    }
+  ],
+  "expected_current": {
+    "runtime_math_pub_mod_count": 69,
+    "runtime_math_rs_file_count": 70,
+    "auxiliary_runtime_math_source_count": 1,
+    "linkage_module_count": 69,
+    "classification_module_count": 69,
+    "governance_module_count": 69,
+    "production_manifest_modules": 25,
+    "research_only_manifest_modules": 44,
+    "classification_counts": {
+      "production_core": 12,
+      "production_monitor": 13,
+      "research": 44
+    },
+    "research_modules_currently_in_production_manifest": 0,
+    "docs_mandatory_rows": 14,
+    "docs_runtime_math_linked_rows": 12,
+    "docs_stale_external_rows": 2
+  },
+  "auxiliary_runtime_math_sources": [
+    {
+      "module": "grobner",
+      "source_path": "crates/frankenlibc-membrane/src/runtime_math/grobner.rs",
+      "linked_from": "crates/frankenlibc-membrane/src/lib.rs",
+      "classification": "crate_root_support_module",
+      "rationale": "Used by runtime_math/mod.rs through crate::grobner and intentionally not declared as a runtime_math pub mod."
+    }
+  ],
+  "docs_mandatory_module_audit": [
+    {
+      "module": "risk",
+      "doc_token": "| `risk.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/risk.rs"
+    },
+    {
+      "module": "bandit",
+      "doc_token": "| `bandit.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/bandit.rs"
+    },
+    {
+      "module": "control",
+      "doc_token": "| `control.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/control.rs"
+    },
+    {
+      "module": "barrier",
+      "doc_token": "| `barrier.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/barrier.rs"
+    },
+    {
+      "module": "cohomology",
+      "doc_token": "| `cohomology.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs"
+    },
+    {
+      "module": "pareto",
+      "doc_token": "| `pareto.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/pareto.rs"
+    },
+    {
+      "module": "design",
+      "doc_token": "| `design.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/design.rs"
+    },
+    {
+      "module": "sparse",
+      "doc_token": "| `sparse.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/sparse.rs"
+    },
+    {
+      "module": "fusion",
+      "doc_token": "| `fusion.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/fusion.rs"
+    },
+    {
+      "module": "equivariant",
+      "doc_token": "| `equivariant.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/equivariant.rs"
+    },
+    {
+      "module": "eprocess",
+      "doc_token": "| `eprocess.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs"
+    },
+    {
+      "module": "cvar",
+      "doc_token": "| `cvar.rs` |",
+      "classification": "runtime_math_linked",
+      "expected_source": "crates/frankenlibc-membrane/src/runtime_math/cvar.rs"
+    },
+    {
+      "module": "hji_reachability",
+      "doc_token": "| `hji_reachability.rs` |",
+      "classification": "documented_as_runtime_math_but_standalone",
+      "expected_source": "crates/frankenlibc-membrane/src/hji_reachability.rs",
+      "linked_from": "crates/frankenlibc-membrane/src/lib.rs",
+      "stale_doc_note": "AGENTS mandatory table names this as runtime_math, but the live module is a standalone membrane module."
+    },
+    {
+      "module": "mean_field_game",
+      "doc_token": "| `mean_field_game.rs` |",
+      "classification": "documented_as_runtime_math_but_standalone",
+      "expected_source": "crates/frankenlibc-membrane/src/mean_field_game.rs",
+      "linked_from": "crates/frankenlibc-membrane/src/lib.rs",
+      "stale_doc_note": "AGENTS mandatory table names this as runtime_math, but the live module is a standalone membrane module."
+    }
+  ],
+  "required_failure_signatures": [
+    "missing_module",
+    "unlinked_module",
+    "retired_module_leakage"
+  ],
+  "negative_tests": [
+    {
+      "id": "missing_module",
+      "mutation": "Remove a required pub mod declaration from runtime_math/mod.rs.",
+      "expected_failure_signature": "missing_module"
+    },
+    {
+      "id": "unlinked_module",
+      "mutation": "Remove a runtime_math module row from runtime_math_linkage.v1.json.",
+      "expected_failure_signature": "unlinked_module"
+    },
+    {
+      "id": "retired_module_leakage",
+      "mutation": "Add a research-classified module to production_kernel_manifest.production_modules.",
+      "expected_failure_signature": "retired_module_leakage"
+    }
+  ]
+}
