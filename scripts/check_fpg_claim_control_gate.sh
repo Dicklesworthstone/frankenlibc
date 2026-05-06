@@ -18,7 +18,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GATE="${ROOT}/tests/conformance/fpg_claim_control_gate.v1.json"
+GATE="${FRANKENLIBC_FPG_CLAIM_CONTROL_GATE:-${ROOT}/tests/conformance/fpg_claim_control_gate.v1.json}"
 LEDGER="${ROOT}/tests/conformance/feature_parity_gap_ledger.v1.json"
 PARITY="${ROOT}/FEATURE_PARITY.md"
 OWNER_GROUPS="${ROOT}/tests/conformance/feature_parity_gap_owner_family_groups.v1.md"
@@ -61,12 +61,13 @@ if ! python3 -c "import json,sys" >/dev/null 2>&1; then
   exit 2
 fi
 
-python3 - "${GATE}" "${LEDGER}" "${PARITY}" "${OWNER_GROUPS}" <<'PY'
+python3 - "${ROOT}" "${GATE}" "${LEDGER}" "${PARITY}" "${OWNER_GROUPS}" <<'PY'
 import json
+import subprocess
 import sys
 from pathlib import Path
 
-gate_path, ledger_path, parity_path, groups_path = (Path(p) for p in sys.argv[1:5])
+root, gate_path, ledger_path, parity_path, groups_path = (Path(p) for p in sys.argv[1:6])
 
 gate = json.loads(gate_path.read_text())
 ledger = json.loads(ledger_path.read_text())
@@ -74,6 +75,35 @@ parity = parity_path.read_text().splitlines()
 groups = groups_path.read_text()
 
 errors = []
+EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY = {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_claim_control_gate_evidence",
+    "claim_control_evidence_allowed_when_stale": False,
+    "rejected_evidence_kind": "stale_source_commit",
+}
+
+
+def is_hex_commit(value):
+    return isinstance(value, str) and len(value) == 40 and all(ch in "0123456789abcdef" for ch in value)
+
+
+def git_head():
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+    except Exception:
+        return None
+
+
+def source_commit_is_current(value):
+    head = git_head()
+    return value == "current" or (head is not None and is_hex_commit(value) and value == head)
 
 if gate.get("schema_version") != "v1":
     errors.append(f"gate schema_version != v1: {gate.get('schema_version')!r}")
@@ -83,8 +113,10 @@ if gate.get("owner_family_group") != "fpg-claim-control":
     errors.append("gate owner_family_group must be fpg-claim-control")
 if gate.get("evidence_owner") != "docs/conformance release-gate owners":
     errors.append("gate evidence_owner must match owner-family group")
-if not gate.get("source_commit"):
-    errors.append("gate source_commit must be set")
+if not source_commit_is_current(gate.get("source_commit")):
+    errors.append("gate source_commit must be 'current' or match current git HEAD")
+if gate.get("source_commit_freshness_policy") != EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY:
+    errors.append("source_commit_freshness_policy must match the stale claim-control gate block contract")
 
 required_inputs = [
     "feature_parity",

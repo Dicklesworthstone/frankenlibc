@@ -5,7 +5,14 @@
   "owner_family_group": "fpg-claim-control",
   "evidence_owner": "docs/conformance release-gate owners",
   "generated_utc": "2026-05-03T16:30:00Z",
-  "source_commit": "fc5838a3ca08c4d66c070bd39b0cbe18403b1691",
+  "source_commit": "current",
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_claim_control_gate_evidence",
+    "claim_control_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_source_commit"
+  },
   "purpose": "Fail-closed gate for the eight fpg-claim-control gaps drawn from tests/conformance/feature_parity_gap_ledger.v1.json. Every macro-coverage-target row in FEATURE_PARITY.md must remain bound to current machine evidence (support_matrix.json, replacement_levels.json, conformance_matrix.v1.json, hardened_repair_deny_matrix.v1.json, semantic_contract_inventory.v1.json, perf_baseline_spec.json, version_scripts/libc.map). Stale, missing, or contradictory evidence blocks claim advancement at any replacement level (L0/L1/L2/L3).",
   "inputs": {
     "feature_parity": "FEATURE_PARITY.md",
