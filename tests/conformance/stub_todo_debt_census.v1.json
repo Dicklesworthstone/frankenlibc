@@ -7,7 +7,7 @@
     "support_matrix_path": "support_matrix.json",
     "support_matrix_sha256": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d",
     "replacement_profile_path": "tests/conformance/replacement_profile.json",
-    "replacement_profile_sha256": "4a933d2583b39328cb6193242a79529ff236fe9635a8979e2c872feaae849480",
+    "replacement_profile_sha256": "aecd4fcea6af777009a9d6c8f9760f4a5bdc17cb496d70474c127c6b8753e02b",
     "scan_roots": [
       "crates/frankenlibc-core/src",
       "crates/frankenlibc-abi/src"
@@ -109,40 +109,16 @@
       "unistd_abi",
       "wchar_abi"
     ],
-    "declared_callthrough_family_modules": [
-      "dirent_abi",
-      "glibc_internal_abi",
-      "io_internal_abi",
-      "pthread_abi",
-      "rpc_abi",
-      "signal_abi",
-      "stdio_abi",
-      "stdlib_abi",
-      "string_abi",
-      "unistd_abi",
-      "wchar_abi"
-    ],
+    "declared_callthrough_family_modules": [],
     "actual_callthrough_modules": [],
-    "declared_but_not_actual_callthrough_modules": [
-      "dirent_abi",
-      "glibc_internal_abi",
-      "io_internal_abi",
-      "pthread_abi",
-      "rpc_abi",
-      "signal_abi",
-      "stdio_abi",
-      "stdlib_abi",
-      "string_abi",
-      "unistd_abi",
-      "wchar_abi"
-    ],
+    "declared_but_not_actual_callthrough_modules": [],
     "actual_but_not_declared_callthrough_modules": [],
     "exported_replacement_blockers": [],
     "exported_interpose_unapproved_callthroughs": [],
     "summary": {
       "replacement_blocker_count": 0,
       "interpose_unapproved_callthrough_count": 0,
-      "claim_alignment_ok": false
+      "claim_alignment_ok": true
     }
   },
   "critical_source_debt": {
