@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.1",
-  "generated_at_utc": "2026-05-05T06:51:40Z",
-  "source_commit": "b00442e1",
+  "generated_at_utc": "2026-05-07T12:35:01Z",
+  "source_commit": "fead0378",
   "purpose": "Inventory current benchmark coverage for ported hot paths and membrane gates before optimization work advances.",
   "inputs": {
     "support_matrix": "support_matrix.json",
@@ -22,7 +22,7 @@
     "support_matrix": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d",
     "user_workload_acceptance_matrix": "e1522428db6fb6f63c2a51cab24ec930cdcd52e8efdbe128794600d5e0336910",
     "workload_matrix": "bd7a6bb698667ce9dc9a502ff18e1c99527e26742c990ebe1c7718afebe7ec0e",
-    "bench_targets": "a3562915746b5a6ee9584916f1f43ef67bb8dac5917b6fbc612605e22cbf6da2"
+    "bench_targets": "d832010468b05f8d9053b80afd9d7d722a53f04e95a8d53febcf3e4d7906903a"
   },
   "required_log_fields": [
     "trace_id",
@@ -66,9 +66,9 @@
   "summary": {
     "family_count": 7,
     "required_family_count": 6,
-    "actual_bench_target_count": 14,
+    "actual_bench_target_count": 15,
     "mapped_bench_target_count": 9,
-    "unmapped_bench_target_count": 5,
+    "unmapped_bench_target_count": 6,
     "hot_symbol_count_in_scope": 384,
     "inventory_row_count": 794,
     "covered_inventory_row_count": 44,
@@ -49742,6 +49742,14 @@
       "mentions_strict_or_hardened": true
     },
     {
+      "bench": "resolv_parsers_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/resolv_parsers_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 6,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": true
+    },
+    {
       "bench": "runtime_math_bench",
       "bench_file": "crates/frankenlibc-bench/benches/runtime_math_bench.rs",
       "exists": true,
@@ -49779,7 +49787,8 @@
     "elimination_bench",
     "errno_bench",
     "glibc_baseline_bench",
-    "metadata_read_bench"
+    "metadata_read_bench",
+    "resolv_parsers_bench"
   ],
   "closure_evidence": {
     "generator": "scripts/generate_benchmark_coverage_inventory.py",
@@ -49788,5 +49797,5 @@
     "target_report": "target/conformance/benchmark_coverage_inventory.report.json",
     "target_log": "target/conformance/benchmark_coverage_inventory.log.jsonl"
   },
-  "artifact_hash": "3a4d6956eb290b14b94f84f05bf24b9050a6963a62960660a225131c8957b1b6"
+  "artifact_hash": "122573a972892ae6407e85f567767b160668ef09f60b0d5e8f39805fa688abca"
 }

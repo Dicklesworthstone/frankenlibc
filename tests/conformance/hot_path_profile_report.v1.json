@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.3",
-  "generated_at_utc": "2026-05-03T01:35:12Z",
-  "source_commit": "46bf3d86",
+  "generated_at_utc": "2026-05-07T12:40:19Z",
+  "source_commit": "fead0378",
   "purpose": "Rank the next optimization targets from measured hot-path profiles, host raw baselines, and missing profile slots.",
   "inputs": {
     "benchmark_coverage_inventory": "tests/conformance/benchmark_coverage_inventory.v1.json",
@@ -14,11 +14,11 @@
     "optimization_proof_ledger": "tests/conformance/optimization_proof_ledger.v1.json"
   },
   "input_digests": {
-    "benchmark_coverage_inventory": "9fec80e4d5feaa9498f56b1783266ce1bcd1d81c1761cab12c6ba938b575003c",
+    "benchmark_coverage_inventory": "5842f0119775de44ffff1f39d09d69941c305b9676bd80f5ef165f7f34048918",
     "membrane_overhead_baseline": "4e329a3426be0161ef2c58d327ebf617bbe52d72a644f1ebc90f0a896bb7efaa",
     "optimization_proof_ledger": "c172cb77dbe09508f65afd1597e3aa7763ccf79af69cf53b4e8d822fec9a807b",
-    "perf_baseline": "de30f6581a07d7fae442fd4da0b0f544a19469ea125856de36731557f36c3d84",
-    "perf_baseline_spec": "ed52f31fa086ff64d03ff2125a687f9e854e0d8470353d964f3756dd08333ee7",
+    "perf_baseline": "2e5d1aaaf442a4a6380a8c8ef851ff340974f71210b4041b8399021a308af28d",
+    "perf_baseline_spec": "6a7fced48f32a9c9ee38a5a8654f408c1a56a034bac6e5fc484d98c39b2af6b3",
     "profile_pipeline": "1f6a3dda0d7fb2569477f2a4dfea8a1c2f28c1e0d6ec2256e3e1beb656df85dd",
     "symbol_latency_baseline": "90b5c85925dad27d69b0f2b49c4651dfa725c80c758f85ef7208c1e5fe062c67"
   },
@@ -221,12 +221,8 @@
     {
       "title": "Capture and optimize missing strict/hardened string and malloc profile slots",
       "seed_profiles": [
-        "malloc:hardened:free:missing",
-        "malloc:strict:free:missing",
-        "malloc:hardened:malloc:missing",
-        "malloc:strict:malloc:missing",
-        "malloc:hardened:realloc:missing",
-        "malloc:strict:realloc:missing"
+        "malloc:hardened:aligned_alloc:missing",
+        "string:hardened:argz_count:missing"
       ]
     },
     {
@@ -1929,334 +1925,6 @@
       }
     },
     {
-      "profile_id": "malloc:hardened:free:missing",
-      "workload_or_microbenchmark": "malloc/alloc_free_cycle",
-      "api_family": "malloc",
-      "symbol": "free",
-      "runtime_mode": "hardened",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
-      "sample_count": 0,
-      "hotness_score": 224.0,
-      "baseline_artifact": {
-        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "benchmark_id": "malloc/alloc_free_cycle",
-        "runtime_mode": "hardened",
-        "present": false,
-        "missing_benchmark_reason": "missing_p50_baseline"
-      },
-      "parity_proof_refs": [
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json"
-      ],
-      "host_baseline": {
-        "available": false,
-        "kind": "not_applicable",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "comparison_ratio_p50": null,
-        "source": null,
-        "limit": "host comparison is blocked until the profile/baseline slot is captured"
-      },
-      "coverage_state": "missing_profile",
-      "artifact_refs": [
-        "crates/frankenlibc-bench/benches",
-        "scripts/perf_baseline.json",
-        "scripts/profile_pipeline.sh",
-        "support_matrix.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/ld_preload_smoke_summary.v1.json",
-        "tests/conformance/perf_baseline_spec.json",
-        "tests/conformance/workload_matrix.json"
-      ],
-      "failure_signature": "missing_p50_baseline:malloc:free:hardened",
-      "rank_inputs": {
-        "missing_benchmark_reason": "missing_p50_baseline",
-        "user_workload_exposure": {
-          "workload_count": 10,
-          "critical_symbol_workload_count": 3,
-          "user_workload_count": 6,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-001",
-            "wl-002",
-            "wl-003",
-            "wl-004",
-            "wl-005",
-            "wl-006",
-            "wl-007",
-            "wl-008"
-          ],
-          "user_workload_ids": [
-            "uwm-build-toolchain",
-            "uwm-language-runtime",
-            "uwm-package-manager",
-            "uwm-threaded-service",
-            "uwm-allocator-stress",
-            "uwm-performance-hotpaths"
-          ],
-          "artifact_refs": [
-            "tests/conformance/workload_matrix.json",
-            "tests/conformance/user_workload_acceptance_matrix.v1.json"
-          ]
-        }
-      }
-    },
-    {
-      "profile_id": "malloc:strict:free:missing",
-      "workload_or_microbenchmark": "malloc/alloc_free_cycle",
-      "api_family": "malloc",
-      "symbol": "free",
-      "runtime_mode": "strict",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
-      "sample_count": 0,
-      "hotness_score": 224.0,
-      "baseline_artifact": {
-        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "benchmark_id": "malloc/alloc_free_cycle",
-        "runtime_mode": "strict",
-        "present": false,
-        "missing_benchmark_reason": "missing_p50_baseline"
-      },
-      "parity_proof_refs": [
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json"
-      ],
-      "host_baseline": {
-        "available": false,
-        "kind": "not_applicable",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "comparison_ratio_p50": null,
-        "source": null,
-        "limit": "host comparison is blocked until the profile/baseline slot is captured"
-      },
-      "coverage_state": "missing_profile",
-      "artifact_refs": [
-        "crates/frankenlibc-bench/benches",
-        "scripts/perf_baseline.json",
-        "scripts/profile_pipeline.sh",
-        "support_matrix.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/ld_preload_smoke_summary.v1.json",
-        "tests/conformance/perf_baseline_spec.json",
-        "tests/conformance/workload_matrix.json"
-      ],
-      "failure_signature": "missing_p50_baseline:malloc:free:strict",
-      "rank_inputs": {
-        "missing_benchmark_reason": "missing_p50_baseline",
-        "user_workload_exposure": {
-          "workload_count": 10,
-          "critical_symbol_workload_count": 3,
-          "user_workload_count": 6,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-001",
-            "wl-002",
-            "wl-003",
-            "wl-004",
-            "wl-005",
-            "wl-006",
-            "wl-007",
-            "wl-008"
-          ],
-          "user_workload_ids": [
-            "uwm-build-toolchain",
-            "uwm-language-runtime",
-            "uwm-package-manager",
-            "uwm-threaded-service",
-            "uwm-allocator-stress",
-            "uwm-performance-hotpaths"
-          ],
-          "artifact_refs": [
-            "tests/conformance/workload_matrix.json",
-            "tests/conformance/user_workload_acceptance_matrix.v1.json"
-          ]
-        }
-      }
-    },
-    {
-      "profile_id": "malloc:hardened:malloc:missing",
-      "workload_or_microbenchmark": "malloc/alloc_free_cycle",
-      "api_family": "malloc",
-      "symbol": "malloc",
-      "runtime_mode": "hardened",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
-      "sample_count": 0,
-      "hotness_score": 224.0,
-      "baseline_artifact": {
-        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "benchmark_id": "malloc/alloc_free_cycle",
-        "runtime_mode": "hardened",
-        "present": false,
-        "missing_benchmark_reason": "missing_p50_baseline"
-      },
-      "parity_proof_refs": [
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json"
-      ],
-      "host_baseline": {
-        "available": false,
-        "kind": "not_applicable",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "comparison_ratio_p50": null,
-        "source": null,
-        "limit": "host comparison is blocked until the profile/baseline slot is captured"
-      },
-      "coverage_state": "missing_profile",
-      "artifact_refs": [
-        "crates/frankenlibc-bench/benches",
-        "scripts/perf_baseline.json",
-        "scripts/profile_pipeline.sh",
-        "support_matrix.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/ld_preload_smoke_summary.v1.json",
-        "tests/conformance/perf_baseline_spec.json",
-        "tests/conformance/workload_matrix.json"
-      ],
-      "failure_signature": "missing_p50_baseline:malloc:malloc:hardened",
-      "rank_inputs": {
-        "missing_benchmark_reason": "missing_p50_baseline",
-        "user_workload_exposure": {
-          "workload_count": 10,
-          "critical_symbol_workload_count": 3,
-          "user_workload_count": 6,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-001",
-            "wl-002",
-            "wl-003",
-            "wl-004",
-            "wl-005",
-            "wl-006",
-            "wl-007",
-            "wl-008"
-          ],
-          "user_workload_ids": [
-            "uwm-build-toolchain",
-            "uwm-language-runtime",
-            "uwm-package-manager",
-            "uwm-threaded-service",
-            "uwm-allocator-stress",
-            "uwm-performance-hotpaths"
-          ],
-          "artifact_refs": [
-            "tests/conformance/workload_matrix.json",
-            "tests/conformance/user_workload_acceptance_matrix.v1.json"
-          ]
-        }
-      }
-    },
-    {
-      "profile_id": "malloc:strict:malloc:missing",
-      "workload_or_microbenchmark": "malloc/alloc_free_cycle",
-      "api_family": "malloc",
-      "symbol": "malloc",
-      "runtime_mode": "strict",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
-      "sample_count": 0,
-      "hotness_score": 224.0,
-      "baseline_artifact": {
-        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "benchmark_id": "malloc/alloc_free_cycle",
-        "runtime_mode": "strict",
-        "present": false,
-        "missing_benchmark_reason": "missing_p50_baseline"
-      },
-      "parity_proof_refs": [
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json"
-      ],
-      "host_baseline": {
-        "available": false,
-        "kind": "not_applicable",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "comparison_ratio_p50": null,
-        "source": null,
-        "limit": "host comparison is blocked until the profile/baseline slot is captured"
-      },
-      "coverage_state": "missing_profile",
-      "artifact_refs": [
-        "crates/frankenlibc-bench/benches",
-        "scripts/perf_baseline.json",
-        "scripts/profile_pipeline.sh",
-        "support_matrix.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/ld_preload_smoke_summary.v1.json",
-        "tests/conformance/perf_baseline_spec.json",
-        "tests/conformance/workload_matrix.json"
-      ],
-      "failure_signature": "missing_p50_baseline:malloc:malloc:strict",
-      "rank_inputs": {
-        "missing_benchmark_reason": "missing_p50_baseline",
-        "user_workload_exposure": {
-          "workload_count": 10,
-          "critical_symbol_workload_count": 3,
-          "user_workload_count": 6,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-001",
-            "wl-002",
-            "wl-003",
-            "wl-004",
-            "wl-005",
-            "wl-006",
-            "wl-007",
-            "wl-008"
-          ],
-          "user_workload_ids": [
-            "uwm-build-toolchain",
-            "uwm-language-runtime",
-            "uwm-package-manager",
-            "uwm-threaded-service",
-            "uwm-allocator-stress",
-            "uwm-performance-hotpaths"
-          ],
-          "artifact_refs": [
-            "tests/conformance/workload_matrix.json",
-            "tests/conformance/user_workload_acceptance_matrix.v1.json"
-          ]
-        }
-      }
-    },
-    {
       "profile_id": "pthread:hardened:pthread_cond_destroy",
       "workload_or_microbenchmark": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
       "api_family": "pthread",
@@ -3007,170 +2675,6 @@
         "capture_priority_score": 70,
         "perf_class": "coldpath",
         "fixture_covered": true
-      }
-    },
-    {
-      "profile_id": "malloc:hardened:realloc:missing",
-      "workload_or_microbenchmark": "malloc/alloc_burst",
-      "api_family": "malloc",
-      "symbol": "realloc",
-      "runtime_mode": "hardened",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
-      "sample_count": 0,
-      "hotness_score": 192.0,
-      "baseline_artifact": {
-        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "benchmark_id": "malloc/alloc_burst",
-        "runtime_mode": "hardened",
-        "present": false,
-        "missing_benchmark_reason": "missing_p50_baseline"
-      },
-      "parity_proof_refs": [
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json"
-      ],
-      "host_baseline": {
-        "available": false,
-        "kind": "not_applicable",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "comparison_ratio_p50": null,
-        "source": null,
-        "limit": "host comparison is blocked until the profile/baseline slot is captured"
-      },
-      "coverage_state": "missing_profile",
-      "artifact_refs": [
-        "crates/frankenlibc-bench/benches",
-        "scripts/perf_baseline.json",
-        "scripts/profile_pipeline.sh",
-        "support_matrix.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/ld_preload_smoke_summary.v1.json",
-        "tests/conformance/perf_baseline_spec.json",
-        "tests/conformance/workload_matrix.json"
-      ],
-      "failure_signature": "missing_p50_baseline:malloc:realloc:hardened",
-      "rank_inputs": {
-        "missing_benchmark_reason": "missing_p50_baseline",
-        "user_workload_exposure": {
-          "workload_count": 10,
-          "critical_symbol_workload_count": 1,
-          "user_workload_count": 6,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-001",
-            "wl-002",
-            "wl-003",
-            "wl-004",
-            "wl-005",
-            "wl-006",
-            "wl-007",
-            "wl-008"
-          ],
-          "user_workload_ids": [
-            "uwm-build-toolchain",
-            "uwm-language-runtime",
-            "uwm-package-manager",
-            "uwm-threaded-service",
-            "uwm-allocator-stress",
-            "uwm-performance-hotpaths"
-          ],
-          "artifact_refs": [
-            "tests/conformance/workload_matrix.json",
-            "tests/conformance/user_workload_acceptance_matrix.v1.json"
-          ]
-        }
-      }
-    },
-    {
-      "profile_id": "malloc:strict:realloc:missing",
-      "workload_or_microbenchmark": "malloc/alloc_burst",
-      "api_family": "malloc",
-      "symbol": "realloc",
-      "runtime_mode": "strict",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
-      "sample_count": 0,
-      "hotness_score": 192.0,
-      "baseline_artifact": {
-        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "benchmark_id": "malloc/alloc_burst",
-        "runtime_mode": "strict",
-        "present": false,
-        "missing_benchmark_reason": "missing_p50_baseline"
-      },
-      "parity_proof_refs": [
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json"
-      ],
-      "host_baseline": {
-        "available": false,
-        "kind": "not_applicable",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "comparison_ratio_p50": null,
-        "source": null,
-        "limit": "host comparison is blocked until the profile/baseline slot is captured"
-      },
-      "coverage_state": "missing_profile",
-      "artifact_refs": [
-        "crates/frankenlibc-bench/benches",
-        "scripts/perf_baseline.json",
-        "scripts/profile_pipeline.sh",
-        "support_matrix.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "tests/conformance/c_fixture_spec.json",
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/ld_preload_smoke_summary.v1.json",
-        "tests/conformance/perf_baseline_spec.json",
-        "tests/conformance/workload_matrix.json"
-      ],
-      "failure_signature": "missing_p50_baseline:malloc:realloc:strict",
-      "rank_inputs": {
-        "missing_benchmark_reason": "missing_p50_baseline",
-        "user_workload_exposure": {
-          "workload_count": 10,
-          "critical_symbol_workload_count": 1,
-          "user_workload_count": 6,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-001",
-            "wl-002",
-            "wl-003",
-            "wl-004",
-            "wl-005",
-            "wl-006",
-            "wl-007",
-            "wl-008"
-          ],
-          "user_workload_ids": [
-            "uwm-build-toolchain",
-            "uwm-language-runtime",
-            "uwm-package-manager",
-            "uwm-threaded-service",
-            "uwm-allocator-stress",
-            "uwm-performance-hotpaths"
-          ],
-          "artifact_refs": [
-            "tests/conformance/workload_matrix.json",
-            "tests/conformance/user_workload_acceptance_matrix.v1.json"
-          ]
-        }
       }
     },
     {
@@ -6174,6 +5678,466 @@
       }
     },
     {
+      "profile_id": "syscall:hardened:endmntent:missing",
+      "workload_or_microbenchmark": "syscall/<missing-benchmark-target>",
+      "api_family": "syscall",
+      "symbol": "endmntent",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1-native-rust",
+      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
+      "sample_count": 0,
+      "hotness_score": 190.0,
+      "baseline_artifact": {
+        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "benchmark_id": "syscall/<missing-benchmark-target>",
+        "runtime_mode": "hardened",
+        "present": false,
+        "missing_benchmark_reason": "missing_benchmark_target"
+      },
+      "parity_proof_refs": [
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "host_baseline": {
+        "available": false,
+        "kind": "not_applicable",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "comparison_ratio_p50": null,
+        "source": null,
+        "limit": "host comparison is blocked until the profile/baseline slot is captured"
+      },
+      "coverage_state": "missing_profile",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "scripts/profile_pipeline.sh",
+        "support_matrix.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_benchmark_target:syscall:endmntent:hardened",
+      "rank_inputs": {
+        "missing_benchmark_reason": "missing_benchmark_target",
+        "user_workload_exposure": {
+          "workload_count": 10,
+          "critical_symbol_workload_count": 0,
+          "user_workload_count": 0,
+          "top_priority_impacts": [
+            "critical",
+            "high",
+            "medium"
+          ],
+          "workload_ids": [
+            "wl-001",
+            "wl-002",
+            "wl-003",
+            "wl-004",
+            "wl-005",
+            "wl-006",
+            "wl-007",
+            "wl-008"
+          ],
+          "user_workload_ids": [],
+          "artifact_refs": [
+            "tests/conformance/workload_matrix.json",
+            "tests/conformance/user_workload_acceptance_matrix.v1.json"
+          ]
+        }
+      }
+    },
+    {
+      "profile_id": "syscall:strict:endmntent:missing",
+      "workload_or_microbenchmark": "syscall/<missing-benchmark-target>",
+      "api_family": "syscall",
+      "symbol": "endmntent",
+      "runtime_mode": "strict",
+      "replacement_level": "L1-native-rust",
+      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
+      "sample_count": 0,
+      "hotness_score": 190.0,
+      "baseline_artifact": {
+        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "benchmark_id": "syscall/<missing-benchmark-target>",
+        "runtime_mode": "strict",
+        "present": false,
+        "missing_benchmark_reason": "missing_benchmark_target"
+      },
+      "parity_proof_refs": [
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "host_baseline": {
+        "available": false,
+        "kind": "not_applicable",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "comparison_ratio_p50": null,
+        "source": null,
+        "limit": "host comparison is blocked until the profile/baseline slot is captured"
+      },
+      "coverage_state": "missing_profile",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "scripts/profile_pipeline.sh",
+        "support_matrix.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_benchmark_target:syscall:endmntent:strict",
+      "rank_inputs": {
+        "missing_benchmark_reason": "missing_benchmark_target",
+        "user_workload_exposure": {
+          "workload_count": 10,
+          "critical_symbol_workload_count": 0,
+          "user_workload_count": 0,
+          "top_priority_impacts": [
+            "critical",
+            "high",
+            "medium"
+          ],
+          "workload_ids": [
+            "wl-001",
+            "wl-002",
+            "wl-003",
+            "wl-004",
+            "wl-005",
+            "wl-006",
+            "wl-007",
+            "wl-008"
+          ],
+          "user_workload_ids": [],
+          "artifact_refs": [
+            "tests/conformance/workload_matrix.json",
+            "tests/conformance/user_workload_acceptance_matrix.v1.json"
+          ]
+        }
+      }
+    },
+    {
+      "profile_id": "syscall:hardened:endutent:missing",
+      "workload_or_microbenchmark": "syscall/<missing-benchmark-target>",
+      "api_family": "syscall",
+      "symbol": "endutent",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1-native-rust",
+      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
+      "sample_count": 0,
+      "hotness_score": 190.0,
+      "baseline_artifact": {
+        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "benchmark_id": "syscall/<missing-benchmark-target>",
+        "runtime_mode": "hardened",
+        "present": false,
+        "missing_benchmark_reason": "missing_benchmark_target"
+      },
+      "parity_proof_refs": [
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "host_baseline": {
+        "available": false,
+        "kind": "not_applicable",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "comparison_ratio_p50": null,
+        "source": null,
+        "limit": "host comparison is blocked until the profile/baseline slot is captured"
+      },
+      "coverage_state": "missing_profile",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "scripts/profile_pipeline.sh",
+        "support_matrix.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_benchmark_target:syscall:endutent:hardened",
+      "rank_inputs": {
+        "missing_benchmark_reason": "missing_benchmark_target",
+        "user_workload_exposure": {
+          "workload_count": 10,
+          "critical_symbol_workload_count": 0,
+          "user_workload_count": 0,
+          "top_priority_impacts": [
+            "critical",
+            "high",
+            "medium"
+          ],
+          "workload_ids": [
+            "wl-001",
+            "wl-002",
+            "wl-003",
+            "wl-004",
+            "wl-005",
+            "wl-006",
+            "wl-007",
+            "wl-008"
+          ],
+          "user_workload_ids": [],
+          "artifact_refs": [
+            "tests/conformance/workload_matrix.json",
+            "tests/conformance/user_workload_acceptance_matrix.v1.json"
+          ]
+        }
+      }
+    },
+    {
+      "profile_id": "syscall:strict:endutent:missing",
+      "workload_or_microbenchmark": "syscall/<missing-benchmark-target>",
+      "api_family": "syscall",
+      "symbol": "endutent",
+      "runtime_mode": "strict",
+      "replacement_level": "L1-native-rust",
+      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
+      "sample_count": 0,
+      "hotness_score": 190.0,
+      "baseline_artifact": {
+        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "benchmark_id": "syscall/<missing-benchmark-target>",
+        "runtime_mode": "strict",
+        "present": false,
+        "missing_benchmark_reason": "missing_benchmark_target"
+      },
+      "parity_proof_refs": [
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "host_baseline": {
+        "available": false,
+        "kind": "not_applicable",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "comparison_ratio_p50": null,
+        "source": null,
+        "limit": "host comparison is blocked until the profile/baseline slot is captured"
+      },
+      "coverage_state": "missing_profile",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "scripts/profile_pipeline.sh",
+        "support_matrix.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_benchmark_target:syscall:endutent:strict",
+      "rank_inputs": {
+        "missing_benchmark_reason": "missing_benchmark_target",
+        "user_workload_exposure": {
+          "workload_count": 10,
+          "critical_symbol_workload_count": 0,
+          "user_workload_count": 0,
+          "top_priority_impacts": [
+            "critical",
+            "high",
+            "medium"
+          ],
+          "workload_ids": [
+            "wl-001",
+            "wl-002",
+            "wl-003",
+            "wl-004",
+            "wl-005",
+            "wl-006",
+            "wl-007",
+            "wl-008"
+          ],
+          "user_workload_ids": [],
+          "artifact_refs": [
+            "tests/conformance/workload_matrix.json",
+            "tests/conformance/user_workload_acceptance_matrix.v1.json"
+          ]
+        }
+      }
+    },
+    {
+      "profile_id": "malloc:hardened:aligned_alloc:missing",
+      "workload_or_microbenchmark": "malloc/<missing-symbol-specific-benchmark>",
+      "api_family": "malloc",
+      "symbol": "aligned_alloc",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1-native-rust",
+      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
+      "sample_count": 0,
+      "hotness_score": 184.0,
+      "baseline_artifact": {
+        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "benchmark_id": "malloc/<missing-symbol-specific-benchmark>",
+        "runtime_mode": "hardened",
+        "present": false,
+        "missing_benchmark_reason": "missing_symbol_specific_benchmark"
+      },
+      "parity_proof_refs": [
+        "tests/conformance/fixtures/allocator.json",
+        "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json"
+      ],
+      "host_baseline": {
+        "available": false,
+        "kind": "not_applicable",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "comparison_ratio_p50": null,
+        "source": null,
+        "limit": "host comparison is blocked until the profile/baseline slot is captured"
+      },
+      "coverage_state": "missing_profile",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "scripts/profile_pipeline.sh",
+        "support_matrix.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/fixtures/allocator.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_symbol_specific_benchmark:malloc:aligned_alloc:hardened",
+      "rank_inputs": {
+        "missing_benchmark_reason": "missing_symbol_specific_benchmark",
+        "user_workload_exposure": {
+          "workload_count": 10,
+          "critical_symbol_workload_count": 0,
+          "user_workload_count": 6,
+          "top_priority_impacts": [
+            "critical",
+            "high",
+            "medium"
+          ],
+          "workload_ids": [
+            "wl-001",
+            "wl-002",
+            "wl-003",
+            "wl-004",
+            "wl-005",
+            "wl-006",
+            "wl-007",
+            "wl-008"
+          ],
+          "user_workload_ids": [
+            "uwm-build-toolchain",
+            "uwm-language-runtime",
+            "uwm-package-manager",
+            "uwm-threaded-service",
+            "uwm-allocator-stress",
+            "uwm-performance-hotpaths"
+          ],
+          "artifact_refs": [
+            "tests/conformance/workload_matrix.json",
+            "tests/conformance/user_workload_acceptance_matrix.v1.json"
+          ]
+        }
+      }
+    },
+    {
+      "profile_id": "string:hardened:argz_count:missing",
+      "workload_or_microbenchmark": "string/<missing-symbol-specific-benchmark>",
+      "api_family": "string",
+      "symbol": "argz_count",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1-native-rust",
+      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
+      "sample_count": 0,
+      "hotness_score": 169.0,
+      "baseline_artifact": {
+        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "benchmark_id": "string/<missing-symbol-specific-benchmark>",
+        "runtime_mode": "hardened",
+        "present": false,
+        "missing_benchmark_reason": "missing_symbol_specific_benchmark"
+      },
+      "parity_proof_refs": [
+        "tests/conformance/fixtures/string_memory_full.json",
+        "tests/conformance/fixtures/string_ops.json",
+        "tests/conformance/symbol_latency_baseline.v1.json"
+      ],
+      "host_baseline": {
+        "available": false,
+        "kind": "not_applicable",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "comparison_ratio_p50": null,
+        "source": null,
+        "limit": "host comparison is blocked until the profile/baseline slot is captured"
+      },
+      "coverage_state": "missing_profile",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "scripts/profile_pipeline.sh",
+        "support_matrix.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/fixtures/string_memory_full.json",
+        "tests/conformance/fixtures/string_ops.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/symbol_latency_baseline.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_symbol_specific_benchmark:string:argz_count:hardened",
+      "rank_inputs": {
+        "missing_benchmark_reason": "missing_symbol_specific_benchmark",
+        "user_workload_exposure": {
+          "workload_count": 10,
+          "critical_symbol_workload_count": 0,
+          "user_workload_count": 1,
+          "top_priority_impacts": [
+            "critical",
+            "high",
+            "medium"
+          ],
+          "workload_ids": [
+            "wl-001",
+            "wl-002",
+            "wl-003",
+            "wl-004",
+            "wl-005",
+            "wl-006",
+            "wl-007",
+            "wl-008"
+          ],
+          "user_workload_ids": [
+            "uwm-performance-hotpaths"
+          ],
+          "artifact_refs": [
+            "tests/conformance/workload_matrix.json",
+            "tests/conformance/user_workload_acceptance_matrix.v1.json"
+          ]
+        }
+      }
+    },
+    {
       "profile_id": "membrane:hardened:stage_bloom_hit",
       "workload_or_microbenchmark": "membrane.stage_bloom_hit.hardened",
       "api_family": "membrane",
@@ -6793,5 +6757,5 @@
     "target_report": "target/conformance/hot_path_profile_report.report.json",
     "target_log": "target/conformance/hot_path_profile_report.log.jsonl"
   },
-  "artifact_hash": "a3290e68697b084d73d694af98636d236ce9117e7c76d7705eb8ecdc9340ff15"
+  "artifact_hash": "d6fb0a0cdfb621b7afc1c0d851e1e35f5c794d7725c4baf2b78bd0853abbc45b"
 }

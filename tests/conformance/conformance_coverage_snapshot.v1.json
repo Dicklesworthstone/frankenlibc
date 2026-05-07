@@ -1,14 +1,14 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-05-01T03:37:44Z",
+  "generated_at": "2026-05-07T12:38:05Z",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 389,
-    "coverage_pct": 9,
-    "total_fixture_files": 57,
-    "total_fixture_cases": 1264,
-    "total_families": 47
+    "symbols_with_fixtures": 403,
+    "coverage_pct": 10,
+    "total_fixture_files": 58,
+    "total_fixture_cases": 1283,
+    "total_families": 48
   },
   "module_coverage": {
     "c11threads_abi": {
@@ -188,8 +188,8 @@
     },
     "string_abi": {
       "total": 146,
-      "covered": 25,
-      "pct": 17
+      "covered": 37,
+      "pct": 25
     },
     "termios_abi": {
       "total": 10,
@@ -203,7 +203,7 @@
     },
     "unistd_abi": {
       "total": 742,
-      "covered": 31,
+      "covered": 33,
       "pct": 4
     },
     "wchar_abi": {
@@ -448,6 +448,13 @@
         "memcpy",
         "memmove",
         "memset"
+      ]
+    },
+    "mntent": {
+      "function_count": 2,
+      "functions": [
+        "getmntent_r",
+        "hasmntopt"
       ]
     },
     "poll": {
@@ -759,8 +766,20 @@
       ]
     },
     "string": {
-      "function_count": 17,
+      "function_count": 29,
       "functions": [
+        "__memcmpeq",
+        "__mempcpy",
+        "__rawmemchr",
+        "__stpcpy",
+        "__stpcpy_small",
+        "__stpncpy",
+        "__strcasecmp",
+        "__strcasecmp_l",
+        "__strcasestr",
+        "__strcoll_l",
+        "__strcpy_small",
+        "__strcspn_c1",
         "memchr",
         "memcmp",
         "memmove",
@@ -1195,6 +1214,18 @@
       ],
       "families": [
         "memory"
+      ]
+    },
+    "mntent_ops": {
+      "file": "mntent_ops.json",
+      "sha256": "03e449ee6c8407c77d1faad27f71834ad515d6562cd5ca6db52aa3aca842990f",
+      "case_count": 6,
+      "functions": [
+        "getmntent_r",
+        "hasmntopt"
+      ],
+      "families": [
+        "mntent"
       ]
     },
     "poll_ops": {
@@ -1694,9 +1725,21 @@
     },
     "string_ops": {
       "file": "string_ops.json",
-      "sha256": "ae58127cda0a41e1d4693bef3c09a919fb5d9ea1d53830fda94e78423d44e559",
-      "case_count": 19,
+      "sha256": "27cc53f44e4d83352210d2e7b305cfff2729276ce31e31b03e24116f831b2f89",
+      "case_count": 32,
       "functions": [
+        "__memcmpeq",
+        "__mempcpy",
+        "__rawmemchr",
+        "__stpcpy",
+        "__stpcpy_small",
+        "__stpncpy",
+        "__strcasecmp",
+        "__strcasecmp_l",
+        "__strcasestr",
+        "__strcoll_l",
+        "__strcpy_small",
+        "__strcspn_c1",
         "memchr",
         "memcmp",
         "memmove",

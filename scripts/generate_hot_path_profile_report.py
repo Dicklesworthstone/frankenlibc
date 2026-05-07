@@ -25,6 +25,7 @@ BEAD_ID = "bd-bp8fl.8.3"
 SCHEMA_VERSION = "v1"
 PROFILE_REPORT_PATH = "tests/conformance/hot_path_profile_report.v1.json"
 REQUIRED_MODES = ("strict", "hardened")
+REQUIRED_PROFILE_FAMILIES = ("membrane", "string", "malloc", "pthread", "syscall")
 MAX_GAP_RECORDS = 50
 TOP_LOG_RECORDS = 25
 
@@ -561,6 +562,51 @@ def gap_profile_record(root: Path, row: dict[str, object]) -> dict[str, object]:
     }
 
 
+def gap_candidate_sort_key(row: dict[str, object]) -> tuple[float, str, str, str]:
+    return (
+        -gap_hotness(row),
+        str(row.get("api_family", "")),
+        str(row.get("symbol", "")),
+        str(row.get("runtime_mode", "")),
+    )
+
+
+def gap_candidate_identity(row: dict[str, object]) -> tuple[str, str, str]:
+    return (
+        str(row.get("api_family", "")),
+        str(row.get("symbol", "")),
+        str(row.get("runtime_mode", "")),
+    )
+
+
+def select_gap_candidates(candidates: list[dict[str, object]]) -> list[dict[str, object]]:
+    ordered = sorted(candidates, key=gap_candidate_sort_key)
+    selected: list[dict[str, object]] = []
+    selected_keys: set[tuple[str, str, str]] = set()
+
+    for required_family in REQUIRED_PROFILE_FAMILIES:
+        for row in ordered:
+            if str(row.get("api_family", "")) != required_family:
+                continue
+            key = gap_candidate_identity(row)
+            if key in selected_keys:
+                continue
+            selected.append(row)
+            selected_keys.add(key)
+            break
+
+    for row in ordered:
+        if len(selected) >= MAX_GAP_RECORDS:
+            break
+        key = gap_candidate_identity(row)
+        if key in selected_keys:
+            continue
+        selected.append(row)
+        selected_keys.add(key)
+
+    return selected[:MAX_GAP_RECORDS]
+
+
 def gap_profile_records(root: Path, inventory: dict[str, object]) -> list[dict[str, object]]:
     candidates = [
         row
@@ -570,15 +616,7 @@ def gap_profile_records(root: Path, inventory: dict[str, object]) -> list[dict[s
         and row.get("coverage_state") != "covered"
         and row.get("runtime_mode") in REQUIRED_MODES
     ]
-    candidates.sort(
-        key=lambda row: (
-            -gap_hotness(row),
-            str(row.get("api_family", "")),
-            str(row.get("symbol", "")),
-            str(row.get("runtime_mode", "")),
-        )
-    )
-    return [gap_profile_record(root, row) for row in candidates[:MAX_GAP_RECORDS]]
+    return [gap_profile_record(root, row) for row in select_gap_candidates(candidates)]
 
 
 def sort_records(records: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -852,14 +890,16 @@ def self_test() -> None:
             fake_profile("b-high", 20.0),
         ]
     )
-    assert [row["profile_id"] for row in sorted_rows] == ["a-high", "b-high", "z-low"]
+    if [row["profile_id"] for row in sorted_rows] != ["a-high", "b-high", "z-low"]:
+        raise AssertionError("profile rows were not sorted by score and tie-breakers")
     validate_profile_records(sorted_rows)
 
     duplicate = [fake_profile("dup", 2.0), fake_profile("dup", 1.0)]
     try:
         validate_profile_records(duplicate)
     except HotPathProfileError as exc:
-        assert "duplicate profile_id" in str(exc)
+        if "duplicate profile_id" not in str(exc):
+            raise AssertionError("duplicate profile validation emitted the wrong error") from exc
     else:
         raise AssertionError("duplicate profile_id was not rejected")
 
@@ -868,7 +908,8 @@ def self_test() -> None:
     try:
         validate_profile_records(missing_parity)
     except HotPathProfileError as exc:
-        assert "parity_proof_refs" in str(exc)
+        if "parity_proof_refs" not in str(exc):
+            raise AssertionError("missing parity validation emitted the wrong error") from exc
     else:
         raise AssertionError("missing parity proof refs were not rejected")
 
@@ -877,7 +918,33 @@ def self_test() -> None:
     stale = deepcopy(generated)
     stale["input_digests"]["a"] = "old"
     attach_artifact_hash(stale)
-    assert not reports_match(generated, stale), "stale profile artifact was not rejected"
+    if reports_match(generated, stale):
+        raise AssertionError("stale profile artifact was not rejected")
+
+    crowded_gaps = [
+        {
+            "api_family": "syscall",
+            "symbol": f"syscall_gap_{idx}",
+            "runtime_mode": "strict",
+            "missing_benchmark_reason": "missing_benchmark_target",
+            "user_workload_exposure": {"critical_symbol_workload_count": 10},
+        }
+        for idx in range(MAX_GAP_RECORDS)
+    ]
+    crowded_gaps.append(
+        {
+            "api_family": "malloc",
+            "symbol": "malloc_usable_size",
+            "runtime_mode": "strict",
+            "missing_benchmark_reason": "missing_symbol_specific_benchmark",
+            "user_workload_exposure": {},
+        }
+    )
+    selected_gaps = select_gap_candidates(crowded_gaps)
+    if len(selected_gaps) != MAX_GAP_RECORDS:
+        raise AssertionError("gap sampler did not preserve the configured cap")
+    if not any(row["api_family"] == "malloc" for row in selected_gaps):
+        raise AssertionError("gap sampler dropped a required malloc family row")
 
 
 def main() -> None:

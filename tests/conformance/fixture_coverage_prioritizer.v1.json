@@ -3,12 +3,12 @@
   "campaigns": [
     {
       "campaign_id": "fcq-unistd-process-filesystem",
-      "current_coverage_pct": 4.45,
+      "current_coverage_pct": 4.72,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 6.06,
+      "expected_coverage_after_first_wave_pct": 6.33,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
         "_Exit",
@@ -46,9 +46,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "process control, filesystem metadata, cwd, exec, exit, and low-level unistd wrappers",
-      "target_covered": 33,
+      "target_covered": 35,
       "target_total": 742,
-      "target_uncovered": 709,
+      "target_uncovered": 707,
       "title": "unistd/process/filesystem syscall fixture wave",
       "workload_domains": [
         "shell_coreutils",
@@ -1302,7 +1302,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3716,
+    "all_uncovered_target_symbols": 3714,
     "campaign_count": 18,
     "covered_modules": [
       "dlfcn_abi",
@@ -1341,7 +1341,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3334,
+    "selected_target_uncovered_symbols": 3332,
     "total_first_wave_fixture_count": 196
   }
 }

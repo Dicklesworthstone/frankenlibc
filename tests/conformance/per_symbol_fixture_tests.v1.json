@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-04T02:45:50Z",
-  "report_hash": "81c0c13485687c95",
+  "generated_at": "2026-05-07T12:35:55Z",
+  "report_hash": "61fee93ac0b4b8c2",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 401,
-    "symbols_without_fixtures": 3718,
-    "fixture_coverage_pct": 9.7,
+    "symbols_with_fixtures": 403,
+    "symbols_without_fixtures": 3716,
+    "fixture_coverage_pct": 9.8,
     "implemented_coverage_pct": 9.3,
-    "total_fixture_files": 57,
-    "total_cases": 1276,
+    "total_fixture_files": 58,
+    "total_cases": 1282,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 300,
-    "symbols_with_errno_checks": 398,
-    "total_quality_issues": 3657,
-    "uncovered_action_count": 3718
+    "symbols_with_edge_cases": 301,
+    "symbols_with_errno_checks": 400,
+    "total_quality_issues": 3656,
+    "uncovered_action_count": 3716
   },
   "fixture_file_analyses": [
     {
@@ -160,6 +160,14 @@
       "valid": true,
       "total_cases": 11,
       "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "mntent_ops.json",
+      "family": "mntent",
+      "valid": true,
+      "total_cases": 6,
+      "unique_symbols": 2,
       "issues": []
     },
     {
@@ -31582,15 +31590,19 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "mntent_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "getmsg",
@@ -33482,14 +33494,18 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "mntent_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -77083,13 +77099,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "getmntent_r",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "getmsg",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -77870,13 +77879,6 @@
       "symbol": "h_nerr",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "hasmntopt",
-      "status": "Implemented",
-      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
