@@ -188,3 +188,7 @@ git_show_*.txt
 # rebuilt per fixture batch and frequently exceed 50 MB)
 tests/conformance/conformance-matrix-case-runner-*.bin
 tests/conformance/*-case-runner-*.bin
+
+# Exit-code scratch files left by some test/CI harnesses (each is a
+# 2-byte file containing just "0\n"). Recurring untracked noise.
+tmp.*.ec
