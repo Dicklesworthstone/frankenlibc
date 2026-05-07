@@ -1,19 +1,18 @@
 {
   "schema_version": "v1",
   "bead": "bd-2vv.11",
-  "generated_at": "2026-04-27T03:56:48Z",
-  "consistency_hash": "550ecae0f61e58af",
+  "generated_at": "2026-05-07T22:47:17Z",
+  "consistency_hash": "d8d8c4e85beaaf03",
   "summary": {
     "overall_verdict": "pass",
-    "total_findings": 6,
+    "total_findings": 5,
     "by_severity": {
       "critical": 0,
       "error": 0,
-      "warning": 3,
+      "warning": 2,
       "info": 3
     },
     "by_verdict": {
-      "drift": 1,
       "inconsistent": 2,
       "pass": 3
     },
@@ -68,14 +67,6 @@
       ],
       "verdict": "inconsistent",
       "description": "Symbol tcsetattr: classification mismatch"
-    },
-    {
-      "rule": "census_alignment",
-      "severity": "warning",
-      "report_pair": "support_matrix vs replacement_profile",
-      "affected_symbols": [],
-      "verdict": "drift",
-      "description": "Module total_call_throughs: support_matrix has 0 callthrough, profile census claims 84"
     },
     {
       "rule": "no_unknown_status",
