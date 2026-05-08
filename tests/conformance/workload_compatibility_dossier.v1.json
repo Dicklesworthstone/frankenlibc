@@ -1,0 +1,87 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-fp4tm.5",
+  "source_beads": [
+    "bd-fp4tm.2",
+    "bd-fp4tm.3",
+    "bd-fp4tm.4",
+    "bd-bp8fl.10.1",
+    "bd-bp8fl.10.8"
+  ],
+  "generated_at_utc": "2026-05-08T05:22:00Z",
+  "purpose": "Generate a user-facing workload compatibility dossier only from fresh workload evidence, replay reproducers, latency-budget joins, smoke summaries, replacement levels, release gates, and compatibility reports.",
+  "inputs": {
+    "workload_acceptance_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "workload_freshness_report": "target/conformance/workload_evidence_freshness.report.json",
+    "workload_reproducer_manifest": "target/conformance/workload_reproducer_manifest.v1.json",
+    "workload_latency_budget_join": "target/conformance/workload_latency_budget_join.report.json",
+    "ld_preload_smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "release_readme_example_gate": "tests/conformance/release_readme_example_workload_gate.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "user_compatibility_report": "tests/conformance/user_compatibility_report.v1.json"
+  },
+  "outputs": {
+    "dossier_json": "target/conformance/workload_compatibility_dossier.report.json",
+    "dossier_markdown": "target/conformance/workload_compatibility_dossier.md",
+    "jsonl_log": "target/conformance/workload_compatibility_dossier.log.jsonl"
+  },
+  "required_dossier_fields": [
+    "trace_id",
+    "bead_id",
+    "workload_id",
+    "claim_scope",
+    "replacement_level",
+    "strict_status",
+    "hardened_status",
+    "freshness_state",
+    "perf_state",
+    "failure_signature",
+    "user_recommendation",
+    "artifact_refs",
+    "exact_reproduction_command",
+    "source_commit",
+    "next_safe_action"
+  ],
+  "recommendation_classes": [
+    "ready_l0_interpose",
+    "hardened_only_degraded",
+    "unsupported_workload",
+    "stale_evidence",
+    "replacement_blocked"
+  ],
+  "fail_closed_signatures": [
+    "dossier_ready_from_prose_only",
+    "dossier_ready_from_stale_evidence",
+    "dossier_missing_claim_rows",
+    "dossier_missing_required_field",
+    "dossier_missing_input_artifact"
+  ],
+  "ready_policy": {
+    "replacement_level": "L0",
+    "strict_required_status": "pass",
+    "hardened_required_status": "pass",
+    "freshness_required_state": "current",
+    "perf_allowed_states": [
+      "within_budget",
+      "overloaded_skip"
+    ],
+    "prose_only_refs": [
+      "README.md",
+      "CHANGELOG.md"
+    ],
+    "minimum_concrete_evidence_refs": 2
+  },
+  "artifact_refs": [
+    "scripts/check_workload_compatibility_dossier.sh",
+    "tests/conformance/workload_compatibility_dossier.v1.json",
+    "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "tests/conformance/workload_evidence_freshness_contract.v1.json",
+    "tests/conformance/workload_reproducer_manifest.v1.json",
+    "tests/conformance/workload_latency_budget_join.v1.json",
+    "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "tests/conformance/release_readme_example_workload_gate.v1.json",
+    "tests/conformance/replacement_levels.json",
+    "tests/conformance/user_compatibility_report.v1.json",
+    "crates/frankenlibc-harness/tests/workload_compatibility_dossier_test.rs"
+  ]
+}
