@@ -1,0 +1,728 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-fp4tm.1",
+  "generated_at_utc": "2026-05-08T04:30:22Z",
+  "source_commit": "current",
+  "purpose": "Inventory every current user-facing workload, replay, smoke, compatibility, release, and replacement-readiness evidence source that backs README.md or FEATURE_PARITY.md claims outside the already-owned support/reality drift gates.",
+  "claim_surfaces": [
+    "README.md",
+    "FEATURE_PARITY.md"
+  ],
+  "claim_refs": [
+    {
+      "id": "readme-claim-field-contract",
+      "path": "README.md",
+      "line_refs": [
+        "README.md:53",
+        "README.md:64",
+        "README.md:66"
+      ],
+      "claim": "Support, parity, and replacement-readiness claims require evidence_artifact, freshness_state, and user_recommendation fields."
+    },
+    {
+      "id": "readme-interpose-many-workloads",
+      "path": "README.md",
+      "line_refs": [
+        "README.md:48",
+        "README.md:211",
+        "README.md:215"
+      ],
+      "claim": "The current interpose shared library is usable for a meaningful but incomplete workload set, with broader hardening and non-curated workload stability tracked separately."
+    },
+    {
+      "id": "readme-smoke-summary",
+      "path": "README.md",
+      "line_refs": [
+        "README.md:214",
+        "README.md:471"
+      ],
+      "claim": "The canonical checked LD_PRELOAD smoke battery is green across strict and hardened modes with optional probes skipped."
+    },
+    {
+      "id": "readme-not-standalone",
+      "path": "README.md",
+      "line_refs": [
+        "README.md:192",
+        "README.md:212",
+        "README.md:612"
+      ],
+      "claim": "The declared current level is L0 interpose; full standalone replacement is not claimed today."
+    },
+    {
+      "id": "feature-parity-field-contract",
+      "path": "FEATURE_PARITY.md",
+      "line_refs": [
+        "FEATURE_PARITY.md:35",
+        "FEATURE_PARITY.md:43",
+        "FEATURE_PARITY.md:44",
+        "FEATURE_PARITY.md:46"
+      ],
+      "claim": "Any supported symbol, family, workload, or release claim must keep evidence artifact, freshness state, known limitation, and user recommendation separate."
+    },
+    {
+      "id": "feature-parity-strict-hardened-evidence",
+      "path": "FEATURE_PARITY.md",
+      "line_refs": [
+        "FEATURE_PARITY.md:53",
+        "FEATURE_PARITY.md:59",
+        "FEATURE_PARITY.md:335",
+        "FEATURE_PARITY.md:339"
+      ],
+      "claim": "Strict/hardened parity, benchmark gates, and mode-specific evidence remain active requirements."
+    }
+  ],
+  "required_evidence_source_fields": [
+    "id",
+    "owner_family",
+    "claim_scope",
+    "claim_refs",
+    "source_artifact",
+    "artifact_refs",
+    "validation_command",
+    "freshness_policy",
+    "stale_failure_signature",
+    "next_safe_action"
+  ],
+  "required_freshness_policy_fields": [
+    "policy_kind",
+    "source_commit_policy",
+    "generated_at_policy",
+    "artifact_refs_policy",
+    "refresh_triggers"
+  ],
+  "standard_log_fields_for_future_reports": [
+    "trace_id",
+    "bead_id",
+    "source_id",
+    "workload_id",
+    "runtime_mode",
+    "replacement_level",
+    "artifact_refs",
+    "source_commit",
+    "generated_at_utc",
+    "freshness_state",
+    "failure_signature",
+    "next_safe_action"
+  ],
+  "excluded_existing_gates": [
+    {
+      "id": "support-matrix-maintenance",
+      "reason": "Symbol taxonomy and support-matrix drift are already owned by scripts/check_support_matrix_maintenance.sh and support_matrix_maintenance_report.v1.json."
+    },
+    {
+      "id": "support-reality-drift-triage",
+      "reason": "Reality-report and support drift reconciliation are already owned by scripts/check_support_reality_drift_triage.sh and support_reality_drift_triage.v1.json."
+    },
+    {
+      "id": "support-reality-regeneration",
+      "reason": "Regeneration mechanics for support/reality artifacts are already owned by scripts/check_support_reality_regeneration.sh and support_reality_regeneration.v1.json."
+    }
+  ],
+  "evidence_sources": [
+    {
+      "id": "claim-field-contract",
+      "owner_family": "documentation_claim_control",
+      "claim_scope": "README and FEATURE_PARITY traceability contract for workload, support, parity, and replacement claims.",
+      "claim_refs": [
+        "readme-claim-field-contract",
+        "feature-parity-field-contract"
+      ],
+      "source_artifact": "tests/conformance/user_compatibility_report.v1.json",
+      "artifact_refs": [
+        "README.md",
+        "FEATURE_PARITY.md",
+        "tests/conformance/user_compatibility_report.v1.json",
+        "scripts/generate_user_compatibility_report.sh",
+        "target/conformance/user_compatibility_report.report.json",
+        "target/conformance/user_compatibility_report.log.jsonl"
+      ],
+      "validation_command": "bash scripts/generate_user_compatibility_report.sh",
+      "freshness_policy": {
+        "policy_kind": "generated_report_head_commit",
+        "source_commit_policy": "generator records current git HEAD in the generated report and JSONL log; checked-in manifest source_commit may be absent because it is a static recipe.",
+        "generated_at_policy": "manifest declares generated_at_utc; generated report is fresh only when regenerated at the current source_commit.",
+        "artifact_refs_policy": "README.md, FEATURE_PARITY.md, workload matrix, replacement levels, smoke summary, perf report, and semantic/support/oracle inputs must all be readable.",
+        "refresh_triggers": [
+          "README.md changes support, workload, parity, replacement, smoke, or recommendation wording",
+          "FEATURE_PARITY.md changes support, workload, release, parity, replacement, smoke, or recommendation wording",
+          "any compatibility report input artifact changes"
+        ]
+      },
+      "covered_workload_ids": [
+        "uwm-shell-coreutils",
+        "uwm-build-toolchain",
+        "uwm-language-runtime",
+        "uwm-package-manager",
+        "uwm-threaded-service",
+        "uwm-resolver-nss",
+        "uwm-locale-iconv",
+        "uwm-stdio-libio",
+        "uwm-allocator-stress",
+        "uwm-startup-linking",
+        "uwm-performance-hotpaths"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_compatibility_report_evidence",
+      "next_safe_action": "Regenerate the user compatibility report and fail closed on missing, stale, contradictory, unsupported, or prose-only claims."
+    },
+    {
+      "id": "ld-preload-smoke-summary",
+      "owner_family": "real_binary_smoke",
+      "claim_scope": "Curated LD_PRELOAD strict and hardened real-binary smoke claim in README current state.",
+      "claim_refs": [
+        "readme-interpose-many-workloads",
+        "readme-smoke-summary"
+      ],
+      "source_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "artifact_refs": [
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "scripts/ld_preload_smoke.sh",
+        "target/ld_preload_smoke/<run_id>/abi_compat_report.json",
+        "target/ld_preload_smoke/<run_id>/trace.jsonl"
+      ],
+      "validation_command": "TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh",
+      "freshness_policy": {
+        "policy_kind": "checked_smoke_snapshot_plus_rerunnable_runner",
+        "source_commit_policy": "runner emits current evidence under target/ld_preload_smoke; checked summary is accepted only as a bounded curated snapshot unless a downstream gate records current HEAD.",
+        "generated_at_policy": "checked_at_utc or run_id must be present in checked or generated smoke artifacts.",
+        "artifact_refs_policy": "libfrankenlibc_abi.so path, case TSV, smoke JSON report, and JSONL trace must be present for a fresh run.",
+        "refresh_triggers": [
+          "README.md smoke pass/skip counts change",
+          "scripts/ld_preload_smoke.sh changes case classification, failure signatures, or mode policy",
+          "ABI library path or build artifact changes",
+          "support or replacement level claim is promoted"
+        ]
+      },
+      "covered_workload_ids": [
+        "smoke",
+        "integration",
+        "stress",
+        "python-runtime-startup",
+        "optional-sqlite3",
+        "optional-redis-cli",
+        "optional-nginx"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "freshness_state": "bounded_snapshot",
+      "stale_failure_signature": "stale_ld_preload_smoke_evidence",
+      "next_safe_action": "Rerun the smoke script through the prescribed build path and regenerate any compatibility report that consumes the smoke summary before advancing user-facing claims."
+    },
+    {
+      "id": "user-workload-acceptance-matrix",
+      "owner_family": "workload_acceptance",
+      "claim_scope": "Persona/domain workload acceptance matrix covering shell, build, runtime, package-manager, threaded-service, resolver/NSS, locale/iconv, stdio/libio, allocator, startup/linking, and performance-sensitive claims.",
+      "claim_refs": [
+        "readme-interpose-many-workloads",
+        "feature-parity-strict-hardened-evidence"
+      ],
+      "source_artifact": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+      "artifact_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "crates/frankenlibc-harness/tests/user_workload_acceptance_matrix_test.rs",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "validation_command": "bash scripts/check_user_workload_acceptance_matrix.sh",
+      "freshness_policy": {
+        "policy_kind": "matrix_shape_and_artifact_existence",
+        "source_commit_policy": "checker emits current git HEAD in target/conformance/user_workload_acceptance_matrix.report.json and log rows.",
+        "generated_at_policy": "static matrix may omit generated_at_utc; generated report timestamp and current source_commit establish freshness.",
+        "artifact_refs_policy": "each workload artifact_paths row must exist unless it is a generated target/conformance output.",
+        "refresh_triggers": [
+          "required domain set changes",
+          "README.md adds or removes workload examples",
+          "FEATURE_PARITY.md changes strict/hardened evidence requirements",
+          "a workload row, script, or referenced artifact changes"
+        ]
+      },
+      "covered_workload_ids": [
+        "uwm-shell-coreutils",
+        "uwm-build-toolchain",
+        "uwm-language-runtime",
+        "uwm-package-manager",
+        "uwm-threaded-service",
+        "uwm-resolver-nss",
+        "uwm-locale-iconv",
+        "uwm-stdio-libio",
+        "uwm-allocator-stress",
+        "uwm-startup-linking",
+        "uwm-performance-hotpaths"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_user_workload_acceptance_matrix",
+      "next_safe_action": "Run the acceptance matrix checker and treat missing artifact paths, incomplete domains, or missing structured log fields as claim blockers."
+    },
+    {
+      "id": "user-workload-replay-manifest",
+      "owner_family": "workload_replay",
+      "claim_scope": "Safe replay manifest for baseline, strict, and hardened comparisons over coreutils, shell pipelines, dynamic runtime startup, C fixtures, and optional-tool probes.",
+      "claim_refs": [
+        "readme-interpose-many-workloads",
+        "feature-parity-strict-hardened-evidence"
+      ],
+      "source_artifact": "tests/conformance/user_workload_replay_manifest.v1.json",
+      "artifact_refs": [
+        "tests/conformance/user_workload_replay_manifest.v1.json",
+        "scripts/check_user_workload_replay_manifest.sh",
+        "scripts/run_user_workload_replay_traces.sh",
+        "crates/frankenlibc-harness/tests/user_workload_replay_manifest_test.rs",
+        "crates/frankenlibc-harness/tests/user_workload_replay_traces_test.rs",
+        "target/conformance/user_workload_replay_manifest.report.json",
+        "target/conformance/user_workload_replay_manifest.log.jsonl",
+        "target/conformance/user_workload_replay_traces.report.json",
+        "target/conformance/user_workload_replay_traces.log.jsonl"
+      ],
+      "validation_command": "bash scripts/check_user_workload_replay_manifest.sh --dry-run && bash scripts/run_user_workload_replay_traces.sh --validate-only",
+      "freshness_policy": {
+        "policy_kind": "manifest_plus_trace_runner_head_commit",
+        "source_commit_policy": "manifest checker and trace runner emit current git HEAD in generated reports and JSONL rows.",
+        "generated_at_policy": "fresh trace reports must include a run_id or target_dir scoped to the current run.",
+        "artifact_refs_policy": "manifest artifact_refs must exist, and trace rows must include artifact_refs for generated stdout/stderr or skip evidence.",
+        "refresh_triggers": [
+          "manifest workload command, mode, expected output, optional-tool policy, or artifact_refs change",
+          "LD_PRELOAD artifact changes",
+          "README.md examples change",
+          "compatibility report consumes replay rows"
+        ]
+      },
+      "covered_workload_ids": [
+        "coreutils_echo_stdout",
+        "shell_pipeline_count_lines",
+        "dynamic_runtime_python_math",
+        "c_fixture_link_test",
+        "optional_sqlite_version_probe"
+      ],
+      "runtime_modes": [
+        "baseline",
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_user_workload_replay_manifest",
+      "next_safe_action": "Validate the manifest first, then run or validate trace replay; missing preload artifacts and optional tools must become structured blocked or skipped rows rather than support claims."
+    },
+    {
+      "id": "real-program-smoke-suite",
+      "owner_family": "real_program_smoke",
+      "claim_scope": "Real-program smoke matrix for strict/hardened, L0/L1, unsupported-failure, and standalone-future rows.",
+      "claim_refs": [
+        "readme-interpose-many-workloads",
+        "readme-not-standalone",
+        "feature-parity-strict-hardened-evidence"
+      ],
+      "source_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "artifact_refs": [
+        "tests/conformance/real_program_smoke_suite.v1.json",
+        "scripts/check_real_program_smoke_suite.sh",
+        "crates/frankenlibc-harness/tests/real_program_smoke_suite_test.rs",
+        "target/conformance/real_program_smoke_suite.report.json",
+        "target/conformance/real_program_smoke_suite.log.jsonl"
+      ],
+      "validation_command": "bash scripts/check_real_program_smoke_suite.sh",
+      "freshness_policy": {
+        "policy_kind": "case_manifest_current_source_policy",
+        "source_commit_policy": "artifact declares source_commit=current; checker records current git HEAD and rejects pinned stale manifest source commits.",
+        "generated_at_policy": "generated_utc records manifest creation; generated report records current check time.",
+        "artifact_refs_policy": "each case must point to fixture, smoke, or failure-bundle artifacts that exist or are generated target outputs.",
+        "refresh_triggers": [
+          "real-program case set changes",
+          "required runtime modes or replacement levels change",
+          "standalone-future policy changes",
+          "README.md workload language changes"
+        ]
+      },
+      "covered_workload_ids": [
+        "shell_coreutils_sort_pipeline_l0_strict",
+        "shell_coreutils_sort_pipeline_l1_hardened",
+        "build_tool_compiler_version_l0_strict",
+        "build_tool_compiler_version_l1_hardened",
+        "resolver_nss_localhost_l0_strict",
+        "resolver_nss_localhost_l1_hardened",
+        "locale_iconv_list_utf_l0_strict",
+        "locale_iconv_list_utf_l1_hardened",
+        "stdio_file_roundtrip_l0_strict",
+        "stdio_file_roundtrip_l1_hardened"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_real_program_smoke_suite",
+      "next_safe_action": "Run the real-program smoke checker and block claims if required domains, modes, failure-bundle rows, or standalone-future non-support rows drift."
+    },
+    {
+      "id": "readme-example-workload-gate",
+      "owner_family": "readme_example_gate",
+      "claim_scope": "README quick-start and workload examples remain executable only as bounded interpose examples, not broad support claims.",
+      "claim_refs": [
+        "readme-interpose-many-workloads",
+        "readme-not-standalone"
+      ],
+      "source_artifact": "tests/conformance/release_readme_example_workload_gate.v1.json",
+      "artifact_refs": [
+        "tests/conformance/release_readme_example_workload_gate.v1.json",
+        "scripts/check_release_readme_example_workload_gate.sh",
+        "crates/frankenlibc-harness/tests/release_readme_example_workload_gate_test.rs",
+        "target/conformance/release_readme_example_workload_gate.report.json",
+        "target/conformance/release_readme_example_workload_gate.log.jsonl"
+      ],
+      "validation_command": "bash scripts/check_release_readme_example_workload_gate.sh",
+      "freshness_policy": {
+        "policy_kind": "doc_example_claim_mapping",
+        "source_commit_policy": "checker emits current git HEAD into generated report/log rows.",
+        "generated_at_policy": "manifest generated_utc plus generated report timestamp define the checked mapping.",
+        "artifact_refs_policy": "claim mappings must cite README examples, workload ids, runtime modes, replacement level, evidence refs, and expected decision.",
+        "refresh_triggers": [
+          "README.md code block changes",
+          "README.md interpose or replacement wording changes",
+          "release claim policy changes",
+          "workload acceptance or smoke artifacts change"
+        ]
+      },
+      "covered_workload_ids": [
+        "readme-quick-example-strict-echo",
+        "readme-quick-example-hardened-echo",
+        "readme-legacy-binary-hardened",
+        "readme-ld-preload-smoke"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_readme_example_workload_gate",
+      "next_safe_action": "Run the README example workload gate before accepting changed README examples or broadening user recommendations."
+    },
+    {
+      "id": "replacement-level-current-claim",
+      "owner_family": "replacement_claim_control",
+      "claim_scope": "Current release level is L0 interpose; L1/L2/L3 promotion remains blocked until claim-control and proof obligations pass.",
+      "claim_refs": [
+        "readme-not-standalone",
+        "feature-parity-field-contract"
+      ],
+      "source_artifact": "tests/conformance/replacement_levels.json",
+      "artifact_refs": [
+        "tests/conformance/replacement_levels.json",
+        "scripts/check_replacement_levels.sh",
+        "scripts/check_replacement_guard.sh",
+        "scripts/release/check_replacement_claim_evidence.sh",
+        "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+        "crates/frankenlibc-harness/tests/release_claim_gate_test.rs",
+        "target/conformance/replacement_levels_l1_gate.report.json",
+        "target/conformance/replacement_levels_l1_gate.log.jsonl"
+      ],
+      "validation_command": "bash scripts/check_replacement_levels.sh && bash scripts/release/check_replacement_claim_evidence.sh",
+      "freshness_policy": {
+        "policy_kind": "promotion_gate_with_blocked_obligations",
+        "source_commit_policy": "checkers emit current git HEAD in generated reports/log rows; static replacement_levels.json records the declared current state.",
+        "generated_at_policy": "generated gate reports record check time; static JSON may omit generated_at_utc.",
+        "artifact_refs_policy": "replacement levels, L1 proof matrix, smoke summary, claim reconciliation, perf prevention, and zero-unapproved fixtures must all be readable for promotion checks.",
+        "refresh_triggers": [
+          "README.md replacement level wording changes",
+          "FEATURE_PARITY.md replacement target wording changes",
+          "current_level or release_tag_policy.current_release_level changes",
+          "support taxonomy or semantic parity changes"
+        ]
+      },
+      "covered_workload_ids": [
+        "all-current-l0-interpose-workloads",
+        "l1-promotion-blocked-obligations",
+        "l2-standalone-future",
+        "l3-full-replacement-future"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_replacement_level_claim_evidence",
+      "next_safe_action": "Keep user-facing guidance at L0 unless both current_level and release_tag_policy.current_release_level promote together with all objective gates passing."
+    },
+    {
+      "id": "release-gate-dag",
+      "owner_family": "release_gate",
+      "claim_scope": "Release readiness depends on ordered evidence gates rather than README prose.",
+      "claim_refs": [
+        "readme-claim-field-contract",
+        "feature-parity-field-contract"
+      ],
+      "source_artifact": "tests/conformance/release_gate_dag.v1.json",
+      "artifact_refs": [
+        "tests/conformance/release_gate_dag.v1.json",
+        "tests/conformance/release_gate_runner_runbook.md",
+        "scripts/check_release_gate.sh",
+        "scripts/check_release_dossier.sh",
+        "crates/frankenlibc-harness/tests/release_gate_dag_test.rs",
+        "target/conformance/release_gate.report.json",
+        "target/conformance/release_gate.log.jsonl"
+      ],
+      "validation_command": "bash scripts/check_release_gate.sh",
+      "freshness_policy": {
+        "policy_kind": "release_gate_dag_ordering",
+        "source_commit_policy": "release gate runner records current git HEAD in target reports and logs.",
+        "generated_at_policy": "DAG manifest and generated report timestamps must be current for release claims.",
+        "artifact_refs_policy": "every gate node must point to a checker or generated artifact with a stable failure signature.",
+        "refresh_triggers": [
+          "release gate order changes",
+          "README.md release or quick-start claims change",
+          "compatibility report inputs change",
+          "replacement claim level changes"
+        ]
+      },
+      "covered_workload_ids": [
+        "release-readiness-all-workloads",
+        "claim-gate-negative-scenarios",
+        "compatibility-dossier-inputs"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_release_gate_evidence",
+      "next_safe_action": "Run the release gate and block any release claim whose dependency artifact is stale, missing, or prose-only."
+    },
+    {
+      "id": "runtime-evidence-replay-gate",
+      "owner_family": "runtime_evidence",
+      "claim_scope": "Runtime evidence replay records protect strict/hardened mode semantics and generated evidence from stale or mismatched source commits.",
+      "claim_refs": [
+        "feature-parity-strict-hardened-evidence"
+      ],
+      "source_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "artifact_refs": [
+        "tests/conformance/runtime_evidence_replay_gate.v1.json",
+        "scripts/check_runtime_evidence_replay_gate.sh",
+        "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_test.rs",
+        "target/conformance/runtime_evidence_replay_gate.report.json",
+        "target/conformance/runtime_evidence_replay_gate.log.jsonl"
+      ],
+      "validation_command": "bash scripts/check_runtime_evidence_replay_gate.sh",
+      "freshness_policy": {
+        "policy_kind": "runtime_replay_record_source_commit",
+        "source_commit_policy": "artifact declares source_commit=current and checker rejects stale pinned replay records.",
+        "generated_at_policy": "generated_utc plus generated report timestamp establish replay freshness.",
+        "artifact_refs_policy": "all replay records must cite inputs, expected outcome, actual outcome, evidence refs, and failure signature.",
+        "refresh_triggers": [
+          "runtime mode policy changes",
+          "strict/hardened decision logging changes",
+          "runtime evidence schema changes",
+          "FEATURE_PARITY.md strict/hardened evidence wording changes"
+        ]
+      },
+      "covered_workload_ids": [
+        "runtime-evidence-strict",
+        "runtime-evidence-hardened",
+        "negative-stale-source-commit",
+        "negative-missing-artifact"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_runtime_evidence_replay",
+      "next_safe_action": "Replay runtime evidence gates after any mode-policy or runtime-evidence schema change before using generated rows in compatibility guidance."
+    },
+    {
+      "id": "workload-performance-budget",
+      "owner_family": "performance_evidence",
+      "claim_scope": "Strict/hardened workload latency and performance claims trace to perf regression prevention and perf budget policy artifacts.",
+      "claim_refs": [
+        "feature-parity-strict-hardened-evidence"
+      ],
+      "source_artifact": "tests/conformance/perf_regression_prevention.v1.json",
+      "artifact_refs": [
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/perf_budget_policy.json",
+        "scripts/check_perf_regression_prevention.sh",
+        "scripts/check_perf_budget.sh",
+        "crates/frankenlibc-harness/tests/perf_regression_prevention_test.rs",
+        "crates/frankenlibc-harness/tests/perf_budget_test.rs",
+        "target/conformance/perf_regression_prevention.report.json",
+        "target/conformance/perf_budget.report.json"
+      ],
+      "validation_command": "bash scripts/check_perf_regression_prevention.sh && bash scripts/check_perf_budget.sh",
+      "freshness_policy": {
+        "policy_kind": "budget_policy_plus_generated_report",
+        "source_commit_policy": "checkers emit current git HEAD in generated reports/log rows; static policy files may omit source_commit.",
+        "generated_at_policy": "generated perf reports must be current when used for workload compatibility claims.",
+        "artifact_refs_policy": "budget policy, prevention manifest, benchmark inventory, and generated report paths must be readable.",
+        "refresh_triggers": [
+          "perf budget thresholds change",
+          "workload latency claims change",
+          "strict/hardened overhead policy changes",
+          "benchmark inventory changes"
+        ]
+      },
+      "covered_workload_ids": [
+        "uwm-performance-hotpaths",
+        "strict-latency-budget",
+        "hardened-latency-budget",
+        "overload-waiver-policy"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_workload_performance_evidence",
+      "next_safe_action": "Run perf prevention and budget checks before allowing workload-level latency or no-regression recommendations."
+    },
+    {
+      "id": "standalone-link-run-smoke",
+      "owner_family": "standalone_readiness",
+      "claim_scope": "Standalone direct-link and future replacement rows are tracked as readiness evidence, not current user support claims.",
+      "claim_refs": [
+        "readme-not-standalone",
+        "feature-parity-field-contract"
+      ],
+      "source_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "artifact_refs": [
+        "tests/conformance/standalone_link_run_smoke.v1.json",
+        "scripts/check_standalone_link_run_smoke.sh",
+        "crates/frankenlibc-harness/tests/standalone_link_run_smoke_test.rs",
+        "target/conformance/standalone_link_run_smoke.report.json",
+        "target/conformance/standalone_link_run_smoke.log.jsonl"
+      ],
+      "validation_command": "bash scripts/check_standalone_link_run_smoke.sh",
+      "freshness_policy": {
+        "policy_kind": "standalone_non_claim_readiness",
+        "source_commit_policy": "artifact declares source_commit=current and checker records current HEAD; stale pinned commits are blockers.",
+        "generated_at_policy": "generated_utc plus generated report timestamp establish freshness.",
+        "artifact_refs_policy": "all standalone smoke rows must cite current claim policy and expected failure classifications.",
+        "refresh_triggers": [
+          "standalone replacement wording changes",
+          "direct-link smoke rows change",
+          "replacement level claim changes",
+          "startup/linking support changes"
+        ]
+      },
+      "covered_workload_ids": [
+        "standalone-direct-link-smoke",
+        "standalone-future-policy",
+        "expected-failure-classifications"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L2",
+        "L3"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_standalone_link_run_smoke_evidence",
+      "next_safe_action": "Keep standalone rows as blocked or future evidence unless the standalone checker and replacement promotion gates are both current and passing."
+    },
+    {
+      "id": "workload-failure-dashboard",
+      "owner_family": "failure_signature_inventory",
+      "claim_scope": "Workload failure classes and hidden skip policies are normalized for downstream freshness, reproducer, and dossier gates.",
+      "claim_refs": [
+        "readme-smoke-summary",
+        "feature-parity-field-contract"
+      ],
+      "source_artifact": "tests/conformance/workload_failure_dashboard.v1.json",
+      "artifact_refs": [
+        "tests/conformance/workload_failure_dashboard.v1.json",
+        "scripts/check_workload_failure_dashboard.sh",
+        "crates/frankenlibc-harness/tests/workload_failure_dashboard_test.rs",
+        "target/conformance/workload_failure_dashboard.report.json",
+        "target/conformance/workload_failure_dashboard.log.jsonl"
+      ],
+      "validation_command": "bash scripts/check_workload_failure_dashboard.sh",
+      "freshness_policy": {
+        "policy_kind": "failure_signature_taxonomy",
+        "source_commit_policy": "checker emits current git HEAD in generated dashboard report and JSONL rows.",
+        "generated_at_policy": "manifest generated_at_utc plus generated report timestamp establish freshness.",
+        "artifact_refs_policy": "dashboard rows must cite source artifacts, representative workload id, representative mode, and failure class.",
+        "refresh_triggers": [
+          "smoke or replay failure signatures change",
+          "optional skip policy changes",
+          "new workload failure class is introduced",
+          "compatibility report starts consuming dashboard rows"
+        ]
+      },
+      "covered_workload_ids": [
+        "startup_timeout",
+        "startup_segv",
+        "startup_symbol_lookup_error",
+        "startup_strict_parity_mismatch",
+        "startup_perf_regression",
+        "unsupported_workload",
+        "missing_binary"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_workload_failure_dashboard",
+      "next_safe_action": "Refresh the dashboard before downstream reproducer or compatibility dossier gates classify failures."
+    }
+  ],
+  "self_validation": {
+    "jq_parse": "jq empty tests/conformance/workload_evidence_freshness_contract.v1.json",
+    "required_field_check": "jq -e '.evidence_sources | length >= 10 and all(.[]; has(\"id\") and has(\"owner_family\") and has(\"claim_scope\") and has(\"claim_refs\") and has(\"source_artifact\") and has(\"artifact_refs\") and has(\"validation_command\") and has(\"freshness_policy\") and has(\"stale_failure_signature\") and has(\"next_safe_action\") and (.freshness_policy | has(\"source_commit_policy\") and has(\"generated_at_policy\") and has(\"artifact_refs_policy\") and has(\"refresh_triggers\")))' tests/conformance/workload_evidence_freshness_contract.v1.json"
+  }
+}
