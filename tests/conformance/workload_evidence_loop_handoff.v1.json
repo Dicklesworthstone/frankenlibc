@@ -1,0 +1,307 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-fp4tm.6",
+  "source_beads": [
+    "bd-fp4tm.2",
+    "bd-fp4tm.3",
+    "bd-fp4tm.4",
+    "bd-fp4tm.5"
+  ],
+  "generated_at_utc": "2026-05-08T05:45:00Z",
+  "purpose": "Machine-checkable handoff and CI recipe for operating the workload evidence loop without rediscovering command order, tracker mode, or generated-artifact validators.",
+  "required_stage_ids": [
+    "freshness",
+    "reproducer",
+    "latency_join",
+    "dossier",
+    "epic_closeout"
+  ],
+  "stages": [
+    {
+      "id": "freshness",
+      "description": "Refresh and validate workload evidence freshness before any compatibility recommendation.",
+      "command": "bash scripts/check_workload_evidence_freshness.sh",
+      "expected_outputs": [
+        "target/conformance/workload_evidence_freshness.report.json",
+        "target/conformance/workload_evidence_freshness.log.jsonl"
+      ],
+      "generated_artifacts": [
+        {
+          "path": "target/conformance/workload_evidence_freshness.report.json",
+          "validator": "freshness_checker",
+          "failure_signature": "handoff_freshness_artifact_invalid"
+        },
+        {
+          "path": "target/conformance/workload_evidence_freshness.log.jsonl",
+          "validator": "freshness_checker",
+          "failure_signature": "handoff_freshness_log_invalid"
+        }
+      ],
+      "validators": [
+        {
+          "id": "freshness_checker",
+          "command": "bash scripts/check_workload_evidence_freshness.sh",
+          "failure_signature": "handoff_freshness_validator_failed"
+        }
+      ],
+      "failure_triage_order": [
+        "missing_input_artifact",
+        "stale_source_commit",
+        "stale_generated_at_utc",
+        "prose_only_claim"
+      ]
+    },
+    {
+      "id": "reproducer",
+      "description": "Convert failing workload replay and LD_PRELOAD smoke rows into exact reproducers.",
+      "command": "bash scripts/check_workload_reproducer_manifest.sh",
+      "expected_outputs": [
+        "target/conformance/workload_reproducer_manifest.report.json",
+        "target/conformance/workload_reproducer_manifest.v1.json",
+        "target/conformance/workload_reproducer_manifest.log.jsonl"
+      ],
+      "generated_artifacts": [
+        {
+          "path": "target/conformance/workload_reproducer_manifest.report.json",
+          "validator": "reproducer_checker",
+          "failure_signature": "handoff_reproducer_report_invalid"
+        },
+        {
+          "path": "target/conformance/workload_reproducer_manifest.v1.json",
+          "validator": "reproducer_checker",
+          "failure_signature": "handoff_reproducer_manifest_invalid"
+        },
+        {
+          "path": "target/conformance/workload_reproducer_manifest.log.jsonl",
+          "validator": "reproducer_checker",
+          "failure_signature": "handoff_reproducer_log_invalid"
+        }
+      ],
+      "validators": [
+        {
+          "id": "reproducer_checker",
+          "command": "bash scripts/check_workload_reproducer_manifest.sh",
+          "failure_signature": "handoff_reproducer_validator_failed"
+        }
+      ],
+      "failure_triage_order": [
+        "reproducer_missing_command",
+        "reproducer_missing_env",
+        "reproducer_missing_mode",
+        "reproducer_unknown_failure_signature"
+      ]
+    },
+    {
+      "id": "latency_join",
+      "description": "Join workload runtime rows to perf budgets before claims can advance.",
+      "command": "bash scripts/check_workload_latency_budget_join.sh",
+      "expected_outputs": [
+        "target/conformance/workload_latency_budget_join.report.json",
+        "target/conformance/workload_latency_budget_join.log.jsonl"
+      ],
+      "generated_artifacts": [
+        {
+          "path": "target/conformance/workload_latency_budget_join.report.json",
+          "validator": "latency_join_checker",
+          "failure_signature": "handoff_latency_report_invalid"
+        },
+        {
+          "path": "target/conformance/workload_latency_budget_join.log.jsonl",
+          "validator": "latency_join_checker",
+          "failure_signature": "handoff_latency_log_invalid"
+        }
+      ],
+      "validators": [
+        {
+          "id": "latency_join_checker",
+          "command": "bash scripts/check_workload_latency_budget_join.sh",
+          "failure_signature": "handoff_latency_validator_failed"
+        }
+      ],
+      "failure_triage_order": [
+        "workload_latency_missing_latency",
+        "workload_latency_missing_mode",
+        "workload_latency_missing_budget",
+        "workload_latency_over_budget",
+        "workload_latency_overloaded_skip"
+      ]
+    },
+    {
+      "id": "dossier",
+      "description": "Generate user-facing compatibility rows only from fresh evidence, reproducer, latency, smoke, release, and replacement artifacts.",
+      "command": "bash scripts/check_workload_compatibility_dossier.sh",
+      "expected_outputs": [
+        "target/conformance/workload_compatibility_dossier.report.json",
+        "target/conformance/workload_compatibility_dossier.md",
+        "target/conformance/workload_compatibility_dossier.log.jsonl"
+      ],
+      "generated_artifacts": [
+        {
+          "path": "target/conformance/workload_compatibility_dossier.report.json",
+          "validator": "dossier_checker",
+          "failure_signature": "handoff_dossier_report_invalid"
+        },
+        {
+          "path": "target/conformance/workload_compatibility_dossier.md",
+          "validator": "dossier_checker",
+          "failure_signature": "handoff_dossier_markdown_invalid"
+        },
+        {
+          "path": "target/conformance/workload_compatibility_dossier.log.jsonl",
+          "validator": "dossier_checker",
+          "failure_signature": "handoff_dossier_log_invalid"
+        }
+      ],
+      "validators": [
+        {
+          "id": "dossier_checker",
+          "command": "bash scripts/check_workload_compatibility_dossier.sh",
+          "failure_signature": "handoff_dossier_validator_failed"
+        }
+      ],
+      "failure_triage_order": [
+        "dossier_ready_from_prose_only",
+        "dossier_ready_from_stale_evidence",
+        "workload_latency_missing_evidence",
+        "replacement_level_blocked"
+      ]
+    },
+    {
+      "id": "epic_closeout",
+      "description": "Close the workload evidence loop epic only after graph health, pushed commits, mirrored branches, and reservation release are recorded.",
+      "command": "br --no-db close bd-fp4tm --reason <structured-closeout> --json",
+      "expected_outputs": [
+        ".beads/issues.jsonl"
+      ],
+      "generated_artifacts": [
+        {
+          "path": ".beads/issues.jsonl",
+          "validator": "tracker_graph_health",
+          "failure_signature": "handoff_epic_closeout_tracker_invalid"
+        }
+      ],
+      "validators": [
+        {
+          "id": "tracker_graph_health",
+          "command": "br --no-db dep cycles --json",
+          "failure_signature": "handoff_tracker_cycles_detected"
+        },
+        {
+          "id": "triage_sanity",
+          "command": "bv --robot-triage",
+          "failure_signature": "handoff_triage_unreadable"
+        }
+      ],
+      "failure_triage_order": [
+        "handoff_missing_closeout_field",
+        "handoff_missing_no_db_command",
+        "handoff_bare_bv_command",
+        "handoff_unreleased_reservation"
+      ]
+    }
+  ],
+  "cargo_validation_lanes": [
+    {
+      "id": "freshness_harness_test",
+      "command": "CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_workload_loop RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test workload_evidence_freshness_test -- --nocapture",
+      "failure_signature": "handoff_rch_freshness_test_failed"
+    },
+    {
+      "id": "reproducer_harness_test",
+      "command": "CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_workload_loop RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test workload_reproducer_manifest_test -- --nocapture",
+      "failure_signature": "handoff_rch_reproducer_test_failed"
+    },
+    {
+      "id": "latency_join_harness_test",
+      "command": "CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_workload_loop RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test workload_latency_budget_join_test -- --nocapture",
+      "failure_signature": "handoff_rch_latency_test_failed"
+    },
+    {
+      "id": "dossier_harness_test",
+      "command": "CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_workload_loop RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test workload_compatibility_dossier_test -- --nocapture",
+      "failure_signature": "handoff_rch_dossier_test_failed"
+    },
+    {
+      "id": "handoff_harness_test",
+      "command": "CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_workload_loop RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test workload_evidence_loop_handoff_test -- --nocapture",
+      "failure_signature": "handoff_rch_recipe_test_failed"
+    },
+    {
+      "id": "handoff_check",
+      "command": "CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_workload_loop_check RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo check -p frankenlibc-harness --test workload_evidence_loop_handoff_test",
+      "failure_signature": "handoff_rch_check_failed"
+    },
+    {
+      "id": "handoff_clippy",
+      "command": "CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_workload_loop_clippy RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo clippy -p frankenlibc-harness --test workload_evidence_loop_handoff_test -- -D warnings",
+      "failure_signature": "handoff_rch_clippy_failed"
+    }
+  ],
+  "tracker_commands": [
+    {
+      "id": "show_child",
+      "command": "br --no-db show bd-fp4tm.6 --json",
+      "failure_signature": "handoff_tracker_show_failed"
+    },
+    {
+      "id": "close_child",
+      "command": "br --no-db close bd-fp4tm.6 --reason <structured-closeout> --json",
+      "failure_signature": "handoff_tracker_close_failed"
+    },
+    {
+      "id": "ready_after_child",
+      "command": "br --no-db ready --json",
+      "failure_signature": "handoff_tracker_ready_failed"
+    },
+    {
+      "id": "cycle_check",
+      "command": "br --no-db dep cycles --json",
+      "failure_signature": "handoff_tracker_cycles_detected"
+    }
+  ],
+  "agent_mail": {
+    "thread_id_policy": "Use the bead id as thread_id for start and close messages.",
+    "required_reservations": [
+      ".beads/issues.jsonl",
+      "tests/conformance/workload_evidence_loop_handoff.v1.json",
+      "scripts/check_workload_evidence_loop_handoff.sh",
+      "crates/frankenlibc-harness/tests/workload_evidence_loop_handoff_test.rs"
+    ],
+    "release_policy": "Release every active reservation after commit, push, mirror, and closeout message."
+  },
+  "structured_closeout": {
+    "required_fields": [
+      "bead_id",
+      "commit",
+      "pushed_main",
+      "mirrored_master",
+      "validation",
+      "ubs_critical_count",
+      "br_cycles_count",
+      "bv_robot_triage_status",
+      "next_ready",
+      "reservations_released"
+    ]
+  },
+  "fail_closed_signatures": [
+    "handoff_missing_stage",
+    "handoff_bare_cargo_command",
+    "handoff_bare_bv_command",
+    "handoff_missing_no_db_command",
+    "handoff_artifact_missing_validator",
+    "handoff_artifact_unknown_validator",
+    "handoff_validator_missing_failure_signature",
+    "handoff_missing_failure_signature",
+    "handoff_missing_agent_mail_reservation",
+    "handoff_missing_closeout_field"
+  ],
+  "artifact_refs": [
+    "tests/conformance/workload_evidence_loop_handoff.v1.json",
+    "scripts/check_workload_evidence_loop_handoff.sh",
+    "crates/frankenlibc-harness/tests/workload_evidence_loop_handoff_test.rs",
+    "tests/conformance/workload_evidence_freshness_contract.v1.json",
+    "tests/conformance/workload_reproducer_manifest.v1.json",
+    "tests/conformance/workload_latency_budget_join.v1.json",
+    "tests/conformance/workload_compatibility_dossier.v1.json"
+  ]
+}
