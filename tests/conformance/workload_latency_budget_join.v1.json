@@ -1,0 +1,114 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-fp4tm.4",
+  "source_beads": [
+    "bd-b92jd.3.2",
+    "bd-fp4tm.2",
+    "bd-fp4tm.3",
+    "bd-2r0"
+  ],
+  "generated_at_utc": "2026-05-08T05:06:00Z",
+  "purpose": "Join workload replay and LD_PRELOAD smoke latency rows to perf_budget_policy.json so user-facing workload claims cannot advance without fresh latency evidence.",
+  "inputs": {
+    "workload_trace_log": "target/conformance/user_workload_replay_traces.log.jsonl",
+    "workload_reproducer_manifest": "target/conformance/workload_reproducer_manifest.v1.json",
+    "perf_budget_policy": "tests/conformance/perf_budget_policy.json"
+  },
+  "outputs": {
+    "report": "target/conformance/workload_latency_budget_join.report.json",
+    "jsonl_log": "target/conformance/workload_latency_budget_join.log.jsonl"
+  },
+  "required_runtime_modes": [
+    "strict",
+    "hardened"
+  ],
+  "required_input_fields": [
+    "trace_id",
+    "workload_id",
+    "mode",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit"
+  ],
+  "required_output_fields": [
+    "trace_id",
+    "bead_id",
+    "workload_id",
+    "mode",
+    "api_family",
+    "symbol_family",
+    "latency_ns",
+    "budget_policy",
+    "latency_threshold_ns",
+    "observed_regression_pct",
+    "overload_policy",
+    "perf_state",
+    "decision",
+    "user_recommendation",
+    "artifact_refs",
+    "source_commit",
+    "freshness_state",
+    "failure_signature",
+    "next_safe_action"
+  ],
+  "failure_signature_schema": {
+    "workload_latency_missing_latency": {
+      "perf_state": "missing_latency",
+      "decision": "fail",
+      "next_safe_action": "Capture a fresh workload latency row before using this workload for compatibility claims."
+    },
+    "workload_latency_stale_evidence": {
+      "perf_state": "stale_evidence",
+      "decision": "fail",
+      "next_safe_action": "Refresh the workload trace or freshness report before advancing performance claims."
+    },
+    "workload_latency_missing_mode": {
+      "perf_state": "missing_mode",
+      "decision": "fail",
+      "next_safe_action": "Provide both strict and hardened workload latency rows."
+    },
+    "workload_latency_missing_budget": {
+      "perf_state": "missing_budget",
+      "decision": "fail",
+      "next_safe_action": "Bind the workload row to an exact workload budget or explicit perf budget class."
+    },
+    "workload_latency_over_budget": {
+      "perf_state": "over_budget",
+      "decision": "fail",
+      "next_safe_action": "Treat the workload as performance-blocked until repeat samples meet policy."
+    },
+    "workload_latency_overloaded_skip": {
+      "perf_state": "overloaded_skip",
+      "decision": "skip",
+      "next_safe_action": "Rerun under the load guard before recording pass or fail."
+    }
+  },
+  "budget_resolution_policy": {
+    "prefer_exact_workload_budget": true,
+    "fallback_budget_class_field": "budget_class",
+    "fallback_default_budget_class": "strict_hotpath",
+    "strict_threshold_field": "strict_mode_ns",
+    "hardened_threshold_field": "hardened_mode_ns",
+    "missing_budget_failure_signature": "workload_latency_missing_budget"
+  },
+  "overload_policy": {
+    "skip_signatures": [
+      "overloaded_host_skip",
+      "host_overloaded",
+      "perf_gate_overloaded_skip"
+    ],
+    "load_state_values": [
+      "overloaded",
+      "host_overloaded"
+    ],
+    "decision": "skip",
+    "failure_signature": "workload_latency_overloaded_skip"
+  },
+  "artifact_refs": [
+    "scripts/check_workload_latency_budget_join.sh",
+    "tests/conformance/workload_latency_budget_join.v1.json",
+    "tests/conformance/perf_budget_policy.json",
+    "scripts/check_perf_budget.sh",
+    "crates/frankenlibc-harness/tests/workload_latency_budget_join_test.rs"
+  ]
+}
