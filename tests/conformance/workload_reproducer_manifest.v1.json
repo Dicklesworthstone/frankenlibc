@@ -1,0 +1,168 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-fp4tm.3",
+  "source_beads": [
+    "bd-b92jd.3.2",
+    "bd-3rw.5.1"
+  ],
+  "generated_at_utc": "2026-05-08T04:55:00Z",
+  "purpose": "Define the fail-closed contract for converting workload replay and LD_PRELOAD smoke failure rows into compact reproducible artifacts.",
+  "inputs": {
+    "workload_replay_trace_log": "target/conformance/user_workload_replay_traces.log.jsonl",
+    "ld_preload_smoke_trace_log": "target/ld_preload_smoke/<run_id>/trace.jsonl",
+    "workload_replay_trace_runner": "scripts/run_user_workload_replay_traces.sh",
+    "ld_preload_smoke_runner": "scripts/ld_preload_smoke.sh",
+    "failure_dashboard_contract": "tests/conformance/workload_failure_dashboard.v1.json"
+  },
+  "output_contract": {
+    "report": "target/conformance/workload_reproducer_manifest.report.json",
+    "manifest": "target/conformance/workload_reproducer_manifest.v1.json",
+    "jsonl_log": "target/conformance/workload_reproducer_manifest.log.jsonl"
+  },
+  "required_input_fields": [
+    "trace_id",
+    "workload_id",
+    "mode",
+    "command",
+    "env",
+    "failure_signature",
+    "artifact_refs"
+  ],
+  "required_reproducer_fields": [
+    "reproducer_id",
+    "source_trace_id",
+    "source_kind",
+    "workload_id",
+    "mode",
+    "command",
+    "env",
+    "input_files",
+    "timeout_ms",
+    "exit_status",
+    "stdout_excerpt",
+    "stderr_excerpt",
+    "failure_signature",
+    "failure_class",
+    "artifact_refs",
+    "triage_owner_family",
+    "reproduction_command",
+    "next_safe_action",
+    "minimization_state",
+    "source_commit"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "event",
+    "status",
+    "reproducer_id",
+    "workload_id",
+    "mode",
+    "failure_signature",
+    "failure_class",
+    "triage_owner_family",
+    "artifact_refs",
+    "source_commit",
+    "next_safe_action"
+  ],
+  "required_failure_signatures": [
+    "startup_timeout",
+    "startup_segv",
+    "startup_symbol_lookup_error",
+    "startup_strict_parity_mismatch",
+    "startup_perf_regression",
+    "unsupported_workload",
+    "missing_binary"
+  ],
+  "failure_signature_schema": {
+    "startup_timeout": {
+      "failure_class": "startup_timeout",
+      "triage_owner_family": "runtime-orchestration",
+      "next_safe_action": "Rerun only the failing workload with the captured timeout and inspect startup stderr before widening gates."
+    },
+    "startup_segv": {
+      "failure_class": "startup_segv",
+      "triage_owner_family": "memory-safety",
+      "next_safe_action": "Replay the captured command under the same mode with crash diagnostics enabled."
+    },
+    "startup_symbol_lookup_error": {
+      "failure_class": "startup_symbol_lookup_error",
+      "triage_owner_family": "abi-loader",
+      "next_safe_action": "Inspect the captured stderr and symbol family before changing replacement-level claims."
+    },
+    "startup_strict_parity_mismatch": {
+      "failure_class": "startup_strict_parity_mismatch",
+      "triage_owner_family": "conformance",
+      "next_safe_action": "Compare the captured baseline and candidate stdout/stderr excerpts against the workload contract."
+    },
+    "startup_perf_regression": {
+      "failure_class": "startup_perf_regression",
+      "triage_owner_family": "performance",
+      "next_safe_action": "Replay the captured command under the same host-load policy and join the row to workload latency budgets."
+    },
+    "unsupported_workload": {
+      "failure_class": "unsupported_workload",
+      "triage_owner_family": "workload-support",
+      "next_safe_action": "Keep the workload out of ready claims until the required binary or feature contract is available."
+    },
+    "missing_binary": {
+      "failure_class": "missing_binary",
+      "triage_owner_family": "environment",
+      "next_safe_action": "Record the missing binary or preload artifact and do not advance compatibility claims from this row."
+    }
+  },
+  "signature_aliases": {
+    "startup_timeout": "startup_timeout",
+    "timeout": "startup_timeout",
+    "startup_segv": "startup_segv",
+    "signal_11": "startup_segv",
+    "segmentation_fault": "startup_segv",
+    "startup_symbol_lookup_error": "startup_symbol_lookup_error",
+    "symbol_lookup": "startup_symbol_lookup_error",
+    "undefined_symbol": "startup_symbol_lookup_error",
+    "symbol_not_found": "startup_symbol_lookup_error",
+    "startup_strict_parity_mismatch": "startup_strict_parity_mismatch",
+    "stdout_digest_mismatch": "startup_strict_parity_mismatch",
+    "exit_mismatch": "startup_strict_parity_mismatch",
+    "parity_mismatch": "startup_strict_parity_mismatch",
+    "startup_perf_regression": "startup_perf_regression",
+    "perf_regression": "startup_perf_regression",
+    "latency_budget_exceeded": "startup_perf_regression",
+    "unsupported_workload": "unsupported_workload",
+    "missing_binary": "missing_binary",
+    "command_unavailable": "missing_binary",
+    "interpose_artifact_missing": "missing_binary",
+    "interpose_artifact_stale": "missing_binary",
+    "interpose_artifact_wrong_name": "missing_binary",
+    "interpose_artifact_unreadable": "missing_binary"
+  },
+  "signature_prefix_aliases": {
+    "optional_tool_missing:": "unsupported_workload",
+    "startup_symbol_lookup_error": "startup_symbol_lookup_error",
+    "startup_timeout": "startup_timeout",
+    "startup_signal_11": "startup_segv"
+  },
+  "fail_closed_signatures": [
+    "reproducer_missing_command",
+    "reproducer_missing_env",
+    "reproducer_missing_mode",
+    "reproducer_missing_failure_signature",
+    "reproducer_unknown_failure_signature",
+    "reproducer_input_unreadable",
+    "reproducer_jsonl_malformed",
+    "reproducer_contract_invalid"
+  ],
+  "excerpt_policy": {
+    "max_excerpt_bytes": 512,
+    "stdout_artifact_suffix": "stdout.txt",
+    "stderr_artifact_suffix": "stderr.txt"
+  },
+  "artifact_refs": [
+    "scripts/check_workload_reproducer_manifest.sh",
+    "scripts/run_user_workload_replay_traces.sh",
+    "scripts/ld_preload_smoke.sh",
+    "tests/conformance/workload_reproducer_manifest.v1.json",
+    "tests/conformance/workload_failure_dashboard.v1.json",
+    "crates/frankenlibc-harness/tests/workload_reproducer_manifest_test.rs"
+  ]
+}
