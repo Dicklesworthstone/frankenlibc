@@ -132,6 +132,11 @@
         "README.md",
         "FEATURE_PARITY.md",
         "tests/conformance/user_compatibility_report.v1.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/user_workload_replay_manifest.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
         "scripts/generate_user_compatibility_report.sh",
         "target/conformance/user_compatibility_report.report.json",
         "target/conformance/user_compatibility_report.log.jsonl"
