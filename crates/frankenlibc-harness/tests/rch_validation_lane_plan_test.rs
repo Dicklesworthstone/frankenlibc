@@ -1,31 +1,23 @@
-//! Conformance gate for `tests/conformance/rch_validation_lane_plan.v1.json`
-//! (bd-juvqm.9).
+//! Gate coverage for the bd-juvqm.9 rch validation-lane plan.
 //!
-//! The plan is a machine-readable map of which `rch cargo …` invocation
-//! and which `CARGO_TARGET_DIR` an agent should use for each common
-//! validation surface. This gate enforces:
-//!
-//!   * Schema sanity — required top-level fields and a
-//!     non-trivial `surfaces` count.
-//!   * No bare `cargo` — every `minimal_test_cmd` and
-//!     `minimal_clippy_cmd` (when not `n/a`) must be `rch cargo …`
-//!     so a peer agent can copy the command verbatim and stay
-//!     within the swarm-safe lane.
-//!   * Focused scope — every entry pins a `-p <crate>` flag so the
-//!     workspace-wide gate is not the default.
-//!   * Target-dir isolation — every `target_dir_pattern` follows
-//!     the per-bead/per-agent rule (`<agent>` and `<bead>`
-//!     placeholders both present).
-//!   * Hang runbook — at least 5 ordered steps so an agent can
-//!     diagnose without re-running blindly.
-//!   * Regeneration note exists (peers replacing entries must
-//!     deprecate, not delete).
+//! The committed manifest gives agents copyable, focused `rch cargo` lanes
+//! for common FrankenLibC surfaces. These tests run the shell checker against
+//! the canonical plan and against mutated plans that would otherwise let local
+//! cargo, workspace-wide gates, or missing target-dir isolation slip through.
 
 use serde_json::Value;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-type TestResult = Result<(), Box<dyn Error>>;
+type TestResult<T = ()> = Result<T, Box<dyn Error>>;
+
+struct CheckerRun {
+    output: Output,
+    report: PathBuf,
+    log: PathBuf,
+}
 
 fn test_error(message: impl Into<String>) -> Box<dyn Error> {
     std::io::Error::other(message.into()).into()
@@ -39,274 +31,269 @@ fn ensure(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+fn workspace_root() -> TestResult<PathBuf> {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    Ok(manifest
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| test_error("workspace root"))?
+        .to_path_buf())
 }
 
-fn plan_path() -> PathBuf {
-    workspace_root().join("tests/conformance/rch_validation_lane_plan.v1.json")
+fn unique_dir(root: &Path, label: &str) -> TestResult<PathBuf> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| test_error(format!("system time before UNIX_EPOCH: {err}")))?
+        .as_nanos();
+    let dir = root
+        .join("target")
+        .join("test-rch-validation-lane-plan")
+        .join(format!("{label}-{stamp}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
-fn load_plan() -> Result<Value, Box<dyn Error>> {
-    let text = std::fs::read_to_string(plan_path())
-        .map_err(|err| test_error(format!("plan should be readable: {err}")))?;
-    serde_json::from_str(&text)
-        .map_err(|err| test_error(format!("plan should parse as JSON: {err}")))
+fn load_json(path: &Path) -> TestResult<Value> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|err| test_error(format!("{} should be readable: {err}", path.display())))?;
+    serde_json::from_str(&content)
+        .map_err(|err| test_error(format!("{} should parse as JSON: {err}", path.display())))
 }
 
-fn surfaces(plan: &Value) -> Result<&Vec<Value>, Box<dyn Error>> {
-    plan["surfaces"]
-        .as_array()
-        .ok_or_else(|| test_error("plan.surfaces must be an array"))
+fn write_json(path: &Path, value: &Value) -> TestResult {
+    let content = serde_json::to_string_pretty(value)
+        .map_err(|err| test_error(format!("{} serialization failed: {err}", path.display())))?;
+    std::fs::write(path, format!("{content}\n"))
+        .map_err(|err| test_error(format!("{} write failed: {err}", path.display())))
+}
+
+fn string_field<'a>(value: &'a Value, key: &str, context: &str) -> TestResult<&'a str> {
+    value
+        .get(key)
+        .ok_or_else(|| test_error(format!("{context}.{key} is missing")))?
+        .as_str()
+        .ok_or_else(|| test_error(format!("{context}.{key} must be a string")))
+}
+
+fn surface_mut<'a>(manifest: &'a mut Value, surface_id: &str) -> TestResult<&'a mut Value> {
+    manifest
+        .get_mut("surfaces")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| test_error("manifest.surfaces must be an array"))?
+        .iter_mut()
+        .find(|surface| surface.get("surface_id").and_then(Value::as_str) == Some(surface_id))
+        .ok_or_else(|| test_error(format!("surface {surface_id} should exist")))
+}
+
+fn remove_surface(manifest: &mut Value, surface_id: &str) -> TestResult {
+    let surfaces = manifest
+        .get_mut("surfaces")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| test_error("manifest.surfaces must be an array"))?;
+    let old_len = surfaces.len();
+    surfaces
+        .retain(|surface| surface.get("surface_id").and_then(Value::as_str) != Some(surface_id));
+    ensure(
+        surfaces.len() + 1 == old_len,
+        format!("surface {surface_id} should have been removed"),
+    )
+}
+
+fn run_checker(
+    root: &Path,
+    manifest_override: Option<&Path>,
+    label: &str,
+) -> TestResult<CheckerRun> {
+    let out_dir = unique_dir(root, label)?;
+    let report = out_dir.join("report.json");
+    let log = out_dir.join("log.jsonl");
+    let mut command = Command::new(root.join("scripts/check_rch_validation_lane_plan.sh"));
+    command
+        .arg("--validate-only")
+        .current_dir(root)
+        .env("RCH_VALIDATION_LANE_PLAN_REPORT", &report)
+        .env("RCH_VALIDATION_LANE_PLAN_LOG", &log);
+    if let Some(path) = manifest_override {
+        command.env("RCH_VALIDATION_LANE_PLAN_MANIFEST", path);
+    }
+    let output = command
+        .output()
+        .map_err(|err| test_error(format!("failed to run rch validation lane checker: {err}")))?;
+    Ok(CheckerRun {
+        output,
+        report,
+        log,
+    })
+}
+
+fn stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+fn same_text(left: &str, right: &str) -> bool {
+    left.chars().eq(right.chars())
+}
+
+fn set_surface_string(
+    manifest: &mut Value,
+    surface_id: &str,
+    field: &str,
+    value: &str,
+) -> TestResult {
+    let surface = surface_mut(manifest, surface_id)?;
+    let object = surface
+        .as_object_mut()
+        .ok_or_else(|| test_error(format!("surface {surface_id} must be an object")))?;
+    object.insert(field.to_owned(), Value::String(value.to_owned()));
+    Ok(())
+}
+
+fn expect_failure(run: &CheckerRun, signature: &str) -> TestResult {
+    ensure(
+        !run.output.status.success(),
+        format!(
+            "checker unexpectedly passed for {signature}\nstdout:\n{}\nstderr:\n{}",
+            stdout(&run.output),
+            stderr(&run.output)
+        ),
+    )?;
+    ensure(
+        stderr(&run.output).contains(&format!("FAIL[{signature}]")),
+        format!(
+            "stderr should contain failure signature {signature}\nstderr:\n{}",
+            stderr(&run.output)
+        ),
+    )?;
+    let report = load_json(&run.report)?;
+    ensure(
+        same_text(
+            string_field(&report, "failure_signature", "report")?,
+            signature,
+        ),
+        format!("report.failure_signature should be {signature}"),
+    )
+}
+
+fn mutated_manifest(
+    root: &Path,
+    label: &str,
+    mutate: impl FnOnce(&mut Value) -> TestResult,
+) -> TestResult<PathBuf> {
+    let mut manifest = load_json(&root.join("tests/conformance/rch_validation_lane_plan.v1.json"))?;
+    mutate(&mut manifest)?;
+    let path = unique_dir(root, label)?.join("manifest.json");
+    write_json(&path, &manifest)?;
+    Ok(path)
 }
 
 #[test]
-fn plan_has_required_top_level_shape() -> TestResult {
-    let plan = load_plan()?;
+fn checker_passes_current_rch_validation_lane_plan() -> TestResult {
+    let root = workspace_root()?;
+    let script = root.join("scripts/check_rch_validation_lane_plan.sh");
+    ensure(script.exists(), "checker script must exist")?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::metadata(&script)?.permissions();
+        ensure(
+            perms.mode() & 0o111 != 0,
+            "checker script must be executable",
+        )?;
+    }
+
+    let run = run_checker(&root, None, "pass")?;
     ensure(
-        plan["schema_version"] == "v1",
-        "schema_version must be \"v1\"",
+        run.output.status.success(),
+        format!(
+            "checker should pass\nstdout:\n{}\nstderr:\n{}",
+            stdout(&run.output),
+            stderr(&run.output)
+        ),
     )?;
-    ensure(plan["bead"] == "bd-juvqm.9", "bead must be bd-juvqm.9")?;
+    let report = load_json(&run.report)?;
     ensure(
-        plan["manifest_id"] == "rch-validation-lane-plan",
-        "manifest_id must be rch-validation-lane-plan",
+        same_text(string_field(&report, "outcome", "report")?, "pass"),
+        "report.outcome should be pass",
     )?;
-    let rules = plan["rules"]
-        .as_object()
-        .ok_or_else(|| test_error("plan.rules must be an object"))?;
+    let cargo_lanes = report
+        .get("summary")
+        .and_then(|summary| summary.get("cargo_lanes"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     ensure(
-        rules.get("all_cargo_through_rch") == Some(&Value::Bool(true)),
-        "rules.all_cargo_through_rch must be true",
+        cargo_lanes >= 10,
+        "checker should count focused cargo lanes",
     )?;
-    for required_rule in [
-        "rationale_no_local_cargo",
-        "target_dir_isolation_pattern",
-        "target_dir_isolation_rationale",
-        "broad_workspace_gate_policy",
-        "post_remote_exit_hang_policy",
-        "fmt_policy",
-        "clippy_lane",
+    let log = std::fs::read_to_string(&run.log)?;
+    let log_row: Value = serde_json::from_str(log.trim())?;
+    for field in [
+        "trace_id",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "latency_ns",
+        "artifact_refs",
     ] {
         ensure(
-            rules.get(required_rule).is_some(),
-            format!("rules.{required_rule} must be present"),
+            log_row.get(field).is_some(),
+            "log row missing required field",
         )?;
     }
-    ensure(
-        plan["regeneration_note"]
-            .as_str()
-            .map(|s| s.len() > 40)
-            .unwrap_or(false),
-        "regeneration_note must be a non-trivial string",
-    )?;
     Ok(())
 }
 
 #[test]
-fn surfaces_count_is_non_trivial() -> TestResult {
-    let plan = load_plan()?;
-    let s = surfaces(&plan)?;
-    ensure(
-        s.len() >= 8,
-        format!(
-            "plan must enumerate at least 8 surfaces so an agent can route any common validation; got {}",
-            s.len()
-        ),
-    )?;
-    Ok(())
-}
-
-#[test]
-fn every_surface_has_required_fields() -> TestResult {
-    let plan = load_plan()?;
-    let s = surfaces(&plan)?;
-    for entry in s {
-        for field in [
-            "surface_id",
-            "scope",
+fn checker_rejects_local_bare_cargo_lane() -> TestResult {
+    let root = workspace_root()?;
+    let manifest = mutated_manifest(&root, "bare-cargo", |manifest| {
+        set_surface_string(
+            manifest,
+            "harness-conformance-gates",
             "minimal_test_cmd",
-            "minimal_clippy_cmd",
-            "target_dir_pattern",
-            "owning_bead",
-        ] {
-            ensure(
-                entry.get(field).and_then(|v| v.as_str()).is_some(),
-                format!("surface entry missing string field {field}: {entry}"),
-            )?;
-        }
-    }
-    Ok(())
+            "cargo test -p frankenlibc-harness --test fixture_schema_validation_test",
+        )
+    })?;
+    let run = run_checker(&root, Some(&manifest), "bare-cargo")?;
+    expect_failure(&run, "bare_cargo_command")
 }
 
 #[test]
-fn minimal_test_cmd_routes_through_rch_or_a_script() -> TestResult {
-    let plan = load_plan()?;
-    let s = surfaces(&plan)?;
-    for entry in s {
-        let cmd = entry["minimal_test_cmd"].as_str().unwrap_or("");
-        let surface_id = entry["surface_id"].as_str().unwrap_or("?");
-        // Either `rch cargo …` (the standard lane) or a `scripts/`
-        // shell wrapper that itself invokes rch (the script is
-        // explicitly noted in scope/cmd text). Bare `cargo …` is
-        // forbidden — that would skip the swarm-safe lane.
-        let routes_through_rch = cmd.starts_with("rch cargo ") || cmd.starts_with("scripts/");
-        ensure(
-            routes_through_rch,
-            format!(
-                "surface {surface_id} minimal_test_cmd must start with `rch cargo` or `scripts/`; got: {cmd}"
-            ),
-        )?;
-        ensure(
-            !cmd.contains(" cargo ") || cmd.contains("rch cargo "),
-            format!(
-                "surface {surface_id} minimal_test_cmd uses bare `cargo …` (not via rch): {cmd}"
-            ),
-        )?;
-    }
-    Ok(())
+fn checker_rejects_workspace_gate_inside_surface_lane() -> TestResult {
+    let root = workspace_root()?;
+    let manifest = mutated_manifest(&root, "workspace-gate", |manifest| {
+        set_surface_string(
+            manifest,
+            "membrane-runtime-math",
+            "minimal_test_cmd",
+            "rch cargo test --workspace",
+        )
+    })?;
+    let run = run_checker(&root, Some(&manifest), "workspace-gate")?;
+    expect_failure(&run, "workspace_gate_forbidden")
 }
 
 #[test]
-fn minimal_clippy_cmd_routes_through_rch_or_is_na() -> TestResult {
-    let plan = load_plan()?;
-    let s = surfaces(&plan)?;
-    for entry in s {
-        let cmd = entry["minimal_clippy_cmd"].as_str().unwrap_or("");
-        let surface_id = entry["surface_id"].as_str().unwrap_or("?");
-        if cmd == "n/a (shell scripts)" {
-            continue;
-        }
-        ensure(
-            cmd.starts_with("rch cargo clippy"),
-            format!(
-                "surface {surface_id} minimal_clippy_cmd must start with `rch cargo clippy` (or be `n/a (shell scripts)`); got: {cmd}"
-            ),
-        )?;
-    }
-    Ok(())
+fn checker_rejects_missing_target_dir_guidance() -> TestResult {
+    let root = workspace_root()?;
+    let manifest = mutated_manifest(&root, "target-dir", |manifest| {
+        set_surface_string(manifest, "abi-stdio", "target_dir_pattern", "target")
+    })?;
+    let run = run_checker(&root, Some(&manifest), "target-dir")?;
+    expect_failure(&run, "missing_cargo_target_dir")
 }
 
 #[test]
-fn cargo_commands_are_focused_with_p_flag() -> TestResult {
-    let plan = load_plan()?;
-    let s = surfaces(&plan)?;
-    for entry in s {
-        let test_cmd = entry["minimal_test_cmd"].as_str().unwrap_or("");
-        let clippy_cmd = entry["minimal_clippy_cmd"].as_str().unwrap_or("");
-        let surface_id = entry["surface_id"].as_str().unwrap_or("?");
-
-        if test_cmd.starts_with("rch cargo ") {
-            ensure(
-                test_cmd.contains(" -p "),
-                format!(
-                    "surface {surface_id} minimal_test_cmd must include `-p <crate>` (not workspace-wide): {test_cmd}"
-                ),
-            )?;
-        }
-        if clippy_cmd.starts_with("rch cargo clippy") {
-            ensure(
-                clippy_cmd.contains(" -p "),
-                format!(
-                    "surface {surface_id} minimal_clippy_cmd must include `-p <crate>` (not workspace-wide): {clippy_cmd}"
-                ),
-            )?;
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn target_dir_pattern_carries_agent_and_bead_placeholders() -> TestResult {
-    let plan = load_plan()?;
-    let s = surfaces(&plan)?;
-    for entry in s {
-        let pattern = entry["target_dir_pattern"].as_str().unwrap_or("");
-        let surface_id = entry["surface_id"].as_str().unwrap_or("?");
-        if pattern.starts_with("set inside the script") {
-            // Shell-script-internal target dirs are documented but
-            // not literal patterns; skip placeholder check.
-            continue;
-        }
-        ensure(
-            pattern.contains("<agent>"),
-            format!(
-                "surface {surface_id} target_dir_pattern missing <agent> placeholder: {pattern}"
-            ),
-        )?;
-        ensure(
-            pattern.contains("<bead>"),
-            format!(
-                "surface {surface_id} target_dir_pattern missing <bead> placeholder: {pattern}"
-            ),
-        )?;
-    }
-    Ok(())
-}
-
-#[test]
-fn surface_ids_are_unique() -> TestResult {
-    let plan = load_plan()?;
-    let s = surfaces(&plan)?;
-    let mut ids: Vec<&str> = s.iter().filter_map(|e| e["surface_id"].as_str()).collect();
-    ids.sort();
-    let total = ids.len();
-    ids.dedup();
-    ensure(
-        ids.len() == total,
-        format!(
-            "plan.surfaces must have unique surface_id values; saw duplicate among {total} entries"
-        ),
-    )?;
-    Ok(())
-}
-
-#[test]
-fn post_remote_exit_hang_runbook_is_ordered_and_complete() -> TestResult {
-    let plan = load_plan()?;
-    let runbook = plan["post_remote_exit_hang_runbook"]
-        .as_array()
-        .ok_or_else(|| test_error("post_remote_exit_hang_runbook must be an array"))?;
-    ensure(
-        runbook.len() >= 5,
-        format!(
-            "runbook must record >=5 ordered steps; got {}",
-            runbook.len()
-        ),
-    )?;
-    for (idx, step) in runbook.iter().enumerate() {
-        let text = step.as_str().unwrap_or("");
-        let expected_prefix = format!("{}.", idx + 1);
-        ensure(
-            text.starts_with(&expected_prefix),
-            format!(
-                "runbook step {idx} must start with `{}.` for ordered enumeration; got: {text}",
-                idx + 1
-            ),
-        )?;
-    }
-    Ok(())
-}
-
-#[test]
-fn broad_gate_allowlist_entries_carry_rationale() -> TestResult {
-    let plan = load_plan()?;
-    let allowlist = plan["broad_gate_allowlist"]
-        .as_array()
-        .ok_or_else(|| test_error("broad_gate_allowlist must be an array"))?;
-    for entry in allowlist {
-        let cmd = entry["command"].as_str().unwrap_or("");
-        ensure(
-            cmd.contains("--workspace"),
-            format!("broad_gate_allowlist command must use --workspace: {cmd}"),
-        )?;
-        ensure(
-            entry["rationale"]
-                .as_str()
-                .map(|r| r.len() > 30)
-                .unwrap_or(false),
-            format!("broad_gate_allowlist {cmd} must carry a non-trivial rationale"),
-        )?;
-    }
-    Ok(())
+fn checker_rejects_missing_required_surface() -> TestResult {
+    let root = workspace_root()?;
+    let manifest = mutated_manifest(&root, "missing-surface", |manifest| {
+        remove_surface(manifest, "abi-string")
+    })?;
+    let run = run_checker(&root, Some(&manifest), "missing-surface")?;
+    expect_failure(&run, "missing_surface")
 }
