@@ -1,0 +1,100 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "membrane-concurrency-bounded-model-check",
+  "bead": "bd-juvqm.8",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "source_commit": "71325872c518f7437d869732e67c78a6e7732e38",
+  "purpose": "Pin the bounded interleaving model checker for the seqlock primitive — the smallest read-mostly published-value primitive in the membrane family. Production seqlock invariants (no torn read, no missed writer publication, monotone version, monotone retry diagnostic) are a strict subset of every other read-mostly primitive (RCU/EBR/left-right/BRAVO/flat-combining); proving them on a bounded model gives a structural-soundness floor any future read-mostly fast-path can rely on. NO production concurrency primitive changes are required by this bead — the manifest gates the *shape* of the model report and the precise bound the model has explored.",
+  "primitive_under_check": {
+    "name": "SeqlockCounter",
+    "rationale": "Smallest published-value primitive whose invariants any RCU/BRAVO leaf reduces to. Choosing the smallest leverage-bearing primitive keeps the model exhaustive and the schedule space tractable.",
+    "owner_subsystem": "membrane",
+    "writer_step_count": 3,
+    "writer_steps": ["ver += 1 (odd)", "val = N", "ver += 1 (even)"],
+    "reader_step_count": 4,
+    "reader_steps": [
+      "load ver_before",
+      "load val",
+      "load ver_after",
+      "decide: Stable iff ver_before == ver_after AND even"
+    ]
+  },
+  "model_bounds": {
+    "writers_modeled": 1,
+    "writer_publication_counts_explored": [1, 2],
+    "readers_modeled": 1,
+    "reader_attempts_per_run": 1,
+    "schedule_enumeration": "exhaustive interleaving of all writer + reader steps under within-thread order preservation",
+    "expected_schedule_count_for_one_write": 35,
+    "expected_schedule_count_for_two_writes": 210,
+    "memory_model": "sequential-consistent (atomic steps are totally ordered). The model does NOT exercise relaxed/acquire-release ordering — that is the documented bound."
+  },
+  "invariants_proved": [
+    {
+      "invariant_id": "no_torn_read_accepted",
+      "label": "Stable reads never return a value not in the writer's published prefix",
+      "violation_kind": "StaleReadAccepted"
+    },
+    {
+      "invariant_id": "no_stable_read_at_odd_version",
+      "label": "Stable reads never return an odd version (writer-in-progress signal)",
+      "violation_kind": "StableReadAtOddVersion"
+    },
+    {
+      "invariant_id": "no_missed_writer_publication",
+      "label": "If the writer fully finishes BEFORE the reader starts, the reader observes Stable, not Retry",
+      "violation_kind": "MissedWriterPublication"
+    },
+    {
+      "invariant_id": "monotone_retry_diagnostic",
+      "label": "retry_count diagnostic is monotone non-decreasing across attempts",
+      "violation_kind": "RetryCountNonMonotone"
+    }
+  ],
+  "invariants_outside_bound": [
+    {
+      "invariant_id": "memory_model_relaxed_orderings",
+      "rationale": "The model assumes SC atomic steps. A future loom/Kani lane is required to exercise acquire/release/relaxed combinations. Until that lands, production code must keep the SC orderings the model assumes."
+    },
+    {
+      "invariant_id": "multi_writer_interleavings",
+      "rationale": "Only 1 writer is modeled. The production seqlock has writer mutual exclusion as a precondition; multi-writer correctness reduces to that precondition holding."
+    },
+    {
+      "invariant_id": "schedule_count_above_two_writes",
+      "rationale": "The exhaustive enumerator caps at 2 writer publications (210 schedules). Larger bounds are tractable but not required for the structural floor — the algebra of the seqlock is identical at every publication count."
+    }
+  ],
+  "policy": {
+    "default_decision": "block_advancement_until_model_check_clean",
+    "fail_closed_when_invariant_violation_present": true,
+    "fail_closed_when_schedules_explored_below_expected": true,
+    "fail_closed_when_source_commit_stale": true,
+    "fail_closed_when_failure_output_missing_schedule_label": true,
+    "stale_source_commit_freshness_target": "current git HEAD",
+    "rejected_evidence_kinds": [
+      "invariant_violation_present",
+      "incomplete_schedule_enumeration",
+      "stale_source_commit",
+      "missing_schedule_label_on_violation",
+      "primitive_under_check_drift"
+    ]
+  },
+  "failure_output_format": "<violation_kind>::<schedule_step_label_csv>",
+  "downstream_consumers": [
+    {
+      "bead": "bd-juvqm.3",
+      "consumes": "Any RCU/BRAVO read-mostly fast-path that reduces to a seqlock at the leaf inherits this bounded soundness floor — it must not weaken the invariants_proved set."
+    }
+  ],
+  "summary": {
+    "bead": "bd-juvqm.8",
+    "primitive": "SeqlockCounter",
+    "schedule_count_explored": 245,
+    "invariant_count_proved": 4,
+    "invariant_count_outside_bound": 3,
+    "report_only": true,
+    "claim_status": "bounded_model_clean",
+    "next_safe_action": "Land an opt-in loom or Kani lane that lifts the memory_model bound; until then, production read-mostly primitives MUST keep SC orderings on the version field."
+  }
+}

@@ -12,6 +12,7 @@
 #[cfg(feature = "asupersync-tooling")]
 pub mod asupersync_orchestrator;
 pub mod capture;
+pub mod concurrency_model_check;
 pub mod conformance_matrix;
 pub mod decision_trace_minimizer;
 pub mod diff;
