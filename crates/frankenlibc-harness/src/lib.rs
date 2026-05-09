@@ -9,6 +9,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod asupersync_lab_replay;
 #[cfg(feature = "asupersync-tooling")]
 pub mod asupersync_orchestrator;
 pub mod capture;

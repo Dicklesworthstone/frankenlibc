@@ -1,0 +1,81 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "asupersync-lab-replay-contract",
+  "bead": "bd-juvqm.15",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "source_commit": "dec34151f86734fca93ec07bd882f0d36b7b64d5",
+  "purpose": "Pin the contract for the narrow asupersync Lab-backed replay prototype produced by `frankenlibc_harness::asupersync_lab_replay::validate_replay` + `classify_outcome`. The prototype targets ONE workload-trace class (`stdio.fread_small`) and reports tool failures separately from code failures so a missing or broken `/dp/asupersync` install never masquerades as a regression in frankenlibc itself.",
+  "narrow_scope": {
+    "trace_class": "stdio.fread_small",
+    "rationale": "Smallest deterministic workload trace with a real FILE-membrane lock geometry — sufficient to prove the schema + tool-failure routing without requiring a broad workload suite.",
+    "broad_workload_required": false
+  },
+  "required_replay_record_fields": [
+    "schema_version",
+    "trace_class",
+    "virtual_time_seed",
+    "schedule_decisions",
+    "replay_inputs",
+    "expected_outputs",
+    "artifact_refs",
+    "source_commit"
+  ],
+  "outcome_classification": {
+    "rationale": "Tool failures and code failures are reported with mutually exclusive variants so a downstream dashboard can weight them differently. A missing asupersync install must NEVER produce CodeFailure.",
+    "outcomes": [
+      {
+        "outcome_id": "Pass",
+        "fires_when": "asupersync_available=true AND observed_outputs == expected_outputs",
+        "carries_signature": false
+      },
+      {
+        "outcome_id": "CodeFailure",
+        "fires_when": "asupersync_available=true AND observed_outputs != expected_outputs",
+        "carries_signature": true,
+        "signature_format": "<trace_class>::missing=<csv>;extra=<csv>"
+      },
+      {
+        "outcome_id": "ToolFailure",
+        "fires_when": "asupersync_available=false (regardless of observed outputs)",
+        "carries_reason": true
+      }
+    ]
+  },
+  "policy": {
+    "default_decision": "block_replay_until_record_validated",
+    "fail_closed_when_required_field_missing": true,
+    "fail_closed_when_source_commit_invalid": true,
+    "fail_closed_when_replay_input_not_in_artifact_refs": true,
+    "tool_failure_separation_required": true,
+    "stale_source_commit_freshness_target": "current git HEAD",
+    "rejected_evidence_kinds": [
+      "missing_required_field",
+      "stale_or_invalid_source_commit",
+      "replay_input_not_in_artifact_refs",
+      "tool_failure_misclassified_as_code_failure"
+    ]
+  },
+  "fallback_path": {
+    "rationale": "When asupersync is unavailable the replay record is still validated; the gate emits ToolFailure with the trace_class and a structured reason so a CI or dashboard can surface a tool-install issue separately from a frankenlibc code regression.",
+    "tool_failure_reason_format": "asupersync tool unavailable (trace_class=<id>); cannot validate virtual-time replay"
+  },
+  "downstream_consumers": [
+    {
+      "bead": "bd-juvqm.6",
+      "consumes": "When ToolFailure fires, the trace minimizer treats the run as inconclusive — not as a strict/hardened divergence."
+    },
+    {
+      "bead": "bd-juvqm.10",
+      "consumes": "The explain dossier surfaces ToolFailure under the `support_taxonomy_claim` section, NOT as a `first_failing_blocker`."
+    }
+  ],
+  "summary": {
+    "bead": "bd-juvqm.15",
+    "trace_class_count": 1,
+    "required_field_count": 8,
+    "outcome_count": 3,
+    "rejected_evidence_kind_count": 4,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
