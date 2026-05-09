@@ -1,0 +1,155 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-blocker-burndown-dag",
+  "bead": "bd-juvqm.14",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "source_commit": "0a94eff028c3b1b976107eace6218c176befac76",
+  "purpose": "Report-only planner output: a directed acyclic graph of next-step blocker burn-down beads derived from the standalone forge owner-action ledger plus host-dependency probe plan. The planner does NOT auto-create beads — agents read this DAG, decide which entries are still needed (deduping against any open `br list`), and create those beads manually via `br create`. Keeping planning separate from tracker mutation prevents stale duplicates after a peer beat the planner to a fix.",
+  "inputs": {
+    "owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json",
+    "host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+    "burndown_progress_rollup": "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json",
+    "rch_validation_lane_plan": "tests/conformance/rch_validation_lane_plan.v1.json"
+  },
+  "policy": {
+    "dedupe_key_format": "burn-<owner_surface>-<blocking_reason>",
+    "auto_create_beads": false,
+    "ledger_coverage_required": true,
+    "ledger_extra_blocker_result": "fail_closed",
+    "ledger_missing_blocker_result": "fail_closed",
+    "stale_source_commit_result": "block_dag_advancement",
+    "duplicate_dedupe_key_result": "fail_closed",
+    "missing_owner_surface_result": "fail_closed",
+    "missing_validation_lane_result": "fail_closed",
+    "validation_lane_must_match_rch_plan_surface_id": true
+  },
+  "owner_surface_to_validation_lane": {
+    "runtime_linkage": "standalone-forge-scripts",
+    "loader_startup": "standalone-forge-scripts",
+    "libc_surface": "abi-stdio",
+    "compiler_runtime": "standalone-forge-scripts",
+    "unwind_runtime": "standalone-forge-scripts",
+    "tls_startup": "abi-pthread",
+    "glibc_symbol_surface": "harness-conformance-gates",
+    "symbol_versioning": "harness-conformance-gates"
+  },
+  "nodes": [
+    {
+      "dedupe_key": "burn-runtime_linkage-host_needed_libraries_present",
+      "suggested_title": "Burn down host-libc NEEDED libraries from the standalone artifact",
+      "labels": ["standalone", "blocker", "needed-libs", "runtime_linkage"],
+      "owner_surface": "runtime_linkage",
+      "blocking_reason": "host_needed_libraries_present",
+      "validation_lane": "standalone-forge-scripts",
+      "depends_on": [],
+      "first_safe_action": "Audit release link flags and crate profile settings to remove host runtime NEEDED edges that should not appear in the standalone artifact.",
+      "exit_criteria": "scripts/check_standalone_replacement_artifact.sh shows no host libc.so / ld-linux entries under DT_NEEDED."
+    },
+    {
+      "dedupe_key": "burn-runtime_linkage-host_direct_needed_libraries_present",
+      "suggested_title": "Eliminate direct host DT_NEEDED edges (separated from ldd resolution)",
+      "labels": ["standalone", "blocker", "needed-libs", "runtime_linkage"],
+      "owner_surface": "runtime_linkage",
+      "blocking_reason": "host_direct_needed_libraries_present",
+      "validation_lane": "standalone-forge-scripts",
+      "depends_on": ["burn-runtime_linkage-host_needed_libraries_present"],
+      "first_safe_action": "Split direct DT_NEEDED cleanup from ldd cleanup and remove direct ld-linux/libgcc/libc edges introduced by upstream tooling.",
+      "exit_criteria": "objdump -p artifact has no DIRECT host runtime entries; transitive resolution still tolerated until the next node closes."
+    },
+    {
+      "dedupe_key": "burn-runtime_linkage-host_resolved_libraries_present",
+      "suggested_title": "Force ldd-resolution proof to remove transitive host edges",
+      "labels": ["standalone", "blocker", "needed-libs", "runtime_linkage"],
+      "owner_surface": "runtime_linkage",
+      "blocking_reason": "host_resolved_libraries_present",
+      "validation_lane": "standalone-forge-scripts",
+      "depends_on": ["burn-runtime_linkage-host_direct_needed_libraries_present"],
+      "first_safe_action": "Force the ldd-resolution proof to distinguish direct dependencies from transitive load-time resolutions and remove every transitive host edge.",
+      "exit_criteria": "ldd artifact reports zero host paths; only owned object paths resolve."
+    },
+    {
+      "dedupe_key": "burn-loader_startup-host_loader_dependency",
+      "suggested_title": "Inventory and own CRT / init / fini / loader startup obligations",
+      "labels": ["standalone", "blocker", "loader-startup", "crt"],
+      "owner_surface": "loader_startup",
+      "blocking_reason": "host_loader_dependency",
+      "validation_lane": "standalone-forge-scripts",
+      "depends_on": ["burn-runtime_linkage-host_direct_needed_libraries_present"],
+      "first_safe_action": "Inventory the owned CRT, init/fini, and loader startup obligations that must replace ld-linux when the artifact is loaded standalone.",
+      "exit_criteria": "Owned _start / _init / _fini bound to the artifact; no ld-linux PT_INTERP entry."
+    },
+    {
+      "dedupe_key": "burn-libc_surface-host_libc_dependency",
+      "suggested_title": "Burn down replacement-forbidden host libc call-throughs",
+      "labels": ["standalone", "blocker", "libc-surface", "abi"],
+      "owner_surface": "libc_surface",
+      "blocking_reason": "host_libc_dependency",
+      "validation_lane": "abi-stdio",
+      "depends_on": ["burn-runtime_linkage-host_resolved_libraries_present"],
+      "first_safe_action": "Burn down replacement-forbidden host libc call-throughs and keep replacement_proofs evidence current per call site.",
+      "exit_criteria": "Every libc-surface ABI symbol resolves inside the standalone artifact OR is documented as out-of-scope with a closure rationale."
+    },
+    {
+      "dedupe_key": "burn-compiler_runtime-libgcc_runtime_dependency",
+      "suggested_title": "Separate libgcc_s NEEDED + GCC version blockers; trial owned compiler runtime",
+      "labels": ["standalone", "blocker", "compiler-runtime", "libgcc"],
+      "owner_surface": "compiler_runtime",
+      "blocking_reason": "libgcc_runtime_dependency",
+      "validation_lane": "standalone-forge-scripts",
+      "depends_on": ["burn-runtime_linkage-host_resolved_libraries_present"],
+      "first_safe_action": "Separate libgcc_s NEEDED and GCC version-node blockers, then test an owned compiler runtime (or compiler-rt-equivalent) for the surface area FrankenLibC actually exercises.",
+      "exit_criteria": "Standalone artifact links without libgcc_s.so.1 NEEDED edge AND no GCC_X.Y verneed."
+    },
+    {
+      "dedupe_key": "burn-unwind_runtime-undefined_unwind_symbols",
+      "suggested_title": "Decide owned-unwinder vs unwind-disabled standalone mode",
+      "labels": ["standalone", "blocker", "unwind-runtime"],
+      "owner_surface": "unwind_runtime",
+      "blocking_reason": "undefined_unwind_symbols",
+      "validation_lane": "standalone-forge-scripts",
+      "depends_on": ["burn-compiler_runtime-libgcc_runtime_dependency"],
+      "first_safe_action": "Decide whether standalone replacement mode provides owned unwinder entrypoints or compiles with panic=abort and forbids `_Unwind_*` references.",
+      "exit_criteria": "Standalone artifact has zero undefined `_Unwind_*` references OR documents the owned unwinder used; bd-juvqm.4 covers the experiment scaffold."
+    },
+    {
+      "dedupe_key": "burn-glibc_symbol_surface-undefined_glibc_symbols",
+      "suggested_title": "Add or eliminate unresolved GLIBC-versioned symbol edges",
+      "labels": ["standalone", "blocker", "glibc-symbol-surface", "abi"],
+      "owner_surface": "glibc_symbol_surface",
+      "blocking_reason": "undefined_glibc_symbols",
+      "validation_lane": "harness-conformance-gates",
+      "depends_on": ["burn-libc_surface-host_libc_dependency"],
+      "first_safe_action": "Add or eliminate unresolved GLIBC-versioned symbol edges through the ABI surface so the standalone link does not refer to host glibc symbol nodes.",
+      "exit_criteria": "Every undefined GLIBC_x.y symbol is either provided by the standalone artifact (with version_script entry) or removed from the call-graph."
+    },
+    {
+      "dedupe_key": "burn-tls_startup-undefined_tls_symbols",
+      "suggested_title": "Trace and replace __tls_get_addr edge through owned TLS startup",
+      "labels": ["standalone", "blocker", "tls-startup"],
+      "owner_surface": "tls_startup",
+      "blocking_reason": "undefined_tls_symbols",
+      "validation_lane": "abi-pthread",
+      "depends_on": [
+        "burn-loader_startup-host_loader_dependency",
+        "burn-libc_surface-host_libc_dependency"
+      ],
+      "first_safe_action": "Trace the __tls_get_addr edge from startup/TLS support and add owned TLS access shims, OR mark the offending modules as TLS-disabled for L1 standalone.",
+      "exit_criteria": "Standalone artifact has zero undefined __tls_get_addr / __tls_get_offset references; bd-juvqm.5 covers the experiment scaffold."
+    },
+    {
+      "dedupe_key": "burn-symbol_versioning-host_version_requirements",
+      "suggested_title": "Partition GCC and GLIBC version requirements by provider",
+      "labels": ["standalone", "blocker", "symbol-versioning"],
+      "owner_surface": "symbol_versioning",
+      "blocking_reason": "host_version_requirements",
+      "validation_lane": "harness-conformance-gates",
+      "depends_on": [
+        "burn-glibc_symbol_surface-undefined_glibc_symbols",
+        "burn-compiler_runtime-libgcc_runtime_dependency"
+      ],
+      "first_safe_action": "Partition GCC and GLIBC version needs by provider, then remove host-provided requirements that should be owned by the standalone artifact instead.",
+      "exit_criteria": "objdump -p shows zero GLIBC_x.y / GCC_x.y verneed entries pointing at host providers."
+    }
+  ],
+  "regeneration_note": "When `standalone_forge_blocker_owner_action_ledger.v1.json` adds, removes, or renames a `blocking_reason`, regenerate this manifest by re-deriving the DAG node set and updating `source_commit` to the current HEAD. The harness checker fails closed when the DAG node set drifts from the ledger blocker set, so atomic regeneration is enforced. Do not delete nodes — replace with `deprecated_at_commit` field if a blocker is permanently retired."
+}
