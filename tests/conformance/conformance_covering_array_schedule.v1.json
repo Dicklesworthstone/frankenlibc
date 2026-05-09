@@ -1,0 +1,104 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "conformance-covering-array-schedule",
+  "bead": "bd-juvqm.13",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "source_commit": "220c8cb90285fc7c783892ab73861bb8e0250084",
+  "purpose": "Bounded covering-array schedule for the next hard-part fixture wave. The repo already has rich fixture packs and runtime_math covering-array machinery; this manifest adds an explicit *interaction* contract on top of them so future hard-part work picks high-order combinations of (mode, symbol family, errno edge, locale, threading regime, allocator pressure, workload class) without re-deriving the schedule and without exploding test cost. The schedule is pairwise (t=2): every pair of factor values must appear in at least one vector, and the harness checker fails closed if any pair is missing.",
+  "factors": {
+    "mode": {
+      "values": ["strict", "hardened"],
+      "rationale": "The two production runtime modes from runtime_policy."
+    },
+    "family": {
+      "values": ["stdio", "malloc", "pthread", "string", "locale"],
+      "rationale": "Highest-volume ABI families with hard-part interaction risk: stdio I/O, malloc allocator pressure, pthread concurrency, string memory boundaries, locale UTF-8 codec switching."
+    },
+    "errno": {
+      "values": ["success", "EFAULT", "EINVAL", "ENOMEM"],
+      "rationale": "Success plus three errno edges that exercise distinct healing paths (bad pointer, bad arg, allocator failure)."
+    },
+    "locale_setting": {
+      "values": ["C", "en_US.UTF-8", "ja_JP.UTF-8"],
+      "rationale": "C anchors the no-multibyte path; en_US.UTF-8 is the dominant UTF-8 locale; ja_JP.UTF-8 stresses 3-byte CJK sequences that often trip locale-aware comparators."
+    },
+    "threading": {
+      "values": ["single", "multi_2", "multi_64"],
+      "rationale": "Single-threaded baseline, low-concurrency contention sentinel, and 64-core swarm-realistic stress."
+    },
+    "allocator_pressure": {
+      "values": ["low", "high"],
+      "rationale": "Low pressure exercises the fast path; high pressure forces fallback / reclamation paths and overlaps with ENOMEM at the symbol layer."
+    },
+    "workload_class": {
+      "values": ["hotpath", "coldpath"],
+      "rationale": "hotpath claims must hit the strict <20ns / hardened <200ns budgets; coldpath claims do not — interactions still need to verify the runtime distinguishes them."
+    }
+  },
+  "coverage_strength": 2,
+  "coverage_strength_rationale": "Pairwise (t=2) is empirically known to catch the majority of multi-factor defects at a small fraction of full-factorial cost (185 pairs vs 1440 vectors). t=3 (3-wise) is the upgrade path; this manifest names the upgrade trigger but does not yet enumerate t=3 vectors.",
+  "upgrade_trigger_t3": "If any closed bead in the bd-juvqm.* family reproduces a defect that requires a 3-way factor combination not covered by the t=2 schedule (i.e., the schedule's vectors all pass but a hand-derived 3-tuple fails), regenerate this manifest at coverage_strength=3 and bump schema_version to v2.",
+  "policy": {
+    "auto_create_fixtures": false,
+    "skipped_combinations_require_rationale": true,
+    "missing_pair_result": "fail_closed",
+    "duplicate_vector_id_result": "fail_closed",
+    "unknown_factor_value_result": "fail_closed",
+    "stale_source_commit_result": "block_schedule_advancement"
+  },
+  "downstream_fixture_families": [
+    {
+      "family_id": "errno-precedence-pairwise",
+      "scope": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_errno_precedence.rs",
+      "consumes_factors": ["mode", "family", "errno", "allocator_pressure"],
+      "rationale": "errno-precedence fuzz is the next family that will benefit from a deduped schedule covering errno × family × allocator_pressure interactions."
+    },
+    {
+      "family_id": "locale-iconv-breadth",
+      "scope": "tests/conformance/locale_iconv_breadth_scope_ledger.v1.json",
+      "consumes_factors": ["mode", "family", "locale_setting", "threading"],
+      "rationale": "locale × threading interactions trip the per-thread locale state machine in iconv; this schedule provides the interaction set."
+    },
+    {
+      "family_id": "high-core-baseline",
+      "scope": "bd-juvqm.1 deliverable (high-core tail baseline)",
+      "consumes_factors": ["mode", "family", "threading", "allocator_pressure", "workload_class"],
+      "rationale": "Baseline manifest will sample p50/p95/p99/p999 across these factors using the tail_stats library (bd-juvqm.11) for confidence intervals."
+    }
+  ],
+  "skipped_combinations": [
+    {
+      "pattern": "{mode=hardened, errno=ENOMEM, allocator_pressure=low}",
+      "rationale": "Hardened mode cannot return ENOMEM under low allocator pressure without an injection harness. The injection harness is intentionally out of scope for this schedule; bd-juvqm.7 (evidence ring backpressure stress) covers the injection path separately.",
+      "permitted": true
+    }
+  ],
+  "vectors": [
+    {"vector_id": "cv-01", "mode": "strict", "family": "stdio", "errno": "success", "locale_setting": "C", "threading": "single", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-02", "mode": "strict", "family": "malloc", "errno": "EFAULT", "locale_setting": "en_US.UTF-8", "threading": "multi_2", "allocator_pressure": "high", "workload_class": "coldpath"},
+    {"vector_id": "cv-03", "mode": "hardened", "family": "pthread", "errno": "EINVAL", "locale_setting": "ja_JP.UTF-8", "threading": "multi_64", "allocator_pressure": "low", "workload_class": "coldpath"},
+    {"vector_id": "cv-04", "mode": "hardened", "family": "string", "errno": "ENOMEM", "locale_setting": "C", "threading": "multi_2", "allocator_pressure": "high", "workload_class": "hotpath"},
+    {"vector_id": "cv-05", "mode": "strict", "family": "locale", "errno": "success", "locale_setting": "ja_JP.UTF-8", "threading": "multi_64", "allocator_pressure": "high", "workload_class": "hotpath"},
+    {"vector_id": "cv-06", "mode": "hardened", "family": "locale", "errno": "ENOMEM", "locale_setting": "en_US.UTF-8", "threading": "single", "allocator_pressure": "low", "workload_class": "coldpath"},
+    {"vector_id": "cv-07", "mode": "strict", "family": "pthread", "errno": "EINVAL", "locale_setting": "en_US.UTF-8", "threading": "single", "allocator_pressure": "high", "workload_class": "hotpath"},
+    {"vector_id": "cv-08", "mode": "hardened", "family": "malloc", "errno": "EFAULT", "locale_setting": "C", "threading": "multi_64", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-09", "mode": "strict", "family": "string", "errno": "success", "locale_setting": "en_US.UTF-8", "threading": "multi_2", "allocator_pressure": "low", "workload_class": "coldpath"},
+    {"vector_id": "cv-10", "mode": "strict", "family": "stdio", "errno": "ENOMEM", "locale_setting": "en_US.UTF-8", "threading": "multi_64", "allocator_pressure": "high", "workload_class": "coldpath"},
+    {"vector_id": "cv-11", "mode": "strict", "family": "string", "errno": "EFAULT", "locale_setting": "ja_JP.UTF-8", "threading": "single", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-12", "mode": "strict", "family": "locale", "errno": "EINVAL", "locale_setting": "C", "threading": "multi_2", "allocator_pressure": "low", "workload_class": "coldpath"},
+    {"vector_id": "cv-13", "mode": "hardened", "family": "stdio", "errno": "success", "locale_setting": "ja_JP.UTF-8", "threading": "multi_2", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-14", "mode": "strict", "family": "malloc", "errno": "ENOMEM", "locale_setting": "ja_JP.UTF-8", "threading": "single", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-15", "mode": "strict", "family": "pthread", "errno": "success", "locale_setting": "C", "threading": "multi_2", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-16", "mode": "strict", "family": "string", "errno": "EINVAL", "locale_setting": "C", "threading": "multi_64", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-17", "mode": "strict", "family": "stdio", "errno": "EFAULT", "locale_setting": "C", "threading": "single", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-18", "mode": "strict", "family": "stdio", "errno": "EINVAL", "locale_setting": "C", "threading": "single", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-19", "mode": "strict", "family": "malloc", "errno": "success", "locale_setting": "C", "threading": "single", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-20", "mode": "strict", "family": "malloc", "errno": "EINVAL", "locale_setting": "C", "threading": "single", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-21", "mode": "strict", "family": "pthread", "errno": "EFAULT", "locale_setting": "C", "threading": "single", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-22", "mode": "strict", "family": "pthread", "errno": "ENOMEM", "locale_setting": "C", "threading": "single", "allocator_pressure": "low", "workload_class": "hotpath"},
+    {"vector_id": "cv-23", "mode": "strict", "family": "locale", "errno": "EFAULT", "locale_setting": "C", "threading": "single", "allocator_pressure": "low", "workload_class": "hotpath"}
+  ],
+  "expected_pair_count": 185,
+  "expected_vector_count": 23,
+  "regeneration_note": "When any factor's `values` list changes, regenerate the vectors with a greedy IPOG-equivalent solver and update `expected_pair_count`, `expected_vector_count`, and `vectors`. Do not hand-edit individual vectors — the harness checker enforces every pair is covered, so a hand-edit that drops a pair fails closed."
+}
