@@ -8,7 +8,7 @@
 //! negative report fixtures, so the contract is testable today
 //! without a live timing-measurement run.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -84,7 +84,7 @@ fn manifest_has_required_top_level_shape() -> TestResult {
         .as_f64()
         .unwrap_or(0.0);
     ensure(
-        amp >= 1.5 && amp <= 10.0,
+        (1.5..=10.0).contains(&amp),
         format!("amplification_threshold_ratio must be in [1.5, 10.0]; got {amp}"),
     )?;
     Ok(())
