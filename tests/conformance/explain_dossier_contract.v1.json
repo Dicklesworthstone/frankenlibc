@@ -1,0 +1,74 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "explain-dossier-contract",
+  "bead": "bd-juvqm.10",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "source_commit": "595224166c3be80fc23f888c5375129a5b26c1b9",
+  "purpose": "Pin the contract for the user-facing explain dossier produced by `frankenlibc_harness::explain_dossier::build_dossier`. The dossier joins workload-replay metadata, runtime decision evidence, standalone blocker snapshots, L1 dashboard rows, and a semantic-overlay summary into a compact explanation. Every claim in the dossier MUST cite an artifact_ref + source_commit; the generator never invents claims and never promotes the support taxonomy (\"works on host\", \"works under preload\") into a semantic-parity assertion.",
+  "required_input_kinds": [
+    "workload_replay",
+    "runtime_decision_log",
+    "standalone_blocker_snapshot",
+    "l1_dashboard_row",
+    "semantic_overlay"
+  ],
+  "required_dossier_sections": [
+    "practical_recommendation",
+    "replacement_level",
+    "first_failing_blocker",
+    "top_decision_terms",
+    "strict_hardened_divergence_signature",
+    "next_diagnostic_command",
+    "support_taxonomy_claim",
+    "evidence_rows",
+    "all_artifact_refs"
+  ],
+  "policy": {
+    "default_decision": "block_dossier_until_evidence_complete",
+    "fail_closed_when_artifact_refs_missing": true,
+    "fail_closed_when_source_commit_stale": true,
+    "fail_closed_when_required_input_missing": true,
+    "fail_closed_when_replacement_level_empty": true,
+    "fail_closed_when_support_taxonomy_promoted_without_semantic_parity": true,
+    "stale_source_commit_freshness_target": "current git HEAD",
+    "rejected_evidence_kinds": [
+      "missing_artifact_refs",
+      "stale_source_commit",
+      "missing_required_input",
+      "empty_replacement_level",
+      "support_taxonomy_promoted_without_semantic_parity"
+    ]
+  },
+  "support_taxonomy_guard": {
+    "rationale": "FrankenLibC distinguishes (1) reachability claims — 'works under preload', 'links cleanly under standalone' — from (2) semantic-parity claims — 'behaves identically to glibc on the workload set'. Only the semantic_overlay artifact backs (2). The dossier MUST refuse a 'passes' / 'ready' support claim unless a non-empty semantic_overlay artifact_ref is paired with it.",
+    "promotion_words": [
+      "passes",
+      "ready"
+    ],
+    "required_paired_artifact_kind": "semantic_overlay"
+  },
+  "deterministic_output_contract": {
+    "json_required": true,
+    "markdown_optional": true,
+    "evidence_rows_sort_order": "ascending by kind label",
+    "all_artifact_refs_sort_order": "ascending unique BTreeSet"
+  },
+  "downstream_consumers": [
+    {
+      "consumer": "user / debugging agent",
+      "consumes": "Reads the practical_recommendation + first_failing_blocker + next_diagnostic_command to decide what to fix or run next."
+    },
+    {
+      "bead": "bd-juvqm.6",
+      "consumes": "If strict_hardened_divergence_signature is non-empty, the recommendation routes the user to the bd-juvqm.6 trace minimizer for a smaller reproducer."
+    }
+  ],
+  "summary": {
+    "bead": "bd-juvqm.10",
+    "required_input_count": 5,
+    "required_section_count": 9,
+    "support_taxonomy_promotion_words": 2,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
