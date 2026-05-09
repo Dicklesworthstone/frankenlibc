@@ -1,0 +1,248 @@
+{
+  "schema_version": "strict_hardened_decision_trace_minimizer.v1",
+  "manifest_id": "strict-hardened-decision-trace-minimizer",
+  "bead": "bd-juvqm.6",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "canonical_checker": "scripts/check_strict_hardened_decision_trace_minimizer.sh --validate-only",
+  "report_path": "target/conformance/strict_hardened_decision_trace_minimizer.report.json",
+  "log_path": "target/conformance/strict_hardened_decision_trace_minimizer.log.jsonl",
+  "purpose": "Fail-closed contract and synthetic proof data for minimizing strict/hardened decision traces. The checker consumes runtime decision JSONL-shaped rows, finds the first strict-vs-hardened divergence by scenario/api_family/symbol/decision_path/input_class, and emits a deterministic replay bundle containing only the paired rows needed to reproduce the divergence.",
+  "input_contract": {
+    "supported_sources": [
+      "runtime_decision_jsonl",
+      "workload_trace_jsonl",
+      "healing_oracle_log_jsonl"
+    ],
+    "identity_key_fields": [
+      "scenario_id",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "input_class"
+    ],
+    "mode_field": "mode",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "divergence_fields": [
+      "decision_action",
+      "outcome",
+      "healing_action",
+      "errno"
+    ],
+    "required_row_fields": [
+      "schema_version",
+      "trace_id",
+      "scenario_id",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "input_class",
+      "mode",
+      "decision_action",
+      "outcome",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs"
+    ]
+  },
+  "output_contract": {
+    "required_bundle_fields": [
+      "case_id",
+      "source_commit",
+      "original_artifact_refs",
+      "minimized_trace",
+      "dropped_rows",
+      "replay_command",
+      "expected_failure_signature"
+    ],
+    "minimized_trace_policy": "For divergent cases, keep exactly the strict and hardened rows for the earliest divergent identity key. For no-divergence controls, keep an empty minimized_trace and emit expected_failure_signature=no_divergence.",
+    "dropped_row_rationales": [
+      "pre_divergence_equivalent",
+      "post_divergence_irrelevant",
+      "no_divergence_control"
+    ],
+    "replay_command_template": "scripts/check_strict_hardened_decision_trace_minimizer.sh --validate-only --case <case_id>"
+  },
+  "trace_cases": [
+    {
+      "case_id": "synthetic_strict_hardened_divergence",
+      "schema_version": "decision-trace-jsonl.v1",
+      "source_kind": "runtime_decision_jsonl",
+      "artifact_refs": [
+        "tests/conformance/strict_hardened_decision_trace_minimizer.v1.json#synthetic_strict_hardened_divergence"
+      ],
+      "replay_command": "scripts/check_strict_hardened_decision_trace_minimizer.sh --validate-only --case synthetic_strict_hardened_divergence",
+      "expected_failure_signature": "mode_divergence:decision_action,outcome,healing_action",
+      "rows": [
+        {
+          "schema_version": "decision-trace-jsonl.v1",
+          "trace_id": "trace-pre-strict",
+          "scenario_id": "pointer-copy-boundary",
+          "api_family": "string",
+          "symbol": "memcpy",
+          "decision_path": "validate.pointer.fast",
+          "input_class": "valid-aligned-range",
+          "mode": "strict",
+          "decision_action": "Allow",
+          "outcome": "copied",
+          "healing_action": null,
+          "errno": 0,
+          "latency_ns": 18,
+          "artifact_refs": [
+            "tests/conformance/strict_hardened_decision_trace_minimizer.v1.json#pre"
+          ]
+        },
+        {
+          "schema_version": "decision-trace-jsonl.v1",
+          "trace_id": "trace-pre-hardened",
+          "scenario_id": "pointer-copy-boundary",
+          "api_family": "string",
+          "symbol": "memcpy",
+          "decision_path": "validate.pointer.fast",
+          "input_class": "valid-aligned-range",
+          "mode": "hardened",
+          "decision_action": "Allow",
+          "outcome": "copied",
+          "healing_action": null,
+          "errno": 0,
+          "latency_ns": 32,
+          "artifact_refs": [
+            "tests/conformance/strict_hardened_decision_trace_minimizer.v1.json#pre"
+          ]
+        },
+        {
+          "schema_version": "decision-trace-jsonl.v1",
+          "trace_id": "trace-diverge-strict",
+          "scenario_id": "pointer-copy-boundary",
+          "api_family": "string",
+          "symbol": "memcpy",
+          "decision_path": "validate.pointer.full",
+          "input_class": "unterminated-overlap",
+          "mode": "strict",
+          "decision_action": "Deny",
+          "outcome": "efault",
+          "healing_action": null,
+          "errno": 14,
+          "latency_ns": 41,
+          "artifact_refs": [
+            "tests/conformance/strict_hardened_decision_trace_minimizer.v1.json#divergence"
+          ]
+        },
+        {
+          "schema_version": "decision-trace-jsonl.v1",
+          "trace_id": "trace-diverge-hardened",
+          "scenario_id": "pointer-copy-boundary",
+          "api_family": "string",
+          "symbol": "memcpy",
+          "decision_path": "validate.pointer.full",
+          "input_class": "unterminated-overlap",
+          "mode": "hardened",
+          "decision_action": "Repair",
+          "outcome": "truncated_copy",
+          "healing_action": "TruncateWithNull",
+          "errno": 14,
+          "latency_ns": 155,
+          "artifact_refs": [
+            "tests/conformance/strict_hardened_decision_trace_minimizer.v1.json#divergence"
+          ]
+        },
+        {
+          "schema_version": "decision-trace-jsonl.v1",
+          "trace_id": "trace-post-strict",
+          "scenario_id": "allocator-pressure",
+          "api_family": "malloc",
+          "symbol": "free",
+          "decision_path": "validate.pointer.quarantine",
+          "input_class": "double-free",
+          "mode": "strict",
+          "decision_action": "Deny",
+          "outcome": "invalid",
+          "healing_action": null,
+          "errno": 22,
+          "latency_ns": 67,
+          "artifact_refs": [
+            "tests/conformance/strict_hardened_decision_trace_minimizer.v1.json#post"
+          ]
+        },
+        {
+          "schema_version": "decision-trace-jsonl.v1",
+          "trace_id": "trace-post-hardened",
+          "scenario_id": "allocator-pressure",
+          "api_family": "malloc",
+          "symbol": "free",
+          "decision_path": "validate.pointer.quarantine",
+          "input_class": "double-free",
+          "mode": "hardened",
+          "decision_action": "Repair",
+          "outcome": "ignored",
+          "healing_action": "IgnoreDoubleFree",
+          "errno": 0,
+          "latency_ns": 144,
+          "artifact_refs": [
+            "tests/conformance/strict_hardened_decision_trace_minimizer.v1.json#post"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "synthetic_no_divergence_control",
+      "schema_version": "decision-trace-jsonl.v1",
+      "source_kind": "runtime_decision_jsonl",
+      "artifact_refs": [
+        "tests/conformance/strict_hardened_decision_trace_minimizer.v1.json#synthetic_no_divergence_control"
+      ],
+      "replay_command": "scripts/check_strict_hardened_decision_trace_minimizer.sh --validate-only --case synthetic_no_divergence_control",
+      "expected_failure_signature": "no_divergence",
+      "rows": [
+        {
+          "schema_version": "decision-trace-jsonl.v1",
+          "trace_id": "trace-nodiv-strict",
+          "scenario_id": "stdio-buffered-read",
+          "api_family": "stdio",
+          "symbol": "fread",
+          "decision_path": "validate.file.readable",
+          "input_class": "valid-file-buffer",
+          "mode": "strict",
+          "decision_action": "Allow",
+          "outcome": "read",
+          "healing_action": null,
+          "errno": 0,
+          "latency_ns": 70,
+          "artifact_refs": [
+            "tests/conformance/strict_hardened_decision_trace_minimizer.v1.json#nodiv"
+          ]
+        },
+        {
+          "schema_version": "decision-trace-jsonl.v1",
+          "trace_id": "trace-nodiv-hardened",
+          "scenario_id": "stdio-buffered-read",
+          "api_family": "stdio",
+          "symbol": "fread",
+          "decision_path": "validate.file.readable",
+          "input_class": "valid-file-buffer",
+          "mode": "hardened",
+          "decision_action": "Allow",
+          "outcome": "read",
+          "healing_action": null,
+          "errno": 0,
+          "latency_ns": 99,
+          "artifact_refs": [
+            "tests/conformance/strict_hardened_decision_trace_minimizer.v1.json#nodiv"
+          ]
+        }
+      ]
+    }
+  ],
+  "fail_closed_when": [
+    "missing case schema_version",
+    "missing case artifact_refs",
+    "missing row artifact_refs",
+    "missing row identity field",
+    "strict/hardened mode pair incomplete",
+    "expected failure signature mismatches computed divergence"
+  ],
+  "regeneration_note": "Add new trace cases when another log producer changes row shape. Keep the synthetic divergence first-divergence property stable so agents can compare minimizer output byte-for-byte across runs."
+}
