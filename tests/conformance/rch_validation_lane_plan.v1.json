@@ -1,0 +1,135 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "rch-validation-lane-plan",
+  "bead": "bd-juvqm.9",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "purpose": "Machine-readable validation-lane plan for FrankenLibC. Maps each common surface (harness tests, runtime_math, ABI subsystems, fuzz build smokes, bench build smokes, standalone forge gates, workload replays) to the minimal `rch` command and CARGO_TARGET_DIR isolation rule that an agent in a 64+ core swarm must use. Reduces overlap (two agents on the same target dir thrash incremental compilation) and prevents agents from running unscoped workspace gates when a focused crate gate would suffice.",
+  "rules": {
+    "all_cargo_through_rch": true,
+    "rationale_no_local_cargo": "AGENTS.md requires `rch cargo …` for any CPU-intensive cargo invocation. Local cargo on this 64-core node would burn the swarm's shared cache and block peer agents.",
+    "target_dir_isolation_pattern": "/data/projects/.cargo-target-<project>-<agent-name>-<bead-short>",
+    "target_dir_isolation_rationale": "Per-bead, per-agent CARGO_TARGET_DIR avoids incremental-compilation contention when two agents touch the same crate at the same time. The bead-short suffix is the last segment of the bead id (e.g. juvqm11 for bd-juvqm.11).",
+    "broad_workspace_gate_policy": "FORBIDDEN unless the bead explicitly touches workspace-wide infrastructure (Cargo.toml at the workspace root, profile changes, or a cross-crate trait). Default to focused `-p <crate>` gates.",
+    "post_remote_exit_hang_policy": "When `rch cargo …` reports remote `exit=0` but artifact retrieval stalls past 5 minutes, do NOT re-run. Verify the work landed via `git log --oneline -3 -- <changed-files>` and `br show <bead>`. Re-running burns tape on a peer's already-completed retrieval and corrupts the shared target dir.",
+    "fmt_policy": "`cargo fmt --check` is fast-local-only; never wrap fmt in rch.",
+    "clippy_lane": "`rch cargo clippy -p <crate> --lib --no-default-features -- -D warnings` is the default focused lane. `--all-targets` only when the bead explicitly touches integration tests or examples."
+  },
+  "surfaces": [
+    {
+      "surface_id": "harness-tail-stats",
+      "scope": "frankenlibc_harness::tail_stats",
+      "minimal_test_cmd": "rch cargo test -p frankenlibc-harness --lib tail_stats",
+      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-harness --lib --no-default-features -- -D warnings",
+      "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
+      "owning_bead": "bd-juvqm.11"
+    },
+    {
+      "surface_id": "harness-conformance-gates",
+      "scope": "crates/frankenlibc-harness/tests/*_test.rs (one file at a time)",
+      "minimal_test_cmd": "rch cargo test -p frankenlibc-harness --test <gate_name>",
+      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-harness --tests --no-default-features -- -D warnings",
+      "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
+      "owning_bead": "bd-juvqm",
+      "broad_gate_forbidden_reason": "Each conformance test is independent; running --tests under --all-targets recompiles 100+ test binaries per invocation."
+    },
+    {
+      "surface_id": "membrane-runtime-math",
+      "scope": "frankenlibc_membrane::runtime_math",
+      "minimal_test_cmd": "rch cargo test -p frankenlibc-membrane --lib runtime_math",
+      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-membrane --lib --no-default-features -- -D warnings",
+      "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
+      "owning_bead": "bd-juvqm"
+    },
+    {
+      "surface_id": "abi-pthread",
+      "scope": "frankenlibc_abi::pthread_abi",
+      "minimal_test_cmd": "rch cargo test -p frankenlibc-abi --lib pthread_abi",
+      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-abi --lib --no-default-features -- -D warnings",
+      "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
+      "owning_bead": "bd-juvqm"
+    },
+    {
+      "surface_id": "abi-stdio",
+      "scope": "frankenlibc_abi::stdio_abi",
+      "minimal_test_cmd": "rch cargo test -p frankenlibc-abi --lib stdio_abi",
+      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-abi --lib --no-default-features -- -D warnings",
+      "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
+      "owning_bead": "bd-juvqm"
+    },
+    {
+      "surface_id": "abi-string",
+      "scope": "frankenlibc_abi::string_abi",
+      "minimal_test_cmd": "rch cargo test -p frankenlibc-abi --lib string_abi",
+      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-abi --lib --no-default-features -- -D warnings",
+      "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
+      "owning_bead": "bd-juvqm"
+    },
+    {
+      "surface_id": "core-stdlib",
+      "scope": "frankenlibc_core::stdlib (and submodules)",
+      "minimal_test_cmd": "rch cargo test -p frankenlibc-core --lib stdlib",
+      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-core --lib --no-default-features -- -D warnings",
+      "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
+      "owning_bead": "bd-juvqm"
+    },
+    {
+      "surface_id": "core-resolv",
+      "scope": "frankenlibc_core::resolv / aliases / netgroup parsers",
+      "minimal_test_cmd": "rch cargo test -p frankenlibc-core --lib resolv",
+      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-core --lib --no-default-features -- -D warnings",
+      "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
+      "owning_bead": "bd-juvqm"
+    },
+    {
+      "surface_id": "fuzz-build-smoke",
+      "scope": "frankenlibc-fuzz fuzz targets (one bin at a time)",
+      "minimal_test_cmd": "rch cargo check -p frankenlibc-fuzz --bin <target_name>",
+      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-fuzz --bin <target_name> -- -D warnings",
+      "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
+      "owning_bead": "bd-juvqm",
+      "broad_gate_forbidden_reason": "frankenlibc-fuzz has 60+ bin targets; checking all of them per fuzz-target edit wastes 10+ minutes per agent."
+    },
+    {
+      "surface_id": "bench-build-smoke",
+      "scope": "frankenlibc-bench harness=false bins (one bench at a time)",
+      "minimal_test_cmd": "rch cargo build -p frankenlibc-bench --bench <bench_name> --release",
+      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-bench --benches --no-default-features -- -D warnings",
+      "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
+      "owning_bead": "bd-juvqm"
+    },
+    {
+      "surface_id": "workload-replay",
+      "scope": "crates/frankenlibc-harness/tests/user_workload_replay_*_test.rs",
+      "minimal_test_cmd": "rch cargo test -p frankenlibc-harness --test user_workload_replay_<variant>",
+      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-harness --tests --no-default-features -- -D warnings",
+      "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
+      "owning_bead": "bd-juvqm"
+    },
+    {
+      "surface_id": "standalone-forge-scripts",
+      "scope": "scripts/check_*.sh that invoke rch internally",
+      "minimal_test_cmd": "scripts/check_<gate>.sh (rch is invoked by the script itself; agent must NOT prefix with `rch cargo …`)",
+      "minimal_clippy_cmd": "n/a (shell scripts)",
+      "target_dir_pattern": "set inside the script via the project's standard CARGO_TARGET_DIR helper",
+      "owning_bead": "bd-juvqm"
+    }
+  ],
+  "broad_gate_allowlist": [
+    {
+      "command": "rch cargo check --workspace",
+      "rationale": "Permitted only when a Cargo.toml at the workspace root or a profile section changes. Bead must cite the workspace-touching file."
+    },
+    {
+      "command": "rch cargo test --workspace --no-run",
+      "rationale": "Permitted only for release-readiness sanity checks; the bead must cite the release tag or pre-merge audit it satisfies."
+    }
+  ],
+  "post_remote_exit_hang_runbook": [
+    "1. Capture wall-clock at hang detection.",
+    "2. `git log --oneline -3 -- <files-the-bead-was-supposed-to-touch>` — if the commit landed, the work is done.",
+    "3. `br show <bead>` — if status is closed, the work is done.",
+    "4. `ls /data/tmp/claude-1000/<session>/tasks/<task-id>.output` — if non-zero size and ends with `[RCH] remote ts2 (Ns)`, retrieval is in flight; wait additional 60s before any remediation.",
+    "5. Only after steps 2-4 confirm the work did NOT land, consider re-running with a different CARGO_TARGET_DIR to bypass a corrupted lock."
+  ],
+  "regeneration_note": "Add a new entry under `surfaces` whenever a bead introduces a new crate, top-level module, or test file pattern that other agents will routinely validate. Do not delete entries; deprecate them via a `deprecated_at_commit` field instead so peers running off older checkouts can still resolve their lane."
+}
