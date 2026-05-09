@@ -1,0 +1,256 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-tls-removal-experiment",
+  "bead": "bd-juvqm.5",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "source_commit": "4353deb0e11ce3794a477dcb4929d4ec4bf81779",
+  "purpose": "Opt-in report-only contract for a single, controlled TLS-removal intervention against the standalone forge __tls_get_addr@GLIBC_2.3 blocker. Compares (1) the baseline standalone forge artifact, (2) the existing local-exec TLS model probe, and (3) a proposed owned-tls-cache source-surface intervention that replaces the largest thread_local! cluster (`abi_unistd_reentrant_buffers_and_lookup_state`, 25 macros at crates/frankenlibc-abi/src/unistd_abi.rs) with a `pthread_setspecific`/`pthread_getspecific` keyed cache. The contract pins the disposition of every TLS source surface across the three lanes so a future live experiment cannot over-claim removal: a row may move from `still_thread_local` to `pthread_key_substituted` only when the build_status is `pass` AND nm/readelf confirm `__tls_get_addr` is no longer undefined. Until every required cluster exits, replacement_level_change_allowed=false and the lane stays report-only. Default forge behavior is never affected by this manifest.",
+  "inputs": {
+    "standalone_tls_blocker_diagnostics": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+    "standalone_tls_model_startup_experiment": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+    "standalone_owned_tls_startup_surface": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+    "standalone_blocker_burndown_dag": "tests/conformance/standalone_blocker_burndown_dag.v1.json"
+  },
+  "report_policy": {
+    "report_only": true,
+    "promotion_allowed": false,
+    "replacement_level_change_allowed": false,
+    "default_forge_path_change_allowed": false,
+    "default_build_profile_change_allowed": false,
+    "default_tls_model_change_allowed": false,
+    "source_rewrite_allowed_in_default_lane": false,
+    "non_baseline_lanes_require_explicit_mode": true,
+    "required_mode": "--owned-tls-cache-experiment",
+    "missing_tls_symbol_row_result": "fail_closed",
+    "hidden_glibc_version_need_result": "fail_closed",
+    "stale_source_commit_result": "fail_closed",
+    "ready_claim_with_thread_local_present_result": "fail_closed",
+    "claim_status_until_all_clusters_exit": "claim_blocked",
+    "rejected_evidence_kinds": [
+      "missing_tls_symbol_row",
+      "missing_owner_surface_row",
+      "hidden_glibc_version_need",
+      "stale_source_commit",
+      "illegal_promotion",
+      "default_forge_path_changed",
+      "replacement_level_changed",
+      "default_tls_model_changed_on_baseline"
+    ]
+  },
+  "source_commit_freshness_policy": {
+    "recorded_source_commit_field": "source_commit",
+    "comparison_target": "current git HEAD",
+    "stale_result": "block_tls_removal_experiment",
+    "experiment_evidence_allowed_when_stale": false,
+    "rejected_evidence_kind": "stale_tls_removal_experiment"
+  },
+  "required_lane_fields": [
+    "lane_id",
+    "role",
+    "build_command",
+    "cargo_target_dir_suffix",
+    "tls_model",
+    "report_only",
+    "expected_claim_status",
+    "must_not_change_default_tls_model"
+  ],
+  "required_tls_symbol_row_fields": [
+    "symbol",
+    "version_node",
+    "provider_library",
+    "version_requirement",
+    "baseline_disposition",
+    "local_exec_disposition",
+    "owned_tls_cache_disposition",
+    "removal_strategy",
+    "claim_status_until_exit",
+    "evidence_commands"
+  ],
+  "required_owner_surface_row_fields": [
+    "path",
+    "owner_surface",
+    "thread_local_macro_count",
+    "baseline_disposition",
+    "local_exec_disposition",
+    "owned_tls_cache_disposition",
+    "removal_plan",
+    "expected_runtime_replacement_primitive",
+    "claim_status_until_exit"
+  ],
+  "experiment_lanes": [
+    {
+      "lane_id": "baseline-release-standalone",
+      "role": "baseline",
+      "cargo_target_dir_suffix": "baseline-release-standalone",
+      "build_command": [
+        "rch",
+        "exec",
+        "--",
+        "cargo",
+        "build",
+        "-p",
+        "frankenlibc-abi",
+        "--release",
+        "--features=standalone"
+      ],
+      "tls_model": "initial-exec",
+      "report_only": true,
+      "expected_claim_status": "claim_blocked",
+      "must_not_change_default_tls_model": true,
+      "expected_undefined_tls_symbol_count": 1
+    },
+    {
+      "lane_id": "local-exec-tls-model-probe",
+      "role": "comparison",
+      "cargo_target_dir_suffix": "local-exec-tls-model-probe",
+      "build_command": [
+        "rch",
+        "exec",
+        "--",
+        "cargo",
+        "build",
+        "-p",
+        "frankenlibc-abi",
+        "--release",
+        "--features=standalone"
+      ],
+      "tls_model": "local-exec",
+      "rustflags": [
+        "-C",
+        "tls-model=local-exec"
+      ],
+      "report_only": true,
+      "expected_claim_status": "report_only",
+      "must_not_change_default_tls_model": true,
+      "expected_build_status": "fail",
+      "expected_failure_signature": "non_pic_tls_relocation_in_shared_dependency"
+    },
+    {
+      "lane_id": "owned-tls-cache-source-surface",
+      "role": "experiment",
+      "cargo_target_dir_suffix": "owned-tls-cache-source-surface",
+      "build_command": [
+        "rch",
+        "exec",
+        "--",
+        "cargo",
+        "build",
+        "-p",
+        "frankenlibc-abi",
+        "--release",
+        "--features=standalone,owned-tls-cache"
+      ],
+      "tls_model": "initial-exec",
+      "rustflags": [],
+      "report_only": true,
+      "expected_claim_status": "report_only",
+      "must_not_change_default_tls_model": true,
+      "expected_undefined_tls_symbol_count_when_complete": 0,
+      "build_status_until_owned_substitute_complete": "report_only_blocked",
+      "expected_replacement_primitives": [
+        "pthread_key_create",
+        "pthread_setspecific",
+        "pthread_getspecific"
+      ]
+    }
+  ],
+  "tls_symbol_disposition_rows": [
+    {
+      "symbol": "__tls_get_addr@GLIBC_2.3",
+      "version_node": "GLIBC_2.3",
+      "provider_library": "ld-linux-x86-64.so.2",
+      "version_requirement": "ld-linux-x86-64.so.2:GLIBC_2.3",
+      "baseline_disposition": "still_undefined",
+      "local_exec_disposition": "build_failed_non_pic_tls_relocation",
+      "owned_tls_cache_disposition": "removed_when_complete",
+      "removal_strategy": "Replace `thread_local!` macros in target source surfaces with a process-keyed pthread_setspecific/pthread_getspecific cache; the resulting binary contains no general-dynamic TLS relocations and therefore no __tls_get_addr undefined symbol.",
+      "claim_status_until_exit": "claim_blocked",
+      "evidence_commands": [
+        "nm -D --undefined-only target/.../libfrankenlibc_abi.so",
+        "readelf -Ws target/.../libfrankenlibc_abi.so",
+        "readelf --version-info target/.../libfrankenlibc_abi.so"
+      ]
+    }
+  ],
+  "owner_surface_disposition_rows": [
+    {
+      "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "owner_surface": "abi_unistd_reentrant_buffers_and_lookup_state",
+      "thread_local_macro_count": 25,
+      "baseline_disposition": "still_thread_local",
+      "local_exec_disposition": "still_thread_local",
+      "owned_tls_cache_disposition": "pthread_key_substituted_when_complete",
+      "removal_plan": "Migrate all 25 `thread_local!` declarations to a single `frankenlibc_abi_unistd_tls` pthread key; allocate the per-thread cache on first access, free in a registered destructor.",
+      "expected_runtime_replacement_primitive": "pthread_setspecific",
+      "claim_status_until_exit": "claim_blocked"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/resolv_abi.rs",
+      "owner_surface": "abi_resolver_tls_and_h_errno_state",
+      "thread_local_macro_count": 14,
+      "baseline_disposition": "still_thread_local",
+      "local_exec_disposition": "still_thread_local",
+      "owned_tls_cache_disposition": "pthread_key_substituted_when_complete",
+      "removal_plan": "Migrate the resolver h_errno + lookup state cluster to a `frankenlibc_abi_resolv_tls` pthread key; preserve resolver(3) reentrancy semantics.",
+      "expected_runtime_replacement_primitive": "pthread_setspecific",
+      "claim_status_until_exit": "claim_blocked"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/rpc_abi.rs",
+      "owner_surface": "abi_rpc_thread_local_buffers",
+      "thread_local_macro_count": 7,
+      "baseline_disposition": "still_thread_local",
+      "local_exec_disposition": "still_thread_local",
+      "owned_tls_cache_disposition": "pthread_key_substituted_when_complete",
+      "removal_plan": "Migrate RPC scratch buffers to a `frankenlibc_abi_rpc_tls` pthread key.",
+      "expected_runtime_replacement_primitive": "pthread_setspecific",
+      "claim_status_until_exit": "claim_blocked"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "owner_surface": "abi_glibc_internal_process_and_tls_shims",
+      "thread_local_macro_count": 6,
+      "baseline_disposition": "still_thread_local",
+      "local_exec_disposition": "still_thread_local",
+      "owned_tls_cache_disposition": "pthread_key_substituted_when_complete",
+      "removal_plan": "Migrate glibc-internal shims to a `frankenlibc_abi_glibc_internal_tls` pthread key; verify behavior of `__libc_thread_freeres`-style hooks.",
+      "expected_runtime_replacement_primitive": "pthread_setspecific",
+      "claim_status_until_exit": "claim_blocked"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/string_abi.rs",
+      "owner_surface": "abi_string_membrane_recursion_and_scratch_state",
+      "thread_local_macro_count": 4,
+      "baseline_disposition": "still_thread_local",
+      "local_exec_disposition": "still_thread_local",
+      "owned_tls_cache_disposition": "pthread_key_substituted_when_complete",
+      "removal_plan": "Migrate string membrane recursion guards to a `frankenlibc_abi_string_tls` pthread key; preserve recursion-into-self detection semantics.",
+      "expected_runtime_replacement_primitive": "pthread_setspecific",
+      "claim_status_until_exit": "claim_blocked"
+    }
+  ],
+  "live_experiment_environment_blockers": [
+    {
+      "blocker": "owned-tls-cache feature gate is design-only at this commit; the pthread-key cache substitute is not yet wired into frankenlibc-abi/Cargo.toml.",
+      "remediation": "A future commit must add a `[features] owned-tls-cache = []` entry plus the pthread-key cache implementation that supersedes the 56 `thread_local!` macros across the 5 owner-surface rows. Until that lands, the owned-tls-cache lane MUST stay report-only with build_status_until_owned_substitute_complete=report_only_blocked."
+    }
+  ],
+  "summary": {
+    "bead": "bd-juvqm.5",
+    "lane_count": 3,
+    "baseline_lane": "baseline-release-standalone",
+    "comparison_lane": "local-exec-tls-model-probe",
+    "experiment_lane": "owned-tls-cache-source-surface",
+    "report_only": true,
+    "default_forge_path_unchanged": true,
+    "replacement_level_change_allowed": false,
+    "promotion_allowed": false,
+    "default_tls_model_change_allowed": false,
+    "claim_status": "claim_blocked",
+    "tls_blocker_symbol_count_baseline": 1,
+    "tls_blocker_symbol_count_owned_tls_cache_when_complete": 0,
+    "owner_surface_cluster_count": 5,
+    "thread_local_macro_count_in_targeted_clusters": 56,
+    "next_safe_action": "Land the owned-tls-cache feature gate + pthread-key substitute crate, then re-run the experiment lane and update each cluster's owned_tls_cache_disposition to `pthread_key_substituted` atomically with source_commit. Promotion remains forbidden until __tls_get_addr is absent from nm -D output AND every owner-surface cluster reports owned_tls_cache_disposition=pthread_key_substituted."
+  }
+}
