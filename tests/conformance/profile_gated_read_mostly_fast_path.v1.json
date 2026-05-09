@@ -1,0 +1,86 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "profile-gated-read-mostly-fast-path",
+  "bead": "bd-juvqm.3",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "source_commit": "d0725a913f379d5dd8bb4d8bce81ab7f4a000597",
+  "purpose": "Pin the contract for the profile-gated RCU/BRAVO-class read-mostly fast-path prototype produced by `frankenlibc_harness::read_mostly_fast_path_prototype`. The optimization changes EXACTLY ONE LEVER — the lane the reader takes (`Conservative` mutex vs. `Seqlock`). Both lanes share the same writer protocol and write to the same backing store, so the optimization can be reverted by flipping the profile flag back to `Conservative` without invalidating any unrelated evidence artifact. This manifest gates (1) the isomorphism proof note any future live experiment must respect, (2) the deterministic-fallback contract, and (3) the schema of the live before/after measurement run.",
+  "anchored_baseline_manifest": "tests/conformance/high_core_tail_baseline.v1.json",
+  "anchored_attribution_manifest": "tests/conformance/membrane_contention_attribution_gate.v1.json",
+  "anchored_concurrency_model_check_manifest": "tests/conformance/membrane_concurrency_bounded_model_check.v1.json",
+  "selected_hotspot": {
+    "stage_id": "tls_cache",
+    "owner_subsystem": "membrane",
+    "expected_signal": "tls_cache_miss_rate",
+    "rationale": "The bd-juvqm.2 attribution gate's `tls_cache` stage is read-mostly by construction: writers are rare (cache invalidations) and readers are every membrane validation. Reducing the read latency at this stage compounds across every API call. No new synchronization abstraction is invented — the prototype uses the seqlock primitive whose bounded-soundness floor was proved in bd-juvqm.8."
+  },
+  "isomorphism_proof": {
+    "ordering": "Both lanes observe writes in program order: the conservative lane via mutex acquire/release; the seqlock lane via Acquire-loaded version sandwiched around an Acquire-loaded value. Every successful seqlock read corresponds to the same instant the mutex would have observed.",
+    "visibility": "Writers update the seqlock value (with version-bump bracketing) BEFORE releasing the mutex. A reader on either lane therefore observes either the pre-write or the post-write value — never a torn intermediate.",
+    "safety_state_monotonicity": "The membrane SafetyState is not modified by either reader; only the value field is. Therefore neither lane changes the safety-state lattice.",
+    "errno_abi_behavior": "Neither lane returns errno or modifies the libc errno location. Reader signature is `fn read(&self) -> u32`; behavior is identical across lanes.",
+    "strict_hardened_divergence": "The strict/hardened mode distinction does NOT affect this reader — the value field is the same in both modes. The bd-juvqm.12 timing side-channel budget gate covers any p99 delta arising from lane choice; this prototype must keep that delta within the per-path cap (200ns for pointer.validate_region, the surface that consumes tls_cache reads)."
+  },
+  "deterministic_fallback_contract": {
+    "fallback_lane": "Conservative",
+    "rationale": "The Conservative mutex lane is always available, always returns the most recently published value, and never retries. Switching `profile_lane` from Seqlock back to Conservative at any time produces an outcome sequence identical to a run that started in Conservative.",
+    "single_lever_invariant": "The ONLY observable change between profiles is read latency. Published values, write protocol, and diagnostic counters are identical."
+  },
+  "live_measurement_schema": {
+    "rationale": "When a future live experiment produces before/after p99/p999/throughput measurements, every row MUST satisfy this schema. The validator at `frankenlibc_harness::read_mostly_fast_path_prototype::validate_live_measurement` enforces it.",
+    "required_fields": [
+      "lane_id",
+      "profile_id",
+      "source_commit",
+      "environment_fingerprint",
+      "p99_ns",
+      "p999_ns",
+      "throughput_ops_per_sec",
+      "n",
+      "seed"
+    ],
+    "minimum_samples_for_p999": 1000,
+    "monotone_quantiles_required": true
+  },
+  "policy": {
+    "default_decision": "block_promotion_until_lanes_agree_on_isomorphism_witness",
+    "fail_closed_when_lanes_disagree": true,
+    "fail_closed_when_single_lever_invariant_violated": true,
+    "fail_closed_when_live_measurement_missing_required_field": true,
+    "fail_closed_when_source_commit_invalid": true,
+    "fail_closed_when_environment_fingerprint_missing": true,
+    "fail_closed_when_n_below_minimum_for_p999": true,
+    "fail_closed_when_quantiles_non_monotone": true,
+    "stale_source_commit_freshness_target": "current git HEAD",
+    "rejected_evidence_kinds": [
+      "lanes_disagree_on_isomorphism_witness",
+      "single_lever_invariant_violated",
+      "missing_required_measurement_field",
+      "invalid_source_commit",
+      "missing_environment_fingerprint",
+      "insufficient_samples_for_p999",
+      "non_monotone_quantiles"
+    ]
+  },
+  "downstream_consumers": [
+    {
+      "bead": "bd-juvqm.12",
+      "consumes": "Strict/hardened timing side-channel budget gate — lane choice MUST keep the per-path p99 delta within the 200ns cap on pointer.validate_region (the surface that consumes tls_cache reads)."
+    },
+    {
+      "bead": "bd-juvqm.8",
+      "consumes": "Reuses the bounded model-check soundness floor for the seqlock primitive."
+    }
+  ],
+  "summary": {
+    "bead": "bd-juvqm.3",
+    "selected_hotspot_stage_id": "tls_cache",
+    "lanes_count": 2,
+    "single_lever_change": true,
+    "deterministic_fallback_lane": "Conservative",
+    "live_measurement_required_field_count": 9,
+    "report_only": true,
+    "claim_status": "report_only_until_live_measurement",
+    "next_safe_action": "Run the live before/after experiment under bd-juvqm.1's high-core tail baseline harness; emit a LiveMeasurementRow for each (lane, profile) pair; the gate will validate fields and refuse to promote unless the lanes agree on the isomorphism witness AND the strict/hardened timing side-channel budget (bd-juvqm.12) holds."
+  }
+}

@@ -33,6 +33,7 @@ pub mod minimizer;
 pub mod observability_dashboard;
 pub mod proof_binder_proofs;
 pub mod proof_chain_e2e;
+pub mod read_mostly_fast_path_prototype;
 pub mod report;
 pub mod runner;
 pub mod runtime_evidence_verifier;
