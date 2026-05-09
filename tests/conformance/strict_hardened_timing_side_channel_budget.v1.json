@@ -1,0 +1,106 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "strict-hardened-timing-side-channel-budget",
+  "bead": "bd-juvqm.12",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "source_commit": "4052e3a5f1b0414f74cce5027269f33df6ad30fa",
+  "purpose": "Timing side-channel budget contract for representative pointer, allocator, string, stdio, and pthread paths across strict and hardened modes. Strict and hardened intentionally differ in validation depth and repair behavior; this manifest pins an upper bound on the *p99 timing delta* between the two modes so an input class that triggers a deeper validation path cannot leak that fact through an unbounded timing channel. NO production timing behavior changes are required by this bead — the manifest is the contract any future hardening/optimization bead must respect.",
+  "anchored_baseline_manifest": "tests/conformance/high_core_tail_baseline.v1.json",
+  "tail_statistics_contract_owner": "bd-juvqm.11",
+  "policy": {
+    "default_decision": "block_advancement_until_delta_within_budget",
+    "fail_closed_when_missing_mode_pair": true,
+    "fail_closed_when_artifact_refs_missing": true,
+    "fail_closed_when_p99_delta_exceeds_budget": true,
+    "fail_closed_when_p99_delta_amplifies_with_input_class": true,
+    "fail_closed_when_source_commit_stale": true,
+    "stale_source_commit_freshness_target": "current git HEAD",
+    "amplification_threshold_ratio": 3.0,
+    "amplification_rationale": "If the worst-input-class p99 delta exceeds 3x the typical-input p99 delta on the same path, treat it as suspicious amplification: a small subset of inputs is consuming disproportionate hardened-mode work and may leak class membership via timing.",
+    "rejected_evidence_kinds": [
+      "missing_mode_pair",
+      "missing_artifact_refs",
+      "over_budget_p99_delta",
+      "amplification_above_threshold",
+      "stale_source_commit",
+      "missing_required_field"
+    ]
+  },
+  "required_row_fields": [
+    "path_id",
+    "owner_subsystem",
+    "input_class",
+    "strict_p99_ns",
+    "hardened_p99_ns",
+    "p99_delta_ns",
+    "allowed_p99_delta_budget_ns",
+    "amplification_ratio",
+    "intentional_divergence",
+    "intentional_divergence_rationale",
+    "artifact_refs",
+    "source_commit"
+  ],
+  "paths": [
+    {
+      "path_id": "pointer.validate_region",
+      "owner_subsystem": "membrane",
+      "rationale": "Pointer validation is the canonical hot-path that distinguishes the two modes; hardened performs canary + bounds re-checks that strict can skip.",
+      "allowed_p99_delta_budget_ns": 200,
+      "intentional_divergence": true,
+      "intentional_divergence_rationale": "Hardened mode runs the full bounds + canary re-check; strict mode trusts a recent cache hit. The 200ns cap matches the hardened budget."
+    },
+    {
+      "path_id": "allocator.malloc_fastpath",
+      "owner_subsystem": "allocator",
+      "rationale": "Fast-path allocations bypass hardened tracking; the delta is bounded so an attacker cannot fingerprint allocator class by timing.",
+      "allowed_p99_delta_budget_ns": 150,
+      "intentional_divergence": true,
+      "intentional_divergence_rationale": "Hardened mode tracks allocation provenance for canary checks; strict skips."
+    },
+    {
+      "path_id": "string.memcmp",
+      "owner_subsystem": "string",
+      "rationale": "Both modes must run constant-time memcmp on equal-length inputs; deltas above 50ns indicate the hardened path took a non-constant-time branch.",
+      "allowed_p99_delta_budget_ns": 50,
+      "intentional_divergence": false,
+      "intentional_divergence_rationale": "memcmp is required to be effectively constant-time across modes for security workloads."
+    },
+    {
+      "path_id": "stdio.fread_small",
+      "owner_subsystem": "stdio",
+      "rationale": "Small reads (<= 4096 bytes) hit the FILE buffer hot path; deltas reflect lock geometry differences.",
+      "allowed_p99_delta_budget_ns": 250,
+      "intentional_divergence": true,
+      "intentional_divergence_rationale": "Hardened mode acquires a per-FILE membrane lock around the buffer; strict can avoid it for non-shared FILEs."
+    },
+    {
+      "path_id": "pthread.mutex_lock_uncontended",
+      "owner_subsystem": "pthread",
+      "rationale": "Uncontended mutex lock is the smallest synchronization primitive; the 100ns budget matches the strict<200ns hardened budget for hot paths.",
+      "allowed_p99_delta_budget_ns": 100,
+      "intentional_divergence": false,
+      "intentional_divergence_rationale": "Mutex lock geometry must be timing-stable across modes for security workloads that use mutex acquisition as a fairness signal."
+    }
+  ],
+  "input_classes": [
+    {
+      "input_class_id": "typical",
+      "rationale": "Mainline well-formed input — the budget baseline."
+    },
+    {
+      "input_class_id": "boundary",
+      "rationale": "Inputs that land exactly on a fast-path boundary (alignment, size class). Should not amplify the delta."
+    },
+    {
+      "input_class_id": "adversarial",
+      "rationale": "Inputs deliberately chosen to maximize hardened-mode work (e.g., crossing a magazine boundary, triggering a bloom miss). Amplification beyond amplification_threshold_ratio fails closed."
+    }
+  ],
+  "downstream_consumers": [
+    {
+      "bead": "bd-juvqm.3",
+      "consumes": "RCU/BRAVO read-mostly fast-path prototype must respect this budget — moving a hot path to a faster lock cannot widen the strict/hardened delta beyond the per-path cap."
+    }
+  ],
+  "regeneration_note": "When a path's strict-vs-hardened semantic gap changes (e.g., hardened gains a new check), update allowed_p99_delta_budget_ns and intentional_divergence_rationale atomically with source_commit. Do NOT raise the cap silently — the harness checker fails closed when delta exceeds budget; raising the cap requires a security review note in this manifest's commit message."
+}
