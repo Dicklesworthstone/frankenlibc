@@ -1,0 +1,135 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "membrane-contention-attribution-gate",
+  "bead": "bd-juvqm.2",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "source_commit": "2926860424ad6eda000b639ecdd032a0c31877b6",
+  "purpose": "Fail-closed gate that attributes high-core stalls to concrete metadata surfaces (validation pipeline stages, allocator shard/magazine paths, runtime evidence emission, pthread/stdio synchronization) rather than broad perf prose. The gate is checked-in: it validates the *contract* that any future contention-attribution report must satisfy, without requiring a live benchmark. A future benchmark wave (bd-juvqm.1 baseline + bd-juvqm.3 RCU/BRAVO prototype) will produce reports that this gate rejects when required stage rows or tail-quantile fields are missing.",
+  "anchored_baseline_manifest": "tests/conformance/high_core_tail_baseline.v1.json",
+  "tail_statistics_contract_owner": "bd-juvqm.11",
+  "validation_pipeline_stages": [
+    {
+      "stage_id": "tls_cache",
+      "owner_subsystem": "membrane",
+      "rationale": "Per-thread cache front-stage; misses fall through to bloom/arena and are observable in p99/p999 tails.",
+      "expected_signal": "tls_cache_miss_rate"
+    },
+    {
+      "stage_id": "bloom",
+      "owner_subsystem": "membrane",
+      "rationale": "Bloom-filter probe; false-positive rate determines arena lookup pressure.",
+      "expected_signal": "bloom_fp_rate"
+    },
+    {
+      "stage_id": "arena",
+      "owner_subsystem": "membrane",
+      "rationale": "Authoritative arena lookup; lock contention here directly attributes to high-core stalls.",
+      "expected_signal": "arena_contention_hint"
+    },
+    {
+      "stage_id": "fingerprint",
+      "owner_subsystem": "membrane",
+      "rationale": "Pointer fingerprint check; cycles attributed here are pure compute, not synchronization.",
+      "expected_signal": "fingerprint_compute_ns"
+    },
+    {
+      "stage_id": "canary",
+      "owner_subsystem": "membrane",
+      "rationale": "Boundary canary check; failures here are tampering signals, not perf signals — but the *cost* of the check is part of the membrane overhead budget.",
+      "expected_signal": "canary_overhead_ns"
+    },
+    {
+      "stage_id": "bounds",
+      "owner_subsystem": "membrane",
+      "rationale": "Final bounds check before granting access; gates the strict <20ns / hardened <200ns membrane budget.",
+      "expected_signal": "bounds_check_ns"
+    },
+    {
+      "stage_id": "allocator_shard",
+      "owner_subsystem": "allocator",
+      "rationale": "Shard selection picks a per-CPU magazine; shard contention is the dominant tail driver above 32 threads.",
+      "expected_signal": "shard_contention_hint"
+    },
+    {
+      "stage_id": "allocator_magazine",
+      "owner_subsystem": "allocator",
+      "rationale": "Magazine refill/drain crosses to the global allocator; observed as p999 spikes on multi_64 profile.",
+      "expected_signal": "magazine_refill_drain_count"
+    },
+    {
+      "stage_id": "evidence_emission",
+      "owner_subsystem": "runtime_math",
+      "rationale": "Decision-card / structured-log emission; bounded cost is essential — this stage attributes stalls caused by ring backpressure (covered separately by bd-juvqm.7).",
+      "expected_signal": "evidence_emission_ns"
+    },
+    {
+      "stage_id": "pthread_sync",
+      "owner_subsystem": "pthread",
+      "rationale": "Mutex + condvar wakeup latency; tropical-latency / CVaR tails come from this stage on multi_64+.",
+      "expected_signal": "futex_wait_wakeup_ns"
+    },
+    {
+      "stage_id": "stdio_sync",
+      "owner_subsystem": "stdio",
+      "rationale": "FILE-stream lock; flock_helpers contention shows up here. Distinct from pthread_sync because the lock geometry differs (per-FILE vs global).",
+      "expected_signal": "stdio_lock_wait_ns"
+    }
+  ],
+  "required_attribution_fields": [
+    "trace_id",
+    "bead_id",
+    "benchmark_id",
+    "stage_id",
+    "owner_subsystem",
+    "expected_signal",
+    "thread_profile",
+    "runtime_mode",
+    "n",
+    "p50",
+    "p95",
+    "p99",
+    "p999",
+    "p99_ci_low",
+    "p99_ci_high",
+    "sufficient_for_p99",
+    "seed",
+    "bootstrap_iters",
+    "contention_hint",
+    "pressure_state",
+    "evidence_loss_count",
+    "source_commit",
+    "target_dir",
+    "artifact_refs",
+    "failure_signature"
+  ],
+  "policy": {
+    "default_decision": "block_attribution_until_evidence_complete",
+    "fail_closed_when_missing_stage_row": true,
+    "fail_closed_when_quantile_ordering_violated": true,
+    "fail_closed_when_source_commit_stale": true,
+    "fail_closed_when_required_attribution_field_missing": true,
+    "fail_closed_when_sufficient_for_p99_false": true,
+    "stale_source_commit_freshness_target": "current git HEAD",
+    "stale_result": "block_attribution_advancement",
+    "rejected_evidence_kinds": [
+      "missing_stage_row",
+      "missing_attribution_field",
+      "non_monotone_quantile",
+      "stale_source_commit",
+      "insufficient_samples_for_p99",
+      "negative_or_non_finite_quantile"
+    ]
+  },
+  "failure_signature_format": "<stage_id>::<thread_profile>::<runtime_mode>::<rejected_evidence_kind>",
+  "downstream_consumers": [
+    {
+      "bead": "bd-juvqm.3",
+      "consumes": "RCU/BRAVO prototype reads contention_hint per stage to decide which lock to replace; proceeds only on stages that fail closed in this gate today."
+    },
+    {
+      "bead": "bd-juvqm.7",
+      "consumes": "Evidence ring backpressure stress reuses the evidence_emission stage's expected_signal; loss-count rows that fail this gate fail-close on the bead-7 stress run too."
+    }
+  ],
+  "regeneration_note": "When a validation pipeline stage is added, removed, renamed, or migrates to a different owner_subsystem, regenerate this manifest atomically with source_commit. Stages SHOULD NOT be silently dropped — deprecate via a `deprecated_at_commit` field if a stage is permanently retired so peers running off older checkouts can still resolve their attribution."
+}
