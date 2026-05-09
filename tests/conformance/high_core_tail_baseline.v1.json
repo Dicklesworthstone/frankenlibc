@@ -1,0 +1,166 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "high-core-tail-baseline",
+  "bead": "bd-juvqm.1",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "source_commit": "d8b4690105cccb5fca9e67e49477d7c091e1eaa3",
+  "purpose": "Baseline contract for the next 64+ core tail-and-contention measurement of FrankenLibC membrane hot paths. Names which symbols, thread profiles, and cost decomposition rows the baseline run must capture, plus the statistical policy and artifact layout the run must emit so future optimization beads (bd-juvqm.2, bd-juvqm.3, bd-juvqm.7) can be evaluated against a frozen reference. NO optimization is performed by this bead; this manifest is the *acceptance contract* the baseline run must satisfy.",
+  "rch_validation_lane": "bench-build-smoke",
+  "tail_statistics_contract": {
+    "module": "frankenlibc_harness::tail_stats",
+    "owned_by_bead": "bd-juvqm.11",
+    "min_samples_for_p99": 100,
+    "min_samples_for_p999": 1000,
+    "default_bootstrap_iters": 1000,
+    "default_alpha": 0.05,
+    "overload_cv_threshold": 1.0,
+    "regenerator_must_record_seed": true
+  },
+  "thread_profiles": [
+    {"profile_id": "single", "thread_count": 1, "rationale": "Per-symbol service-time floor with no contention; serves as the reference against which every concurrent profile attributes its overhead."},
+    {"profile_id": "multi_8", "thread_count": 8, "rationale": "Mid-contention profile: typical user shell + small daemon set."},
+    {"profile_id": "multi_32", "thread_count": 32, "rationale": "Higher-contention profile typical of build/test farms; surfaces lock-spillover effects on shared registries."},
+    {"profile_id": "multi_64", "thread_count": 64, "rationale": "Swarm-realistic profile (matches the 64-core target node); surfaces the tails that strict <20ns / hardened <200ns budgets must hold under."},
+    {"profile_id": "multi_oversub", "thread_count": 128, "rationale": "Oversubscribed profile: 2x core count to reveal scheduler queueing and futex wakeup tails."}
+  ],
+  "hot_path_catalog": [
+    {
+      "symbol_path": "frankenlibc_abi::malloc_abi::{malloc, calloc, realloc, free}",
+      "perf_class": "strict_hotpath",
+      "owner_subsystem": "allocator",
+      "evidence_anchor": "tests/conformance/membrane_overhead_baseline.v1.json",
+      "expected_strict_ns": 20,
+      "expected_hardened_ns": 200
+    },
+    {
+      "symbol_path": "frankenlibc_membrane::pointer_validator::validate_region",
+      "perf_class": "strict_hotpath",
+      "owner_subsystem": "pointer_validation",
+      "evidence_anchor": "tests/conformance/perf_budget_policy.json#workload_performance_budgets[membrane-validation-hotpath-strict]",
+      "expected_strict_ns": 20,
+      "expected_hardened_ns": 200
+    },
+    {
+      "symbol_path": "frankenlibc_abi::string_abi::{strlen, memcpy, memcmp, memchr}",
+      "perf_class": "strict_hotpath",
+      "owner_subsystem": "string_memory",
+      "evidence_anchor": "crates/frankenlibc-bench/benches/string_bench.rs",
+      "expected_strict_ns": 20,
+      "expected_hardened_ns": 200
+    },
+    {
+      "symbol_path": "frankenlibc_abi::stdio_abi::{fread, fwrite, fputc, fgetc, fflush}",
+      "perf_class": "hardened_hotpath",
+      "owner_subsystem": "stdio",
+      "evidence_anchor": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+      "expected_strict_ns": null,
+      "expected_hardened_ns": 200
+    },
+    {
+      "symbol_path": "frankenlibc_abi::pthread_abi::{pthread_mutex_lock, pthread_mutex_unlock, pthread_cond_wait, pthread_cond_signal}",
+      "perf_class": "strict_hotpath",
+      "owner_subsystem": "pthread",
+      "evidence_anchor": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+      "expected_strict_ns": 20,
+      "expected_hardened_ns": 200
+    }
+  ],
+  "cost_decomposition_rows": [
+    {"row_id": "service_time", "definition": "Time spent in the symbol's pure service path (no waiting on locks, no allocator pressure)."},
+    {"row_id": "queueing_synchronization", "definition": "Time spent waiting on shared locks, futexes, RCU read-side, or other synchronization primitives."},
+    {"row_id": "allocator_membrane_overhead", "definition": "Allocator-level overhead introduced by the membrane: pointer-validation, arena bookkeeping, allocation tracking."},
+    {"row_id": "evidence_emission", "definition": "Time spent writing decision cards, structured logs, or evidence ring entries — must remain bounded even under high-volume emission."}
+  ],
+  "required_jsonl_fields": [
+    "trace_id",
+    "bead_id",
+    "benchmark_id",
+    "symbol_path",
+    "perf_class",
+    "owner_subsystem",
+    "thread_profile",
+    "runtime_mode",
+    "replacement_level",
+    "environment_id",
+    "n",
+    "p50",
+    "p95",
+    "p99",
+    "p999",
+    "p99_ci_low",
+    "p99_ci_high",
+    "throughput_ops_s",
+    "service_time_ns",
+    "queueing_synchronization_ns",
+    "allocator_membrane_overhead_ns",
+    "evidence_emission_ns",
+    "evidence_loss_count",
+    "contention_hint",
+    "pressure_state",
+    "sufficient_for_p99",
+    "sufficient_for_p999",
+    "overloaded_host",
+    "seed",
+    "bootstrap_iters",
+    "source_commit",
+    "target_dir",
+    "artifact_refs"
+  ],
+  "policy": {
+    "no_optimization_in_this_bead": true,
+    "all_cargo_through_rch": true,
+    "writes_deterministic_jsonl": true,
+    "skip_when_overloaded_host_true": true,
+    "fail_closed_when_missing_field": [
+      "n",
+      "p99",
+      "p99_ci_low",
+      "p99_ci_high",
+      "sufficient_for_p99",
+      "seed",
+      "evidence_loss_count",
+      "source_commit"
+    ],
+    "fail_closed_when_thread_profile_unsupported": true,
+    "fail_closed_when_perf_class_drifts_from_support_matrix": true
+  },
+  "artifact_paths": {
+    "report_json": "target/conformance/high_core_tail_baseline.report.json",
+    "rows_jsonl": "target/conformance/high_core_tail_baseline.rows.jsonl",
+    "environment_fingerprint_json": "target/conformance/high_core_tail_baseline.env.json"
+  },
+  "baseline_command_template": "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-<agent>-juvqm1 rch cargo bench -p frankenlibc-bench --bench <bench_name> -- --thread_profile <profile_id> --runtime_mode <mode>",
+  "environment_fingerprint_required_fields": [
+    "kernel",
+    "cpu_model",
+    "cpu_count",
+    "cpu_governor",
+    "isolcpus",
+    "load_average_1m",
+    "load_average_5m",
+    "memory_total_kb",
+    "transparent_hugepages",
+    "rust_toolchain",
+    "rch_worker_id",
+    "FRANKENLIBC_MODE"
+  ],
+  "downstream_consumers": [
+    {
+      "bead": "bd-juvqm.2",
+      "consumes": "Membrane metadata contention attribution gate uses these baseline rows to derive expected vs observed contention hints."
+    },
+    {
+      "bead": "bd-juvqm.3",
+      "consumes": "RCU/BRAVO read-mostly fast-path prototype targets only the rows with high queueing_synchronization_ns and acceptable evidence_loss_count baseline."
+    },
+    {
+      "bead": "bd-juvqm.7",
+      "consumes": "Evidence ring backpressure stress reuses the multi_64 profile's evidence_emission_ns baseline as the bounded-loss reference."
+    },
+    {
+      "bead": "bd-juvqm.12",
+      "consumes": "Strict hardened timing side-channel budget derives its variance budget from this manifest's p99_ci_high - p99_ci_low spread."
+    }
+  ],
+  "regeneration_note": "When a hot-path symbol is added, removed, or renamed, regenerate this manifest atomically with source_commit, the catalog row, and any affected downstream consumer reference. Adding a new thread_profile or runtime_mode requires updating required_jsonl_fields and downstream_consumers; the harness checker fails closed on missing required fields."
+}
