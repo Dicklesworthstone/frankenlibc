@@ -1,0 +1,167 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "evidence-ring-backpressure-stress-contract",
+  "bead": "bd-juvqm.7",
+  "generated_utc": "2026-05-09T00:00:00Z",
+  "source_commit": "0bc4950f2b6917aa05057a2ac5f98e135b254713",
+  "purpose": "Pin the contract any future evidence-ring stress harness must satisfy. Under high-core agent-swarm workloads the runtime evidence rings, stdio evidence rows, and membrane validation logs WILL exceed their bounded capacity in both strict and hardened modes; this contract requires that the resulting loss is intentional, bounded, monotone-counted, and deterministically serialized so downstream replay can distinguish a missing row from corruption. NO production ring geometry changes are required by this bead — the manifest gates the *shape* of the report any future stress run must produce.",
+  "anchored_baseline_manifest": "tests/conformance/high_core_tail_baseline.v1.json",
+  "tail_statistics_contract_owner": "bd-juvqm.11",
+  "policy": {
+    "default_decision": "block_advancement_until_loss_accounting_complete",
+    "fail_closed_when_ring_path_unaccounted": true,
+    "fail_closed_when_seqno_non_monotone": true,
+    "fail_closed_when_loss_count_field_missing": true,
+    "fail_closed_when_max_epoch_field_missing": true,
+    "fail_closed_when_redaction_cardinality_unbounded": true,
+    "fail_closed_when_serialization_non_deterministic_post_overwrite": true,
+    "fail_closed_when_loss_evidence_kind_undocumented": true,
+    "fail_closed_when_source_commit_stale": true,
+    "stale_source_commit_freshness_target": "current git HEAD",
+    "rejected_evidence_kinds": [
+      "missing_ring_path_row",
+      "non_monotone_seqno",
+      "missing_loss_count_field",
+      "missing_max_epoch_field",
+      "unbounded_redaction_cardinality",
+      "non_deterministic_post_overwrite",
+      "undocumented_loss_evidence_kind",
+      "stale_source_commit"
+    ]
+  },
+  "required_ring_path_fields": [
+    "ring_id",
+    "owner_subsystem",
+    "capacity",
+    "expected_loss_semantics",
+    "monotone_seqno_required",
+    "evidence_loss_count_field",
+    "max_epoch_field",
+    "redaction_cardinality_limit",
+    "deterministic_serialization_after_overwrite",
+    "downstream_replay_treatment"
+  ],
+  "ring_paths": [
+    {
+      "ring_id": "runtime_math.decision_card_ring",
+      "owner_subsystem": "runtime_math",
+      "capacity": 1024,
+      "expected_loss_semantics": "overwrite_oldest",
+      "monotone_seqno_required": true,
+      "evidence_loss_count_field": "evidence_loss_count",
+      "max_epoch_field": "max_epoch",
+      "redaction_cardinality_limit": 256,
+      "deterministic_serialization_after_overwrite": true,
+      "downstream_replay_treatment": "Replay must treat any seqno gap below `(max_epoch * capacity)` as expected loss attributed to backpressure, not corruption. The minimizer (bd-juvqm.6) emits an empty signature when the loss is fully accounted for by `evidence_loss_count`; otherwise it emits `evidence_seqno_gap_exceeded_loss_count` and fails replay closed."
+    },
+    {
+      "ring_id": "runtime_math.evidence_symbol_ring",
+      "owner_subsystem": "runtime_math",
+      "capacity": 1024,
+      "expected_loss_semantics": "overwrite_oldest",
+      "monotone_seqno_required": true,
+      "evidence_loss_count_field": "evidence_loss_count",
+      "max_epoch_field": "max_epoch",
+      "redaction_cardinality_limit": 256,
+      "deterministic_serialization_after_overwrite": true,
+      "downstream_replay_treatment": "Same as decision_card_ring: gaps below loss_count are expected; gaps above fail closed."
+    },
+    {
+      "ring_id": "structured_log.event_ring",
+      "owner_subsystem": "structured_log",
+      "capacity": 4096,
+      "expected_loss_semantics": "overwrite_oldest",
+      "monotone_seqno_required": true,
+      "evidence_loss_count_field": "structured_log_loss_count",
+      "max_epoch_field": "structured_log_max_epoch",
+      "redaction_cardinality_limit": 1024,
+      "deterministic_serialization_after_overwrite": true,
+      "downstream_replay_treatment": "Replay tools must read the loss_count and max_epoch fields and treat gaps below the threshold as expected. Otherwise the structured log is unrecoverable for that interval."
+    },
+    {
+      "ring_id": "stdio.evidence_row_ring",
+      "owner_subsystem": "stdio",
+      "capacity": 2048,
+      "expected_loss_semantics": "overwrite_oldest",
+      "monotone_seqno_required": true,
+      "evidence_loss_count_field": "stdio_evidence_loss_count",
+      "max_epoch_field": "stdio_evidence_max_epoch",
+      "redaction_cardinality_limit": 512,
+      "deterministic_serialization_after_overwrite": true,
+      "downstream_replay_treatment": "The stdio evidence ring records FILE-stream observations; downstream replay treats missing rows as evidence loss attributed to the FILE-membrane lock geometry under high-core load."
+    },
+    {
+      "ring_id": "membrane.validation_log_ring",
+      "owner_subsystem": "membrane",
+      "capacity": 8192,
+      "expected_loss_semantics": "overwrite_oldest",
+      "monotone_seqno_required": true,
+      "evidence_loss_count_field": "membrane_validation_loss_count",
+      "max_epoch_field": "membrane_validation_max_epoch",
+      "redaction_cardinality_limit": 2048,
+      "deterministic_serialization_after_overwrite": true,
+      "downstream_replay_treatment": "Membrane validation logs may overwrite during heavy-shard contention; downstream replay may interpret a gap as evidence that the canary or bounds path was exercised more than `capacity` times in the interval."
+    }
+  ],
+  "stress_profile": {
+    "drive_to_capacity_multiple": 4,
+    "rationale": "Drive each ring to 4x capacity. That guarantees at least 3x capacity worth of overwrites — enough to verify that overwrite_oldest is correct, that evidence_loss_count is monotone-incrementing, and that max_epoch advances at least 3 times.",
+    "modes": [
+      "strict",
+      "hardened"
+    ],
+    "deterministic_seed_required": true,
+    "deterministic_seed_field": "stress_seed"
+  },
+  "loss_evidence_kinds": [
+    {
+      "kind": "expected_overwrite_loss",
+      "rationale": "Loss is fully accounted for by evidence_loss_count and the seqno gap matches. Replay treats this as intentional backpressure.",
+      "fail_closed": false
+    },
+    {
+      "kind": "missing_loss_count_field",
+      "rationale": "Stress run produced gaps but did not export evidence_loss_count. Must fail closed because replay cannot distinguish from corruption.",
+      "fail_closed": true
+    },
+    {
+      "kind": "loss_count_underreports_gap",
+      "rationale": "evidence_loss_count is smaller than the observed seqno gap. Indicates a counting bug or a non-overwrite-oldest loss path.",
+      "fail_closed": true
+    },
+    {
+      "kind": "non_monotone_seqno",
+      "rationale": "A reader observed a smaller seqno after a larger one within the same epoch. Always indicates a publication bug.",
+      "fail_closed": true
+    },
+    {
+      "kind": "non_deterministic_serialization_post_overwrite",
+      "rationale": "Two stress runs with the same seed produced byte-different snapshots after overwrite. Replay correctness depends on this being deterministic.",
+      "fail_closed": true
+    }
+  ],
+  "downstream_consumers": [
+    {
+      "bead": "bd-juvqm.6",
+      "consumes": "The decision-trace minimizer treats `evidence_loss_count` and the documented loss_evidence_kinds as inputs when classifying gap signatures."
+    },
+    {
+      "bead": "bd-juvqm.2",
+      "consumes": "The membrane contention attribution gate's `evidence_emission` and `stdio_sync` stages read the per-ring loss accounting recorded here."
+    },
+    {
+      "bead": "bd-juvqm.10",
+      "consumes": "The user-facing explain dossier surfaces loss_count + max_epoch so a user can see how much evidence was overwritten between two replays."
+    }
+  ],
+  "summary": {
+    "bead": "bd-juvqm.7",
+    "ring_path_count": 5,
+    "stress_drive_to_capacity_multiple": 4,
+    "deterministic_seed_required": true,
+    "loss_evidence_kind_count": 5,
+    "fail_closed_kinds_count": 4,
+    "default_decision": "block_advancement_until_loss_accounting_complete",
+    "next_safe_action": "When a future stress harness runs against the real evidence ring, it MUST emit per-ring rows containing every required_ring_path_field and only loss_evidence_kinds documented here. Adding a new loss kind requires updating this manifest atomically with source_commit."
+  }
+}
