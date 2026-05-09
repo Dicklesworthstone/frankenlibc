@@ -40,6 +40,37 @@
     "baseline_file": "scripts/perf_baseline.json",
     "baseline_update_policy": "Manual update only. New baselines require review comment explaining improvement source."
   },
+  "tail_statistics_contract": {
+    "bead": "bd-juvqm.11",
+    "purpose": "Lock down the deterministic tail-statistics computation that any future high-core baseline (bd-juvqm.1), evidence-loss accounting (bd-juvqm.7), or timing side-channel budget (bd-juvqm.12) must use when surfacing tail claims. Reports MUST emit every required_tail_stats_field below alongside any p95/p99/p999 claim; a tail claim arriving without these fields fails the consuming gate closed (no silent extrapolation from too-few samples).",
+    "module": "frankenlibc_harness::tail_stats",
+    "min_samples_for_p99": 100,
+    "min_samples_for_p999": 1000,
+    "default_bootstrap_iters": 1000,
+    "default_alpha": 0.05,
+    "overload_cv_threshold": 1.0,
+    "required_tail_stats_fields": [
+      "n",
+      "p50",
+      "p95",
+      "p99",
+      "p999",
+      "p99_ci_low",
+      "p99_ci_high",
+      "sufficient_for_p99",
+      "sufficient_for_p999",
+      "overloaded_host",
+      "seed",
+      "bootstrap_iters"
+    ],
+    "fail_closed_when_missing": [
+      "sufficient_for_p99",
+      "sufficient_for_p999",
+      "p99_ci_low",
+      "p99_ci_high",
+      "seed"
+    ]
+  },
   "workload_budget_extension": {
     "bead": "bd-bp8fl.8.6",
     "purpose": "Attach performance budgets to representative user workloads and membrane hot-path evidence without allowing performance claims to outrun parity or baseline proof.",
