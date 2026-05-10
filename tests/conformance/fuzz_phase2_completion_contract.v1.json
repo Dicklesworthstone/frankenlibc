@@ -1,0 +1,223 @@
+{
+  "schema": "fuzz_phase2_completion_contract.v1",
+  "bead": "bd-1oz.7",
+  "completion_debt_bead": "bd-1oz.7.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-1oz.7/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.fuzz.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "artifacts": {
+      "phase2_report": "tests/conformance/fuzz_phase2_targets.v1.json",
+      "phase2_checker": "scripts/check_fuzz_phase2_targets.sh",
+      "phase2_generator": "scripts/generate_fuzz_phase2_targets.py",
+      "nightly_runner": "scripts/fuzz_nightly.sh",
+      "ci_workflow": ".github/workflows/ci.yml",
+      "fuzz_cargo": "crates/frankenlibc-fuzz/Cargo.toml",
+      "fuzz_resolver": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_resolver.rs",
+      "fuzz_resolv": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_resolv.rs",
+      "fuzz_iconv": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_iconv.rs",
+      "fuzz_runtime_math": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_runtime_math.rs",
+      "existing_harness_test": "crates/frankenlibc-harness/tests/fuzz_phase2_targets_test.rs",
+      "completion_contract": "tests/conformance/fuzz_phase2_completion_contract.v1.json",
+      "completion_checker": "scripts/check_fuzz_phase2_completion_contract.sh",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/fuzz_phase2_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "scripts/check_fuzz_phase2_targets.sh:50",
+      "scripts/check_fuzz_phase2_targets.sh:56",
+      "scripts/check_fuzz_phase2_targets.sh:62",
+      "scripts/check_fuzz_phase2_targets.sh:68",
+      "scripts/check_fuzz_phase2_targets.sh:80",
+      "scripts/check_fuzz_phase2_targets.sh:101",
+      "scripts/check_fuzz_phase2_targets.sh:107",
+      "scripts/check_fuzz_phase2_targets.sh:119",
+      "crates/frankenlibc-harness/tests/fuzz_phase2_targets_test.rs:45",
+      "crates/frankenlibc-harness/tests/fuzz_phase2_targets_test.rs:68",
+      "crates/frankenlibc-harness/tests/fuzz_phase2_targets_test.rs:83",
+      "crates/frankenlibc-harness/tests/fuzz_phase2_targets_test.rs:104",
+      "crates/frankenlibc-harness/tests/fuzz_phase2_targets_test.rs:121",
+      "crates/frankenlibc-harness/tests/fuzz_phase2_targets_test.rs:147",
+      "crates/frankenlibc-harness/tests/fuzz_phase2_targets_test.rs:164",
+      "tests/conformance/fuzz_phase2_targets.v1.json:5",
+      "tests/conformance/fuzz_phase2_targets.v1.json:16",
+      "tests/conformance/fuzz_phase2_targets.v1.json:353",
+      "tests/conformance/fuzz_phase2_targets.v1.json:355",
+      "tests/conformance/fuzz_phase2_targets.v1.json:358",
+      "tests/conformance/fuzz_phase2_targets.v1.json:385",
+      "tests/conformance/fuzz_phase2_targets.v1.json:412",
+      ".github/workflows/ci.yml:198",
+      ".github/workflows/ci.yml:203",
+      ".github/workflows/ci.yml:210",
+      ".github/workflows/ci.yml:213",
+      ".github/workflows/ci.yml:223",
+      ".github/workflows/ci.yml:241",
+      "scripts/fuzz_nightly.sh:59",
+      "scripts/fuzz_nightly.sh:104",
+      "scripts/fuzz_nightly.sh:137",
+      "scripts/fuzz_nightly.sh:142",
+      "scripts/fuzz_nightly.sh:150",
+      "scripts/fuzz_nightly.sh:170",
+      "scripts/fuzz_nightly.sh:226"
+    ],
+    "phase2_policy": {
+      "required_targets": [
+        "fuzz_resolver",
+        "fuzz_resolv",
+        "fuzz_iconv",
+        "fuzz_runtime_math"
+      ],
+      "required_transition_families": [
+        "resolver",
+        "locale",
+        "runtime-math"
+      ],
+      "minimum_phase2_targets": 4,
+      "minimum_functional_targets": 4,
+      "minimum_smoke_viable_targets": 4,
+      "minimum_average_readiness_score": 70,
+      "minimum_symbol_coverage": 10,
+      "runs_per_target": 1000000,
+      "timeout_seconds": 1800,
+      "max_crashes": 0,
+      "gate_success_markers": [
+        "PASS: Nightly run budget meets threshold",
+        "PASS: Nightly policy target set matches report targets",
+        "check_fuzz_phase2_targets: PASS"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "existing_harness_test",
+          "name": "phase2_report_generates_successfully"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "phase2_schema_complete"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "phase2_targets_cover_required_transition_families"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "phase2_targets_are_smoke_viable"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "phase2_nightly_policy_matches_target_inventory"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "phase2_readiness_thresholds_are_reasonable"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "contract_binds_phase2_targets_ci_and_existing_tests"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fuzz_phase2_targets_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fuzz_phase2_completion_contract_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_scripts": [
+        "scripts/check_fuzz_phase2_targets.sh",
+        "scripts/fuzz_nightly.sh --duration 1 --target-group phase2",
+        "scripts/check_fuzz_phase2_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {
+          "source": "existing_harness_test",
+          "name": "fuzz_nightly_build_check_fallback_writes_phase2_summary"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_emits_report_log_and_replays_existing_gate"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_required_target"
+        }
+      ],
+      "required_commands": [
+        "scripts/check_fuzz_phase2_targets.sh",
+        "scripts/check_fuzz_phase2_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fuzz_phase2_targets_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fuzz_phase2_completion_contract_test -- --nocapture"
+      ]
+    },
+    "fuzz_primary": {
+      "missing_item_id": "tests.fuzz.primary",
+      "required_targets": [
+        "fuzz_resolver",
+        "fuzz_resolv",
+        "fuzz_iconv",
+        "fuzz_runtime_math"
+      ],
+      "required_cargo_fuzz_command": "cargo fuzz run --fuzz-dir crates/frankenlibc-fuzz <target> -- -runs=1000000 -print_final_stats=1",
+      "required_ci_log_glob": "artifacts/ci/fuzz-runs/*.log",
+      "max_crashes": 0
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "required_artifacts": [
+        "tests/conformance/fuzz_phase2_targets.v1.json",
+        "target/conformance/fuzz_phase2_completion_contract.report.json",
+        "target/conformance/fuzz_phase2_completion_contract.log.jsonl"
+      ],
+      "required_checker": "scripts/check_fuzz_phase2_targets.sh"
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "required_log_artifacts": [
+        "target/conformance/fuzz_phase2_completion_contract.log.jsonl",
+        "target/conformance/fuzz_phase2_completion_contract.report.json"
+      ],
+      "required_events": [
+        "fuzz_phase2_units_validated",
+        "fuzz_phase2_e2e_validated",
+        "fuzz_phase2_fuzz_inventory_validated",
+        "fuzz_phase2_conformance_validated",
+        "fuzz_phase2_telemetry_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "completion_debt_bead",
+        "original_bead",
+        "event",
+        "status",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "target_group",
+        "target_count",
+        "runs_per_target",
+        "max_crashes",
+        "transition_family_count",
+        "symbol_count",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    },
+    "test_sources": {
+      "existing_harness_test": "crates/frankenlibc-harness/tests/fuzz_phase2_targets_test.rs",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/fuzz_phase2_completion_contract_test.rs"
+    }
+  }
+}
