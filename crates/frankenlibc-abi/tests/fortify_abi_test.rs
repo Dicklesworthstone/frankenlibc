@@ -2,13 +2,36 @@
 
 //! Integration tests for `_FORTIFY_SOURCE` ABI entrypoints (`__*_chk` variants).
 //!
-//! Tests cover safe pass-through paths where buffer sizes are sufficient.
-//! The abort paths (__chk_fail) cannot be tested in-process since they call abort().
+//! Tests cover safe pass-through paths where buffer sizes are sufficient and
+//! fork-isolated failure paths where checked wrappers abort the child process.
 
 use std::ffi::{CString, c_char, c_int, c_long};
 
 // Re-export fortified functions from the ABI crate.
 use frankenlibc_abi::fortify_abi::*;
+
+fn assert_child_sigabrt(label: &str, child: impl FnOnce()) {
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed for {label}");
+
+    if pid == 0 {
+        child();
+        unsafe { libc::_exit(127) };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid, "waitpid failed for {label}");
+    assert!(
+        libc::WIFSIGNALED(status),
+        "{label} child should terminate by signal, status={status}"
+    );
+    assert_eq!(
+        libc::WTERMSIG(status),
+        libc::SIGABRT,
+        "{label} child should terminate with SIGABRT"
+    );
+}
 
 // ===========================================================================
 // Memory operations: __memcpy_chk, __memmove_chk, __memset_chk,
@@ -39,6 +62,22 @@ fn memcpy_chk_exact_fit() {
         __memcpy_chk(dest.as_mut_ptr().cast(), src.as_ptr().cast(), 4, 4);
     }
     assert_eq!(dest, [0xAA; 4]);
+}
+
+#[test]
+fn memcpy_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("memcpy_chk overflow", || {
+        let src = [1u8, 2, 3, 4];
+        let mut dest = [0u8; 2];
+        unsafe {
+            __memcpy_chk(
+                dest.as_mut_ptr().cast(),
+                src.as_ptr().cast(),
+                src.len(),
+                dest.len(),
+            );
+        }
+    });
 }
 
 #[test]
@@ -85,6 +124,16 @@ fn explicit_bzero_chk_partial() {
     assert_eq!(&buf[4..], &[0xFF; 4]);
 }
 
+#[test]
+fn explicit_bzero_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("explicit_bzero_chk overflow", || {
+        let mut buf = [0xFFu8; 2];
+        unsafe {
+            __explicit_bzero_chk(buf.as_mut_ptr().cast(), 3, buf.len());
+        }
+    });
+}
+
 // ===========================================================================
 // String operations: __strcpy_chk, __strncpy_chk, __strcat_chk,
 //                    __strncat_chk, __stpcpy_chk, __stpncpy_chk
@@ -97,6 +146,17 @@ fn strcpy_chk_safe() {
     let ret = unsafe { __strcpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 16) };
     assert_eq!(ret, dest.as_mut_ptr().cast::<c_char>());
     assert_eq!(&dest[..6], b"hello\0");
+}
+
+#[test]
+fn strcpy_chk_overflow_aborts_child_process() {
+    let src = c"toolong";
+    assert_child_sigabrt("strcpy_chk overflow", || {
+        let mut dest = [0u8; 4];
+        unsafe {
+            __strcpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), dest.len());
+        }
+    });
 }
 
 #[test]
@@ -589,6 +649,20 @@ fn fdelt_chk_valid_fds() {
     let bits = 8 * std::mem::size_of::<c_long>() as c_long;
     let idx = unsafe { __fdelt_chk(1023) };
     assert_eq!(idx, 1023 / bits);
+}
+
+#[test]
+fn fdelt_chk_negative_fd_aborts_child_process() {
+    assert_child_sigabrt("fdelt_chk negative fd", || unsafe {
+        __fdelt_chk(-1);
+    });
+}
+
+#[test]
+fn fdelt_chk_oversized_fd_aborts_child_process() {
+    assert_child_sigabrt("fdelt_chk oversized fd", || unsafe {
+        __fdelt_chk(libc::FD_SETSIZE as c_long);
+    });
 }
 
 // ===========================================================================
