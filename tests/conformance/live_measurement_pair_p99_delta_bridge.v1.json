@@ -1,0 +1,37 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "live-measurement-pair-p99-delta-bridge",
+  "bead": "bd-vmp2v",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "e82d7ff837d210ca0171d900f01aa81c34e39642",
+  "purpose": "Pin the bridge that joins bd-juvqm.3 / bd-8b70o (LiveMeasurementPair) and bd-hp41p (P99Delta) into a single drive. Today a budget gate that wants to compare Conservative and Seqlock lanes p99 against an allowed budget would have to (a) call run_live_measurement_pair, (b) THROW AWAY the underlying TailStats it just computed, and (c) re-drive both lanes via tail_stats::compute again to feed compute_p99_delta — wasteful and racy. This bridge reuses the SAME drive: the LiveMeasurementRow values the pair carries are derived from the exact TailStats the P99Delta is computed from, so callers can hand the returned P99Delta to validate_p99_delta_against_budget without further work.",
+  "bridge_pair_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair_with_p99_delta",
+  "bridge_pair_default_fingerprint_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair_with_p99_delta_and_detected_fingerprint",
+  "underlying_pair_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair",
+  "underlying_p99_delta_function": "frankenlibc_harness::tail_stats::compute_p99_delta",
+  "underlying_p99_delta_validator": "frankenlibc_harness::tail_stats::validate_p99_delta_against_budget",
+  "fingerprint_source_function": "frankenlibc_harness::system_fingerprint::environment_fingerprint",
+  "policy": {
+    "bridge_drives_each_lane_exactly_once": true,
+    "live_measurement_row_p99_must_be_consistent_with_p99_delta": true,
+    "underlying_helpers_signature_unchanged": true,
+    "default_fingerprint_variant_routes_through_environment_fingerprint": true
+  },
+  "downstream_consumers": [
+    {
+      "bead": "bd-juvqm.12",
+      "consumes": "Timing-side-channel budget gate — gets P99Delta + LiveMeasurementPair from the same drive."
+    },
+    {
+      "bead": "bd-8b70o",
+      "consumes": "Lane-pair anchoring + budget classification in one call."
+    }
+  ],
+  "summary": {
+    "bead": "bd-vmp2v",
+    "single_drive_per_lane": true,
+    "underlying_signature_unchanged": true,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}

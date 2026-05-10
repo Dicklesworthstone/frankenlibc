@@ -290,16 +290,18 @@ fn drive_one_lane(lane: LaneId, n: u64, seed: u64) -> Vec<f64> {
     latencies
 }
 
-/// Run a single-lane live measurement. Computes p99 / p999 via
-/// the bd-juvqm.11 `tail_stats::compute()` library.
-pub fn run_live_measurement(
+/// Drive one lane and compute the corresponding [`LiveMeasurementRow`]
+/// AND the underlying [`crate::tail_stats::TailStats`] in a single
+/// pass. The bd-vmp2v bridge uses this to produce a P99Delta without
+/// re-driving the lanes.
+fn drive_lane_and_compute(
     lane: LaneId,
     profile_id: &str,
     n: u64,
     seed: u64,
     environment_fingerprint: &str,
     source_commit: &str,
-) -> Result<LiveMeasurementRow, LiveMeasurementError> {
+) -> Result<(LiveMeasurementRow, crate::tail_stats::TailStats), LiveMeasurementError> {
     if n < crate::tail_stats::MIN_SAMPLES_FOR_P999 as u64 {
         return Err(LiveMeasurementError::InsufficientSamplesForP999);
     }
@@ -331,7 +333,7 @@ pub fn run_live_measurement(
     } else {
         0
     };
-    Ok(LiveMeasurementRow {
+    let row = LiveMeasurementRow {
         lane_id: lane_label.to_string(),
         profile_id: profile_id.to_string(),
         source_commit: source_commit.to_string(),
@@ -341,7 +343,29 @@ pub fn run_live_measurement(
         throughput_ops_per_sec: throughput,
         n,
         seed,
-    })
+    };
+    Ok((row, stats))
+}
+
+/// Run a single-lane live measurement. Computes p99 / p999 via
+/// the bd-juvqm.11 `tail_stats::compute()` library.
+pub fn run_live_measurement(
+    lane: LaneId,
+    profile_id: &str,
+    n: u64,
+    seed: u64,
+    environment_fingerprint: &str,
+    source_commit: &str,
+) -> Result<LiveMeasurementRow, LiveMeasurementError> {
+    let (row, _) = drive_lane_and_compute(
+        lane,
+        profile_id,
+        n,
+        seed,
+        environment_fingerprint,
+        source_commit,
+    )?;
+    Ok(row)
 }
 
 /// Run live measurements on BOTH lanes under identical anchoring
@@ -402,6 +426,61 @@ pub fn run_live_measurement_pair_with_detected_fingerprint(
 ) -> Result<LiveMeasurementPair, LiveMeasurementError> {
     let fp = crate::system_fingerprint::environment_fingerprint();
     run_live_measurement_pair(profile_id, n, seed, &fp, source_commit)
+}
+
+/// Run a paired live measurement (Conservative + Seqlock lanes) AND
+/// return the bd-hp41p [`crate::tail_stats::P99Delta`] computed from
+/// the underlying TailStats objects (bd-vmp2v). Drives each lane
+/// EXACTLY ONCE: the same drive that populates the
+/// [`LiveMeasurementPair`] is the drive the P99Delta is computed
+/// from. Callers that want to apply
+/// [`crate::tail_stats::validate_p99_delta_against_budget`] avoid
+/// the re-drive overhead and the determinism risk of two independent
+/// runs.
+pub fn run_live_measurement_pair_with_p99_delta(
+    profile_id: &str,
+    n: u64,
+    seed: u64,
+    environment_fingerprint: &str,
+    source_commit: &str,
+) -> Result<(LiveMeasurementPair, crate::tail_stats::P99Delta), LiveMeasurementError> {
+    let (cons_row, cons_stats) = drive_lane_and_compute(
+        LaneId::Conservative,
+        profile_id,
+        n,
+        seed,
+        environment_fingerprint,
+        source_commit,
+    )?;
+    let (seq_row, seq_stats) = drive_lane_and_compute(
+        LaneId::Seqlock,
+        profile_id,
+        n,
+        seed,
+        environment_fingerprint,
+        source_commit,
+    )?;
+    let delta = crate::tail_stats::compute_p99_delta(&cons_stats, &seq_stats);
+    Ok((
+        LiveMeasurementPair {
+            conservative: cons_row,
+            seqlock: seq_row,
+        },
+        delta,
+    ))
+}
+
+/// Convenience wrapper around [`run_live_measurement_pair_with_p99_delta`]
+/// that fills the `environment_fingerprint` field from
+/// [`crate::system_fingerprint::environment_fingerprint`] (bd-6epxt).
+pub fn run_live_measurement_pair_with_p99_delta_and_detected_fingerprint(
+    profile_id: &str,
+    n: u64,
+    seed: u64,
+    source_commit: &str,
+) -> Result<(LiveMeasurementPair, crate::tail_stats::P99Delta), LiveMeasurementError> {
+    let fp = crate::system_fingerprint::environment_fingerprint();
+    run_live_measurement_pair_with_p99_delta(profile_id, n, seed, &fp, source_commit)
 }
 
 #[cfg(test)]
