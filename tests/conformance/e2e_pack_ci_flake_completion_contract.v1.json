@@ -1,0 +1,445 @@
+{
+  "schema_version": "e2e_pack_ci_flake_completion_contract.v1",
+  "bead": "bd-b5a.3",
+  "completion_debt_bead": "bd-b5a.3.1",
+  "description": "Completion-debt evidence binding for E2E scenario packs, CI gating, retry classification, flake quarantine, and replayable artifact/log contracts.",
+  "next_audit_score_threshold": 800,
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-b5a.3/scorecard.md",
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "source_paths": {
+    "scenario_manifest": "tests/conformance/e2e_scenario_manifest.v1.json",
+    "e2e_suite": "scripts/e2e_suite.sh",
+    "e2e_suite_gate": "scripts/check_e2e_suite.sh",
+    "flake_policy": "scripts/e2e_flake_policy.py",
+    "flake_policy_unit_tests": "tests/conformance/test_e2e_flake_policy.py",
+    "ci_script": "scripts/ci.sh",
+    "e2e_suite_harness": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
+    "completion_contract": "tests/conformance/e2e_pack_ci_flake_completion_contract.v1.json",
+    "completion_checker": "scripts/check_e2e_pack_ci_flake_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/e2e_pack_ci_flake_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    {
+      "kind": "suite_output_artifacts",
+      "path": "scripts/e2e_suite.sh",
+      "line": 52,
+      "anchor": "INDEX_FILE=\"${OUT_DIR}/artifact_index.json\""
+    },
+    {
+      "kind": "suite_flake_policy_helper",
+      "path": "scripts/e2e_suite.sh",
+      "line": 58,
+      "anchor": "FLAKE_POLICY=\"${ROOT}/scripts/e2e_flake_policy.py\""
+    },
+    {
+      "kind": "retry_policy_bridge",
+      "path": "scripts/e2e_suite.sh",
+      "line": 255,
+      "anchor": "should_retry_attempt()"
+    },
+    {
+      "kind": "quarantine_report_writer",
+      "path": "scripts/e2e_suite.sh",
+      "line": 332,
+      "anchor": "emit_quarantine_report()"
+    },
+    {
+      "kind": "scenario_pack_report_writer",
+      "path": "scripts/e2e_suite.sh",
+      "line": 411,
+      "anchor": "emit_pack_report()"
+    },
+    {
+      "kind": "mode_pair_report_writer",
+      "path": "scripts/e2e_suite.sh",
+      "line": 522,
+      "anchor": "emit_mode_pair_report()"
+    },
+    {
+      "kind": "retry_log_contract",
+      "path": "scripts/e2e_suite.sh",
+      "line": 724,
+      "anchor": "emit_log \"info\" \"case_attempt\""
+    },
+    {
+      "kind": "flake_classification_contract",
+      "path": "scripts/e2e_suite.sh",
+      "line": 744,
+      "anchor": "local retry_count flake_score verdict final_outcome final_exit_code is_flaky should_quarantine"
+    },
+    {
+      "kind": "pack_threshold_gate",
+      "path": "scripts/e2e_suite.sh",
+      "line": 1205,
+      "anchor": "scenario_pack_gate_fail"
+    },
+    {
+      "kind": "artifact_index_writer",
+      "path": "scripts/e2e_suite.sh",
+      "line": 1270,
+      "anchor": "\"artifact_index.json\""
+    },
+    {
+      "kind": "flake_classifier",
+      "path": "scripts/e2e_flake_policy.py",
+      "line": 30,
+      "anchor": "def classify_attempts(exit_codes: list[int], quarantine_threshold: float)"
+    },
+    {
+      "kind": "retry_decider",
+      "path": "scripts/e2e_flake_policy.py",
+      "line": 66,
+      "anchor": "def should_retry("
+    },
+    {
+      "kind": "flake_policy_unit_tests",
+      "path": "tests/conformance/test_e2e_flake_policy.py",
+      "line": 23,
+      "anchor": "class TestFlakeClassifier(unittest.TestCase):"
+    },
+    {
+      "kind": "e2e_gate_unit_tests",
+      "path": "scripts/check_e2e_suite.sh",
+      "line": 356,
+      "anchor": "python3 -m unittest \"${ROOT}/tests/conformance/test_e2e_flake_policy.py\" -q"
+    },
+    {
+      "kind": "e2e_gate_run",
+      "path": "scripts/check_e2e_suite.sh",
+      "line": 377,
+      "anchor": "bash \"${ROOT}/scripts/e2e_suite.sh\" --dry-run-manifest fault strict"
+    },
+    {
+      "kind": "e2e_gate_reports",
+      "path": "scripts/check_e2e_suite.sh",
+      "line": 595,
+      "anchor": "flake_quarantine_report.json"
+    },
+    {
+      "kind": "ci_extended_gate",
+      "path": "scripts/ci.sh",
+      "line": 499,
+      "anchor": "scripts/check_e2e_suite.sh"
+    },
+    {
+      "kind": "e2e_harness_report_tests",
+      "path": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
+      "line": 597,
+      "anchor": "fn e2e_quarantine_and_pack_reports_valid()"
+    },
+    {
+      "kind": "completion_checker",
+      "path": "scripts/check_e2e_pack_ci_flake_completion_contract.sh",
+      "line": 1,
+      "anchor": "e2e_pack_ci_flake_completion_contract"
+    },
+    {
+      "kind": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/e2e_pack_ci_flake_completion_contract_test.rs",
+      "line": 1,
+      "anchor": "bd-b5a.3.1"
+    }
+  ],
+  "source_anchors": {
+    "scenario_manifest": [
+      "\"class\": \"smoke\"",
+      "\"class\": \"stress\"",
+      "\"class\": \"fault\"",
+      "\"class\": \"stability\"",
+      "\"completion_debt_evidence\"",
+      "scenario_pack_report.json",
+      "flake_quarantine_report.json"
+    ],
+    "e2e_suite": [
+      "INDEX_FILE=\"${OUT_DIR}/artifact_index.json\"",
+      "PAIR_REPORT_FILE=\"${OUT_DIR}/mode_pair_report.json\"",
+      "PACK_REPORT_FILE=\"${OUT_DIR}/scenario_pack_report.json\"",
+      "QUARANTINE_REPORT_FILE=\"${OUT_DIR}/flake_quarantine_report.json\"",
+      "FLAKE_POLICY=\"${ROOT}/scripts/e2e_flake_policy.py\"",
+      "RETRY_MAX=",
+      "should_retry_attempt()",
+      "emit_quarantine_report()",
+      "emit_pack_report()",
+      "emit_mode_pair_report()",
+      "case_retry",
+      "retry_count",
+      "flake_score",
+      "quarantined_flake",
+      "scenario_pack_gate_fail",
+      "rch is required for cargo build offload"
+    ],
+    "flake_policy": [
+      "def flake_score(",
+      "def transitions(",
+      "def classify_attempts(",
+      "def should_retry(",
+      "\"quarantined_flake\"",
+      "should_quarantine",
+      "sub.add_parser(\"classify\"",
+      "sub.add_parser(\"should-retry\""
+    ],
+    "flake_policy_unit_tests": [
+      "def test_all_pass_not_flaky",
+      "def test_fail_then_pass_is_flaky",
+      "def test_quarantined_flake_when_threshold_breached",
+      "def test_retry_on_nonzero_enabled",
+      "def test_retry_on_nonzero_disabled_respects_allowlist",
+      "def test_retry_stops_at_max",
+      "def test_classify_json_output",
+      "def test_should_retry_cli"
+    ],
+    "e2e_suite_gate": [
+      "python3 -m unittest \"${ROOT}/tests/conformance/test_e2e_flake_policy.py\" -q",
+      "bash \"${ROOT}/scripts/e2e_suite.sh\" --dry-run-manifest fault strict",
+      "bash \"${ROOT}/scripts/e2e_suite.sh\" fault",
+      "artifact_index.json",
+      "mode_pair_report.json",
+      "scenario_pack_report.json",
+      "flake_quarantine_report.json",
+      "FRANKENLIBC_E2E_COMPLETION_ONLY",
+      "e2e_suite_completion_debt_validated"
+    ],
+    "ci_script": [
+      "deterministic E2E CI gate",
+      "scripts/check_e2e_suite.sh"
+    ],
+    "e2e_suite_harness": [
+      "fn e2e_suite_runs_and_produces_jsonl",
+      "fn e2e_suite_supports_manifest_dry_run",
+      "fn e2e_artifact_index_valid",
+      "fn e2e_mode_pair_report_valid",
+      "fn e2e_quarantine_and_pack_reports_valid",
+      "fn check_e2e_suite_emits_completion_debt_report_and_log",
+      "fn completion_debt_checker_rejects_stale_test_binding"
+    ]
+  },
+  "gate_contract": {
+    "required_scenario_packs": [
+      "smoke",
+      "stress",
+      "fault",
+      "stability"
+    ],
+    "required_artifacts": [
+      "trace.jsonl",
+      "artifact_index.json",
+      "mode_pair_report.json",
+      "scenario_pack_report.json",
+      "flake_quarantine_report.json"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "mode",
+      "scenario_id",
+      "scenario_pack",
+      "retry_count",
+      "flake_score",
+      "artifact_refs",
+      "verdict",
+      "replay_key",
+      "env_fingerprint",
+      "latency_ns"
+    ],
+    "required_events": [
+      "suite_start",
+      "manifest_case",
+      "case_start",
+      "case_attempt",
+      "case_retry",
+      "case_pass",
+      "case_fail",
+      "mode_pair_result",
+      "scenario_pack_gate_fail",
+      "suite_end",
+      "e2e_suite_completion_debt_validated"
+    ],
+    "ci_gate": {
+      "required_scripts": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "gating_mode": "extended"
+    },
+    "quarantine_policy": {
+      "threshold_env": "FRANKENLIBC_E2E_FLAKE_QUARANTINE_THRESHOLD",
+      "retry_env": "FRANKENLIBC_E2E_RETRY_MAX",
+      "retryable_codes_env": "FRANKENLIBC_E2E_RETRYABLE_CODES",
+      "remediation_required": [
+        "reproduce each quarantined case with replay_key and identical mode",
+        "inspect captured stdout/stderr/env/artifact index before unquarantine",
+        "fix root cause or tighten retry policy only with explicit evidence",
+        "remove quarantine label after two deterministic clean reruns"
+      ]
+    }
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "description": "Unit coverage binds the deterministic flake classifier and retry policy to edge cases, CLI output, allowlist behavior, and quarantine threshold handling.",
+      "implementation_refs": [
+        "scripts/e2e_flake_policy.py:17",
+        "scripts/e2e_flake_policy.py:30",
+        "scripts/e2e_flake_policy.py:66",
+        "tests/conformance/test_e2e_flake_policy.py:23"
+      ],
+      "test_refs": [
+        {
+          "source": "flake_policy_unit_tests",
+          "name": "test_all_pass_not_flaky"
+        },
+        {
+          "source": "flake_policy_unit_tests",
+          "name": "test_fail_then_pass_is_flaky"
+        },
+        {
+          "source": "flake_policy_unit_tests",
+          "name": "test_quarantined_flake_when_threshold_breached"
+        },
+        {
+          "source": "flake_policy_unit_tests",
+          "name": "test_consistent_failure_is_not_flaky"
+        },
+        {
+          "source": "flake_policy_unit_tests",
+          "name": "test_retry_on_nonzero_enabled"
+        },
+        {
+          "source": "flake_policy_unit_tests",
+          "name": "test_retry_on_nonzero_disabled_respects_allowlist"
+        },
+        {
+          "source": "flake_policy_unit_tests",
+          "name": "test_retry_stops_at_max"
+        },
+        {
+          "source": "flake_policy_unit_tests",
+          "name": "test_classify_json_output"
+        },
+        {
+          "source": "flake_policy_unit_tests",
+          "name": "test_should_retry_cli"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_and_e2e_audit_items"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_unit_binding_or_ci_gate"
+        }
+      ],
+      "validation_commands": [
+        "python3 -m unittest tests/conformance/test_e2e_flake_policy.py -q",
+        "bash scripts/check_e2e_pack_ci_flake_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test e2e_pack_ci_flake_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "description": "E2E coverage binds scenario packs, dry-run manifest loading, artifact index, strict/hardened mode-pair reports, scenario-pack thresholds, flake quarantine reports, CI wiring, and completion telemetry.",
+      "implementation_refs": [
+        "scripts/e2e_suite.sh:52",
+        "scripts/e2e_suite.sh:332",
+        "scripts/e2e_suite.sh:431",
+        "scripts/e2e_suite.sh:522",
+        "scripts/e2e_suite.sh:724",
+        "scripts/e2e_suite.sh:1205",
+        "scripts/check_e2e_suite.sh:377",
+        "scripts/check_e2e_suite.sh:595",
+        "scripts/ci.sh:499",
+        "crates/frankenlibc-harness/tests/e2e_suite_test.rs:597"
+      ],
+      "test_refs": [
+        {
+          "source": "e2e_suite_harness",
+          "name": "e2e_suite_runs_and_produces_jsonl"
+        },
+        {
+          "source": "e2e_suite_harness",
+          "name": "e2e_suite_supports_manifest_dry_run"
+        },
+        {
+          "source": "e2e_suite_harness",
+          "name": "e2e_artifact_index_valid"
+        },
+        {
+          "source": "e2e_suite_harness",
+          "name": "e2e_mode_pair_report_valid"
+        },
+        {
+          "source": "e2e_suite_harness",
+          "name": "e2e_quarantine_and_pack_reports_valid"
+        },
+        {
+          "source": "e2e_suite_harness",
+          "name": "check_e2e_suite_emits_completion_debt_report_and_log"
+        },
+        {
+          "source": "e2e_suite_harness",
+          "name": "completion_debt_checker_rejects_stale_test_binding"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_report_log_and_runs_flake_policy_unit_tests"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_e2e_artifact_contract"
+        }
+      ],
+      "validation_commands": [
+        "bash scripts/check_e2e_pack_ci_flake_completion_contract.sh",
+        "bash scripts/check_e2e_suite.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test e2e_suite_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test e2e_pack_ci_flake_completion_contract_test -- --nocapture"
+      ],
+      "required_artifacts": [
+        "target/e2e_suite/<run_id>/trace.jsonl",
+        "target/e2e_suite/<run_id>/artifact_index.json",
+        "target/e2e_suite/<run_id>/mode_pair_report.json",
+        "target/e2e_suite/<run_id>/scenario_pack_report.json",
+        "target/e2e_suite/<run_id>/flake_quarantine_report.json",
+        "target/conformance/e2e_pack_ci_flake_completion_contract.report.json",
+        "target/conformance/e2e_pack_ci_flake_completion_contract.log.jsonl"
+      ]
+    }
+  ],
+  "reporting": {
+    "report_path": "target/conformance/e2e_pack_ci_flake_completion_contract.report.json",
+    "log_path": "target/conformance/e2e_pack_ci_flake_completion_contract.log.jsonl",
+    "events": [
+      "e2e_pack_ci_flake_completion_contract_validated",
+      "e2e_pack_ci_flake_completion_contract_failed"
+    ],
+    "required_fields": [
+      "timestamp",
+      "trace_id",
+      "span_id",
+      "level",
+      "event",
+      "bead_id",
+      "completion_debt_bead",
+      "mode",
+      "runtime_mode",
+      "scenario_pack",
+      "retry_count",
+      "flake_score",
+      "artifact_refs",
+      "verdict",
+      "latency_ns",
+      "source_commit",
+      "failure_signature"
+    ]
+  }
+}
