@@ -1,0 +1,57 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "wcstok-unterminated-delimiter-overread",
+  "bead": "bd-0cjqo",
+  "completion_debt_bead": "bd-0cjqo.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "bdee6add307e4627473c63df6a7e26e7f6c43b6f",
+  "purpose": "Conformance contract for the wcstok overread fix originally landed under bd-0cjqo (closed 2026-04-29). The audit pass 2026-05-10T03-16-16Z scored bd-0cjqo at 470/1000 (false-closed) with a single missing item: tests.conformance.primary. This manifest + harness gate satisfies that requirement by pinning, at conformance level, that frankenlibc-abi's wcstok bounds delimiter scans by allocator-tracked extents (malloc_abi::known_remaining) and rejects tracked-unterminated delimiters BEFORE constructing the delim slice that would otherwise cause an out-of-bounds read.",
+  "vulnerable_function": "frankenlibc_abi::wchar_abi::wcstok",
+  "vulnerable_file": "crates/frankenlibc-abi/src/wchar_abi.rs",
+  "regression_test_function": "wcstok_rejects_tracked_unterminated_delimiter",
+  "regression_test_file": "crates/frankenlibc-abi/tests/wchar_abi_test.rs",
+  "required_guards": [
+    {
+      "id": "delim_bound_via_known_remaining",
+      "description": "wcstok must compute `let delim_bound = known_remaining(delim as usize).map(bytes_to_wchars);` so scan_w_string respects the allocator's tracked extent for the delim allocation.",
+      "match_substring": "let delim_bound = known_remaining(delim as usize).map(bytes_to_wchars);"
+    },
+    {
+      "id": "scan_w_string_with_bound",
+      "description": "wcstok must invoke `scan_w_string(delim, delim_bound)` so the scan returns (delim_len, terminated) safely.",
+      "match_substring": "scan_w_string(delim, delim_bound)"
+    },
+    {
+      "id": "reject_unterminated_before_slice",
+      "description": "wcstok must check `if !delim_terminated { return null }` BEFORE the `slice::from_raw_parts(delim, delim_len)` call. The reject branch returns std::ptr::null_mut().",
+      "match_substring": "if !delim_terminated"
+    }
+  ],
+  "policy": {
+    "fail_closed_when_guard_missing": true,
+    "fail_closed_when_regression_test_missing": true,
+    "regression_test_must_assert_null_token_and_null_save_ptr": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_known_remaining_guard",
+    "missing_scan_w_string_bounded_call",
+    "missing_unterminated_reject_before_slice",
+    "missing_regression_test"
+  ],
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-0cjqo/scorecard.md",
+    "spec_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-0cjqo/spec.json",
+    "missing_item_id": "tests.conformance.primary",
+    "score_before": 470,
+    "score_threshold": 700
+  },
+  "summary": {
+    "bead": "bd-0cjqo",
+    "completion_debt_bead": "bd-0cjqo.1",
+    "guards_pinned": 3,
+    "regression_test_pinned": true,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
