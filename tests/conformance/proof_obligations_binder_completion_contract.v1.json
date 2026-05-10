@@ -1,0 +1,162 @@
+{
+  "schema": "proof_obligations_binder_completion_contract.v1",
+  "bead": "bd-5fw.4",
+  "completion_debt_bead": "bd-5fw.4.1",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "implementation_refs": [
+      "tests/conformance/proof_obligations_binder.v1.json:5",
+      "tests/conformance/proof_obligations_binder.v1.json:14",
+      "tests/conformance/proof_obligations_binder.v1.json:19",
+      "tests/conformance/proof_obligations_binder.v1.json:21",
+      "scripts/check_proof_traceability_freshness.sh:79",
+      "scripts/check_proof_traceability_freshness.sh:100",
+      "scripts/check_proof_traceability_freshness.sh:212",
+      "scripts/check_fpg_proof_core_safety_gate.sh:146",
+      "scripts/check_fpg_proof_core_safety_gate.sh:172",
+      "scripts/check_fpg_proof_core_safety_gate.sh:244",
+      "crates/frankenlibc-harness/tests/proof_traceability_freshness_test.rs:231",
+      "crates/frankenlibc-harness/tests/proof_traceability_freshness_test.rs:282",
+      "crates/frankenlibc-harness/tests/proof_traceability_freshness_test.rs:490",
+      "crates/frankenlibc-harness/tests/proof_binder_proofs_test.rs:44"
+    ],
+    "test_sources": {
+      "proof_traceability_test": "crates/frankenlibc-harness/tests/proof_traceability_freshness_test.rs",
+      "fpg_proof_core_test": "crates/frankenlibc-harness/tests/fpg_proof_core_safety_gate_test.rs",
+      "proof_binder_proofs_test": "crates/frankenlibc-harness/tests/proof_binder_proofs_test.rs",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/proof_obligations_binder_completion_contract_test.rs"
+    },
+    "proof_binder_contract": {
+      "binder_path": "tests/conformance/proof_obligations_binder.v1.json",
+      "validation_path": "tests/conformance/proof_binder_validation.v1.json",
+      "traceability_path": "tests/conformance/proof_traceability_check.json",
+      "freshness_gate": "tests/conformance/proof_traceability_freshness_gate.v1.json",
+      "proof_core_gate": "tests/conformance/fpg_proof_core_safety_gate.v1.json",
+      "minimum_obligations": 24,
+      "minimum_categories": 14,
+      "minimum_source_refs": 60,
+      "minimum_unique_evidence_artifacts": 20,
+      "minimum_unique_gate_scripts": 10,
+      "required_obligation_ids": [
+        "PO-01",
+        "PO-02",
+        "PO-03",
+        "PO-04",
+        "PO-05",
+        "PO-06",
+        "PO-07",
+        "PO-08",
+        "PO-09",
+        "PO-10",
+        "PO-11",
+        "PO-12",
+        "PO-13",
+        "PO-14",
+        "PO-15",
+        "PO-16",
+        "PO-17",
+        "PO-18",
+        "PO-19",
+        "PO-20",
+        "PO-21",
+        "PO-22",
+        "PO-23",
+        "PO-24"
+      ],
+      "required_categories": [
+        "concurrency",
+        "consistency",
+        "controller_safety",
+        "core_safety",
+        "coverage",
+        "determinism",
+        "formal_verification",
+        "governance",
+        "mode_semantics",
+        "optimization_proof",
+        "performance",
+        "release",
+        "robustness",
+        "statistical_guarantee"
+      ],
+      "required_gate_scripts": [
+        "scripts/check_proof_binder.sh",
+        "scripts/check_fpg_proof_core_safety_gate.sh",
+        "scripts/check_proof_traceability_freshness.sh"
+      ],
+      "required_evidence_artifacts": [
+        "tests/conformance/proof_traceability_check.json",
+        "tests/conformance/proof_binder_validation.v1.json",
+        "tests/conformance/fpg_proof_core_safety_gate.v1.json"
+      ]
+    },
+    "e2e_primary": {
+      "required_scripts": [
+        "scripts/check_proof_traceability_freshness.sh",
+        "scripts/check_fpg_proof_core_safety_gate.sh"
+      ],
+      "required_commands": [
+        "bash scripts/check_proof_traceability_freshness.sh --validate-only",
+        "bash scripts/check_fpg_proof_core_safety_gate.sh --validate-only",
+        "rch exec -- cargo test -p frankenlibc-harness --test proof_traceability_freshness_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test fpg_proof_core_safety_gate_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test proof_obligations_binder_completion_contract_test -- --nocapture"
+      ],
+      "required_test_refs": [
+        {
+          "source": "proof_traceability_test",
+          "name": "gate_artifact_is_well_formed"
+        },
+        {
+          "source": "proof_traceability_test",
+          "name": "every_binder_source_ref_resolves_in_current_tree"
+        },
+        {
+          "source": "proof_traceability_test",
+          "name": "validation_envelope_matches_binder"
+        },
+        {
+          "source": "proof_traceability_test",
+          "name": "evidence_artifacts_resolve_in_current_tree"
+        },
+        {
+          "source": "fpg_proof_core_test",
+          "name": "gate_artifact_is_well_formed"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_emits_report_log_and_replays_static_gates"
+        }
+      ]
+    },
+    "telemetry_primary": {
+      "report_path": "target/conformance/proof_obligations_binder_completion_contract.report.json",
+      "log_path": "target/conformance/proof_obligations_binder_completion_contract.log.jsonl",
+      "required_events": [
+        "proof_obligations_binder_contract_validated",
+        "proof_obligations_binder_e2e_validated",
+        "proof_obligations_binder_telemetry_validated"
+      ],
+      "required_fields": [
+        "trace_id",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "artifact_refs",
+        "event",
+        "status",
+        "bead_id",
+        "completion_debt_bead",
+        "failure_signature"
+      ]
+    }
+  }
+}
