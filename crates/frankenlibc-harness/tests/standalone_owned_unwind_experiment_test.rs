@@ -41,6 +41,10 @@ fn manifest_path(root: &Path) -> PathBuf {
         .join("standalone_owned_unwind_experiment.v1.json")
 }
 
+fn abi_crate_path(root: &Path, rel: &str) -> PathBuf {
+    root.join("crates").join("frankenlibc-abi").join(rel)
+}
+
 fn load_manifest() -> TestResult<Value> {
     let root = workspace_root()?;
     let path = manifest_path(&root);
@@ -271,10 +275,52 @@ fn three_lanes_are_present_with_correct_roles() -> TestResult {
         "owned-unwind panic_strategy",
     )?;
     require(
-        json_string(owned, "build_status_until_owned_substitute_complete")?
-            == "report_only_blocked",
-        "owned-unwind must remain report_only_blocked until substitute lands",
+        json_string(owned, "build_status_until_owned_substitute_complete")? == "pass",
+        "owned-unwind source gate and release lane must pass before evidence rows exit",
     )
+}
+
+#[test]
+fn owned_unwind_stub_feature_is_wired_to_abi_symbols() -> TestResult {
+    let root = workspace_root()?;
+    let cargo_toml = std::fs::read_to_string(abi_crate_path(&root, "Cargo.toml"))
+        .map_err(|err| format!("read frankenlibc-abi Cargo.toml: {err}"))?;
+    require(
+        cargo_toml.contains("owned-unwind-stub = []"),
+        "frankenlibc-abi must expose owned-unwind-stub feature",
+    )?;
+
+    let lib_rs = std::fs::read_to_string(abi_crate_path(&root, "src/lib.rs"))
+        .map_err(|err| format!("read frankenlibc-abi lib.rs: {err}"))?;
+    require(
+        lib_rs.contains("feature = \"standalone\", feature = \"owned-unwind-stub\""),
+        "owned_unwind_abi module must be gated by standalone and owned-unwind-stub",
+    )?;
+    require(
+        lib_rs.contains("pub mod owned_unwind_abi;"),
+        "owned_unwind_abi module must be wired into the ABI crate",
+    )?;
+
+    let owned = std::fs::read_to_string(abi_crate_path(&root, "src/owned_unwind_abi.rs"))
+        .map_err(|err| format!("read owned_unwind_abi.rs: {err}"))?;
+    for symbol in [
+        "_Unwind_Backtrace",
+        "_Unwind_GetDataRelBase",
+        "_Unwind_GetIP",
+        "_Unwind_GetIPInfo",
+        "_Unwind_GetLanguageSpecificData",
+        "_Unwind_GetRegionStart",
+        "_Unwind_GetTextRelBase",
+        "_Unwind_Resume",
+        "_Unwind_SetGR",
+        "_Unwind_SetIP",
+    ] {
+        require(
+            owned.contains(&format!("fn {symbol}")),
+            format!("owned unwind stub must define {symbol}"),
+        )?;
+    }
+    Ok(())
 }
 
 #[test]
@@ -369,29 +415,45 @@ fn panic_abort_lane_removes_two_unwind_symbols() -> TestResult {
 }
 
 #[test]
-fn every_planned_owned_substitute_row_is_claim_blocked() -> TestResult {
+fn every_owned_substitute_row_has_nm_evidence() -> TestResult {
     let m = load_manifest()?;
     let rows = json_array(&m, "symbol_disposition_rows")?;
+    let mut substitute_count = 0;
     for r in rows {
         let owned = r
             .get("owned_unwind_disposition")
             .and_then(Value::as_str)
             .unwrap_or("");
-        if owned == "owned_substitute_planned" {
+        if owned == "owned_substitute" {
+            substitute_count += 1;
+            let surface = r
+                .get("owned_surface_status")
+                .and_then(Value::as_str)
+                .unwrap_or("");
             let claim = r
                 .get("claim_status_until_exit")
                 .and_then(Value::as_str)
                 .unwrap_or("");
             require(
-                claim == "claim_blocked",
+                surface == "nm_evidence_passed",
                 format!(
-                    "row {:?}: owned_substitute_planned must be claim_blocked, saw {claim}",
+                    "row {:?}: owned_substitute must have nm_evidence_passed, saw {surface}",
+                    r.get("symbol")
+                ),
+            )?;
+            require(
+                claim == "exit_evidence_passed",
+                format!(
+                    "row {:?}: owned_substitute must have exit_evidence_passed, saw {claim}",
                     r.get("symbol")
                 ),
             )?;
         }
     }
-    Ok(())
+    require(
+        substitute_count == 12,
+        "owned-unwind lane must own all 12 _Unwind_* rows",
+    )
 }
 
 #[test]
@@ -460,7 +522,7 @@ fn fixture_blocker_regression_is_rejected() -> TestResult {
 #[test]
 fn fixture_illegal_promotion_is_rejected() -> TestResult {
     let mut m = load_manifest()?;
-    // Flip a design_only row's claim_status_until_exit to "ready".
+    // Flip an evidence-passed row back to design_only while claiming ready.
     let rows = m
         .as_object_mut()
         .unwrap()
@@ -468,15 +530,15 @@ fn fixture_illegal_promotion_is_rejected() -> TestResult {
         .unwrap()
         .as_array_mut()
         .unwrap();
-    for r in rows.iter_mut() {
-        if r.get("owned_surface_status").and_then(Value::as_str) == Some("design_only") {
-            r.as_object_mut().unwrap().insert(
-                "claim_status_until_exit".to_string(),
-                Value::String("ready".into()),
-            );
-            break;
-        }
-    }
+    let row = rows.first_mut().ok_or("missing first symbol row")?;
+    row.as_object_mut().unwrap().insert(
+        "owned_surface_status".to_string(),
+        Value::String("design_only".into()),
+    );
+    row.as_object_mut().unwrap().insert(
+        "claim_status_until_exit".to_string(),
+        Value::String("ready".into()),
+    );
     let r = evaluate(&m);
     require(
         r.contains(&"illegal_promotion".to_string()),
@@ -554,7 +616,7 @@ fn summary_blocker_counts_match_lane_expectations() -> TestResult {
         "summary owned_unwind count when complete",
     )?;
     require(
-        json_string(summary, "claim_status")? == "claim_blocked",
+        json_string(summary, "claim_status")? == "report_only",
         "summary claim_status",
     )?;
     require(

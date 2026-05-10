@@ -117,7 +117,7 @@ fn corpus_u64() -> Vec<u64> {
         i64::MAX as u64,
         u64::MAX,
     ];
-    let mut rng = Pcg32::new(0xb1ad_c0ff_ee_15_face);
+    let mut rng = Pcg32::new(0xb1ad_c0ff_ee15_face);
     for _ in 0..256 {
         samples.push(rng.next_u64());
     }

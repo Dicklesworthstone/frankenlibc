@@ -15,6 +15,7 @@ unsafe_code = "allow"
 [features]
 default = []
 standalone = []
+owned-unwind-stub = []
 conformance-testing = []
 
 [dependencies]

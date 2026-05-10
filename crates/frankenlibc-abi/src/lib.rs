@@ -40,6 +40,9 @@ compile_error!(
     raw-syscall sequences before this crate can build on them."
 );
 
+#[cfg(all(feature = "owned-unwind-stub", not(feature = "standalone")))]
+compile_error!("owned-unwind-stub is only valid for opt-in standalone experiments");
+
 #[macro_use]
 mod macros;
 
@@ -58,6 +61,8 @@ pub use runtime_policy::conformance_testing;
 // libc in the test binary, causing infinite recursion or deadlock.
 #[cfg(not(test))]
 pub mod malloc_abi;
+#[cfg(all(not(test), feature = "standalone", feature = "owned-unwind-stub"))]
+pub mod owned_unwind_abi;
 #[cfg(not(test))]
 pub mod stdlib_abi;
 #[cfg(not(test))]

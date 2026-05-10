@@ -2,8 +2,8 @@
   "schema_version": "v1",
   "manifest_id": "standalone-owned-unwind-experiment",
   "bead": "bd-juvqm.4",
-  "generated_utc": "2026-05-09T00:00:00Z",
-  "source_commit": "b982d0ba38a908eaf58e30f3240988e89d0e34b3",
+  "generated_utc": "2026-05-10T03:18:39Z",
+  "source_commit": "current",
   "purpose": "Opt-in report-only contract for an owned-unwind experiment that compares (1) the baseline standalone forge artifact, (2) the existing panic-abort compiler-runtime-minimized lane, and (3) a proposed owned-unwind lane that supplies internal _Unwind_* substitutes. The contract pins disposition rows for each undefined _Unwind_* symbol so a future live experiment cannot over-claim removal: a row may move from `still_undefined` to `owned_substitute` only when the build_status is `pass` AND nm/readelf evidence shows the symbol is no longer undefined. Until every row exits, replacement_level_change_allowed=false and the lane stays report-only. Default forge behavior is never affected by this manifest.",
   "inputs": {
     "standalone_owned_unwinder_symbol_surface": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
@@ -143,7 +143,12 @@
       "expected_claim_status": "report_only",
       "must_not_change_default_profile": true,
       "expected_undefined_unwind_symbol_count": 0,
-      "build_status_until_owned_substitute_complete": "report_only_blocked"
+      "build_status_until_owned_substitute_complete": "pass",
+      "observed_undefined_unwind_symbol_count": 0,
+      "observed_needed_libraries": [
+        "ld-linux-x86-64.so.2"
+      ],
+      "evidence_artifact": "/data/projects/.cargo-target-frankenlibc-JadeLynx-ownedunwind/release/libfrankenlibc_abi.so"
     }
   ],
   "symbol_disposition_rows": [
@@ -154,15 +159,15 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "still_undefined",
-      "owned_unwind_disposition": "owned_substitute_planned",
+      "owned_unwind_disposition": "owned_substitute",
       "owned_substitute_strategy": "owned panic_unwind crate emits a no-op backtrace stub returning _URC_END_OF_STACK; sufficient because frankenlibc has no panic-runtime dependency on backtrace walking",
-      "owned_surface_status": "design_only",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_Backtrace; readelf -Ws confirms the stub is provided locally; libgcc_s.so.1 is no longer in NEEDED",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so",
         "readelf -Ws target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "claim_blocked"
+      "claim_status_until_exit": "exit_evidence_passed"
     },
     {
       "symbol": "_Unwind_DeleteException@GCC_3.0",
@@ -171,14 +176,14 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "removed_by_panic_abort",
-      "owned_unwind_disposition": "removed_by_panic_abort",
-      "owned_substitute_strategy": "panic-abort already eliminates this symbol; owned-unwind lane inherits the same removal",
-      "owned_surface_status": "covered_by_panic_abort",
+      "owned_unwind_disposition": "owned_substitute",
+      "owned_substitute_strategy": "owned stub no-ops exception cleanup; panic-abort keeps the path unreachable and nm evidence confirms no undefined symbol remains",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "panic_strategy=abort confirmed; nm -D reports no undefined _Unwind_DeleteException",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "exit_pending_evidence"
+      "claim_status_until_exit": "exit_evidence_passed"
     },
     {
       "symbol": "_Unwind_GetDataRelBase@GCC_3.0",
@@ -187,14 +192,14 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "still_undefined",
-      "owned_unwind_disposition": "owned_substitute_planned",
+      "owned_unwind_disposition": "owned_substitute",
       "owned_substitute_strategy": "owned panic_unwind stub returns 0; correct because frankenlibc emits no DWARF FDEs that read DataRel base",
-      "owned_surface_status": "design_only",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetDataRelBase",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "claim_blocked"
+      "claim_status_until_exit": "exit_evidence_passed"
     },
     {
       "symbol": "_Unwind_GetIP@GCC_3.0",
@@ -203,14 +208,14 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "still_undefined",
-      "owned_unwind_disposition": "owned_substitute_planned",
+      "owned_unwind_disposition": "owned_substitute",
       "owned_substitute_strategy": "owned stub returns the saved RIP from the unwind context; touched only by personality routines, which we do not call under panic=abort",
-      "owned_surface_status": "design_only",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetIP",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "claim_blocked"
+      "claim_status_until_exit": "exit_evidence_passed"
     },
     {
       "symbol": "_Unwind_GetIPInfo@GCC_4.2.0",
@@ -219,14 +224,14 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "still_undefined",
-      "owned_unwind_disposition": "owned_substitute_planned",
+      "owned_unwind_disposition": "owned_substitute",
       "owned_substitute_strategy": "owned stub forwards to _Unwind_GetIP with ip_before_insn=1; correct under panic=abort where the personality routine is unreachable",
-      "owned_surface_status": "design_only",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetIPInfo",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "claim_blocked"
+      "claim_status_until_exit": "exit_evidence_passed"
     },
     {
       "symbol": "_Unwind_GetLanguageSpecificData@GCC_3.0",
@@ -235,14 +240,14 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "still_undefined",
-      "owned_unwind_disposition": "owned_substitute_planned",
+      "owned_unwind_disposition": "owned_substitute",
       "owned_substitute_strategy": "owned stub returns NULL; correct because frankenlibc emits no LSDA tables under panic=abort",
-      "owned_surface_status": "design_only",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetLanguageSpecificData",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "claim_blocked"
+      "claim_status_until_exit": "exit_evidence_passed"
     },
     {
       "symbol": "_Unwind_GetRegionStart@GCC_3.0",
@@ -251,14 +256,14 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "still_undefined",
-      "owned_unwind_disposition": "owned_substitute_planned",
+      "owned_unwind_disposition": "owned_substitute",
       "owned_substitute_strategy": "owned stub returns 0; only called by personality routines that we do not invoke under panic=abort",
-      "owned_surface_status": "design_only",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetRegionStart",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "claim_blocked"
+      "claim_status_until_exit": "exit_evidence_passed"
     },
     {
       "symbol": "_Unwind_GetTextRelBase@GCC_3.0",
@@ -267,14 +272,14 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "still_undefined",
-      "owned_unwind_disposition": "owned_substitute_planned",
+      "owned_unwind_disposition": "owned_substitute",
       "owned_substitute_strategy": "owned stub returns 0; not reached under panic=abort",
-      "owned_surface_status": "design_only",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetTextRelBase",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "claim_blocked"
+      "claim_status_until_exit": "exit_evidence_passed"
     },
     {
       "symbol": "_Unwind_RaiseException@GCC_3.0",
@@ -283,14 +288,14 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "removed_by_panic_abort",
-      "owned_unwind_disposition": "removed_by_panic_abort",
-      "owned_substitute_strategy": "panic-abort already eliminates this symbol; owned-unwind lane inherits the same removal",
-      "owned_surface_status": "covered_by_panic_abort",
+      "owned_unwind_disposition": "owned_substitute",
+      "owned_substitute_strategy": "owned stub aborts immediately; panic-abort keeps exception raising unreachable and nm evidence confirms no undefined symbol remains",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "panic_strategy=abort confirmed; nm -D reports no undefined _Unwind_RaiseException",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "exit_pending_evidence"
+      "claim_status_until_exit": "exit_evidence_passed"
     },
     {
       "symbol": "_Unwind_Resume@GCC_3.0",
@@ -299,14 +304,14 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "still_undefined",
-      "owned_unwind_disposition": "owned_substitute_planned",
+      "owned_unwind_disposition": "owned_substitute",
       "owned_substitute_strategy": "owned stub aborts via libc abort() — _Unwind_Resume is unreachable under panic=abort but the linker still emits the cleanup landing pad reference",
-      "owned_surface_status": "design_only",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_Resume",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "claim_blocked"
+      "claim_status_until_exit": "exit_evidence_passed"
     },
     {
       "symbol": "_Unwind_SetGR@GCC_3.0",
@@ -315,14 +320,14 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "still_undefined",
-      "owned_unwind_disposition": "owned_substitute_planned",
+      "owned_unwind_disposition": "owned_substitute",
       "owned_substitute_strategy": "owned stub aborts via libc abort() — only personality routines call this and we have none under panic=abort",
-      "owned_surface_status": "design_only",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_SetGR",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "claim_blocked"
+      "claim_status_until_exit": "exit_evidence_passed"
     },
     {
       "symbol": "_Unwind_SetIP@GCC_3.0",
@@ -331,22 +336,35 @@
       "provider_library": "libgcc_s.so.1",
       "baseline_disposition": "still_undefined",
       "panic_abort_disposition": "still_undefined",
-      "owned_unwind_disposition": "owned_substitute_planned",
+      "owned_unwind_disposition": "owned_substitute",
       "owned_substitute_strategy": "owned stub aborts via libc abort() — only personality routines call this and we have none under panic=abort",
-      "owned_surface_status": "design_only",
+      "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_SetIP",
       "evidence_commands": [
         "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
       ],
-      "claim_status_until_exit": "claim_blocked"
+      "claim_status_until_exit": "exit_evidence_passed"
     }
   ],
-  "live_experiment_environment_blockers": [
-    {
-      "blocker": "owned-unwind-stub feature gate is design-only at this commit; the panic_unwind crate substitute is not yet wired into frankenlibc-abi/Cargo.toml.",
-      "remediation": "A future commit must add a `[features] owned-unwind-stub = []` entry plus a stub crate that exports the 10 _Unwind_* symbols listed with disposition=owned_substitute_planned. Until that lands, the owned-unwind lane MUST stay report-only with build_status_until_owned_substitute_complete=report_only_blocked."
-    }
-  ],
+  "live_experiment_environment_blockers": [],
+  "live_experiment_evidence": {
+    "build_status": "pass",
+    "validated_utc": "2026-05-10T03:18:39Z",
+    "rch_worker": "vmi1152480",
+    "target_dir": "/data/projects/.cargo-target-frankenlibc-JadeLynx-ownedunwind",
+    "artifact": "/data/projects/.cargo-target-frankenlibc-JadeLynx-ownedunwind/release/libfrankenlibc_abi.so",
+    "commands": [
+      "RCH_VISIBILITY=summary RCH_DAEMON_WAIT_RESPONSE_TIMEOUT_SECS=300 RCH_PRIORITY=high rch exec -- env CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-JadeLynx-ownedunwind CARGO_PROFILE_RELEASE_PANIC=abort RUSTFLAGS='-C link-arg=-Wl,--no-undefined' cargo build -p frankenlibc-abi --release --features=standalone,owned-unwind-stub",
+      "nm -D --undefined-only /data/projects/.cargo-target-frankenlibc-JadeLynx-ownedunwind/release/libfrankenlibc_abi.so | rg '_Unwind_' || true",
+      "readelf -d /data/projects/.cargo-target-frankenlibc-JadeLynx-ownedunwind/release/libfrankenlibc_abi.so | rg 'NEEDED|libgcc' || true",
+      "readelf -Ws /data/projects/.cargo-target-frankenlibc-JadeLynx-ownedunwind/release/libfrankenlibc_abi.so | rg '_Unwind_'"
+    ],
+    "observed_undefined_unwind_symbols": [],
+    "observed_needed_libraries": [
+      "ld-linux-x86-64.so.2"
+    ],
+    "defined_unwind_symbol_count": 12
+  },
   "summary": {
     "bead": "bd-juvqm.4",
     "lane_count": 3,
@@ -358,10 +376,10 @@
     "replacement_level_change_allowed": false,
     "promotion_allowed": false,
     "panic_strategy_change_allowed_on_baseline": false,
-    "claim_status": "claim_blocked",
+    "claim_status": "report_only",
     "blocker_symbol_count_baseline": 12,
     "blocker_symbol_count_panic_abort": 10,
     "blocker_symbol_count_owned_unwind_when_complete": 0,
-    "next_safe_action": "Land the owned-unwind-stub feature gate + panic_unwind stub crate, then re-run the experiment lane and update each owned_substitute_planned row's owned_surface_status from design_only to nm_evidence_passed atomically with source_commit. Promotion remains forbidden until every row reaches owned_surface_status=nm_evidence_passed."
+    "next_safe_action": "Keep the owned-unwind lane report-only and feed the nm/readelf evidence into the broader standalone host-dependency burndown. Promotion remains forbidden until the surrounding replacement-readiness gates consume current artifact evidence."
   }
 }
