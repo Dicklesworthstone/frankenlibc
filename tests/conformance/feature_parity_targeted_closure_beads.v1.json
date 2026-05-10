@@ -1,6 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.3.3",
+  "completion_debt_bead": "bd-bp8fl.3.3.1",
   "generated_utc": "2026-05-03T21:55:00Z",
   "purpose": "Map every feature-parity gap owner-family row to a concrete closure bead with source row, evidence type, test obligations, replay command, and fail-closed claim policy.",
   "inputs": {
@@ -10,8 +11,13 @@
     "issues_jsonl": ".beads/issues.jsonl"
   },
   "required_log_fields": [
+    "timestamp",
     "trace_id",
     "bead_id",
+    "completion_debt_bead",
+    "original_bead",
+    "event",
+    "outcome",
     "source_row_id",
     "created_issue_id",
     "missing_evidence_type",
@@ -258,5 +264,67 @@
     "expected_gap_count": 111,
     "created_issue_count": 10,
     "source_artifact_freshness": "validated_by_gate"
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-bp8fl.3.3.1",
+    "original_bead": "bd-bp8fl.3.3",
+    "next_audit_score_threshold": 800,
+    "test_source": "crates/frankenlibc-harness/tests/feature_parity_targeted_closure_beads_test.rs",
+    "unit_primary": {
+      "description": "Unit-level artifact shape and row mapping coverage for targeted closure beads.",
+      "required_test_names": [
+        "artifact_defines_complete_targeted_closure_contract",
+        "closure_rows_match_owner_groups_and_tracker_dependencies",
+        "completion_debt_evidence_binds_unit_e2e_and_telemetry_items"
+      ]
+    },
+    "e2e_primary": {
+      "description": "Executable checker coverage for pass and fail-closed targeted-closure gate behavior.",
+      "required_script": "scripts/check_feature_parity_targeted_closure_beads.sh",
+      "required_test_names": [
+        "gate_script_passes_and_emits_structured_artifacts",
+        "gate_script_fails_closed_for_duplicate_source_row",
+        "gate_script_fails_closed_when_completion_debt_telemetry_binding_drifts"
+      ]
+    },
+    "telemetry_primary": {
+      "description": "Structured report and JSONL rows emitted by the targeted closure-bead checker.",
+      "default_report_path": "target/conformance/feature_parity_targeted_closure_beads.report.json",
+      "default_log_path": "target/conformance/feature_parity_targeted_closure_beads.log.jsonl",
+      "required_events": [
+        "feature_parity_targeted_closure_validated",
+        "feature_parity_targeted_closure_failed",
+        "feature_parity_targeted_closure_row_validated",
+        "feature_parity_targeted_closure_row_failed"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "bead_id",
+        "completion_debt_bead",
+        "original_bead",
+        "event",
+        "outcome",
+        "source_row_id",
+        "created_issue_id",
+        "missing_evidence_type",
+        "expected",
+        "actual",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "required_report_fields": [
+        "schema_version",
+        "bead",
+        "completion_debt_bead",
+        "original_bead",
+        "event",
+        "status",
+        "summary",
+        "rows",
+        "errors",
+        "artifact_refs"
+      ]
+    }
   }
 }

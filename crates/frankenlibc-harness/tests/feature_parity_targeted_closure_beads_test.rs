@@ -37,8 +37,13 @@ const EXPECTED_ROWS: &[(&str, &str, u64)] = &[
 ];
 
 const REQUIRED_LOG_FIELDS: &[&str] = &[
+    "timestamp",
     "trace_id",
     "bead_id",
+    "completion_debt_bead",
+    "original_bead",
+    "event",
+    "outcome",
     "source_row_id",
     "created_issue_id",
     "missing_evidence_type",
@@ -215,6 +220,11 @@ fn artifact_defines_complete_targeted_closure_contract() -> TestResult {
         "schema_version",
     )?;
     ensure_eq(artifact["bead"].as_str(), Some("bd-bp8fl.3.3"), "bead")?;
+    ensure_eq(
+        artifact["completion_debt_bead"].as_str(),
+        Some("bd-bp8fl.3.3.1"),
+        "completion_debt_bead",
+    )?;
     ensure(
         artifact["purpose"]
             .as_str()
@@ -280,6 +290,92 @@ fn artifact_defines_complete_targeted_closure_contract() -> TestResult {
         Some(EXPECTED_ROWS.len() as u64),
         "summary.created_issue_count",
     )
+}
+
+#[test]
+fn completion_debt_evidence_binds_unit_e2e_and_telemetry_items() -> TestResult {
+    let root = workspace_root();
+    let artifact = load_json(&artifact_path(&root))?;
+    let evidence = &artifact["completion_debt_evidence"];
+
+    ensure_eq(
+        evidence["bead"].as_str(),
+        Some("bd-bp8fl.3.3.1"),
+        "completion debt bead",
+    )?;
+    ensure_eq(
+        evidence["original_bead"].as_str(),
+        Some("bd-bp8fl.3.3"),
+        "completion debt original bead",
+    )?;
+    ensure(
+        evidence["next_audit_score_threshold"].as_u64().unwrap_or(0) >= 800,
+        "completion debt must target the real audit threshold",
+    )?;
+    ensure_eq(
+        evidence["test_source"].as_str(),
+        Some("crates/frankenlibc-harness/tests/feature_parity_targeted_closure_beads_test.rs"),
+        "completion debt test source",
+    )?;
+
+    let test_source = read_text(&root.join(as_str(
+        &evidence["test_source"],
+        "completion_debt_evidence.test_source",
+    )?))?;
+    for section in ["unit_primary", "e2e_primary"] {
+        let tests = as_array(
+            &evidence[section]["required_test_names"],
+            &format!("completion_debt_evidence.{section}.required_test_names"),
+        )?;
+        ensure(
+            !tests.is_empty(),
+            format!("completion debt {section} must cite test names"),
+        )?;
+        for test in tests {
+            let name = as_str(test, "required_test_names[]")?;
+            ensure(
+                test_source.contains(&format!("fn {name}(")),
+                format!("completion debt {section} cites missing test {name}"),
+            )?;
+        }
+    }
+
+    ensure_eq(
+        evidence["e2e_primary"]["required_script"].as_str(),
+        Some("scripts/check_feature_parity_targeted_closure_beads.sh"),
+        "completion debt e2e required script",
+    )?;
+
+    let telemetry = &evidence["telemetry_primary"];
+    ensure_eq(
+        telemetry["default_report_path"].as_str(),
+        Some("target/conformance/feature_parity_targeted_closure_beads.report.json"),
+        "completion debt telemetry report path",
+    )?;
+    ensure_eq(
+        telemetry["default_log_path"].as_str(),
+        Some("target/conformance/feature_parity_targeted_closure_beads.log.jsonl"),
+        "completion debt telemetry log path",
+    )?;
+    let events = as_array(&telemetry["required_events"], "telemetry.required_events")?
+        .iter()
+        .map(|event| as_str(event, "telemetry.required_events[]"))
+        .collect::<TestResult<BTreeSet<_>>>()?;
+    ensure_eq(
+        events,
+        BTreeSet::from([
+            "feature_parity_targeted_closure_failed",
+            "feature_parity_targeted_closure_row_failed",
+            "feature_parity_targeted_closure_row_validated",
+            "feature_parity_targeted_closure_validated",
+        ]),
+        "completion debt telemetry events",
+    )?;
+    let fields = as_array(&telemetry["required_fields"], "telemetry.required_fields")?
+        .iter()
+        .map(|field| as_str(field, "telemetry.required_fields[]"))
+        .collect::<TestResult<Vec<_>>>()?;
+    ensure_eq(fields, REQUIRED_LOG_FIELDS.to_vec(), "telemetry fields")
 }
 
 #[test]
@@ -449,6 +545,21 @@ fn gate_script_passes_and_emits_structured_artifacts() -> TestResult {
     let report = load_json(&report_path)?;
     ensure_eq(report["status"].as_str(), Some("pass"), "report status")?;
     ensure_eq(
+        report["completion_debt_bead"].as_str(),
+        Some("bd-bp8fl.3.3.1"),
+        "report completion_debt_bead",
+    )?;
+    ensure_eq(
+        report["original_bead"].as_str(),
+        Some("bd-bp8fl.3.3"),
+        "report original_bead",
+    )?;
+    ensure_eq(
+        report["event"].as_str(),
+        Some("feature_parity_targeted_closure_validated"),
+        "report event",
+    )?;
+    ensure_eq(
         report["summary"]["source_rows"].as_u64(),
         Some(EXPECTED_ROWS.len() as u64),
         "report summary.source_rows",
@@ -477,6 +588,22 @@ fn gate_script_passes_and_emits_structured_artifacts() -> TestResult {
             )?;
         }
         ensure_eq(log["bead_id"].as_str(), Some("bd-bp8fl.3.3"), "log bead_id")?;
+        ensure_eq(
+            log["completion_debt_bead"].as_str(),
+            Some("bd-bp8fl.3.3.1"),
+            "log completion_debt_bead",
+        )?;
+        ensure_eq(
+            log["original_bead"].as_str(),
+            Some("bd-bp8fl.3.3"),
+            "log original_bead",
+        )?;
+        ensure_eq(
+            log["event"].as_str(),
+            Some("feature_parity_targeted_closure_row_validated"),
+            "log event",
+        )?;
+        ensure_eq(log["outcome"].as_str(), Some("pass"), "log outcome")?;
         ensure_eq(
             log["failure_signature"].as_str(),
             Some("none"),
@@ -539,5 +666,51 @@ fn gate_script_fails_closed_for_duplicate_source_row() -> TestResult {
     ensure(
         errors.contains("duplicate source_row_id"),
         format!("negative report should name duplicate source rows, got {errors:?}"),
+    )
+}
+
+#[test]
+fn gate_script_fails_closed_when_completion_debt_telemetry_binding_drifts() -> TestResult {
+    let root = workspace_root();
+    let mut artifact = load_json(&artifact_path(&root))?;
+    artifact["completion_debt_evidence"]["telemetry_primary"]["required_fields"] =
+        serde_json::json!(["trace_id"]);
+
+    let out_dir = unique_temp_dir("feature-parity-targeted-closure-telemetry-negative")?;
+    let fixture = out_dir.join("telemetry-drift.fixture.json");
+    let report_path = out_dir.join("telemetry-drift.report.json");
+    let log_path = out_dir.join("telemetry-drift.log.jsonl");
+    write_json(&fixture, &artifact)?;
+    let issues_fixture = out_dir.join("issues.jsonl");
+    write_tracker_fixture(&issues_fixture, &artifact)?;
+
+    let script = script_path(&root);
+    let output = Command::new(&script)
+        .current_dir(&root)
+        .env("FRANKENLIBC_TARGETED_CLOSURE_BEADS", &fixture)
+        .env("FRANKENLIBC_TARGETED_CLOSURE_REPORT", &report_path)
+        .env("FRANKENLIBC_TARGETED_CLOSURE_LOG", &log_path)
+        .env("FRANKENLIBC_BEADS_JSONL", &issues_fixture)
+        .output()
+        .map_err(|err| {
+            test_error(format!(
+                "failed to run telemetry-drift targeted-closure gate: {err}"
+            ))
+        })?;
+    ensure(
+        !output.status.success(),
+        "telemetry binding drift must fail the gate",
+    )?;
+
+    let report = load_json(&report_path)?;
+    ensure_eq(report["status"].as_str(), Some("fail"), "negative status")?;
+    let errors = as_array(&report["errors"], "report.errors")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    ensure(
+        errors.contains("telemetry_primary.required_fields mismatch"),
+        format!("negative report should name telemetry required_fields drift, got {errors:?}"),
     )
 }

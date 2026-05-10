@@ -27,8 +27,13 @@ report_path = Path(sys.argv[5])
 log_path = Path(sys.argv[6])
 
 REQUIRED_LOG_FIELDS = [
+    "timestamp",
     "trace_id",
     "bead_id",
+    "completion_debt_bead",
+    "original_bead",
+    "event",
+    "outcome",
     "source_row_id",
     "created_issue_id",
     "missing_evidence_type",
@@ -37,6 +42,26 @@ REQUIRED_LOG_FIELDS = [
     "artifact_refs",
     "failure_signature",
 ]
+COMPLETION_DEBT_BEAD = "bd-bp8fl.3.3.1"
+ORIGINAL_BEAD = "bd-bp8fl.3.3"
+EXPECTED_TELEMETRY_EVENTS = {
+    "feature_parity_targeted_closure_validated",
+    "feature_parity_targeted_closure_failed",
+    "feature_parity_targeted_closure_row_validated",
+    "feature_parity_targeted_closure_row_failed",
+}
+EXPECTED_REPORT_FIELDS = {
+    "schema_version",
+    "bead",
+    "completion_debt_bead",
+    "original_bead",
+    "event",
+    "status",
+    "summary",
+    "rows",
+    "errors",
+    "artifact_refs",
+}
 
 errors: list[str] = []
 logs: list[dict[str, object]] = []
@@ -92,6 +117,14 @@ def append_log(
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "trace_id": f"bd-bp8fl.3.3::{source_row_id}::{created_issue_id}",
             "bead_id": "bd-bp8fl.3.3",
+            "completion_debt_bead": COMPLETION_DEBT_BEAD,
+            "original_bead": ORIGINAL_BEAD,
+            "event": (
+                "feature_parity_targeted_closure_row_validated"
+                if failure_signature == "none"
+                else "feature_parity_targeted_closure_row_failed"
+            ),
+            "outcome": "pass" if failure_signature == "none" else "fail",
             "source_row_id": source_row_id,
             "created_issue_id": created_issue_id,
             "missing_evidence_type": missing_evidence_type,
@@ -114,6 +147,8 @@ if config.get("schema_version") != "v1":
     errors.append("schema_version must be v1")
 if config.get("bead") != "bd-bp8fl.3.3":
     errors.append("bead must be bd-bp8fl.3.3")
+if config.get("completion_debt_bead") != COMPLETION_DEBT_BEAD:
+    errors.append(f"completion_debt_bead must be {COMPLETION_DEBT_BEAD}")
 if config.get("required_log_fields") != REQUIRED_LOG_FIELDS:
     errors.append("required_log_fields must match bd-bp8fl.3.3 contract")
 
@@ -231,6 +266,80 @@ if total_gap_count != summary.get("expected_gap_count"):
 if len(created_ids) != summary.get("created_issue_count"):
     errors.append("created issue count does not match summary")
 
+completion = config.get("completion_debt_evidence")
+if not isinstance(completion, dict):
+    errors.append("completion_debt_evidence must be an object")
+    completion = {}
+if completion.get("bead") != COMPLETION_DEBT_BEAD:
+    errors.append(f"completion_debt_evidence.bead must be {COMPLETION_DEBT_BEAD}")
+if completion.get("original_bead") != ORIGINAL_BEAD:
+    errors.append(f"completion_debt_evidence.original_bead must be {ORIGINAL_BEAD}")
+if int(completion.get("next_audit_score_threshold", 0)) < 800:
+    errors.append("completion_debt_evidence.next_audit_score_threshold must be >= 800")
+
+workspace_root = Path.cwd()
+test_source = completion.get("test_source")
+if not isinstance(test_source, str) or not test_source:
+    errors.append("completion_debt_evidence.test_source must be non-empty")
+    test_source_text = ""
+else:
+    test_source_path = Path(test_source)
+    if not test_source_path.is_absolute():
+        test_source_path = workspace_root / test_source_path
+    if not test_source_path.is_file():
+        errors.append(f"completion_debt_evidence.test_source missing: {test_source}")
+        test_source_text = ""
+    else:
+        test_source_text = test_source_path.read_text(encoding="utf-8")
+
+for evidence_key in ["unit_primary", "e2e_primary"]:
+    section = completion.get(evidence_key)
+    if not isinstance(section, dict):
+        errors.append(f"completion_debt_evidence.{evidence_key} must be an object")
+        continue
+    required_tests = section.get("required_test_names")
+    if not isinstance(required_tests, list) or not required_tests:
+        errors.append(
+            f"completion_debt_evidence.{evidence_key}.required_test_names must be non-empty"
+        )
+        continue
+    for test_name in required_tests:
+        if not isinstance(test_name, str) or not test_name:
+            errors.append(f"completion_debt_evidence.{evidence_key} has invalid test name")
+            continue
+        if f"fn {test_name}(" not in test_source_text:
+            errors.append(
+                f"completion_debt_evidence.{evidence_key} references missing test {test_name}"
+            )
+
+e2e = completion.get("e2e_primary")
+if isinstance(e2e, dict):
+    required_script = e2e.get("required_script")
+    if required_script != "scripts/check_feature_parity_targeted_closure_beads.sh":
+        errors.append("completion_debt_evidence.e2e_primary.required_script drifted")
+    else:
+        required_script_path = workspace_root / required_script
+        if not required_script_path.is_file():
+            errors.append(f"completion_debt_evidence.e2e_primary.required_script missing: {required_script}")
+
+telemetry = completion.get("telemetry_primary")
+if not isinstance(telemetry, dict):
+    errors.append("completion_debt_evidence.telemetry_primary must be an object")
+    telemetry = {}
+if telemetry.get("default_report_path") != "target/conformance/feature_parity_targeted_closure_beads.report.json":
+    errors.append("completion_debt_evidence.telemetry_primary.default_report_path drifted")
+if telemetry.get("default_log_path") != "target/conformance/feature_parity_targeted_closure_beads.log.jsonl":
+    errors.append("completion_debt_evidence.telemetry_primary.default_log_path drifted")
+required_events = telemetry.get("required_events")
+if not isinstance(required_events, list) or set(str(event) for event in required_events) != EXPECTED_TELEMETRY_EVENTS:
+    errors.append("completion_debt_evidence.telemetry_primary.required_events drifted")
+required_fields = telemetry.get("required_fields")
+if not isinstance(required_fields, list) or [str(field) for field in required_fields] != REQUIRED_LOG_FIELDS:
+    errors.append("completion_debt_evidence.telemetry_primary.required_fields mismatch")
+required_report_fields = telemetry.get("required_report_fields")
+if not isinstance(required_report_fields, list) or set(str(field) for field in required_report_fields) != EXPECTED_REPORT_FIELDS:
+    errors.append("completion_debt_evidence.telemetry_primary.required_report_fields drifted")
+
 for log in logs:
     missing = [field for field in REQUIRED_LOG_FIELDS if field not in log]
     if missing:
@@ -239,6 +348,13 @@ for log in logs:
 report = {
     "schema_version": "v1",
     "bead": "bd-bp8fl.3.3",
+    "completion_debt_bead": COMPLETION_DEBT_BEAD,
+    "original_bead": ORIGINAL_BEAD,
+    "event": (
+        "feature_parity_targeted_closure_validated"
+        if not errors
+        else "feature_parity_targeted_closure_failed"
+    ),
     "status": "pass" if not errors else "fail",
     "summary": {
         "source_rows": len(rows),
