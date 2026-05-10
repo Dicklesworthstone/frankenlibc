@@ -1,0 +1,118 @@
+{
+  "schema_version": "math_value_ablations_completion_contract.v1",
+  "bead_id": "bd-1rxj.1",
+  "original_bead": "bd-1rxj",
+  "trace_id": "bd-1rxj.1::math-value-ablations::v1",
+  "generated_at_utc": "2026-05-10T14:50:00Z",
+  "purpose": "Bind the bd-1rxj controller value-proof ablation gate to a machine-checkable completion-debt contract for tests.e2e.primary.",
+  "source_artifacts": [
+    {
+      "id": "math_value_ablations",
+      "path": "tests/conformance/math_value_ablations.v1.json",
+      "role": "controller-by-controller A/B value-proof ablation artifact"
+    },
+    {
+      "id": "math_value_proof",
+      "path": "tests/conformance/math_value_proof.json",
+      "role": "production runtime-math retained-controller value-proof inventory"
+    },
+    {
+      "id": "math_value_gate",
+      "path": "scripts/check_math_value_ablations.sh",
+      "role": "E2E value-proof ablation gate that emits report and JSONL logs"
+    },
+    {
+      "id": "math_value_harness_test",
+      "path": "crates/frankenlibc-harness/tests/math_value_ablations_test.rs",
+      "role": "Rust harness test that executes the E2E ablation gate"
+    },
+    {
+      "id": "completion_contract",
+      "path": "tests/conformance/math_value_ablations_completion_contract.v1.json",
+      "role": "completion-debt contract binding the E2E proof to bd-1rxj.1"
+    },
+    {
+      "id": "completion_gate",
+      "path": "scripts/check_math_value_ablations_completion_contract.sh",
+      "role": "fail-closed checker for the completion-debt contract"
+    },
+    {
+      "id": "completion_harness_test",
+      "path": "crates/frankenlibc-harness/tests/math_value_ablations_completion_contract_test.rs",
+      "role": "Rust harness tests for positive and negative completion-contract behavior"
+    }
+  ],
+  "e2e_contract": {
+    "missing_item_id": "tests.e2e.primary",
+    "required_experiment_count": 25,
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_log_row_count": 50,
+    "required_report_schema_version": "v1",
+    "required_report_ok": true,
+    "required_summary": {
+      "total_modules": 25,
+      "retain": 25,
+      "retire": 0,
+      "min_confidence": 0.86,
+      "max_strict_with_latency_ns": 14,
+      "max_hardened_with_latency_ns": 103
+    },
+    "required_policy_fields": [
+      "strict_budget_ns_max",
+      "hardened_budget_ns_max",
+      "min_confidence",
+      "min_risk_reduction_ppm",
+      "min_quality_gain",
+      "min_latency_improvement_pct",
+      "retain_rule"
+    ],
+    "required_log_fields": [
+      "trace_id",
+      "mode",
+      "symbol",
+      "event",
+      "outcome",
+      "errno",
+      "timing_ns",
+      "tier",
+      "decision",
+      "confidence",
+      "risk_reduction_ppm",
+      "quality_gain",
+      "latency_improvement_pct",
+      "reasons"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "spec_item": "tests.e2e.primary",
+      "implementation_refs": [
+        "tests/conformance/math_value_ablations.v1.json",
+        "scripts/check_math_value_ablations.sh",
+        "tests/conformance/math_value_ablations_completion_contract.v1.json",
+        "scripts/check_math_value_ablations_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/math_value_ablations_test.rs",
+        "crates/frankenlibc-harness/tests/math_value_ablations_completion_contract_test.rs"
+      ],
+      "required_positive_tests": [
+        "gate_script_emits_logs_and_report",
+        "checker_accepts_math_value_ablation_completion_contract"
+      ],
+      "required_negative_tests": [
+        "checker_rejects_missing_e2e_binding",
+        "checker_rejects_incomplete_mode_contract"
+      ],
+      "validation_commands": [
+        "bash scripts/check_math_value_ablations.sh",
+        "bash scripts/check_math_value_ablations_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test math_value_ablations_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test math_value_ablations_completion_contract_test -- --nocapture"
+      ]
+    }
+  ]
+}
