@@ -93,15 +93,17 @@ fn read_cpu_count() -> u32 {
 
 fn read_kernel_release() -> String {
     let osrelease = Path::new("/proc/sys/kernel/osrelease");
-    if osrelease.exists()
-        && let Ok(text) = std::fs::read_to_string(osrelease)
-    {
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
+    match std::fs::read_to_string(osrelease) {
+        Ok(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                "unknown".to_string()
+            } else {
+                trimmed.to_string()
+            }
         }
+        Err(_) => "unknown".to_string(),
     }
-    "unknown".to_string()
 }
 
 /// Compute the environment fingerprint, honoring the

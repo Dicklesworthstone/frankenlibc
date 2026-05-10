@@ -721,13 +721,6 @@ use frankenlibc_core::stdio::{ScanValue, parse_scanf_format, scan_input};
 
 /// Run a scanf conformance test case and compare output.
 fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
-    // Skip tests that require features not yet implemented in core scanf
-    // DISC-004 FIXED: Hex float parsing now implemented in scan_hex_float
-    if case.name.contains("_overflow") || case.name.contains("_underflow") {
-        // DISC-003: Integer overflow/underflow wrapping behavior differs from glibc
-        return Ok(());
-    }
-
     let inputs = &case.inputs;
     let input = inputs
         .get("input")
@@ -834,6 +827,38 @@ fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[test]
+fn scanf_overflow_underflow_cases_execute_in_runtime_harness() {
+    let fixture = load_fixture("scanf_conformance");
+    let mut executed = Vec::new();
+
+    for case in fixture
+        .cases
+        .iter()
+        .filter(|case| case.name.contains("_overflow") || case.name.contains("_underflow"))
+    {
+        run_scanf_case(case)
+            .unwrap_or_else(|err| panic!("{} should execute without stale skip: {err}", case.name));
+        executed.push(case.name.as_str());
+    }
+
+    assert_eq!(
+        executed,
+        vec![
+            "sscanf_d_overflow",
+            "sscanf_d_underflow",
+            "sscanf_hd_overflow",
+            "sscanf_hd_underflow",
+            "sscanf_hhd_overflow",
+            "sscanf_hhd_underflow",
+            "sscanf_u_overflow",
+            "sscanf_hu_overflow",
+            "sscanf_i_overflow",
+        ],
+        "all overflow/underflow scanf fixtures must run through run_scanf_case"
+    );
 }
 
 #[test]
