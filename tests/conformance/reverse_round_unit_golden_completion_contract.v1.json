@@ -1,0 +1,153 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "reverse-round-unit-golden-completion-contract",
+  "bead": "bd-2a2.4",
+  "completion_debt_bead": "bd-2a2.4.1",
+  "generated_utc": "2026-05-10T15:24:00Z",
+  "purpose": "Completion-debt contract for reverse-round per-round math-to-subsystem unit tests and golden-output reproducibility. The checked-in reverse_round_contracts.v1.json artifact is the golden oracle; this contract binds R7-R11 round assertions, invariant coverage, verification-hook existence, and pinned round hashes to a fail-closed checker.",
+  "source_artifacts": [
+    {
+      "artifact_id": "reverse_round_report",
+      "path": "tests/conformance/reverse_round_contracts.v1.json",
+      "required_needles": [
+        "\"round_results\"",
+        "\"golden_output\"",
+        "\"R7\"",
+        "\"R11\""
+      ]
+    },
+    {
+      "artifact_id": "reverse_round_generator",
+      "path": "scripts/generate_reverse_round_contracts.py",
+      "required_needles": [
+        "Reverse-Round per-round math-to-subsystem contract verification",
+        "\"R7\"",
+        "\"R11\"",
+        "golden_output"
+      ]
+    },
+    {
+      "artifact_id": "reverse_round_gate",
+      "path": "scripts/check_reverse_round_contracts.sh",
+      "required_needles": [
+        "Reverse-Round Contract Verification Gate",
+        "reverse_round.contracts.check",
+        "PASS: reverse-round cross-round integration"
+      ]
+    },
+    {
+      "artifact_id": "reverse_round_source_tests",
+      "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+      "required_needles": [
+        "contracts_r7_r11_verification_hooks_capture_all_declared_paths",
+        "contracts_reproducible",
+        "golden_output"
+      ]
+    }
+  ],
+  "round_scope": {
+    "required_rounds": [
+      "R7",
+      "R8",
+      "R9",
+      "R10",
+      "R11"
+    ],
+    "minimum_math_families_per_round": 4,
+    "minimum_math_classes_per_round": 3,
+    "required_round_fields": [
+      "legacy_surfaces",
+      "math_families",
+      "branch_diversity",
+      "implementation_plan",
+      "verification_strategy",
+      "supporting_files"
+    ],
+    "required_verification_paths": {
+      "R7": [
+        "scripts/check_reverse_round_contracts.sh",
+        "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+        "scripts/check_runtime_math_epic_closure.sh"
+      ],
+      "R8": [
+        "scripts/check_reverse_round_contracts.sh",
+        "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+        "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs",
+        "crates/frankenlibc-harness/tests/pressure_sensing_test.rs",
+        "scripts/check_runtime_math_epic_closure.sh"
+      ],
+      "R9": [
+        "scripts/check_reverse_round_contracts.sh",
+        "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+        "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+        "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs"
+      ],
+      "R10": [
+        "scripts/check_reverse_round_contracts.sh",
+        "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+        "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+        "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+        "scripts/check_runtime_math_epic_closure.sh"
+      ],
+      "R11": [
+        "scripts/check_reverse_round_contracts.sh",
+        "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+        "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+        "crates/frankenlibc-harness/tests/math_governance_test.rs",
+        "scripts/check_runtime_math_epic_closure.sh"
+      ]
+    }
+  },
+  "golden_expectations": {
+    "source_artifact": "tests/conformance/reverse_round_contracts.v1.json",
+    "report_hash": "7374312f71246ce0",
+    "round_hashes": {
+      "R7": "aac99f84f6dc",
+      "R8": "fd21d6709ab1",
+      "R9": "1c8f487e1ef1",
+      "R10": "7e84357ec964",
+      "R11": "33bf75d138f7"
+    },
+    "summary": {
+      "rounds_verified": 35,
+      "total_math_families": 140,
+      "modules_missing": 0,
+      "invariants_total": 140,
+      "invariants_specified": 140,
+      "math_class_count": 10,
+      "all_rounds_diverse": true
+    }
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-2a2.4.1",
+    "original_bead": "bd-2a2.4",
+    "next_audit_score_threshold": 800,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.golden.primary"
+    ],
+    "required_events": [
+      "reverse_round_unit_source",
+      "reverse_round_unit_round",
+      "reverse_round_golden_check",
+      "reverse_round_unit_summary"
+    ],
+    "unit_primary": {
+      "test_source": "crates/frankenlibc-harness/tests/reverse_round_unit_golden_completion_contract_test.rs",
+      "required_test_names": [
+        "manifest_anchors_completion_debt",
+        "round_scope_binds_r7_r11_unit_contracts",
+        "checker_rejects_missing_required_round"
+      ]
+    },
+    "golden_primary": {
+      "golden_source": "tests/conformance/reverse_round_unit_golden_completion_contract.v1.json",
+      "checked_artifact": "tests/conformance/reverse_round_contracts.v1.json",
+      "required_test_names": [
+        "golden_snapshot_matches_checked_in_reverse_round_output",
+        "checker_rejects_golden_hash_drift",
+        "checker_accepts_manifest_and_emits_report"
+      ]
+    }
+  }
+}
