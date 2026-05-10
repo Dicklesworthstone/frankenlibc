@@ -13,6 +13,99 @@
     ],
     "deterministic_inputs": "Pinned seed + pinned command argv + pinned manifest schema."
   },
+  "completion_debt_evidence": {
+    "bead": "bd-2ez.1",
+    "original_bead": "bd-2ez",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-2ez/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "test_source": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
+    "implementation_refs": [
+      "scripts/e2e_suite.sh:198",
+      "scripts/e2e_suite.sh:495",
+      "scripts/e2e_suite.sh:522",
+      "scripts/e2e_suite.sh:724",
+      "scripts/e2e_suite.sh:1153",
+      "scripts/e2e_suite.sh:1217",
+      "scripts/check_e2e_suite.sh:1",
+      "tests/conformance/e2e_scenario_manifest.v1.json:1"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "next_audit_score_threshold": 800,
+      "required_test_names": [
+        "e2e_manifest_validator_and_catalog_exist",
+        "replay_keys_are_deterministic_for_same_seed_and_manifest",
+        "completion_debt_evidence_binds_missing_audit_items"
+      ],
+      "evidence_summary": "Manifest schema, deterministic replay-key generation, implementation refs, and stale evidence guards are asserted by harness tests."
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "next_audit_score_threshold": 800,
+      "required_test_names": [
+        "e2e_suite_runs_and_produces_jsonl",
+        "e2e_suite_supports_manifest_dry_run",
+        "e2e_mode_pair_report_valid",
+        "check_e2e_suite_emits_completion_debt_report_and_log"
+      ],
+      "required_commands": [
+        "bash scripts/check_e2e_suite.sh",
+        "bash scripts/e2e_suite.sh --dry-run-manifest fault strict",
+        "bash scripts/e2e_suite.sh fault"
+      ],
+      "required_outputs": [
+        "target/e2e_suite/<run_id>/trace.jsonl",
+        "target/e2e_suite/<run_id>/artifact_index.json",
+        "target/e2e_suite/<run_id>/mode_pair_report.json",
+        "target/e2e_suite/<run_id>/scenario_pack_report.json",
+        "target/e2e_suite/<run_id>/flake_quarantine_report.json"
+      ],
+      "evidence_summary": "The suite executes strict+hardened scenarios, dry-runs the manifest catalog, and emits replayable artifact bundles."
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "next_audit_score_threshold": 800,
+      "default_report_path": "target/conformance/e2e_suite_completion_debt.report.json",
+      "default_log_path": "target/conformance/e2e_suite_completion_debt.log.jsonl",
+      "required_test_names": [
+        "completion_debt_evidence_binds_missing_audit_items",
+        "check_e2e_suite_emits_completion_debt_report_and_log",
+        "completion_debt_checker_rejects_stale_test_binding"
+      ],
+      "required_events": [
+        "suite_start",
+        "manifest_case",
+        "case_start",
+        "case_attempt",
+        "case_pass",
+        "case_fail",
+        "mode_pair_result",
+        "suite_end",
+        "e2e_suite_completion_debt_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "level",
+        "event",
+        "bead_id",
+        "completion_debt_bead",
+        "original_bead",
+        "mode",
+        "scenario_id",
+        "scenario_pack",
+        "retry_count",
+        "flake_score",
+        "artifact_refs",
+        "verdict",
+        "replay_key",
+        "env_fingerprint",
+        "latency_ns"
+      ],
+      "evidence_summary": "Trace JSONL, artifact-index join keys, mode-pair reports, and the checker completion log bind telemetry evidence to bd-2ez.1."
+    }
+  },
   "scenarios": [
     {
       "id": "smoke.coreutils_ls",

@@ -20,8 +20,281 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GATE_SEED="${FRANKENLIBC_E2E_GATE_SEED:-91337}"
+COMPLETION_MANIFEST="${FRANKENLIBC_E2E_COMPLETION_MANIFEST:-${ROOT}/tests/conformance/e2e_scenario_manifest.v1.json}"
+COMPLETION_REPORT="${FRANKENLIBC_E2E_COMPLETION_REPORT:-${ROOT}/target/conformance/e2e_suite_completion_debt.report.json}"
+COMPLETION_LOG="${FRANKENLIBC_E2E_COMPLETION_LOG:-${ROOT}/target/conformance/e2e_suite_completion_debt.log.jsonl}"
 
 failures=0
+
+run_completion_debt_check() {
+    local completion_output
+    completion_output="$(
+        ROOT="${ROOT}" \
+        COMPLETION_MANIFEST="${COMPLETION_MANIFEST}" \
+        COMPLETION_REPORT="${COMPLETION_REPORT}" \
+        COMPLETION_LOG="${COMPLETION_LOG}" \
+        FRANKENLIBC_E2E_LATEST_RUN="${latest_run:-}" \
+        python3 - <<'PY'
+import json
+import os
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(os.environ["ROOT"])
+MANIFEST = Path(os.environ["COMPLETION_MANIFEST"])
+REPORT = Path(os.environ["COMPLETION_REPORT"])
+LOG = Path(os.environ["COMPLETION_LOG"])
+LATEST_RUN = os.environ.get("FRANKENLIBC_E2E_LATEST_RUN", "")
+COMPLETION_BEAD = "bd-2ez.1"
+ORIGINAL_BEAD = "bd-2ez"
+EXPECTED_MISSING_ITEMS = {
+    "unit_primary": "tests.unit.primary",
+    "e2e_primary": "tests.e2e.primary",
+    "telemetry_primary": "telemetry.primary",
+}
+EXPECTED_TELEMETRY_EVENTS = {
+    "suite_start",
+    "manifest_case",
+    "case_start",
+    "case_attempt",
+    "mode_pair_result",
+    "suite_end",
+    "e2e_suite_completion_debt_validated",
+}
+EXPECTED_TELEMETRY_FIELDS = {
+    "timestamp",
+    "trace_id",
+    "level",
+    "event",
+    "bead_id",
+    "mode",
+    "scenario_id",
+    "scenario_pack",
+    "retry_count",
+    "flake_score",
+    "artifact_refs",
+    "verdict",
+    "replay_key",
+    "env_fingerprint",
+    "latency_ns",
+}
+
+errors: list[str] = []
+
+
+def err(message: str) -> None:
+    errors.append(message)
+
+
+def read_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        err(f"{path.relative_to(ROOT)} is not valid JSON: {exc}")
+        return {}
+
+
+def file_line_ref_exists(ref: str) -> bool:
+    if ":" not in ref:
+        err(f"implementation ref missing line separator: {ref}")
+        return False
+    path_text, line_text = ref.rsplit(":", 1)
+    path = ROOT / path_text
+    if not path.exists():
+        err(f"implementation ref path missing: {ref}")
+        return False
+    try:
+        line_no = int(line_text)
+    except ValueError:
+        err(f"implementation ref line is not numeric: {ref}")
+        return False
+    if line_no < 1:
+        err(f"implementation ref line must be positive: {ref}")
+        return False
+    line_count = len(path.read_text(encoding="utf-8").splitlines())
+    if line_no > line_count:
+        err(f"implementation ref line outside file: {ref}")
+        return False
+    return True
+
+
+manifest = read_json(MANIFEST)
+completion = manifest.get("completion_debt_evidence")
+if not isinstance(completion, dict):
+    completion = {}
+    err("completion_debt_evidence must be an object")
+
+if completion.get("bead") != COMPLETION_BEAD:
+    err("completion_debt_evidence.bead must be bd-2ez.1")
+if completion.get("original_bead") != ORIGINAL_BEAD:
+    err("completion_debt_evidence.original_bead must be bd-2ez")
+threshold = completion.get("next_audit_score_threshold")
+if not isinstance(threshold, int) or threshold < 700 or threshold > 1000:
+    err("completion_debt_evidence.next_audit_score_threshold must be 700..1000")
+
+test_source = completion.get("test_source")
+test_source_path = ROOT / str(test_source)
+test_source_text = ""
+if not isinstance(test_source, str) or not test_source:
+    err("completion_debt_evidence.test_source must be non-empty")
+elif not test_source_path.exists():
+    err(f"completion_debt_evidence.test_source missing: {test_source}")
+else:
+    test_source_text = test_source_path.read_text(encoding="utf-8")
+
+implementation_refs = completion.get("implementation_refs")
+if not isinstance(implementation_refs, list) or not implementation_refs:
+    err("completion_debt_evidence.implementation_refs must be non-empty")
+else:
+    for ref in implementation_refs:
+        if not isinstance(ref, str):
+            err("completion_debt_evidence.implementation_refs entries must be strings")
+            continue
+        file_line_ref_exists(ref)
+
+missing_items: list[str] = []
+for section_name, missing_item in EXPECTED_MISSING_ITEMS.items():
+    section = completion.get(section_name)
+    if not isinstance(section, dict):
+        err(f"completion_debt_evidence.{section_name} must be an object")
+        continue
+    if section.get("missing_item_id") != missing_item:
+        err(f"completion_debt_evidence.{section_name}.missing_item_id must be {missing_item}")
+    missing_items.append(str(section.get("missing_item_id", "")))
+    section_threshold = section.get("next_audit_score_threshold", threshold)
+    if not isinstance(section_threshold, int) or section_threshold < 700 or section_threshold > 1000:
+        err(f"completion_debt_evidence.{section_name}.next_audit_score_threshold must be 700..1000")
+    required_tests = section.get("required_test_names")
+    if not isinstance(required_tests, list) or not required_tests:
+        err(f"completion_debt_evidence.{section_name}.required_test_names must be non-empty")
+        continue
+    for test_name in required_tests:
+        if not isinstance(test_name, str) or not test_name:
+            err(f"completion_debt_evidence.{section_name} contains invalid test name")
+            continue
+        if test_source_text and f"fn {test_name}" not in test_source_text:
+            err(f"completion_debt_evidence.{section_name} references missing test {test_name}")
+
+telemetry = completion.get("telemetry_primary", {})
+events = set(telemetry.get("required_events", [])) if isinstance(telemetry, dict) else set()
+fields = set(telemetry.get("required_fields", [])) if isinstance(telemetry, dict) else set()
+if not EXPECTED_TELEMETRY_EVENTS.issubset(events):
+    missing = sorted(EXPECTED_TELEMETRY_EVENTS - events)
+    err(f"telemetry_primary.required_events missing {missing}")
+if not EXPECTED_TELEMETRY_FIELDS.issubset(fields):
+    missing = sorted(EXPECTED_TELEMETRY_FIELDS - fields)
+    err(f"telemetry_primary.required_fields missing {missing}")
+if telemetry.get("default_report_path") != "target/conformance/e2e_suite_completion_debt.report.json":
+    err("telemetry_primary.default_report_path drifted")
+if telemetry.get("default_log_path") != "target/conformance/e2e_suite_completion_debt.log.jsonl":
+    err("telemetry_primary.default_log_path drifted")
+
+latest_run_path = Path(LATEST_RUN) if LATEST_RUN else None
+latest_artifacts: list[str] = []
+if latest_run_path and latest_run_path.exists():
+    for rel in [
+        "trace.jsonl",
+        "artifact_index.json",
+        "mode_pair_report.json",
+        "scenario_pack_report.json",
+        "flake_quarantine_report.json",
+    ]:
+        candidate = latest_run_path / rel
+        if not candidate.exists():
+            err(f"latest e2e run missing {rel}")
+        else:
+            latest_artifacts.append(str(candidate.relative_to(ROOT)))
+    trace_path = latest_run_path / "trace.jsonl"
+    if trace_path.exists():
+        actual_events: set[str] = set()
+        for line_no, raw in enumerate(trace_path.read_text(encoding="utf-8").splitlines(), 1):
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                err(f"latest trace line {line_no} invalid JSON: {exc}")
+                continue
+            actual_events.add(str(row.get("event", "")))
+            for field in ("timestamp", "trace_id", "level", "event", "bead_id"):
+                if field not in row:
+                    err(f"latest trace line {line_no} missing {field}")
+        required_actual = {"suite_start", "case_start", "case_attempt", "mode_pair_result", "suite_end"}
+        if not required_actual.issubset(actual_events):
+            err(f"latest trace missing events {sorted(required_actual - actual_events)}")
+
+try:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=ROOT,
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).strip()
+except Exception:
+    source_commit = "unknown"
+
+status = "fail" if errors else "pass"
+timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+REPORT.parent.mkdir(parents=True, exist_ok=True)
+LOG.parent.mkdir(parents=True, exist_ok=True)
+report = {
+    "schema_version": "e2e_suite_completion_debt.report.v1",
+    "status": status,
+    "completion_debt_bead": COMPLETION_BEAD,
+    "original_bead": ORIGINAL_BEAD,
+    "missing_items": sorted(EXPECTED_MISSING_ITEMS.values()),
+    "next_audit_score_threshold": threshold,
+    "source_commit": source_commit,
+    "test_source": test_source,
+    "implementation_refs": implementation_refs if isinstance(implementation_refs, list) else [],
+    "required_events": sorted(events),
+    "required_fields": sorted(fields),
+    "latest_e2e_run": str(latest_run_path.relative_to(ROOT)) if latest_run_path and latest_run_path.exists() else None,
+    "artifact_refs": latest_artifacts,
+    "errors": errors,
+}
+REPORT.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+log_row = {
+    "timestamp": timestamp,
+    "trace_id": f"{COMPLETION_BEAD}::e2e-suite-completion::{status}",
+    "level": "info" if status == "pass" else "error",
+    "event": "e2e_suite_completion_debt_validated" if status == "pass" else "e2e_suite_completion_debt_failed",
+    "bead_id": ORIGINAL_BEAD,
+    "completion_debt_bead": COMPLETION_BEAD,
+    "original_bead": ORIGINAL_BEAD,
+    "status": status,
+    "missing_items_bound": sorted(missing_items),
+    "report_path": str(REPORT.relative_to(ROOT)),
+    "latest_e2e_run": str(latest_run_path.relative_to(ROOT)) if latest_run_path and latest_run_path.exists() else "",
+    "artifact_refs": [str(REPORT.relative_to(ROOT)), *latest_artifacts],
+    "failure_signature": "none" if status == "pass" else "completion_debt_contract_failed",
+}
+LOG.write_text(json.dumps(log_row, sort_keys=True) + "\n", encoding="utf-8")
+
+for message in errors:
+    print(f"COMPLETION_ERROR: {message}")
+print(f"COMPLETION_ERRORS={len(errors)}")
+print(f"COMPLETION_REPORT={REPORT}")
+print(f"COMPLETION_LOG={LOG}")
+PY
+    )"
+    echo "${completion_output}"
+    local completion_errors
+    completion_errors="$(echo "${completion_output}" | awk -F= '/^COMPLETION_ERRORS=/{print $2}')"
+    [[ "${completion_errors:-1}" -eq 0 ]]
+}
+
+if [[ "${FRANKENLIBC_E2E_COMPLETION_ONLY:-0}" == "1" ]]; then
+    echo "=== E2E Suite Completion Debt Gate (bd-2ez.1) ==="
+    if run_completion_debt_check; then
+        echo "check_e2e_suite completion debt: PASS"
+        exit 0
+    fi
+    echo "check_e2e_suite completion debt: FAILED"
+    exit 1
+fi
 
 echo "=== E2E Suite Gate (bd-2ez, bd-b5a.3) ==="
 echo ""
@@ -393,6 +666,15 @@ if [[ "${startup_contract_fail}" -ne 0 ]]; then
     failures=$((failures + 1))
 else
     echo "PASS: startup smoke diagnostics contract markers present"
+fi
+echo ""
+
+echo "--- Check 11: Completion-debt evidence binding ---"
+if run_completion_debt_check; then
+    echo "PASS: completion-debt evidence bound to bd-2ez.1"
+else
+    echo "FAIL: completion-debt evidence binding failed"
+    failures=$((failures + 1))
 fi
 echo ""
 

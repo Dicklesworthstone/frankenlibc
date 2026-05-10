@@ -12,7 +12,7 @@
 //!
 //! Run: cargo test -p frankenlibc-harness --test e2e_suite_test
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread::sleep;
@@ -323,8 +323,8 @@ fn e2e_suite_runs_and_produces_jsonl() {
                 if line.is_empty() {
                     continue;
                 }
-                let obj: serde_json::Value = serde_json::from_str(line)
-                    .unwrap_or_else(|e| panic!("Invalid JSON at line: {e}"));
+                let obj: serde_json::Value =
+                    serde_json::from_str(line).expect("trace.jsonl should contain valid JSON");
                 assert!(obj["timestamp"].is_string(), "Missing timestamp");
                 assert!(obj["trace_id"].is_string(), "Missing trace_id");
                 assert!(obj["level"].is_string(), "Missing level");
@@ -789,5 +789,261 @@ fn e2e_suite_supports_scenario_filter() {
     assert!(
         !stdout.contains("[FAIL] fault/"),
         "Should not run fault scenarios when filtered to smoke"
+    );
+}
+
+fn read_e2e_manifest(root: &Path) -> serde_json::Value {
+    let manifest = root.join("tests/conformance/e2e_scenario_manifest.v1.json");
+    serde_json::from_str(
+        &std::fs::read_to_string(&manifest).expect("e2e scenario manifest should be readable"),
+    )
+    .expect("e2e scenario manifest should be valid JSON")
+}
+
+fn json_string_set(value: &serde_json::Value) -> BTreeSet<String> {
+    value
+        .as_array()
+        .expect("value should be an array")
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .expect("array entries should be strings")
+                .to_string()
+        })
+        .collect()
+}
+
+fn assert_file_line_ref_exists(root: &Path, file_line_ref: &str) {
+    let (path, line) = file_line_ref
+        .rsplit_once(':')
+        .expect("file-line ref should contain ':'");
+    let line_no: usize = line.parse().expect("file-line ref has non-numeric line");
+    assert!(line_no > 0, "file-line ref line must be positive");
+    let full_path = root.join(path);
+    assert!(
+        full_path.exists(),
+        "file-line ref path should exist: {file_line_ref}"
+    );
+    let line_count = std::fs::read_to_string(&full_path)
+        .expect("referenced file should be readable")
+        .lines()
+        .count();
+    assert!(
+        line_no <= line_count,
+        "file-line ref outside file: {file_line_ref}"
+    );
+}
+
+#[test]
+fn completion_debt_evidence_binds_missing_audit_items() {
+    let root = workspace_root();
+    let manifest = read_e2e_manifest(&root);
+    let evidence = &manifest["completion_debt_evidence"];
+
+    assert_eq!(evidence["bead"].as_str(), Some("bd-2ez.1"));
+    assert_eq!(evidence["original_bead"].as_str(), Some("bd-2ez"));
+    assert!(
+        evidence["next_audit_score_threshold"].as_u64().unwrap_or(0) >= 800,
+        "completion evidence should target a passing next audit score"
+    );
+
+    let test_source = evidence["test_source"]
+        .as_str()
+        .expect("test_source should be a string");
+    let test_source_text =
+        std::fs::read_to_string(root.join(test_source)).expect("test_source should be readable");
+
+    let required_sections = [
+        ("unit_primary", "tests.unit.primary"),
+        ("e2e_primary", "tests.e2e.primary"),
+        ("telemetry_primary", "telemetry.primary"),
+    ];
+    for (section, missing_item_id) in required_sections {
+        let section_value = &evidence[section];
+        assert_eq!(
+            section_value["missing_item_id"].as_str(),
+            Some(missing_item_id),
+            "{section} should bind the audit missing item"
+        );
+        assert!(
+            section_value["next_audit_score_threshold"]
+                .as_u64()
+                .unwrap_or(0)
+                >= 800,
+            "{section} should carry the next audit threshold"
+        );
+        let required_test_names = section_value["required_test_names"]
+            .as_array()
+            .expect("required_test_names should be an array");
+        assert!(
+            !required_test_names.is_empty(),
+            "{section} should name at least one test"
+        );
+        for name in required_test_names {
+            let name = name.as_str().expect("test names should be strings");
+            assert!(
+                test_source_text.contains(&format!("fn {name}")),
+                "completion evidence references missing test: {name}"
+            );
+        }
+    }
+
+    let refs = evidence["implementation_refs"]
+        .as_array()
+        .expect("implementation_refs should be an array");
+    assert!(
+        refs.len() >= 6,
+        "implementation refs should cover suite, checker, and manifest surfaces"
+    );
+    for file_line_ref in refs {
+        assert_file_line_ref_exists(
+            &root,
+            file_line_ref
+                .as_str()
+                .expect("implementation refs should be strings"),
+        );
+    }
+
+    let telemetry = &evidence["telemetry_primary"];
+    let required_events = json_string_set(&telemetry["required_events"]);
+    for event in [
+        "suite_start",
+        "manifest_case",
+        "case_start",
+        "case_attempt",
+        "mode_pair_result",
+        "suite_end",
+        "e2e_suite_completion_debt_validated",
+    ] {
+        assert!(
+            required_events.contains(event),
+            "telemetry evidence should require event {event}"
+        );
+    }
+
+    let required_fields = json_string_set(&telemetry["required_fields"]);
+    for field in [
+        "timestamp",
+        "trace_id",
+        "event",
+        "bead_id",
+        "mode",
+        "scenario_id",
+        "scenario_pack",
+        "artifact_refs",
+        "replay_key",
+        "env_fingerprint",
+        "latency_ns",
+    ] {
+        assert!(
+            required_fields.contains(field),
+            "telemetry evidence should require field {field}"
+        );
+    }
+}
+
+#[test]
+fn check_e2e_suite_emits_completion_debt_report_and_log() {
+    let root = workspace_root();
+    let report = root.join("target/conformance/e2e_suite_completion_debt.test.report.json");
+    let log = root.join("target/conformance/e2e_suite_completion_debt.test.log.jsonl");
+
+    let output = Command::new("bash")
+        .arg(root.join("scripts/check_e2e_suite.sh"))
+        .env("FRANKENLIBC_E2E_COMPLETION_ONLY", "1")
+        .env("FRANKENLIBC_E2E_COMPLETION_REPORT", &report)
+        .env("FRANKENLIBC_E2E_COMPLETION_LOG", &log)
+        .output()
+        .expect("completion-only e2e checker should execute");
+    assert!(
+        output.status.success(),
+        "completion-only checker should pass, stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_json: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&report).expect("completion report should be readable"),
+    )
+    .expect("completion report should be valid JSON");
+    assert_eq!(report_json["status"].as_str(), Some("pass"));
+    assert_eq!(
+        report_json["completion_debt_bead"].as_str(),
+        Some("bd-2ez.1")
+    );
+    assert_eq!(report_json["original_bead"].as_str(), Some("bd-2ez"));
+    assert!(
+        report_json["missing_items"]
+            .as_array()
+            .expect("missing_items should be an array")
+            .iter()
+            .any(|item| item.as_str() == Some("tests.e2e.primary")),
+        "report should bind tests.e2e.primary"
+    );
+
+    let log_content = std::fs::read_to_string(&log).expect("completion log should be readable");
+    let log_row: serde_json::Value =
+        serde_json::from_str(log_content.trim()).expect("completion log should be valid JSONL");
+    assert_eq!(
+        log_row["event"].as_str(),
+        Some("e2e_suite_completion_debt_validated")
+    );
+    assert_eq!(log_row["completion_debt_bead"].as_str(), Some("bd-2ez.1"));
+    assert_eq!(log_row["original_bead"].as_str(), Some("bd-2ez"));
+    assert!(
+        log_row["artifact_refs"]
+            .as_array()
+            .expect("artifact_refs should be an array")
+            .iter()
+            .any(|item| {
+                item.as_str()
+                    == Some("target/conformance/e2e_suite_completion_debt.test.report.json")
+            }),
+        "completion log should point at the report artifact"
+    );
+}
+
+#[test]
+fn completion_debt_checker_rejects_stale_test_binding() {
+    let root = workspace_root();
+    let mut manifest = read_e2e_manifest(&root);
+    manifest["completion_debt_evidence"]["unit_primary"]["required_test_names"] =
+        serde_json::json!(["stale_missing_test_name"]);
+
+    let stale_manifest = root.join("target/conformance/e2e_suite_completion_debt.stale.json");
+    let stale_report = root.join("target/conformance/e2e_suite_completion_debt.stale.report.json");
+    let stale_log = root.join("target/conformance/e2e_suite_completion_debt.stale.log.jsonl");
+    std::fs::create_dir_all(
+        stale_manifest
+            .parent()
+            .expect("stale manifest should have parent"),
+    )
+    .expect("target conformance directory should be creatable");
+    std::fs::write(
+        &stale_manifest,
+        serde_json::to_string_pretty(&manifest).unwrap() + "\n",
+    )
+    .expect("stale manifest should be writable");
+
+    let output = Command::new("bash")
+        .arg(root.join("scripts/check_e2e_suite.sh"))
+        .env("FRANKENLIBC_E2E_COMPLETION_ONLY", "1")
+        .env("FRANKENLIBC_E2E_COMPLETION_MANIFEST", &stale_manifest)
+        .env("FRANKENLIBC_E2E_COMPLETION_REPORT", &stale_report)
+        .env("FRANKENLIBC_E2E_COMPLETION_LOG", &stale_log)
+        .output()
+        .expect("completion-only e2e checker should execute");
+    assert!(
+        !output.status.success(),
+        "stale completion evidence should fail validation"
+    );
+    let merged = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        merged.contains("references missing test stale_missing_test_name"),
+        "checker should explain stale test binding, got: {merged}"
     );
 }
