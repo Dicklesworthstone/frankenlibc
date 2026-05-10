@@ -1,0 +1,180 @@
+{
+  "schema": "unit_test_closure_packs_completion_contract.v1",
+  "bead": "bd-w2c3.9.1",
+  "completion_debt_bead": "bd-w2c3.9.1.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.9.1/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "artifacts": {
+      "fixture_dir": "tests/conformance/fixtures",
+      "existing_gate": "scripts/check_unit_test_packs.sh",
+      "existing_harness_test": "crates/frankenlibc-harness/tests/unit_test_closure_packs_test.rs",
+      "completion_contract": "tests/conformance/unit_test_closure_packs_completion_contract.v1.json",
+      "completion_checker": "scripts/check_unit_test_closure_packs_completion_contract.sh",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/unit_test_closure_packs_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "scripts/check_unit_test_packs.sh:23",
+      "scripts/check_unit_test_packs.sh:30",
+      "scripts/check_unit_test_packs.sh:56",
+      "scripts/check_unit_test_packs.sh:70",
+      "scripts/check_unit_test_packs.sh:87",
+      "scripts/check_unit_test_packs.sh:102",
+      "crates/frankenlibc-harness/tests/unit_test_closure_packs_test.rs:34",
+      "crates/frankenlibc-harness/tests/unit_test_closure_packs_test.rs:80",
+      "crates/frankenlibc-harness/tests/unit_test_closure_packs_test.rs:127",
+      "crates/frankenlibc-harness/tests/unit_test_closure_packs_test.rs:159",
+      "crates/frankenlibc-harness/tests/unit_test_closure_packs_test.rs:261",
+      "tests/conformance/fixtures/startup_ops.json:76",
+      "tests/conformance/fixtures/startup_ops.json:110",
+      "tests/conformance/fixtures/startup_ops.json:170",
+      "tests/conformance/fixtures/setjmp_ops.json:3",
+      "tests/conformance/fixtures/setjmp_ops.json:54",
+      "tests/conformance/fixtures/sysv_ipc_ops.json:3",
+      "tests/conformance/fixtures/sysv_ipc_ops.json:84",
+      "tests/conformance/fixtures/backtrace_ops.json:3",
+      "tests/conformance/fixtures/backtrace_ops.json:44",
+      "tests/conformance/fixtures/session_ops.json:3",
+      "tests/conformance/fixtures/session_ops.json:54",
+      "tests/conformance/fixtures/loader_edges.json:3",
+      "tests/conformance/fixtures/loader_edges.json:64",
+      "tests/conformance/fixtures/spawn_exec_ops.json:3",
+      "tests/conformance/fixtures/spawn_exec_ops.json:64",
+      "tests/conformance/fixtures/regex_glob_ops.json:3",
+      "tests/conformance/fixtures/regex_glob_ops.json:74"
+    ],
+    "closure_pack_policy": {
+      "required_families": [
+        "startup_ops",
+        "loader_edges",
+        "resolv/dns",
+        "locale_ops",
+        "iconv/phase1",
+        "signal_ops",
+        "setjmp_ops",
+        "sysv_ipc_ops",
+        "backtrace_ops",
+        "session_ops",
+        "spawn_exec_ops",
+        "regex_glob_ops"
+      ],
+      "new_pack_files": [
+        "setjmp_ops.json",
+        "sysv_ipc_ops.json",
+        "backtrace_ops.json",
+        "session_ops.json",
+        "loader_edges.json",
+        "spawn_exec_ops.json",
+        "regex_glob_ops.json"
+      ],
+      "minimum_fixture_files": 48,
+      "minimum_total_cases": 470,
+      "strict_hardened_required_for_new_packs": true,
+      "gate_success_markers": [
+        "All 12 required families present",
+        "check_unit_test_packs: PASS"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "existing_harness_test",
+          "name": "all_required_families_have_fixtures"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "new_closure_packs_have_cases"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "closure_packs_have_strict_and_hardened_cases"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "startup_fixture_expansion_covers_invariant_matrix"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "total_fixture_count_meets_minimum"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "contract_binds_unit_pack_families_and_existing_tests"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test unit_test_closure_packs_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test unit_test_closure_packs_completion_contract_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_scripts": [
+        "scripts/check_unit_test_packs.sh",
+        "scripts/check_unit_test_closure_packs_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {
+          "source": "completion_harness_test",
+          "name": "checker_emits_report_log_and_replays_existing_gate"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_required_family"
+        }
+      ],
+      "required_commands": [
+        "scripts/check_unit_test_packs.sh",
+        "scripts/check_unit_test_closure_packs_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test unit_test_closure_packs_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test unit_test_closure_packs_completion_contract_test -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "required_log_artifacts": [
+        "target/conformance/unit_test_closure_packs_completion_contract.log.jsonl",
+        "target/conformance/unit_test_closure_packs_completion_contract.report.json"
+      ],
+      "required_events": [
+        "unit_test_closure_pack_units_validated",
+        "unit_test_closure_pack_e2e_validated",
+        "unit_test_closure_pack_telemetry_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "completion_debt_bead",
+        "original_bead",
+        "event",
+        "status",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "fixture_files",
+        "total_cases",
+        "strict_cases",
+        "hardened_cases",
+        "required_family_count",
+        "new_pack_count",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    },
+    "test_sources": {
+      "existing_harness_test": "crates/frankenlibc-harness/tests/unit_test_closure_packs_test.rs",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/unit_test_closure_packs_completion_contract_test.rs"
+    }
+  }
+}
