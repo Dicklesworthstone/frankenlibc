@@ -1,0 +1,236 @@
+{
+  "schema": "explainability_workbench_completion_contract.v1",
+  "bead": "bd-26xb.4",
+  "completion_debt_bead": "bd-26xb.4.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-26xb.4/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.integration.primary",
+      "tests.e2e.primary",
+      "tests.golden.primary",
+      "telemetry.primary"
+    ],
+    "artifacts": {
+      "workbench_source": "crates/frankenlibc-harness/src/explainability_workbench.rs",
+      "harness_cli": "crates/frankenlibc-harness/src/bin/harness.rs",
+      "harness_cargo": "crates/frankenlibc-harness/Cargo.toml",
+      "existing_integration_test": "crates/frankenlibc-harness/tests/explainability_workbench_test.rs",
+      "completion_contract": "tests/conformance/explainability_workbench_completion_contract.v1.json",
+      "completion_checker": "scripts/check_explainability_workbench_completion_contract.sh",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/explainability_workbench_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-harness/src/explainability_workbench.rs:183",
+      "crates/frankenlibc-harness/src/explainability_workbench.rs:195",
+      "crates/frankenlibc-harness/src/explainability_workbench.rs:258",
+      "crates/frankenlibc-harness/src/explainability_workbench.rs:807",
+      "crates/frankenlibc-harness/src/explainability_workbench.rs:926",
+      "crates/frankenlibc-harness/src/explainability_workbench.rs:1049",
+      "crates/frankenlibc-harness/src/explainability_workbench.rs:1100",
+      "crates/frankenlibc-harness/src/explainability_workbench.rs:1143",
+      "crates/frankenlibc-harness/src/explainability_workbench.rs:1183",
+      "crates/frankenlibc-harness/src/bin/harness.rs:185",
+      "crates/frankenlibc-harness/src/bin/harness.rs:198",
+      "crates/frankenlibc-harness/src/bin/harness.rs:1006",
+      "crates/frankenlibc-harness/src/bin/harness.rs:1015",
+      "crates/frankenlibc-harness/src/bin/harness.rs:1019",
+      "crates/frankenlibc-harness/src/bin/harness.rs:1034",
+      "crates/frankenlibc-harness/tests/explainability_workbench_test.rs:46",
+      "crates/frankenlibc-harness/tests/explainability_workbench_test.rs:47",
+      "crates/frankenlibc-harness/tests/explainability_workbench_test.rs:60",
+      "crates/frankenlibc-harness/tests/explainability_workbench_test.rs:97",
+      "crates/frankenlibc-harness/tests/explainability_workbench_test.rs:139",
+      "crates/frankenlibc-harness/tests/explainability_workbench_test.rs:143",
+      "crates/frankenlibc-harness/tests/explainability_workbench_test.rs:150",
+      "crates/frankenlibc-harness/tests/explainability_workbench_test.rs:154",
+      "crates/frankenlibc-harness/Cargo.toml:15",
+      "crates/frankenlibc-harness/Cargo.toml:16",
+      "crates/frankenlibc-harness/Cargo.toml:17",
+      "crates/frankenlibc-harness/Cargo.toml:46",
+      "crates/frankenlibc-harness/Cargo.toml:47"
+    ],
+    "workbench_policy": {
+      "required_schema_version": "v1",
+      "required_bead": "bd-26xb.4",
+      "minimum_scenarios": 1,
+      "minimum_traces": 2,
+      "minimum_artifact_links": 1,
+      "minimum_mode_divergences": 1,
+      "required_modes": [
+        "strict",
+        "hardened"
+      ],
+      "required_render_formats": [
+        "json",
+        "plain",
+        "ftui"
+      ],
+      "required_cli_flags": [
+        "--log",
+        "--artifact-index",
+        "--scenario-id",
+        "--format",
+        "--output"
+      ],
+      "required_tooling_contract_fields": [
+        "has_asupersync_dependency",
+        "asupersync_feature_present",
+        "default_enables_asupersync_tooling",
+        "asupersync_tooling_enabled",
+        "frankentui_feature_present",
+        "frankentui_dependency_set_complete",
+        "frankentui_ui_enabled"
+      ],
+      "required_golden_fields": [
+        "schema_version",
+        "bead",
+        "tooling_contract",
+        "scenarios",
+        "mode_divergence",
+        "artifact_links",
+        "root_cause",
+        "timeline"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "workbench_source",
+          "name": "build_report_detects_mode_divergence_and_stage_chain"
+        },
+        {
+          "source": "workbench_source",
+          "name": "artifact_index_entries_join_via_decision_id"
+        },
+        {
+          "source": "workbench_source",
+          "name": "plain_render_mentions_divergence_and_artifacts"
+        },
+        {
+          "source": "workbench_source",
+          "name": "ftui_render_mentions_title_and_scenario"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "contract_binds_workbench_module_cli_and_existing_tests"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness explainability_workbench --lib -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test explainability_workbench_completion_contract_test -- --nocapture"
+      ]
+    },
+    "integration_primary": {
+      "missing_item_id": "tests.integration.primary",
+      "required_test_refs": [
+        {
+          "source": "existing_integration_test",
+          "name": "explainability_workbench_command_writes_joined_report"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_emits_report_log_and_validates_golden_shape"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test explainability_workbench_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test explainability_workbench_completion_contract_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_scripts": [
+        "scripts/check_explainability_workbench_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {
+          "source": "existing_integration_test",
+          "name": "explainability_workbench_command_writes_joined_report"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_cli_flag"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_required_source_ref"
+        }
+      ],
+      "required_commands": [
+        "scripts/check_explainability_workbench_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test explainability_workbench_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test explainability_workbench_completion_contract_test -- --nocapture"
+      ]
+    },
+    "golden_primary": {
+      "missing_item_id": "tests.golden.primary",
+      "required_artifacts": [
+        "target/conformance/explainability_workbench_completion_contract.report.json",
+        "target/conformance/explainability_workbench_completion_contract.log.jsonl"
+      ],
+      "required_report_fields": [
+        "schema",
+        "status",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "summary",
+        "required_events",
+        "required_fields",
+        "errors"
+      ],
+      "required_sample_assertions": [
+        "report[\"bead\"] == \"bd-26xb.4\"",
+        "mode_divergence[0].differing_fields[0] == \"outcome\"",
+        "artifact_links contains reports/root-cause.json",
+        "tooling_contract.default_enables_asupersync_tooling == true",
+        "tooling_contract.frankentui_feature_present == true"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "required_log_artifacts": [
+        "target/conformance/explainability_workbench_completion_contract.log.jsonl",
+        "target/conformance/explainability_workbench_completion_contract.report.json"
+      ],
+      "required_events": [
+        "explainability_workbench_units_validated",
+        "explainability_workbench_integration_validated",
+        "explainability_workbench_e2e_validated",
+        "explainability_workbench_golden_validated",
+        "explainability_workbench_telemetry_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "completion_debt_bead",
+        "original_bead",
+        "event",
+        "status",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "scenario_count",
+        "trace_count",
+        "artifact_link_count",
+        "divergence_count",
+        "render_format_count",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    },
+    "test_sources": {
+      "workbench_source": "crates/frankenlibc-harness/src/explainability_workbench.rs",
+      "existing_integration_test": "crates/frankenlibc-harness/tests/explainability_workbench_test.rs",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/explainability_workbench_completion_contract_test.rs"
+    }
+  }
+}
