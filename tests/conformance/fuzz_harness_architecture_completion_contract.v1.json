@@ -1,0 +1,213 @@
+{
+  "schema_version": "fuzz_harness_architecture_completion_contract.v1",
+  "manifest_id": "bd-1oz.5.1-fuzz-harness-architecture-completion",
+  "original_bead": "bd-1oz.5",
+  "completion_debt_bead": "bd-1oz.5.1",
+  "source_artifacts": {
+    "fuzz_harness_architecture_report": "tests/conformance/fuzz_harness_architecture.v1.json",
+    "fuzz_harness_architecture_generator": "scripts/generate_fuzz_harness_architecture.py",
+    "fuzz_harness_architecture_gate": "scripts/check_fuzz_harness_architecture.sh",
+    "fuzz_harness_architecture_harness_test": "crates/frankenlibc-harness/tests/fuzz_harness_architecture_test.rs",
+    "fuzz_cargo_manifest": "crates/frankenlibc-fuzz/Cargo.toml",
+    "fuzz_ci_gate": ".github/workflows/ci.yml",
+    "completion_checker": "scripts/check_fuzz_harness_architecture_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/fuzz_harness_architecture_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "required_architecture_contract": {
+      "schema_version": "v1",
+      "generated_by_bead": "bd-1oz.5",
+      "minimum_total_targets": 55,
+      "required_functional_targets": 55,
+      "required_stub_targets": 0,
+      "required_quality_score_pct": 100.0,
+      "minimum_seed_corpus": 1,
+      "minimum_dictionary_entries": 1,
+      "minimum_unique_cwes": 5,
+      "required_summary_domains": [
+        "abi-entrypoint",
+        "allocator",
+        "loader",
+        "locale",
+        "membrane",
+        "runtime-kernel"
+      ],
+      "required_convention_checks": [
+        "no_main_attr",
+        "fuzz_target_macro",
+        "input_size_guard",
+        "no_unwrap",
+        "no_panic"
+      ],
+      "required_attributes": [
+        "#![no_main]"
+      ],
+      "required_macros": [
+        "fuzz_target!"
+      ],
+      "required_artifact_layout_keys": [
+        "corpus",
+        "dictionary",
+        "crashes"
+      ],
+      "required_targets": [
+        "fuzz_string",
+        "fuzz_malloc",
+        "fuzz_membrane",
+        "fuzz_printf",
+        "fuzz_locale",
+        "fuzz_runtime_math",
+        "fuzz_elf_loader"
+      ],
+      "required_ci_steps": [
+        "scripts/check_fuzz_harness_architecture.sh",
+        "cargo fuzz list --fuzz-dir crates/frankenlibc-fuzz"
+      ]
+    },
+    "implementation_refs": [
+      {
+        "id": "generator_target_inventory",
+        "path": "scripts/generate_fuzz_harness_architecture.py",
+        "required_text": [
+          "TARGET_DOMAINS",
+          "HARNESS_CHECKS",
+          "SEED_GENERATORS",
+          "DICTIONARIES",
+          "build_corpus_manifest",
+          "build_dictionary_manifest"
+        ]
+      },
+      {
+        "id": "source_architecture_gate",
+        "path": "scripts/check_fuzz_harness_architecture.sh",
+        "required_text": [
+          "All corpora are deterministic/reproducible",
+          "check_fuzz_harness_architecture: PASS"
+        ]
+      },
+      {
+        "id": "ci_fuzz_gate",
+        "path": ".github/workflows/ci.yml",
+        "required_text": [
+          "fuzz-gates",
+          "scripts/check_fuzz_harness_architecture.sh",
+          "cargo fuzz list --fuzz-dir crates/frankenlibc-fuzz",
+          "fuzz_runtime_math"
+        ]
+      }
+    ],
+    "test_sources": {
+      "source_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/fuzz_harness_architecture_test.rs",
+        "required_test_refs": [
+          "fuzz_architecture_report_generates_successfully",
+          "fuzz_architecture_schema_complete",
+          "fuzz_architecture_all_conventions_pass",
+          "fuzz_architecture_corpus_seeded",
+          "fuzz_architecture_dictionaries_present",
+          "fuzz_architecture_cwe_coverage",
+          "fuzz_architecture_harness_conventions_documented"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/fuzz_harness_architecture_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_e2e_and_fuzz_completion_evidence",
+          "checker_validates_fuzz_harness_architecture_contract",
+          "checker_emits_completion_report_and_jsonl",
+          "checker_rejects_missing_fuzz_target_binding",
+          "checker_rejects_missing_source_test_ref",
+          "checker_rejects_unimplemented_telemetry_event"
+        ]
+      }
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_artifacts": [
+        "crates/frankenlibc-harness/tests/fuzz_harness_architecture_test.rs",
+        "crates/frankenlibc-harness/tests/fuzz_harness_architecture_completion_contract_test.rs"
+      ],
+      "required_test_refs": [
+        "fuzz_architecture_schema_complete",
+        "fuzz_architecture_all_conventions_pass",
+        "manifest_binds_unit_e2e_and_fuzz_completion_evidence",
+        "checker_validates_fuzz_harness_architecture_contract"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "required_artifacts": [
+        "scripts/check_fuzz_harness_architecture.sh",
+        "scripts/check_fuzz_harness_architecture_completion_contract.sh",
+        "tests/conformance/fuzz_harness_architecture.v1.json",
+        ".github/workflows/ci.yml"
+      ],
+      "required_test_refs": [
+        "fuzz_architecture_report_generates_successfully",
+        "checker_emits_completion_report_and_jsonl"
+      ]
+    },
+    {
+      "id": "tests.fuzz.primary",
+      "kind": "fuzz",
+      "required_artifacts": [
+        "crates/frankenlibc-fuzz/Cargo.toml",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_string.rs",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_malloc.rs",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_membrane.rs",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_locale.rs",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_runtime_math.rs",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_elf_loader.rs",
+        "tests/conformance/fuzz_harness_architecture.v1.json"
+      ],
+      "required_test_refs": [
+        "fuzz_architecture_corpus_seeded",
+        "fuzz_architecture_dictionaries_present",
+        "fuzz_architecture_cwe_coverage",
+        "checker_rejects_missing_fuzz_target_binding"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_commit",
+      "summary",
+      "source_artifacts",
+      "required_architecture_contract",
+      "test_refs",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome",
+      "source_commit",
+      "schema_version",
+      "artifact_refs",
+      "test_refs",
+      "failure_signature"
+    ],
+    "required_events": [
+      "fuzz_harness_architecture_completion_summary",
+      "fuzz_harness_architecture_source_bindings",
+      "fuzz_harness_architecture_test_bindings",
+      "fuzz_harness_architecture_completion_contract_pass",
+      "fuzz_harness_architecture_completion_contract_fail"
+    ]
+  }
+}
