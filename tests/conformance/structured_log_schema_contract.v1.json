@@ -1,0 +1,77 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "structured-log-schema-contract",
+  "bead": "bd-144",
+  "completion_debt_bead": "bd-144.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "675b6a53d726ace3db46d951da6f4238a26cd358",
+  "purpose": "Conformance contract for the structured-logging schema originally landed under bd-144 (closed 2026-02-11 with a one-word `done` close reason). The audit pass 2026-05-10T03-16-16Z scored bd-144 at 470/1000 (false-closed) with three missing items: tests.unit.primary, tests.e2e.primary, and telemetry.primary. This manifest + harness gate makes the linkage explicit at file:line so the next audit pass can attach the evidence.\n\nThe canonical schema lives in `frankenlibc_harness::structured_log::LogEntry` with 4 required fields (timestamp, trace_id, level, event) and a curated optional vocabulary covering bead correlation (bead_id), decision explainability (decision_id, policy_id, controller_id, decision_action, risk_inputs), evidence joins (evidence_seqno, source_commit, target_dir), failure classification (failure_signature), and the artifact index (artifact_refs).",
+  "schema_struct": "frankenlibc_harness::structured_log::LogEntry",
+  "schema_file": "crates/frankenlibc-harness/src/structured_log.rs",
+  "validator_line_function": "frankenlibc_harness::structured_log::validate_log_line",
+  "validator_file_function": "frankenlibc_harness::structured_log::validate_log_file",
+  "required_log_entry_fields": [
+    "timestamp",
+    "trace_id",
+    "level",
+    "event"
+  ],
+  "telemetry_correlation_fields": [
+    "bead_id",
+    "trace_id",
+    "span_id",
+    "parent_span_id",
+    "decision_id",
+    "policy_id",
+    "controller_id",
+    "evidence_seqno",
+    "source_commit",
+    "artifact_refs"
+  ],
+  "primary_unit_tests": [
+    "validate_valid_line",
+    "validate_missing_required_field",
+    "validate_invalid_level",
+    "validate_invalid_json",
+    "validate_bad_trace_id_format",
+    "validate_decision_requires_explainability_fields",
+    "validate_decision_rejects_zero_join_ids"
+  ],
+  "e2e_validation_function": "frankenlibc_harness::structured_log::validate_log_file",
+  "policy": {
+    "fail_closed_when_required_field_missing": true,
+    "fail_closed_when_validator_function_missing": true,
+    "fail_closed_when_decision_lacks_explainability_fields": true,
+    "fail_closed_when_join_ids_are_zero": true,
+    "telemetry_correlation_fields_must_be_present_in_log_entry_struct": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_log_entry_field",
+    "missing_validator_function",
+    "missing_unit_test",
+    "missing_e2e_validation_path",
+    "missing_telemetry_correlation_field"
+  ],
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-144/scorecard.md",
+    "spec_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-144/spec.json",
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "score_before": 470,
+    "score_threshold": 700
+  },
+  "summary": {
+    "bead": "bd-144",
+    "completion_debt_bead": "bd-144.1",
+    "required_fields_pinned": 4,
+    "telemetry_correlation_fields_pinned": 10,
+    "primary_unit_tests_pinned": 7,
+    "e2e_validation_pinned": true,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
