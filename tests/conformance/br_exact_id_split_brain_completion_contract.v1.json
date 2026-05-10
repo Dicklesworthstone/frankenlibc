@@ -1,0 +1,169 @@
+{
+  "schema_version": "br_exact_id_split_brain_completion_contract.v1",
+  "original_bead": "bd-uaut8",
+  "completion_debt_bead": "bd-uaut8.1",
+  "trace_id": "bd-uaut8-1-br-exact-id-split-brain-completion-v1",
+  "purpose": "Bind the br exact-ID split-brain repair closeout to machine-checkable unit, e2e, and conformance evidence without mutating tracker state.",
+  "source_artifacts": {
+    "tracker_health_report": "tests/conformance/tracker_health_report.v1.json",
+    "tracker_health_checker": "scripts/check_tracker_health_report.sh",
+    "tracker_health_test": "crates/frankenlibc-harness/tests/tracker_health_report_test.rs",
+    "br_bv_disagreement_dashboard": "tests/conformance/br_bv_disagreement_dashboard.v1.json",
+    "br_bv_disagreement_checker": "scripts/check_br_bv_disagreement_dashboard.sh",
+    "br_bv_disagreement_test": "crates/frankenlibc-harness/tests/br_bv_disagreement_dashboard_test.rs"
+  },
+  "source_contracts": [
+    {
+      "id": "tracker_health_report",
+      "path": "tests/conformance/tracker_health_report.v1.json",
+      "expected_schema_version": "v1",
+      "expected_bead": "bd-bp8fl.2.3",
+      "required_discrepancies": [
+        "db_jsonl_count_mismatch",
+        "exact_id_split_brain",
+        "timeout",
+        "stale_blocked_cache",
+        "already_shipped_but_open",
+        "conflicting_ready_lists",
+        "cycle_report_disagreement",
+        "missing_issue_record"
+      ],
+      "required_state_classes": [
+        "healthy",
+        "tracker_failure",
+        "tool_timeout",
+        "split_brain"
+      ],
+      "checker": "scripts/check_tracker_health_report.sh",
+      "checker_mode": "--fixture-replay"
+    },
+    {
+      "id": "br_bv_disagreement_dashboard",
+      "path": "tests/conformance/br_bv_disagreement_dashboard.v1.json",
+      "expected_schema_version": "v1",
+      "expected_bead": "bd-bp8fl.2.7",
+      "required_discrepancies": [
+        "db_jsonl_count_mismatch",
+        "exact_id_split_brain",
+        "timeout",
+        "stale_blocked_cache",
+        "already_shipped_but_open_bead",
+        "conflicting_ready_lists",
+        "cycle_report_disagreement",
+        "missing_issue_record"
+      ],
+      "required_state_classes": [],
+      "checker": "scripts/check_br_bv_disagreement_dashboard.sh",
+      "checker_mode": "--fixture-replay"
+    }
+  ],
+  "live_read_only_probe_contract": {
+    "required_probe_ids": [
+      "bd-bp8fl.2.1",
+      "bd-bp8fl.10",
+      "bd-bp8fl.2.7",
+      "bd-rm999"
+    ],
+    "exact_id_probe_commands": [
+      "br show <id> --json",
+      "br --no-db show <id> --json"
+    ],
+    "graph_probe_commands": [
+      "br dep cycles --json",
+      "br --no-db dep cycles --json"
+    ],
+    "health_probe_commands": [
+      "br doctor --json",
+      "br sync --status --json",
+      "br ready --json"
+    ],
+    "required_status_agreement": true,
+    "required_zero_cycles": true,
+    "required_sync_clean": true,
+    "allowed_doctor_health": [
+      "ok",
+      "degraded"
+    ],
+    "allowed_doctor_anomalies": [
+      "stale_recovery_artifacts"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "type": "unit",
+      "evidence_refs": [
+        "crates/frankenlibc-harness/tests/br_exact_id_split_brain_completion_contract_test.rs::manifest_binds_exact_id_commands_and_missing_items",
+        "crates/frankenlibc-harness/tests/tracker_health_report_test.rs::artifact_defines_report_and_log_contracts",
+        "crates/frankenlibc-harness/tests/br_bv_disagreement_dashboard_test.rs::artifact_defines_source_of_truth_policy"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "type": "e2e",
+      "evidence_refs": [
+        "scripts/check_br_exact_id_split_brain_completion_contract.sh",
+        "crates/frankenlibc-harness/tests/br_exact_id_split_brain_completion_contract_test.rs::checker_replays_live_read_only_tracker_commands"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "type": "conformance",
+      "evidence_refs": [
+        "tests/conformance/br_exact_id_split_brain_completion_contract.v1.json",
+        "crates/frankenlibc-harness/tests/br_exact_id_split_brain_completion_contract_test.rs::checker_validates_source_artifacts_and_structured_logs"
+      ]
+    }
+  ],
+  "completion_debt_evidence": {
+    "required_test_refs": [
+      "manifest_binds_exact_id_commands_and_missing_items",
+      "checker_replays_live_read_only_tracker_commands",
+      "checker_validates_source_artifacts_and_structured_logs",
+      "checker_rejects_missing_exact_id_probe",
+      "checker_rejects_missing_source_discrepancy"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "original_bead",
+      "completion_debt_bead",
+      "trace_id",
+      "source_commit",
+      "status",
+      "source_contracts",
+      "live_read_only_probes",
+      "missing_item_bindings",
+      "summary",
+      "artifact_refs",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "stream",
+      "gate",
+      "scenario_id",
+      "runtime_mode",
+      "replacement_level",
+      "api_family",
+      "symbol",
+      "oracle_kind",
+      "expected",
+      "actual",
+      "source_commit",
+      "target_dir",
+      "failure_signature",
+      "artifact_refs"
+    ]
+  },
+  "claim_policy": {
+    "no_destructive_tracker_repair": true,
+    "live_commands_are_read_only": true,
+    "completion_must_fail_closed_if_named_exact_id_is_missing": true,
+    "completion_must_fail_closed_if_source_artifact_loses_split_brain_coverage": true,
+    "completion_must_fail_closed_if_graph_cycles_are_nonzero": true
+  }
+}
