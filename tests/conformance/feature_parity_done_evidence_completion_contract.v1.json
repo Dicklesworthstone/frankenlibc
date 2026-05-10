@@ -1,0 +1,154 @@
+{
+  "schema_version": "feature_parity_done_evidence_completion_contract.v1",
+  "manifest_id": "bd-bp8fl.3.2.1-feature-parity-done-evidence-completion-contract",
+  "bead": "bd-bp8fl.3.2",
+  "description": "Completion-debt evidence binding for the feature-parity DONE-row machine-evidence audit.",
+  "source_modules": [
+    "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "scripts/generate_feature_parity_gap_ledger.py",
+    "scripts/check_feature_parity_gap_ledger.sh",
+    "crates/frankenlibc-harness/tests/feature_parity_gap_ledger_test.rs"
+  ],
+  "completion_debt_evidence": {
+    "bead": "bd-bp8fl.3.2.1",
+    "original_bead": "bd-bp8fl.3.2",
+    "audit_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.3.2/scorecard.md",
+    "source_artifacts": {
+      "feature_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+      "generator": "scripts/generate_feature_parity_gap_ledger.py",
+      "checker": "scripts/check_feature_parity_gap_ledger.sh",
+      "source_harness": "crates/frankenlibc-harness/tests/feature_parity_gap_ledger_test.rs"
+    },
+    "test_sources": {
+      "source_harness": "crates/frankenlibc-harness/tests/feature_parity_gap_ledger_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/feature_parity_done_evidence_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "tests/conformance/feature_parity_gap_ledger.v1.json:123",
+      "tests/conformance/feature_parity_gap_ledger.v1.json:6281",
+      "scripts/generate_feature_parity_gap_ledger.py:625",
+      "scripts/generate_feature_parity_gap_ledger.py:1000",
+      "scripts/check_feature_parity_gap_ledger.sh:14",
+      "scripts/check_feature_parity_gap_ledger.sh:50",
+      "scripts/check_feature_parity_gap_ledger.sh:145",
+      "crates/frankenlibc-harness/tests/feature_parity_gap_ledger_test.rs:93",
+      "scripts/check_feature_parity_done_evidence_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/feature_parity_done_evidence_completion_contract_test.rs:1"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "source_harness",
+          "name": "artifact_exists_and_valid"
+        },
+        {
+          "source": "source_harness",
+          "name": "done_rows_have_evidence_audit_records"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_feature_parity_done_evidence_completion"
+        }
+      ],
+      "required_commands": [
+        "cargo test -p frankenlibc-harness --test feature_parity_gap_ledger_test artifact_exists_and_valid -- --nocapture",
+        "cargo test -p frankenlibc-harness --test feature_parity_gap_ledger_test done_rows_have_evidence_audit_records -- --nocapture",
+        "cargo test -p frankenlibc-harness --test feature_parity_done_evidence_completion_contract_test manifest_binds_feature_parity_done_evidence_completion -- --nocapture"
+      ],
+      "evidence_summary": "Unit evidence binds the canonical ledger schema, DONE-row audit presence, and completion-debt manifest identity."
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_test_refs": [
+        {
+          "source": "source_harness",
+          "name": "gate_script_emits_done_evidence_log_and_report"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_completion_report_and_log"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_feature_parity_gap_ledger.sh",
+        "bash scripts/check_feature_parity_done_evidence_completion_contract.sh"
+      ],
+      "evidence_summary": "E2E evidence binds the source gate report/log and the completion checker report/log for DONE evidence claims."
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "required_artifacts": [
+        "tests/conformance/feature_parity_gap_ledger.v1.json"
+      ],
+      "required_counts": {
+        "row_count": 170,
+        "gap_count": 111,
+        "delta_count": 5,
+        "done_row_count": 60,
+        "done_evidence_audit_count": 60,
+        "invalid_done_evidence_count": 59,
+        "done_evidence_pass_count": 1,
+        "done_evidence_fail_count": 59,
+        "fresh_done_evidence_count": 1,
+        "prose_only_done_evidence_count": 34,
+        "source_only_done_evidence_count": 25,
+        "parse_error_count": 0,
+        "transition_count": 0,
+        "drift_delta_count": 1
+      },
+      "required_negative_cases": [
+        "fresh_evidence",
+        "missing_artifact",
+        "stale_commit",
+        "contradictory_artifact",
+        "archived_canonical_artifact",
+        "prose_only_done_claim",
+        "done_audit_count_drift"
+      ],
+      "required_test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_invalid_done_evidence_count_drift"
+        }
+      ],
+      "evidence_summary": "Conformance evidence preserves all 170 rows, all 60 DONE rows, the 59 invalid DONE evidence rows, and the canonical freshness distribution."
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "default_report_path": "target/conformance/feature_parity_done_evidence_completion_contract.report.json",
+      "default_log_path": "target/conformance/feature_parity_done_evidence_completion_contract.log.jsonl",
+      "source_report_path": "target/conformance/feature_parity_done_evidence.report.json",
+      "source_log_path": "target/conformance/feature_parity_done_evidence.log.jsonl",
+      "required_events": [
+        "feature_parity_done_evidence_completion_contract_validated",
+        "feature_parity_done_evidence_completion_contract_failed"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "level",
+        "schema_version",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "missing_items_bound",
+        "test_refs",
+        "artifact_refs",
+        "row_count",
+        "done_evidence_audit_count",
+        "invalid_done_evidence_count",
+        "freshness_counts",
+        "failure_signature"
+      ],
+      "required_test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_completion_report_and_log"
+        }
+      ],
+      "evidence_summary": "Telemetry evidence binds completion-debt report rows to trace IDs, source commit, missing audit items, DONE evidence counts, freshness distribution, and artifact refs."
+    }
+  }
+}
