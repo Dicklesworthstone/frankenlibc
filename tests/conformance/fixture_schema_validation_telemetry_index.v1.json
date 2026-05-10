@@ -1,0 +1,63 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "fixture-schema-validation-telemetry-index",
+  "bead": "bd-0agsk.6",
+  "completion_debt_bead": "bd-0agsk.6.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "42f68435d57069983edc147268246050f48b9bf6",
+  "purpose": "Conformance + telemetry index for the full fixture schema validation gate originally landed under bd-0agsk.6 (closed 2026-05-06; score 470/1000 because the audit pass 2026-05-10T03-16-16Z couldn't link the existing artifacts to tests.conformance.primary or telemetry.primary). This sibling manifest names the upstream gate's manifest, the canonical conformance test file with its 6 test functions, and the telemetry-emission contract — namely, that running the gate produces a structured JSON report at target/conformance/fixture_schema_validation.report.json suitable for downstream consumption.",
+  "upstream_gate_manifest": "tests/conformance/fixture_schema_validation.v1.json",
+  "upstream_gate_schema_version": "fixture_schema_validation.v1",
+  "upstream_gate_canonical_command": "scripts/check_fixture_schema_validation.sh --validate-only",
+  "upstream_gate_check_script": "scripts/check_fixture_schema_validation.sh",
+  "primary_conformance_test_file": "crates/frankenlibc-harness/tests/fixture_schema_validation_test.rs",
+  "primary_conformance_test_functions": [
+    "contract_declares_full_fixture_schema_gate",
+    "checker_passes_for_current_fixture_corpus",
+    "checker_rejects_missing_expected_errno_where_required",
+    "checker_rejects_invalid_expected_output_shape",
+    "checker_rejects_unsupported_scenario_without_expected_outcome",
+    "checker_rejects_unclassified_fixture_file"
+  ],
+  "telemetry_emission_contract": {
+    "report_artifact_path": "target/conformance/fixture_schema_validation.report.json",
+    "report_artifact_kind": "json",
+    "report_emission_command": "scripts/check_fixture_schema_validation.sh --validate-only",
+    "input_policy_artifact_path": "tests/conformance/fixture_expected_output_schema_policy.v1.json",
+    "fixture_root": "tests/conformance/fixtures",
+    "rationale": "Running the gate emits a deterministic JSON report capturing every fixture file scanned, its classification under the schema_classes vocabulary, and any rejection reasons. Downstream gates (closure-readiness, audit pipelines) consume this report as their canonical telemetry signal that fixture corpus is schema-valid."
+  },
+  "policy": {
+    "fail_closed_when_upstream_gate_manifest_missing": true,
+    "fail_closed_when_primary_conformance_test_file_missing": true,
+    "fail_closed_when_check_script_missing": true,
+    "fail_closed_when_check_script_not_executable": true,
+    "fail_closed_when_telemetry_report_path_drifts": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_upstream_gate_manifest",
+    "missing_primary_conformance_test_file",
+    "missing_check_script",
+    "check_script_not_executable",
+    "telemetry_report_path_drift"
+  ],
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-0agsk.6/scorecard.md",
+    "spec_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-0agsk.6/spec.json",
+    "missing_item_ids": [
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "score_before": 470,
+    "score_threshold": 700
+  },
+  "summary": {
+    "bead": "bd-0agsk.6",
+    "completion_debt_bead": "bd-0agsk.6.1",
+    "primary_conformance_tests_pinned": 6,
+    "telemetry_report_path_pinned": true,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
