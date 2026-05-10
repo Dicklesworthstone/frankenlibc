@@ -1,0 +1,205 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "support-reality-drift-triage-completion-contract",
+  "bead": "bd-0agsk.4",
+  "completion_debt_bead": "bd-0agsk.4.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "purpose": "Completion-debt contract for the per-symbol support/reality/version-script drift triage report originally closed under bd-0agsk.4. The audit pass required concrete conformance evidence; this manifest binds the triage report, fail-closed checker, support/reality/version-script inputs, replacement guard, and Rust conformance tests to machine-readable checker output.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-0agsk.4/scorecard.md",
+    "spec_path": "passes/2026-05-10T03-16-16Z/beads/bd-0agsk.4/spec.json",
+    "score_before": 570,
+    "score_threshold": 800
+  },
+  "runtime_target": {
+    "max_seconds": 90,
+    "external_services_allowed": false,
+    "coverage_artifacts": [
+      "target/conformance/support_reality_drift_triage_completion_contract.report.json",
+      "target/conformance/support_reality_drift_triage_completion_contract.log.jsonl"
+    ],
+    "allowed_command_prefixes": [
+      "bash scripts/check_support_reality_drift_triage.sh --validate-only",
+      "rch cargo test -p frankenlibc-harness --test support_reality_drift_triage_completion_contract_test",
+      "rch cargo check -p frankenlibc-harness --test support_reality_drift_triage_completion_contract_test",
+      "rch cargo clippy -p frankenlibc-harness --test support_reality_drift_triage_completion_contract_test"
+    ],
+    "forbidden_command_substrings": [
+      "cargo ",
+      "cargo\t",
+      "git reset --hard",
+      "git clean -fd",
+      "rm -rf"
+    ]
+  },
+  "source_artifacts": {
+    "triage_report": "tests/conformance/support_reality_drift_triage.v1.json",
+    "checker": "scripts/check_support_reality_drift_triage.sh",
+    "rust_conformance_test": "crates/frankenlibc-harness/tests/support_reality_drift_triage_test.rs",
+    "support_matrix": "support_matrix.json",
+    "reality_report": "tests/conformance/reality_report.v1.json",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
+    "replacement_guard_checker": "scripts/check_replacement_guard.sh"
+  },
+  "triage_invariants": {
+    "schema_version": "support_reality_drift_triage.v1",
+    "claim_status": "triage_report_only",
+    "summary": {
+      "support_symbol_count": 4119,
+      "reality_total_exported": 4119,
+      "version_script_export_count": 4184,
+      "delta_symbol_count": 75,
+      "missing_export_count": 5,
+      "expected_unsupported_surface_count": 70,
+      "taxonomy_mismatch_count": 0,
+      "replacement_guard_ok": true,
+      "replacement_guard_total_call_throughs": 0
+    },
+    "required_delta_buckets": [
+      {
+        "id": "support_symbols_missing_version_exports_stdio_abi",
+        "classification": "missing_export",
+        "min_symbol_count": 3,
+        "required_symbols": [
+          "_IO_2_1_stderr_",
+          "_IO_2_1_stdin_",
+          "_IO_2_1_stdout_"
+        ]
+      },
+      {
+        "id": "support_symbols_missing_version_exports_glibc_internal_abi",
+        "classification": "missing_export",
+        "min_symbol_count": 2,
+        "required_symbols": [
+          "__ns_name_uncompressed_p",
+          "__ns_samename"
+        ]
+      },
+      {
+        "id": "version_exports_outside_support_matrix",
+        "classification": "expected_unsupported_surface",
+        "min_symbol_count": 70,
+        "required_symbols": [
+          "__cxa_bad_cast",
+          "strtonum"
+        ]
+      }
+    ],
+    "allowed_classifications": [
+      "taxonomy_mismatch",
+      "missing_fixture",
+      "missing_export",
+      "stale_evidence",
+      "expected_unsupported_surface"
+    ]
+  },
+  "checker_contract": {
+    "script": "scripts/check_support_reality_drift_triage.sh",
+    "required_script_needles": [
+      "support_reality_drift_triage.report.v1",
+      "support_reality_drift_triage_validated",
+      "unclassified_delta",
+      "delta_symbol_missing",
+      "check_replacement_guard.sh",
+      "replacement_guard_ok"
+    ],
+    "expected_report_schema": "support_reality_drift_triage.report.v1",
+    "expected_success_event": "support_reality_drift_triage_validated",
+    "expected_failure_event": "support_reality_drift_triage_failed"
+  },
+  "rust_conformance_contract": {
+    "test_file": "crates/frankenlibc-harness/tests/support_reality_drift_triage_test.rs",
+    "required_tests": [
+      {
+        "test": "triage_report_has_required_shape",
+        "line_ref": "crates/frankenlibc-harness/tests/support_reality_drift_triage_test.rs:85"
+      },
+      {
+        "test": "checker_passes_and_emits_summary",
+        "line_ref": "crates/frankenlibc-harness/tests/support_reality_drift_triage_test.rs:110"
+      },
+      {
+        "test": "checker_accepts_expected_unsupported_surface_row",
+        "line_ref": "crates/frankenlibc-harness/tests/support_reality_drift_triage_test.rs:148"
+      },
+      {
+        "test": "checker_fails_on_unclassified_delta",
+        "line_ref": "crates/frankenlibc-harness/tests/support_reality_drift_triage_test.rs:165"
+      },
+      {
+        "test": "checker_fails_when_expected_delta_is_missing",
+        "line_ref": "crates/frankenlibc-harness/tests/support_reality_drift_triage_test.rs:187"
+      }
+    ]
+  },
+  "conformance_primary": {
+    "missing_item_id": "tests.conformance.primary",
+    "scenarios": [
+      {
+        "scenario_id": "triage_checker_passes_live_inputs",
+        "command": "bash scripts/check_support_reality_drift_triage.sh --validate-only",
+        "expected_exit": 0,
+        "expected_report_fields": [
+          "schema_version",
+          "bead",
+          "trace_id",
+          "source_commit",
+          "outcome",
+          "checks",
+          "summary"
+        ]
+      },
+      {
+        "scenario_id": "rust_conformance_binds_positive_and_negative_cases",
+        "command": "rch cargo test -p frankenlibc-harness --test support_reality_drift_triage_completion_contract_test -- --nocapture",
+        "expected_exit": 0,
+        "expected_test_count": 8
+      },
+      {
+        "scenario_id": "fail_closed_contract_mutations_are_rejected",
+        "command": "rch cargo test -p frankenlibc-harness --test support_reality_drift_triage_completion_contract_test checker_rejects -- --nocapture",
+        "expected_exit": 0,
+        "expected_failure_signatures": [
+          "missing required Rust conformance test",
+          "missing required triage delta bucket",
+          "triage summary count mismatch"
+        ]
+      }
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-0agsk.4.1",
+    "original_bead": "bd-0agsk.4",
+    "next_audit_score_threshold": 800,
+    "test_source": "crates/frankenlibc-harness/tests/support_reality_drift_triage_completion_contract_test.rs",
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "required_test_names": [
+        "manifest_anchors_completion_debt",
+        "source_artifacts_are_file_backed",
+        "checker_accepts_manifest_and_runs_original_gate",
+        "checker_rejects_missing_required_test_binding",
+        "checker_rejects_missing_delta_bucket_binding",
+        "checker_rejects_stale_summary_count"
+      ]
+    }
+  },
+  "telemetry_contract": {
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature"
+    ],
+    "required_log_events": [
+      "support_reality_drift_completion_source",
+      "support_reality_drift_completion_conformance",
+      "support_reality_drift_completion_summary"
+    ]
+  }
+}
