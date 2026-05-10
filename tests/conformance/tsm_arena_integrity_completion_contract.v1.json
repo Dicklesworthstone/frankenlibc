@@ -1,0 +1,163 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "tsm-arena-integrity-completion-contract",
+  "bead": "bd-32e.2",
+  "completion_debt_bead": "bd-32e.2.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "purpose": "Completion-debt contract for TSM arena lookup, fingerprint, canary, and bounds stages. This manifest binds the stage implementation tokens, unit-test anchors, e2e anchors, and replayable checker telemetry required by the audit missing items.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-32e.2/scorecard.md",
+    "spec_path": "passes/2026-05-10T03-16-16Z/beads/bd-32e.2/spec.json",
+    "score_before": 570,
+    "score_threshold": 800
+  },
+  "source_artifacts": {
+    "ptr_validator": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+    "arena": "crates/frankenlibc-membrane/src/arena.rs",
+    "fingerprint": "crates/frankenlibc-membrane/src/fingerprint.rs",
+    "tsm_pipeline_e2e": "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
+    "completion_checker": "scripts/check_tsm_arena_integrity_completion_contract.sh",
+    "completion_unit_test": "crates/frankenlibc-harness/tests/tsm_arena_integrity_completion_contract_test.rs"
+  },
+  "implementation_contract": {
+    "stage_labels": [
+      "arena_lookup",
+      "fingerprint",
+      "canary",
+      "bounds"
+    ],
+    "stage_paths": [
+      "pipeline::stage4::arena",
+      "pipeline::stage5::fingerprint",
+      "pipeline::stage6::canary",
+      "pipeline::stage7::bounds"
+    ],
+    "required_outcomes": [
+      "Validated",
+      "TemporalViolation",
+      "Invalid"
+    ],
+    "ptr_validator_needles": [
+      "CheckStage::Arena => \"arena_lookup\"",
+      "CheckStage::Fingerprint => \"fingerprint\"",
+      "CheckStage::Canary => \"canary\"",
+      "CheckStage::Bounds => \"bounds\"",
+      "MembraneMetrics::inc(&metrics.arena_lookups);",
+      "MembraneMetrics::inc(&metrics.fingerprint_passes);",
+      "MembraneMetrics::inc(&metrics.canary_passes);",
+      "AllocationFingerprint::from_bytes(&fp_bytes)",
+      "expected_canary.verify(&actual)",
+      "return ValidationOutcome::Invalid(abs);",
+      "return ValidationOutcome::TemporalViolation(abs);",
+      "inject_trailing_canary_corruption"
+    ],
+    "arena_needles": [
+      "pub fn remaining_from(&self, addr: usize) -> Option<(ArenaSlot, usize)>",
+      "fn verify_canary_for_slot(&self, slot: &ArenaSlot) -> bool",
+      "FreeResult::FreedWithCanaryCorruption",
+      "return Some(*slot);"
+    ],
+    "fingerprint_needles": [
+      "pub const FINGERPRINT_SIZE: usize = 24;",
+      "pub const CANARY_SIZE: usize = 8;",
+      "pub fn compute(base_addr: usize, size: u64, generation: u64) -> Self",
+      "pub fn verify(&self, base_addr: usize) -> bool",
+      "pub fn canary(&self) -> Canary",
+      "pub fn verify(&self, bytes: &[u8; CANARY_SIZE]) -> bool"
+    ],
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:588",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:601",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:1136",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:1243",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:1318",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:1396",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:1799",
+      "crates/frankenlibc-membrane/src/arena.rs:418",
+      "crates/frankenlibc-membrane/src/arena.rs:439",
+      "crates/frankenlibc-membrane/src/fingerprint.rs:12",
+      "crates/frankenlibc-membrane/src/fingerprint.rs:36",
+      "crates/frankenlibc-membrane/src/fingerprint.rs:83"
+    ]
+  },
+  "unit_primary": {
+    "missing_item_id": "tests.unit.primary",
+    "required_test_refs": [
+      {"source": "arena", "name": "lookup_finds_allocation"},
+      {"source": "arena", "name": "lookup_into_middle_of_allocation"},
+      {"source": "arena", "name": "canary_corruption_detected"},
+      {"source": "arena", "name": "proof_foreign_pointers_always_rejected"},
+      {"source": "fingerprint", "name": "fingerprint_roundtrip"},
+      {"source": "fingerprint", "name": "fingerprint_verify_fails_for_wrong_addr"},
+      {"source": "fingerprint", "name": "proof_fingerprint_single_bit_sensitivity"},
+      {"source": "fingerprint", "name": "proof_canary_detects_all_single_byte_corruptions"},
+      {"source": "ptr_validator", "name": "allocated_pointer_validates"},
+      {"source": "ptr_validator", "name": "interior_pointer_on_owned_page_is_not_misclassified_as_foreign"},
+      {"source": "ptr_validator", "name": "canary_corruption_detected_via_pipeline_free"},
+      {"source": "ptr_validator", "name": "one_past_end_pointer_is_denied_as_invalid"},
+      {"source": "ptr_validator", "name": "header_pointer_is_denied_as_invalid"},
+      {"source": "ptr_validator", "name": "dependency_safe_order_property_holds"}
+    ],
+    "required_commands": [
+      "rch cargo test -p frankenlibc-membrane allocated_pointer_validates --lib -- --nocapture",
+      "rch cargo test -p frankenlibc-membrane one_past_end_pointer_is_denied_as_invalid --lib -- --nocapture",
+      "rch cargo test -p frankenlibc-membrane canary_corruption_detected_via_pipeline_free --lib -- --nocapture"
+    ]
+  },
+  "e2e_primary": {
+    "missing_item_id": "tests.e2e.primary",
+    "required_test_refs": [
+      {"source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle"},
+      {"source": "tsm_pipeline_e2e", "name": "multiple_allocations_independent"},
+      {"source": "tsm_pipeline_e2e", "name": "small_allocation_validated"},
+      {"source": "tsm_pipeline_e2e", "name": "large_allocation_validated"},
+      {"source": "tsm_pipeline_e2e", "name": "rapid_alloc_free_cycles"},
+      {"source": "tsm_pipeline_e2e", "name": "concurrent_mixed_workload"},
+      {"source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload"},
+      {"source": "tsm_pipeline_e2e", "name": "validation_outcome_abstraction_fields"}
+    ],
+    "required_commands": [
+      "rch cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test alloc_validate_free_lifecycle -- --nocapture",
+      "rch cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test multiple_allocations_independent -- --nocapture",
+      "rch cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test validation_outcome_abstraction_fields -- --nocapture"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-32e.2.1",
+    "original_bead": "bd-32e.2",
+    "next_audit_score_threshold": 800,
+    "test_source": "crates/frankenlibc-harness/tests/tsm_arena_integrity_completion_contract_test.rs",
+    "required_test_names": [
+      "manifest_anchors_completion_debt",
+      "source_artifacts_are_file_backed",
+      "implementation_contract_binds_stage_tokens",
+      "unit_primary_binds_arena_fingerprint_and_validator_tests",
+      "e2e_primary_binds_public_pipeline_tests",
+      "checker_accepts_manifest_and_emits_report",
+      "checker_rejects_missing_bounds_stage_path",
+      "checker_rejects_missing_unit_anchor",
+      "checker_rejects_missing_e2e_anchor",
+      "checker_rejects_stale_fingerprint_constant"
+    ]
+  },
+  "telemetry_contract": {
+    "required_log_events": [
+      "tsm_arena_integrity_completion_source",
+      "tsm_arena_integrity_completion_implementation",
+      "tsm_arena_integrity_completion_unit",
+      "tsm_arena_integrity_completion_e2e",
+      "tsm_arena_integrity_completion_summary"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature"
+    ]
+  }
+}
