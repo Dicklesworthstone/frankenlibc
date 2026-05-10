@@ -1,0 +1,238 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-aixvz.1",
+  "parent_bead": "bd-aixvz",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "85d11a2d137f53ea04b314588e13e13acb500357",
+  "purpose": "Completion-debt evidence for bd-aixvz: prove that the bd-bp8fl parent acceptance-criteria rewrite has deterministic unit, e2e, and telemetry coverage without mutating tracker state.",
+  "checker": "scripts/check_bp8fl_parent_acceptance_replay.sh",
+  "issues_source": ".beads/issues.jsonl",
+  "report_path": "target/conformance/bp8fl_parent_acceptance_replay.report.json",
+  "log_path": "target/conformance/bp8fl_parent_acceptance_replay.log.jsonl",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-aixvz/scorecard.md",
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "score_before": 455,
+    "score_threshold": 700
+  },
+  "target_parent_ids": [
+    "bd-bp8fl",
+    "bd-bp8fl.1",
+    "bd-bp8fl.2",
+    "bd-bp8fl.3",
+    "bd-bp8fl.4",
+    "bd-bp8fl.5",
+    "bd-bp8fl.6",
+    "bd-bp8fl.7",
+    "bd-bp8fl.8",
+    "bd-bp8fl.9",
+    "bd-bp8fl.10"
+  ],
+  "required_acceptance_terms": [
+    {
+      "term_id": "parent_specific_header",
+      "any_of": [
+        [
+          "Parent-specific acceptance criteria"
+        ]
+      ],
+      "failure_signature": "missing_parent_specific_header"
+    },
+    {
+      "term_id": "preserve_scope",
+      "any_of": [
+        [
+          "Preserve"
+        ]
+      ],
+      "failure_signature": "missing_preserve_scope"
+    },
+    {
+      "term_id": "child_workstreams",
+      "any_of": [
+        [
+          "Closure requires",
+          "bd-bp8fl"
+        ],
+        [
+          "child workstreams"
+        ]
+      ],
+      "failure_signature": "missing_child_workstreams"
+    },
+    {
+      "term_id": "required_unit_tests",
+      "any_of": [
+        [
+          "Required unit tests"
+        ],
+        [
+          "Required test classes"
+        ]
+      ],
+      "failure_signature": "missing_unit_test_classes"
+    },
+    {
+      "term_id": "deterministic_e2e",
+      "any_of": [
+        [
+          "Required deterministic"
+        ],
+        [
+          "deterministic scripts"
+        ],
+        [
+          "deterministic e2e"
+        ]
+      ],
+      "failure_signature": "missing_deterministic_e2e"
+    },
+    {
+      "term_id": "structured_telemetry",
+      "any_of": [
+        [
+          "Structured logs",
+          "trace_id",
+          "source_commit",
+          "failure_signature"
+        ]
+      ],
+      "failure_signature": "missing_structured_telemetry"
+    },
+    {
+      "term_id": "source_of_truth_freshness",
+      "any_of": [
+        [
+          "Source-of-truth freshness",
+          "source_commit"
+        ],
+        [
+          "Source-of-truth freshness",
+          "DB",
+          "JSONL"
+        ]
+      ],
+      "failure_signature": "missing_source_of_truth_freshness"
+    },
+    {
+      "term_id": "claim_gate_cases",
+      "any_of": [
+        [
+          "Claim gates",
+          "positive",
+          "negative"
+        ]
+      ],
+      "failure_signature": "missing_claim_gate_cases"
+    },
+    {
+      "term_id": "closure_commands",
+      "any_of": [
+        [
+          "Closure must list exact commands"
+        ],
+        [
+          "Closure must list exact",
+          "commands"
+        ]
+      ],
+      "failure_signature": "missing_closure_commands"
+    },
+    {
+      "term_id": "no_feature_loss",
+      "any_of": [
+        [
+          "no-feature-loss"
+        ],
+        [
+          "No feature"
+        ]
+      ],
+      "failure_signature": "missing_no_feature_loss"
+    }
+  ],
+  "required_report_fields": [
+    "schema_version",
+    "bead",
+    "parent_bead",
+    "generated_at_utc",
+    "trace_id",
+    "source_commit",
+    "mode",
+    "status",
+    "tracker_state",
+    "parent_count",
+    "jsonl_count",
+    "db_count",
+    "missing_parent_ids",
+    "duplicate_parent_ids",
+    "failed_terms",
+    "tool_probes",
+    "summary",
+    "artifact_refs"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "parent_epic_id",
+    "command",
+    "exit_status",
+    "expected",
+    "actual",
+    "db_count",
+    "jsonl_count",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "tool_probe_contract": {
+    "optional_env": "FRANKENLIBC_BP8FL_PARENT_ACCEPTANCE_PROBE_TOOLS=1",
+    "commands": [
+      "br show <parent-id> --no-db --json",
+      "br dep cycles --no-db --json"
+    ],
+    "failure_policy": "Tool probe failures are telemetry failures; direct JSONL validation still reports missing rows and weak acceptance criteria separately."
+  },
+  "fixture_replay": {
+    "expected_failure_signatures": [
+      "missing_parent_rows",
+      "duplicate_parent_rows",
+      "missing_structured_telemetry"
+    ],
+    "issues": [
+      {
+        "id": "bd-bp8fl",
+        "status": "closed",
+        "priority": 0,
+        "issue_type": "epic",
+        "acceptance_criteria": "Parent-specific acceptance criteria: Preserve fixture scope. Closure requires bd-bp8fl.1 child workstreams. Required unit tests include parser tests. Required deterministic e2e scripts replay tracker rows. Structured logs must include trace_id, source_commit, and failure_signature. Source-of-truth freshness checks record DB and JSONL counts. Claim gates include positive and negative cases. Closure must list exact commands and a no-feature-loss note."
+      },
+      {
+        "id": "bd-bp8fl.1",
+        "status": "closed",
+        "priority": 0,
+        "issue_type": "epic",
+        "acceptance_criteria": "Parent-specific acceptance criteria: Preserve fixture scope. Closure requires child workstreams. Required unit tests include parser tests. Required deterministic e2e scripts replay tracker rows. Source-of-truth freshness checks record DB and JSONL counts. Claim gates include positive and negative cases. Closure must list exact commands and a no-feature-loss note."
+      },
+      {
+        "id": "bd-bp8fl.2",
+        "status": "closed",
+        "priority": 0,
+        "issue_type": "epic",
+        "acceptance_criteria": "Parent-specific acceptance criteria: Preserve fixture scope. Closure requires child workstreams. Required unit tests include parser tests. Required deterministic e2e scripts replay tracker rows. Structured logs must include trace_id, source_commit, and failure_signature. Source-of-truth freshness checks record DB and JSONL counts. Claim gates include positive and negative cases. Closure must list exact commands and a no-feature-loss note."
+      },
+      {
+        "id": "bd-bp8fl.2",
+        "status": "closed",
+        "priority": 0,
+        "issue_type": "epic",
+        "acceptance_criteria": "duplicate fixture row"
+      }
+    ]
+  }
+}
