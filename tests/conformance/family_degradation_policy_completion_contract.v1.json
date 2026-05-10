@@ -1,0 +1,199 @@
+{
+  "schema": "family_degradation_policy_completion_contract.v1",
+  "bead": "bd-w2c3.7.2",
+  "completion_debt_bead": "bd-w2c3.7.2.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.7.2/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "artifacts": {
+      "policy_table_source": "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs",
+      "policy_table_design": "crates/frankenlibc-membrane/src/runtime_math/proof_carrying_policy_tables.md",
+      "runtime_math_source": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "pressure_sensor_source": "crates/frankenlibc-membrane/src/pressure_sensor.rs",
+      "proof_policy_audit": "tests/conformance/proof_carrying_policy_audit.v1.json",
+      "proof_policy_script": "scripts/check_proof_carrying_policy_audit.sh",
+      "proof_policy_test": "crates/frankenlibc-harness/tests/proof_carrying_policy_audit_test.rs",
+      "admission_report": "tests/runtime_math/admission_gate_report.v1.json",
+      "controller_manifest": "tests/runtime_math/controller_manifest.v1.json",
+      "runtime_linkage": "tests/runtime_math/runtime_math_linkage.v1.json",
+      "pressure_fixture": "tests/conformance/fixtures/pressure_sensing.json"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs:786",
+      "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs:809",
+      "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs:824",
+      "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs:1016",
+      "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs:1056",
+      "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs:1120",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:4568",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:4624",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:4655",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:4664",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:6386",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:6419",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:6475",
+      "crates/frankenlibc-membrane/src/pressure_sensor.rs:74",
+      "crates/frankenlibc-membrane/src/pressure_sensor.rs:571",
+      "scripts/check_proof_carrying_policy_audit.sh:13",
+      "scripts/check_proof_carrying_policy_audit.sh:195",
+      "scripts/check_proof_carrying_policy_audit.sh:205",
+      "crates/frankenlibc-harness/tests/proof_carrying_policy_audit_test.rs:129",
+      "crates/frankenlibc-harness/tests/proof_carrying_policy_audit_test.rs:407",
+      "crates/frankenlibc-harness/tests/proof_carrying_policy_audit_test.rs:440",
+      "crates/frankenlibc-harness/tests/proof_carrying_policy_audit_test.rs:460"
+    ],
+    "policy_table_guard": {
+      "required_lookup_dimensions": [
+        "mode",
+        "ApiFamily",
+        "risk bucket",
+        "budget bucket",
+        "consistency bucket",
+        "policy hash"
+      ],
+      "required_action_outputs": [
+        "profile override",
+        "action override",
+        "repair override",
+        "policy_id"
+      ],
+      "required_invariant": "Policy table override is deterministic and keyed by mode/family/risk/budget/consistency buckets.",
+      "strict_overload_action": "Deny",
+      "hardened_overload_action": "Repair(ReturnSafeDefault)",
+      "fallback_when_data_missing": "Use built-in conservative table defaults when policy artifact or bucket data is unavailable."
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "policy_table_source",
+          "name": "verifies_minimal_blake3_artifact"
+        },
+        {
+          "source": "policy_table_source",
+          "name": "strict_repair_is_rejected"
+        },
+        {
+          "source": "policy_table_source",
+          "name": "risk_monotonicity_violation_is_rejected"
+        },
+        {
+          "source": "policy_table_source",
+          "name": "lookup_from_artifact_roundtrip"
+        },
+        {
+          "source": "runtime_math_source",
+          "name": "pressured_regime_can_apply_fast_allow_overload_policy"
+        },
+        {
+          "source": "runtime_math_source",
+          "name": "overloaded_regime_applies_mode_specific_safe_fallback"
+        },
+        {
+          "source": "runtime_math_source",
+          "name": "runtime_math_log_jsonl_exports_pressure_and_overload_policy_events"
+        },
+        {
+          "source": "pressure_sensor_source",
+          "name": "degradation_active_only_in_overloaded"
+        },
+        {
+          "source": "proof_policy_test",
+          "name": "required_negative_tests_resolve_in_policy_source"
+        },
+        {
+          "source": "completion_contract_test",
+          "name": "contract_binds_policy_table_units_and_overload_telemetry"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_math::policy_table::tests -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane overloaded_regime_applies_mode_specific_safe_fallback -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_math_log_jsonl_exports_pressure_and_overload_policy_events -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane pressure_sensor::tests::degradation_active_only_in_overloaded -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test family_degradation_policy_completion_contract_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_scripts": [
+        "scripts/check_proof_carrying_policy_audit.sh --validate-only",
+        "scripts/check_family_degradation_policy_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {
+          "source": "proof_policy_test",
+          "name": "audit_artifact_is_well_formed"
+        },
+        {
+          "source": "proof_policy_test",
+          "name": "verification_command_targets_policy_table_tests"
+        },
+        {
+          "source": "proof_policy_test",
+          "name": "audit_consuming_gates_exist"
+        },
+        {
+          "source": "completion_contract_test",
+          "name": "checker_rejects_missing_overload_policy_event"
+        }
+      ],
+      "required_commands": [
+        "scripts/check_proof_carrying_policy_audit.sh --validate-only",
+        "scripts/check_family_degradation_policy_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test proof_carrying_policy_audit_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test family_degradation_policy_completion_contract_test -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "required_log_artifacts": [
+        "target/conformance/family_degradation_policy_completion_contract.log.jsonl",
+        "target/conformance/family_degradation_policy_completion_contract.report.json",
+        "target/conformance/runtime_math_admission_gate.log.jsonl"
+      ],
+      "required_events": [
+        "family_degradation_policy_table_validated",
+        "family_degradation_policy_e2e_validated",
+        "family_degradation_policy_telemetry_validated",
+        "runtime_decision",
+        "runtime_pressure_sensor",
+        "runtime_overload_policy_applied"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "completion_debt_bead",
+        "original_bead",
+        "event",
+        "status",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "overload_state",
+        "degradation_active",
+        "overload_policy",
+        "policy_id",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    },
+    "test_sources": {
+      "policy_table_source": "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs",
+      "runtime_math_source": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "pressure_sensor_source": "crates/frankenlibc-membrane/src/pressure_sensor.rs",
+      "proof_policy_test": "crates/frankenlibc-harness/tests/proof_carrying_policy_audit_test.rs",
+      "completion_contract_test": "crates/frankenlibc-harness/tests/family_degradation_policy_completion_contract_test.rs"
+    }
+  }
+}
