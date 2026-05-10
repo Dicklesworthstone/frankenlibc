@@ -635,9 +635,27 @@ fn allowlist_policy_is_enforced_and_negative_claims_are_resolved() -> TestResult
             .is_some_and(Vec::is_empty),
         "allowlist entries must resolve to ABI modules or explicit sentinels",
     )?;
+    let direct_call_modules: HashSet<_> =
+        summary_string_array(&report, "direct_call_modules_seen")?
+            .into_iter()
+            .collect();
+    let mut covered_callthrough_modules: HashSet<_> =
+        summary_string_array(&report, "allowlist_modules_seen")?
+            .into_iter()
+            .collect();
+    covered_callthrough_modules.extend(summary_string_array(
+        &report,
+        "implicit_allowlist_modules_seen",
+    )?);
+    let uncovered: Vec<_> = direct_call_modules
+        .difference(&covered_callthrough_modules)
+        .cloned()
+        .collect();
     require(
-        !summary_string_array(&report, "allowlist_modules_seen")?.is_empty(),
-        "report should name allowlisted modules where direct libc calls were observed",
+        uncovered.is_empty(),
+        format!(
+            "direct libc call modules must be allowlisted or implicit resolver modules: {uncovered:?}"
+        ),
     )?;
 
     let negative_results = json_array(&report, "negative_claim_results")?;
