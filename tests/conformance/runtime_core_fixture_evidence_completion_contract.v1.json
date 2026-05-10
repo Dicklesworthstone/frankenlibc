@@ -1,0 +1,222 @@
+{
+  "schema_version": "runtime_core_fixture_evidence_completion_contract.v1",
+  "manifest_id": "bd-bp8fl.3.6-runtime-core-fixture-evidence-completion-contract",
+  "original_bead": "bd-bp8fl.3.6",
+  "completion_debt_bead": "bd-bp8fl.3.6.1",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.3.6/scorecard.md",
+  "source_artifacts": {
+    "runtime_core_gate": "tests/conformance/runtime_core_fixture_evidence_gate.v1.json",
+    "source_checker": "scripts/check_runtime_core_fixture_evidence_gate.sh",
+    "source_harness_test": "crates/frankenlibc-harness/tests/runtime_core_fixture_evidence_gate_test.rs",
+    "completion_checker": "scripts/check_runtime_core_fixture_evidence_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/runtime_core_fixture_evidence_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "implementation_refs": [
+      {
+        "id": "runtime-core-gate-binds-gap-rows-and-dual-mode-evidence",
+        "path": "tests/conformance/runtime_core_fixture_evidence_gate.v1.json",
+        "required_text": [
+          "\"bead\": \"bd-bp8fl.3.6\"",
+          "\"owner_family_group\": \"fpg-reverse-runtime-core\"",
+          "\"gap_count\": 10",
+          "\"strict_mode_evidence_rows\": 10",
+          "\"hardened_mode_evidence_rows\": 10",
+          "\"fixture_or_semantic_overlay_rows\": 10",
+          "\"runtime_evidence\"",
+          "\"direct_runner\"",
+          "\"isolated_runner\""
+        ]
+      },
+      {
+        "id": "source-checker-emits-runtime-core-report-and-structured-log",
+        "path": "scripts/check_runtime_core_fixture_evidence_gate.sh",
+        "required_text": [
+          "TRACE_ID = \"bd-bp8fl.3.6:runtime-core-fixture-evidence\"",
+          "EXPECTED_GAP_IDS",
+          "runtime_mode_evidence",
+          "artifact_refs",
+          "semantic_inventory_binding",
+          "mode_policy_binding",
+          "structured_log",
+          "runtime_core_fixture_evidence_gate.report.json",
+          "runtime_core_fixture_evidence_gate.log.jsonl"
+        ]
+      },
+      {
+        "id": "source-harness-binds-unit-conformance-and-negative-cases",
+        "path": "crates/frankenlibc-harness/tests/runtime_core_fixture_evidence_gate_test.rs",
+        "required_text": [
+          "gate_artifact_preserves_runtime_core_gap_contract",
+          "source_commit_policy_blocks_stale_runtime_core_evidence",
+          "checker_passes_and_emits_report_and_logs",
+          "checker_rejects_missing_gap_row",
+          "checker_rejects_stale_gate_source_commit",
+          "checker_rejects_stale_source_commit",
+          "checker_rejects_unsupported_row_without_named_case",
+          "checker_rejects_expected_actual_mismatch"
+        ]
+      }
+    ],
+    "test_sources": {
+      "source_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/runtime_core_fixture_evidence_gate_test.rs",
+        "required_test_refs": [
+          "gate_artifact_preserves_runtime_core_gap_contract",
+          "source_commit_policy_blocks_stale_runtime_core_evidence",
+          "checker_passes_and_emits_report_and_logs",
+          "checker_rejects_missing_gap_row",
+          "checker_rejects_stale_gate_source_commit",
+          "checker_rejects_stale_source_commit",
+          "checker_rejects_unsupported_row_without_named_case",
+          "checker_rejects_expected_actual_mismatch"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/runtime_core_fixture_evidence_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_conformance_and_telemetry_evidence",
+          "checker_validates_existing_runtime_core_fixture_gate",
+          "checker_emits_report_and_jsonl",
+          "checker_rejects_missing_required_gap_id",
+          "checker_rejects_local_cargo_command",
+          "checker_rejects_missing_telemetry_event"
+        ]
+      }
+    }
+  },
+  "required_source_contract": {
+    "expected_gap_ids": [
+      "fp-reverse-core-311e99aff4d6",
+      "fp-reverse-core-a30cbdd5d2da",
+      "fp-reverse-core-422dc81789ec",
+      "fp-reverse-core-bbe405ff4f84",
+      "fp-reverse-core-97ef5634c70b",
+      "fp-reverse-core-bdb29f3d780e",
+      "fp-reverse-core-d6c0faa879a5",
+      "fp-reverse-core-36e1946e7f8d",
+      "fp-reverse-core-afa6d92abe42",
+      "fp-reverse-core-8f333dadeb11"
+    ],
+    "summary_exact": {
+      "expected_gap_count": 10,
+      "row_count": 10,
+      "structured_log_rows": 20,
+      "strict_mode_rows": 10,
+      "hardened_mode_rows": 10
+    },
+    "required_source_checks": [
+      "json_parse",
+      "top_level_shape",
+      "input_artifacts_exist",
+      "owner_group_binding",
+      "group_gap_binding",
+      "reconciliation_binding",
+      "row_contract",
+      "explicit_case_binding",
+      "runtime_mode_evidence",
+      "artifact_refs",
+      "semantic_inventory_binding",
+      "mode_policy_binding",
+      "runner_binding",
+      "structured_log"
+    ],
+    "required_source_log_fields": [
+      "trace_id",
+      "bead_id",
+      "gap_id",
+      "api_family",
+      "symbol",
+      "runtime_mode",
+      "expected",
+      "actual",
+      "errno",
+      "artifact_refs",
+      "source_commit",
+      "failure_signature"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "trace_id",
+      "bead_id",
+      "status",
+      "generated_at_utc",
+      "checks",
+      "summary",
+      "errors"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_test_refs": [
+        "gate_artifact_preserves_runtime_core_gap_contract",
+        "source_commit_policy_blocks_stale_runtime_core_evidence",
+        "manifest_binds_unit_conformance_and_telemetry_evidence",
+        "checker_rejects_local_cargo_command"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test runtime_core_fixture_evidence_gate_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test runtime_core_fixture_evidence_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "required_test_refs": [
+        "checker_passes_and_emits_report_and_logs",
+        "checker_rejects_missing_gap_row",
+        "checker_validates_existing_runtime_core_fixture_gate",
+        "checker_rejects_missing_required_gap_id"
+      ],
+      "required_commands": [
+        "bash scripts/check_runtime_core_fixture_evidence_gate.sh",
+        "bash scripts/check_runtime_core_fixture_evidence_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test runtime_core_fixture_evidence_gate_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "required_test_refs": [
+        "checker_passes_and_emits_report_and_logs",
+        "checker_emits_report_and_jsonl",
+        "checker_rejects_missing_telemetry_event"
+      ],
+      "required_commands": [
+        "jq -s empty target/conformance/runtime_core_fixture_evidence_gate.log.jsonl",
+        "jq -s empty target/conformance/runtime_core_fixture_evidence_completion_contract.log.jsonl"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_gate_report",
+      "source_gate_log",
+      "summary",
+      "checks",
+      "source_log_row_count",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome"
+    ],
+    "required_events": [
+      "runtime_core_fixture_evidence_completion_summary",
+      "runtime_core_fixture_evidence_source_gate_bindings",
+      "runtime_core_fixture_evidence_completion_contract_pass"
+    ]
+  }
+}
