@@ -1,0 +1,223 @@
+{
+  "schema_version": "perf_regression_prevention_completion_contract.v1",
+  "manifest_id": "bd-1qfc.1-perf-regression-prevention-completion-contract",
+  "original_bead": "bd-1qfc",
+  "completion_debt_bead": "bd-1qfc.1",
+  "audit_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-1qfc/scorecard.md",
+  "source_artifacts": {
+    "prevention_report": "tests/conformance/perf_regression_prevention.v1.json",
+    "source_generator": "scripts/generate_perf_regression_prevention.py",
+    "source_checker": "scripts/check_perf_regression_prevention.sh",
+    "source_harness_test": "crates/frankenlibc-harness/tests/perf_regression_prevention_test.rs",
+    "dashboard_report": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+    "dashboard_harness_test": "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
+    "completion_checker": "scripts/check_perf_regression_prevention_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/perf_regression_prevention_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "implementation_refs": [
+      {
+        "id": "source-generator-emits-prevention-report",
+        "path": "scripts/generate_perf_regression_prevention.py",
+        "line": 270,
+        "required_text": [
+          "\"bead\": \"bd-1qfc\"",
+          "\"summary\"",
+          "\"gate_wiring\"",
+          "\"hotpath_symbol_coverage\"",
+          "\"config_consistency\""
+        ]
+      },
+      {
+        "id": "source-checker-validates-default-and-strict-thresholds",
+        "path": "scripts/check_perf_regression_prevention.sh",
+        "line": 25,
+        "required_text": [
+          "Performance Regression Prevention Gate",
+          "check_perf_regression_prevention",
+          "Hotpath coverage",
+          "Baseline fill"
+        ]
+      },
+      {
+        "id": "source-unit-harness-covers-report-gate-baseline-and-config",
+        "path": "crates/frankenlibc-harness/tests/perf_regression_prevention_test.rs",
+        "line": 43,
+        "required_text": [
+          "prevention_report_generates_successfully",
+          "prevention_report_schema_complete",
+          "prevention_all_spec_suites_have_bench_files",
+          "prevention_enforced_suites_have_baselines",
+          "prevention_gate_has_required_features",
+          "prevention_config_no_issues"
+        ]
+      },
+      {
+        "id": "dashboard-consumers-keep-perf-prevention-visible",
+        "path": "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
+        "line": 4569,
+        "required_text": [
+          "perf_regression_prevention_rows_are_explicit",
+          "perf-regression-prevention-no-issues",
+          "perf-regression-prevention-event-logging",
+          "perf-regression-prevention-regression-threshold"
+        ]
+      }
+    ],
+    "test_sources": {
+      "source_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/perf_regression_prevention_test.rs",
+        "required_test_refs": [
+          "prevention_report_generates_successfully",
+          "prevention_report_schema_complete",
+          "prevention_all_spec_suites_have_bench_files",
+          "prevention_enforced_suites_have_baselines",
+          "prevention_gate_has_required_features",
+          "prevention_config_no_issues"
+        ]
+      },
+      "dashboard_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
+        "required_test_refs": [
+          "perf_regression_prevention_rows_are_explicit"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/perf_regression_prevention_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_e2e_and_telemetry_evidence",
+          "checker_validates_generated_perf_report",
+          "checker_emits_report_and_jsonl",
+          "checker_rejects_missing_gate_feature_binding",
+          "checker_rejects_missing_telemetry_log_field"
+        ]
+      }
+    }
+  },
+  "required_source_report": {
+    "schema_version": "v1",
+    "bead": "bd-1qfc",
+    "summary_exact": {
+      "total_suites_in_spec": 5,
+      "suites_with_bench_files": 5,
+      "suites_with_full_baselines": 5,
+      "total_issues": 0,
+      "total_warnings": 0
+    },
+    "summary_min": {
+      "suites_enforced_in_gate": 3,
+      "baseline_slot_fill_pct": 100.0,
+      "hotpath_symbol_coverage_pct": 50.0,
+      "total_hotpath_symbols": 100
+    },
+    "required_sections": [
+      "bench_file_inventory",
+      "baseline_coverage",
+      "gate_wiring",
+      "hotpath_symbol_coverage",
+      "config_consistency"
+    ],
+    "required_gate_features": [
+      "load_guard",
+      "attribution_policy",
+      "event_logging",
+      "injection_support"
+    ],
+    "required_enforced_suites": [
+      "runtime_math",
+      "membrane",
+      "errno"
+    ],
+    "required_config_fields": [
+      "baseline_version",
+      "regression_max_pct",
+      "strict_target_ns",
+      "hardened_target_ns",
+      "active_waivers",
+      "expired_waivers",
+      "issues"
+    ],
+    "required_dashboard_rows": [
+      "perf-regression-prevention-no-issues",
+      "perf-regression-prevention-total-warnings",
+      "perf-regression-prevention-baseline-slot-fill",
+      "perf-regression-prevention-hotpath-coverage",
+      "perf-regression-prevention-gate-exists",
+      "perf-regression-prevention-event-logging",
+      "perf-regression-prevention-injection-support",
+      "perf-regression-prevention-regression-threshold",
+      "perf-regression-prevention-active-waivers",
+      "perf-regression-prevention-expired-waivers"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_test_refs": [
+        "prevention_report_schema_complete",
+        "prevention_all_spec_suites_have_bench_files",
+        "prevention_enforced_suites_have_baselines",
+        "prevention_gate_has_required_features",
+        "prevention_config_no_issues",
+        "manifest_binds_unit_e2e_and_telemetry_evidence"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test perf_regression_prevention_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test perf_regression_prevention_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "required_test_refs": [
+        "prevention_report_generates_successfully",
+        "checker_validates_generated_perf_report",
+        "checker_rejects_missing_gate_feature_binding"
+      ],
+      "required_commands": [
+        "bash scripts/check_perf_regression_prevention_completion_contract.sh"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "required_test_refs": [
+        "checker_emits_report_and_jsonl",
+        "checker_rejects_missing_telemetry_log_field"
+      ],
+      "required_commands": [
+        "jq -s empty target/conformance/perf_regression_prevention_completion_contract.log.jsonl"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_report",
+      "summary",
+      "gate_wiring",
+      "dashboard_row_count",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_report",
+      "outcome"
+    ],
+    "required_events": [
+      "perf_regression_prevention_completion_summary",
+      "perf_regression_prevention_gate_wiring_preserved",
+      "perf_regression_prevention_completion_contract_pass"
+    ]
+  }
+}
