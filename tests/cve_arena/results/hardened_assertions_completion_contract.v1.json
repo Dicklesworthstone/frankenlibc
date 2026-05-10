@@ -1,0 +1,212 @@
+{
+  "schema_version": "cve_hardened_assertions_completion_contract.v1",
+  "manifest_id": "bd-1m5.6.1-cve-hardened-assertions-completion-contract",
+  "generated_utc": "2026-05-10T14:33:00Z",
+  "description": "Completion-debt evidence binding for hardened CVE prevention and healing assertions.",
+  "bead": "bd-1m5.6.1",
+  "original_bead": "bd-1m5.6",
+  "source_artifacts": {
+    "hardened_assertions_report": "tests/cve_arena/results/hardened_assertions.v1.json",
+    "corpus_normalization_report": "tests/cve_arena/results/corpus_normalization.v1.json",
+    "hardened_assertions_generator": "scripts/generate_cve_hardened_assertions.py",
+    "hardened_assertions_gate": "scripts/check_cve_hardened_assertions.sh",
+    "hardened_assertions_harness": "crates/frankenlibc-harness/tests/cve_hardened_assertions_test.rs",
+    "completion_gate": "scripts/check_cve_hardened_assertions_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/cve_hardened_assertions_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-1m5.6/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "missing_item_bindings": [
+      {
+        "missing_item_id": "tests.unit.primary",
+        "evidence_section": "unit_primary"
+      },
+      {
+        "missing_item_id": "tests.e2e.primary",
+        "evidence_section": "e2e_primary"
+      },
+      {
+        "missing_item_id": "tests.conformance.primary",
+        "evidence_section": "conformance_primary"
+      }
+    ],
+    "implementation_refs": [
+      "scripts/generate_cve_hardened_assertions.py:40",
+      "scripts/generate_cve_hardened_assertions.py:109",
+      "scripts/generate_cve_hardened_assertions.py:148",
+      "scripts/generate_cve_hardened_assertions.py:160",
+      "scripts/generate_cve_hardened_assertions.py:222",
+      "scripts/check_cve_hardened_assertions.sh:2",
+      "scripts/check_cve_hardened_assertions.sh:13",
+      "scripts/check_cve_hardened_assertions.sh:70",
+      "scripts/check_cve_hardened_assertions.sh:108",
+      "crates/frankenlibc-harness/tests/cve_hardened_assertions_test.rs:34",
+      "crates/frankenlibc-harness/tests/cve_hardened_assertions_test.rs:58",
+      "crates/frankenlibc-harness/tests/cve_hardened_assertions_test.rs:82",
+      "crates/frankenlibc-harness/tests/cve_hardened_assertions_test.rs:198",
+      "tests/cve_arena/results/hardened_assertions.v1.json:1",
+      "tests/cve_arena/results/corpus_normalization.v1.json:1",
+      "scripts/check_cve_hardened_assertions_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/cve_hardened_assertions_completion_contract_test.rs:1",
+      "tests/cve_arena/results/hardened_assertions_completion_contract.v1.json:1"
+    ],
+    "test_sources": {
+      "source_harness": "crates/frankenlibc-harness/tests/cve_hardened_assertions_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/cve_hardened_assertions_completion_contract_test.rs"
+    },
+    "required_hardened_assertion_contract": {
+      "source_report_schema_version": "v1",
+      "original_bead": "bd-1m5.6",
+      "source_corpus_bead": "bd-1m5.5",
+      "minimum_total_assertions": 12,
+      "minimum_unique_healing_actions": 8,
+      "required_prevention_strategies": [
+        "prevent",
+        "quarantine",
+        "deny"
+      ],
+      "required_healing_actions": [
+        "ClampSize",
+        "FreedWithCanaryCorruption",
+        "IgnoreDoubleFree",
+        "IgnoreForeignFree",
+        "ReallocAsMalloc",
+        "ReturnSafeDefault",
+        "TruncateWithNull",
+        "UpgradeToSafeVariant"
+      ],
+      "required_assertion_fields": [
+        "cve_id",
+        "test_name",
+        "cvss_score",
+        "vulnerability_classes",
+        "prevention_strategy",
+        "hardened_expectations",
+        "cwe_prevention",
+        "regression_checks"
+      ],
+      "required_hardened_expectation_fields": [
+        "crashes",
+        "exit_code",
+        "healing_actions_required",
+        "no_uncontrolled_unsafety"
+      ],
+      "required_regression_fields": [
+        "no_crash",
+        "expected_exit_code",
+        "healing_actions_emitted",
+        "healing_actions_list"
+      ],
+      "required_corpus_replay_fields": [
+        "expected_strict",
+        "expected_hardened",
+        "replay_key"
+      ],
+      "required_source_log_fields": [
+        "timestamp",
+        "trace_id",
+        "bead_id",
+        "scenario_id",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "artifact_refs",
+        "event",
+        "outcome"
+      ],
+      "required_completion_log_events": [
+        "cve_hardened_assertions_completion_contract_validated",
+        "cve_hardened_assertions_generator_replayed",
+        "cve_hardened_assertions_conformance_mapping_verified",
+        "cve_hardened_assertions_completion_summary"
+      ],
+      "forbidden_completion_log_events": [
+        "cve_hardened_assertions_completion_contract_failed"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "source_harness",
+          "name": "hardened_report_schema_complete"
+        },
+        {
+          "source": "source_harness",
+          "name": "hardened_all_cves_have_healing_actions"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_missing_items_and_hardened_contract"
+        },
+        {
+          "source": "completion_harness",
+          "name": "source_gate_and_tests_are_anchored"
+        }
+      ],
+      "required_commands": [
+        "jq empty tests/cve_arena/results/hardened_assertions_completion_contract.v1.json",
+        "bash scripts/check_cve_hardened_assertions_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR cargo test -p frankenlibc-harness --test cve_hardened_assertions_completion_contract_test manifest_binds_missing_items_and_hardened_contract -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_test_refs": [
+        {
+          "source": "source_harness",
+          "name": "hardened_log_emission_contains_required_fields"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_runs_generator_and_emits_completion_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "completion_logs_validate_against_structured_schema"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_binding"
+        }
+      ],
+      "required_commands": [
+        "FRANKENLIBC_CVE_HARDENED_COMPLETION_REPORT=<report> FRANKENLIBC_CVE_HARDENED_COMPLETION_LOG=<log> bash scripts/check_cve_hardened_assertions_completion_contract.sh",
+        "jq empty target/conformance/hardened_assertions_completion_contract.report.json",
+        "rch exec -- env CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR cargo test -p frankenlibc-harness --test cve_hardened_assertions_completion_contract_test checker_runs_generator_and_emits_completion_evidence -- --nocapture"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "required_test_refs": [
+        {
+          "source": "source_harness",
+          "name": "hardened_all_cves_no_crash"
+        },
+        {
+          "source": "source_harness",
+          "name": "hardened_regression_detection_digest_present"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_report_with_crashing_hardened_cve"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_corpus_mapping"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_cve_hardened_assertions_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR cargo test -p frankenlibc-harness --test cve_hardened_assertions_test hardened_all_cves_no_crash -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR cargo test -p frankenlibc-harness --test cve_hardened_assertions_completion_contract_test checker_rejects_missing_corpus_mapping -- --nocapture"
+      ]
+    }
+  }
+}
