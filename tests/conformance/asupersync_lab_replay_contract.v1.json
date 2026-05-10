@@ -59,6 +59,25 @@
     "rationale": "When asupersync is unavailable the replay record is still validated; the gate emits ToolFailure with the trace_class and a structured reason so a CI or dashboard can surface a tool-install issue separately from a frankenlibc code regression.",
     "tool_failure_reason_format": "asupersync tool unavailable (trace_class=<id>); cannot validate virtual-time replay"
   },
+  "detection_contract": {
+    "rationale": "Every caller MUST resolve `asupersync_available` through `detect_asupersync_available(&DetectionEnv)` so the probe order is deterministic and inspectable. The `detection_reason` enum-string is the only legitimate way to attribute a Pass / CodeFailure / ToolFailure outcome back to an environment state.",
+    "env_override_var": "FRANKENLIBC_ASUPERSYNC_AVAILABLE",
+    "env_override_truthy_values": ["1", "true", "yes", "on"],
+    "env_override_falsy_values": ["0", "false", "no", "off", ""],
+    "probe_order": [
+      "env_override_disabled",
+      "env_override_enabled",
+      "asupersync_dir_present",
+      "binary_on_path",
+      "no_install_detected"
+    ],
+    "canonical_install_dir": "/dp/asupersync",
+    "binary_name_searched_on_path": "asupersync",
+    "fail_closed_when_detection_reason_unknown": true,
+    "rejected_evidence_kinds_added": [
+      "unknown_detection_reason"
+    ]
+  },
   "downstream_consumers": [
     {
       "bead": "bd-juvqm.6",

@@ -10,7 +10,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use frankenlibc_harness::asupersync_lab_replay::{
-    ReplayOutcome, ReplayRecord, ReplayValidationError, classify_outcome, validate_replay,
+    DETECTION_REASONS, DetectionEnv, ReplayOutcome, ReplayRecord, ReplayValidationError,
+    classify_outcome, detect_asupersync_available, validate_replay,
 };
 use serde_json::Value;
 
@@ -290,4 +291,184 @@ fn fixture_validate_rejects_replay_input_not_in_artifact_refs() -> TestResult {
         Err(ReplayValidationError::MissingArtifactRefs) => Ok(()),
         other => Err(format!("expected MissingArtifactRefs; got {other:?}")),
     }
+}
+
+// ── Detection contract tests (bd-qfbhc) ──────────────────────────────
+
+fn empty_env() -> DetectionEnv {
+    DetectionEnv {
+        override_var: None,
+        asupersync_dir: PathBuf::from("/nonexistent-asupersync-test-dir"),
+        path_search_paths: vec![],
+    }
+}
+
+#[test]
+fn manifest_detection_contract_locks_probe_order_and_override_var() -> TestResult {
+    let m = load_manifest()?;
+    let det = json_field(&m, "detection_contract")?;
+    require(
+        json_string(det, "env_override_var")? == "FRANKENLIBC_ASUPERSYNC_AVAILABLE",
+        "env_override_var",
+    )?;
+    require(
+        json_string(det, "canonical_install_dir")? == "/dp/asupersync",
+        "canonical_install_dir",
+    )?;
+    require(
+        json_string(det, "binary_name_searched_on_path")? == "asupersync",
+        "binary_name_searched_on_path",
+    )?;
+    let probe_order: Vec<&str> = json_array(det, "probe_order")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let expected = [
+        "env_override_disabled",
+        "env_override_enabled",
+        "asupersync_dir_present",
+        "binary_on_path",
+        "no_install_detected",
+    ];
+    require(
+        probe_order == expected,
+        format!("probe_order: got {probe_order:?}"),
+    )?;
+    // The library's DETECTION_REASONS const must match the manifest probe_order set.
+    let manifest_reasons: BTreeSet<&str> = probe_order.iter().copied().collect();
+    let lib_reasons: BTreeSet<&str> = DETECTION_REASONS.iter().copied().collect();
+    require(
+        manifest_reasons == lib_reasons,
+        format!("DETECTION_REASONS drift: lib={lib_reasons:?}, manifest={manifest_reasons:?}"),
+    )
+}
+
+#[test]
+fn detect_returns_no_install_detected_on_empty_env() -> TestResult {
+    let r = detect_asupersync_available(&empty_env());
+    require(!r.available, "available must be false")?;
+    require(
+        r.detection_reason == "no_install_detected",
+        format!("got {}", r.detection_reason),
+    )?;
+    require(r.path.is_none(), "path must be None")
+}
+
+#[test]
+fn env_override_disabled_short_circuits_regardless_of_fs_state() -> TestResult {
+    // Even with a real asupersync_dir, FRANKENLIBC_ASUPERSYNC_AVAILABLE=0 wins.
+    let mut env = empty_env();
+    env.override_var = Some("0".to_string());
+    env.asupersync_dir = std::env::temp_dir(); // exists
+    let r = detect_asupersync_available(&env);
+    require(!r.available, "override=0 must produce available=false")?;
+    require(
+        r.detection_reason == "env_override_disabled",
+        format!("got {}", r.detection_reason),
+    )
+}
+
+#[test]
+fn env_override_enabled_short_circuits_regardless_of_fs_state() -> TestResult {
+    // Even with NO asupersync_dir on disk, override=1 wins.
+    let mut env = empty_env();
+    env.override_var = Some("1".to_string());
+    let r = detect_asupersync_available(&env);
+    require(r.available, "override=1 must produce available=true")?;
+    require(
+        r.detection_reason == "env_override_enabled",
+        format!("got {}", r.detection_reason),
+    )
+}
+
+#[test]
+fn env_override_truthy_aliases_match() -> TestResult {
+    for v in ["true", "yes", "on"] {
+        let mut env = empty_env();
+        env.override_var = Some(v.to_string());
+        let r = detect_asupersync_available(&env);
+        require(
+            r.available && r.detection_reason == "env_override_enabled",
+            format!(
+                "override={v}: got available={}, reason={}",
+                r.available, r.detection_reason
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn env_override_falsy_aliases_match() -> TestResult {
+    for v in ["false", "no", "off", ""] {
+        let mut env = empty_env();
+        env.override_var = Some(v.to_string());
+        let r = detect_asupersync_available(&env);
+        require(
+            !r.available && r.detection_reason == "env_override_disabled",
+            format!(
+                "override={v:?}: got available={}, reason={}",
+                r.available, r.detection_reason
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn asupersync_dir_present_branch_fires_when_dir_exists_and_no_override() -> TestResult {
+    // Use temp_dir as a stand-in for a real install dir.
+    let mut env = empty_env();
+    env.asupersync_dir = std::env::temp_dir();
+    let r = detect_asupersync_available(&env);
+    require(r.available, "available must be true when dir exists")?;
+    require(
+        r.detection_reason == "asupersync_dir_present",
+        format!("got {}", r.detection_reason),
+    )?;
+    require(
+        r.path == Some(std::env::temp_dir()),
+        "path must equal the dir",
+    )
+}
+
+#[test]
+fn binary_on_path_branch_fires_when_binary_exists_on_path() -> TestResult {
+    // Find a binary that exists on /usr/bin (e.g. /bin/ls or /usr/bin/ls).
+    // We don't actually need an asupersync binary — we synthesize one by
+    // pointing path_search_paths at a dir we control with a fake file.
+    let tmp = std::env::temp_dir().join(format!(
+        "frankenlibc-asupersync-test-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("mkdir {tmp:?}: {e}"))?;
+    let fake = tmp.join("asupersync");
+    std::fs::write(&fake, b"#!/bin/sh\necho fake\n").map_err(|e| format!("write {fake:?}: {e}"))?;
+    let mut env = empty_env();
+    env.path_search_paths = vec![tmp.clone()];
+    let r = detect_asupersync_available(&env);
+    require(r.available, "available must be true when binary exists")?;
+    require(
+        r.detection_reason == "binary_on_path",
+        format!("got {}", r.detection_reason),
+    )?;
+    require(r.path == Some(fake), "path must point at fake binary")?;
+    let _ = std::fs::remove_dir_all(&tmp);
+    Ok(())
+}
+
+#[test]
+fn detection_is_deterministic_for_a_given_env() -> TestResult {
+    let mut env = empty_env();
+    env.override_var = Some("1".to_string());
+    let r1 = detect_asupersync_available(&env);
+    let r2 = detect_asupersync_available(&env);
+    require(r1 == r2, format!("{r1:?} vs {r2:?}"))
+}
+
+#[test]
+fn detection_env_from_process_env_does_not_panic() -> TestResult {
+    let env = DetectionEnv::from_process_env();
+    let _r = detect_asupersync_available(&env);
+    Ok(())
 }

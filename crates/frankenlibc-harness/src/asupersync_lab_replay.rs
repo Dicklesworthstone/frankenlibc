@@ -114,6 +114,125 @@ pub fn validate_replay(r: &ReplayRecord) -> Result<(), ReplayValidationError> {
     Ok(())
 }
 
+/// Asupersync Lab availability probe (bd-qfbhc).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabAvailability {
+    pub available: bool,
+    pub version: Option<String>,
+    pub path: Option<std::path::PathBuf>,
+    /// Stable enum-string for the detection branch that fired.
+    pub detection_reason: String,
+}
+
+/// Inputs to [`detect_asupersync_available`]. Pure data, so tests
+/// can craft alternate environments without mutating process env.
+#[derive(Debug, Clone)]
+pub struct DetectionEnv {
+    /// Value of `FRANKENLIBC_ASUPERSYNC_AVAILABLE`, if present.
+    pub override_var: Option<String>,
+    /// Directory that, if it exists, indicates a local asupersync
+    /// install (typically `/dp/asupersync`).
+    pub asupersync_dir: std::path::PathBuf,
+    /// Colon-split `PATH` entries to scan for an `asupersync` binary.
+    pub path_search_paths: Vec<std::path::PathBuf>,
+}
+
+impl DetectionEnv {
+    /// Build a [`DetectionEnv`] from real process environment +
+    /// canonical `/dp/asupersync` directory.
+    pub fn from_process_env() -> Self {
+        let path_search_paths = std::env::var("PATH")
+            .ok()
+            .map(|p| {
+                p.split(':')
+                    .filter(|s| !s.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            override_var: std::env::var("FRANKENLIBC_ASUPERSYNC_AVAILABLE").ok(),
+            asupersync_dir: std::path::PathBuf::from("/dp/asupersync"),
+            path_search_paths,
+        }
+    }
+}
+
+/// Detect asupersync Lab availability with a deterministic probe
+/// order:
+///   1. `FRANKENLIBC_ASUPERSYNC_AVAILABLE` env override (highest
+///      priority — short-circuits filesystem state).
+///   2. `asupersync_dir` directory exists.
+///   3. `asupersync` binary on `path_search_paths`.
+///   4. Fall back to `available=false` with reason
+///      `"no_install_detected"`.
+///
+/// `detection_reason` enum-strings:
+///   * `"env_override_disabled"` — override said NO.
+///   * `"env_override_enabled"` — override said YES.
+///   * `"asupersync_dir_present"` — `/dp/asupersync` (or override) exists.
+///   * `"binary_on_path"` — `asupersync` binary found on PATH.
+///   * `"no_install_detected"` — none of the above.
+pub fn detect_asupersync_available(env: &DetectionEnv) -> LabAvailability {
+    if let Some(v) = &env.override_var {
+        match v.trim() {
+            "0" | "false" | "no" | "off" | "" => {
+                return LabAvailability {
+                    available: false,
+                    version: None,
+                    path: None,
+                    detection_reason: "env_override_disabled".to_string(),
+                };
+            }
+            "1" | "true" | "yes" | "on" => {
+                return LabAvailability {
+                    available: true,
+                    version: None,
+                    path: None,
+                    detection_reason: "env_override_enabled".to_string(),
+                };
+            }
+            _ => {}
+        }
+    }
+    if env.asupersync_dir.is_dir() {
+        return LabAvailability {
+            available: true,
+            version: None,
+            path: Some(env.asupersync_dir.clone()),
+            detection_reason: "asupersync_dir_present".to_string(),
+        };
+    }
+    for dir in &env.path_search_paths {
+        let candidate = dir.join("asupersync");
+        if candidate.is_file() {
+            return LabAvailability {
+                available: true,
+                version: None,
+                path: Some(candidate),
+                detection_reason: "binary_on_path".to_string(),
+            };
+        }
+    }
+    LabAvailability {
+        available: false,
+        version: None,
+        path: None,
+        detection_reason: "no_install_detected".to_string(),
+    }
+}
+
+/// Stable list of every possible `detection_reason` string. Used by
+/// the conformance gate to lock the contract — adding a new branch
+/// requires updating this constant atomically with the manifest.
+pub const DETECTION_REASONS: &[&str] = &[
+    "env_override_disabled",
+    "env_override_enabled",
+    "asupersync_dir_present",
+    "binary_on_path",
+    "no_install_detected",
+];
+
 /// Synthesize a replay outcome given:
 ///   * the validated record
 ///   * whether asupersync Lab tooling reports as available
