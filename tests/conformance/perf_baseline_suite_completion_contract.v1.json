@@ -1,0 +1,276 @@
+{
+  "schema_version": "perf_baseline_suite_completion_contract.v1",
+  "manifest_id": "bd-2wp.1-perf-baseline-suite-completion-contract",
+  "original_bead": "bd-2wp",
+  "completion_debt_bead": "bd-2wp.1",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-2wp/scorecard.md",
+  "source_artifacts": {
+    "perf_baseline_spec": "tests/conformance/perf_baseline_spec.json",
+    "perf_baseline": "scripts/perf_baseline.json",
+    "source_checker": "scripts/check_perf_baseline.sh",
+    "source_harness_test": "crates/frankenlibc-harness/tests/perf_baseline_test.rs",
+    "benchmark_gate": "scripts/check_benchmark_gate.sh",
+    "perf_gate": "scripts/perf_gate.sh",
+    "dashboard_report": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+    "dashboard_harness_test": "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
+    "completion_checker": "scripts/check_perf_baseline_suite_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/perf_baseline_suite_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "implementation_refs": [
+      {
+        "id": "baseline-spec-defines-critical-suites",
+        "path": "tests/conformance/perf_baseline_spec.json",
+        "required_text": [
+          "\"bead\": \"bd-2wp\"",
+          "\"benchmark_suites\"",
+          "\"runtime_math\"",
+          "\"membrane\"",
+          "\"errno\"",
+          "\"strict\"",
+          "\"hardened\""
+        ]
+      },
+      {
+        "id": "baseline-json-covers-suite-mode-benchmark-slots",
+        "path": "scripts/perf_baseline.json",
+        "required_text": [
+          "\"baseline_p50_ns_op\"",
+          "\"baseline_sources\"",
+          "\"machine_fingerprint\"",
+          "\"runtime_math\"",
+          "\"membrane\"",
+          "\"errno\""
+        ]
+      },
+      {
+        "id": "source-checker-validates-structure-and-coverage",
+        "path": "scripts/check_perf_baseline.sh",
+        "required_text": [
+          "Perf Baseline Suite Gate",
+          "Baseline file coverage",
+          "Percentile targets",
+          "Regeneration procedure",
+          "Profile artifact contract",
+          "check_perf_baseline: PASS"
+        ]
+      },
+      {
+        "id": "criterion-gate-runs-through-rch-and-emits-telemetry",
+        "path": "scripts/perf_gate.sh",
+        "required_text": [
+          "EVENT_LOG_PATH",
+          "REPORT_PATH",
+          "benchmark_result",
+          "auto_throttle",
+          "FRANKENLIBC_PERF_INJECT_RESULTS",
+          "perf_gate: PASS"
+        ]
+      },
+      {
+        "id": "benchmark-gate-wraps-criterion-through-rch",
+        "path": "scripts/check_benchmark_gate.sh",
+        "required_text": [
+          "validating perf baseline contract",
+          "running criterion regression gate via rch",
+          "rch exec -- env",
+          "FRANKENLIBC_PERF_EVENT_LOG",
+          "FRANKENLIBC_PERF_REPORT"
+        ]
+      },
+      {
+        "id": "source-harness-binds-unit-contract",
+        "path": "crates/frankenlibc-harness/tests/perf_baseline_test.rs",
+        "required_text": [
+          "spec_exists_and_valid",
+          "benchmark_suites_reference_valid_crates",
+          "baseline_covers_enforced_suites",
+          "percentile_targets_well_defined",
+          "regression_thresholds_match_budget_policy",
+          "summary_consistent"
+        ]
+      },
+      {
+        "id": "dashboard-keeps-baseline-suite-visible",
+        "path": "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
+        "required_text": [
+          "perf_baseline_spec_rows_are_explicit",
+          "perf-baseline-spec-total-suites",
+          "perf-baseline-spec-total-benchmarks",
+          "perf-baseline-spec-baseline-file"
+        ]
+      }
+    ],
+    "test_sources": {
+      "source_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/perf_baseline_test.rs",
+        "required_test_refs": [
+          "spec_exists_and_valid",
+          "benchmark_suites_reference_valid_crates",
+          "baseline_covers_enforced_suites",
+          "percentile_targets_well_defined",
+          "regeneration_procedure_complete",
+          "profile_artifact_contract_defined",
+          "regression_thresholds_match_budget_policy",
+          "summary_consistent",
+          "gate_script_exists_and_executable"
+        ]
+      },
+      "dashboard_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
+        "required_test_refs": [
+          "perf_baseline_spec_rows_are_explicit"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/perf_baseline_suite_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_e2e_and_telemetry_evidence",
+          "checker_validates_existing_baseline_gate",
+          "checker_emits_report_and_jsonl",
+          "checker_rejects_missing_required_suite",
+          "checker_rejects_missing_telemetry_event"
+        ]
+      }
+    }
+  },
+  "required_source_contract": {
+    "summary_exact": {
+      "total_suites": 5,
+      "total_benchmarks": 25,
+      "enforced_suites": 3,
+      "planned_suites": 2,
+      "modes": 2,
+      "captured_percentiles": 3,
+      "regeneration_steps": 6,
+      "prerequisite_checks": 4,
+      "profile_required_files": 6,
+      "baseline_p50_slots": 50,
+      "enforced_baseline_p50_slots": 30
+    },
+    "summary_min": {
+      "baseline_slot_fill_pct": 100.0,
+      "enforced_baseline_slot_fill_pct": 100.0
+    },
+    "required_suites": [
+      "runtime_math",
+      "membrane",
+      "string",
+      "malloc",
+      "errno"
+    ],
+    "required_enforced_suites": [
+      "runtime_math",
+      "membrane",
+      "errno"
+    ],
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_output_prefixes": [
+      "RUNTIME_MATH_BENCH",
+      "MEMBRANE_BENCH",
+      "STRING_BENCH",
+      "MALLOC_BENCH",
+      "ERRNO_BENCH"
+    ],
+    "required_cross_references": [
+      "perf_budget_policy",
+      "perf_baseline",
+      "perf_gate",
+      "check_perf_budget",
+      "bench_compare",
+      "profile_pipeline",
+      "waiver_bead"
+    ],
+    "required_gate_features": [
+      "baseline_validation",
+      "criterion_regression_gate",
+      "rch_wrapped_gate",
+      "load_guard",
+      "injection_support",
+      "structured_event_log",
+      "structured_report"
+    ],
+    "required_dashboard_rows": [
+      "perf-baseline-spec-total-suites",
+      "perf-baseline-spec-total-benchmarks",
+      "perf-baseline-spec-enforced-suites",
+      "perf-baseline-spec-primary-gate-metric",
+      "perf-baseline-spec-baseline-file",
+      "perf-baseline-spec-max-cv",
+      "perf-baseline-spec-regression-threshold",
+      "perf-baseline-spec-profile-required-files"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_test_refs": [
+        "spec_exists_and_valid",
+        "benchmark_suites_reference_valid_crates",
+        "baseline_covers_enforced_suites",
+        "percentile_targets_well_defined",
+        "summary_consistent",
+        "manifest_binds_unit_e2e_and_telemetry_evidence"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test perf_baseline_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test perf_baseline_suite_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "required_test_refs": [
+        "gate_script_exists_and_executable",
+        "checker_validates_existing_baseline_gate",
+        "checker_rejects_missing_required_suite"
+      ],
+      "required_commands": [
+        "bash scripts/check_perf_baseline.sh",
+        "bash scripts/check_perf_baseline_suite_completion_contract.sh"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "required_test_refs": [
+        "checker_emits_report_and_jsonl",
+        "checker_rejects_missing_telemetry_event"
+      ],
+      "required_commands": [
+        "jq -s empty target/conformance/perf_baseline_suite_completion_contract.log.jsonl"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "summary",
+      "gate_features",
+      "dashboard_row_count",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome"
+    ],
+    "required_events": [
+      "perf_baseline_suite_completion_summary",
+      "perf_baseline_suite_gate_bindings",
+      "perf_baseline_suite_completion_contract_pass"
+    ]
+  }
+}
