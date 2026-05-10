@@ -1,0 +1,290 @@
+{
+  "schema_version": "reverse_round_r7_r11_completion_contract.v1",
+  "original_bead": "bd-2a2.1",
+  "completion_debt_bead": "bd-2a2.1.1",
+  "title": "Reverse-Round R7-R11 completion binding",
+  "purpose": "Bind the existing reverse-round R7-R11 contract generator, checked-in artifact, gate, and harness tests to machine-checkable unit and e2e completion evidence.",
+  "source_artifacts": {
+    "reverse_round_generator": "scripts/generate_reverse_round_contracts.py",
+    "reverse_round_report": "tests/conformance/reverse_round_contracts.v1.json",
+    "reverse_round_gate": "scripts/check_reverse_round_contracts.sh",
+    "reverse_round_harness": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+    "reverse_round_plan": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+    "runtime_math_epic_gate": "scripts/check_runtime_math_epic_closure.sh",
+    "completion_checker": "scripts/check_reverse_round_r7_r11_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/reverse_round_r7_r11_completion_contract_test.rs"
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_test_refs": [
+        "contracts_schema_complete",
+        "contracts_all_modules_exist",
+        "contracts_all_invariants_specified",
+        "contracts_branch_diversity",
+        "contracts_legacy_surfaces_anchored",
+        "contracts_r7_r11_verification_hooks_capture_all_declared_paths",
+        "manifest_binds_unit_and_e2e_completion_evidence",
+        "checker_validates_reverse_round_r7_r11_completion_contract",
+        "checker_emits_completion_report_and_jsonl",
+        "checker_rejects_missing_round_binding",
+        "checker_rejects_missing_source_test_ref",
+        "checker_rejects_unimplemented_telemetry_event"
+      ],
+      "evidence": [
+        "checked-in reverse-round schema and summary assertions",
+        "per-round module and invariant coverage",
+        "completion checker fail-closed negative cases"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "required_test_refs": [
+        "contracts_report_generates_successfully",
+        "gate_script_emits_report_and_structured_log",
+        "contracts_reproducible",
+        "reverse_round_plan_doc_sections_include_execution_contracts",
+        "checker_validates_reverse_round_r7_r11_completion_contract"
+      ],
+      "evidence": [
+        "generator writes reverse-round artifact",
+        "gate emits structured JSONL and gate report",
+        "plan sections retain execution contracts for R7-R11"
+      ]
+    }
+  ],
+  "completion_debt_evidence": {
+    "required_reverse_round_contract": {
+      "report_schema_version": "v1",
+      "bead": "bd-2a2.5",
+      "summary": {
+        "rounds_verified": 35,
+        "total_math_families": 140,
+        "modules_found": 140,
+        "modules_missing": 0,
+        "module_coverage_pct": 100.0,
+        "invariants_specified": 140,
+        "invariants_total": 140,
+        "math_class_count": 10,
+        "all_rounds_diverse": true,
+        "cross_round_checks_total": 6,
+        "cross_round_checks_passing": 6,
+        "milestones_verified": 4,
+        "milestones_diverse": 4,
+        "all_milestones_diverse": true,
+        "max_milestone_class_share_pct": 33.3
+      },
+      "required_rounds": {
+        "R7": {
+          "name": "Loader / Symbol / IFUNC",
+          "legacy_surfaces": [
+            "elf",
+            "dl-*",
+            "IFUNC",
+            "hwcaps",
+            "tunables"
+          ],
+          "math_families": [
+            "ktheory",
+            "regret_bounds",
+            "sheaf_cohomology",
+            "tropical"
+          ],
+          "verification_paths": [
+            "scripts/check_reverse_round_contracts.sh",
+            "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+            "scripts/check_runtime_math_epic_closure.sh"
+          ]
+        },
+        "R8": {
+          "name": "Allocator / nptl",
+          "legacy_surfaces": [
+            "malloc",
+            "nptl",
+            "futex",
+            "pthread"
+          ],
+          "math_families": [
+            "coupling",
+            "mean_field_game",
+            "rough_path",
+            "sos_barrier"
+          ],
+          "verification_paths": [
+            "scripts/check_reverse_round_contracts.sh",
+            "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+            "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs",
+            "crates/frankenlibc-harness/tests/pressure_sensing_test.rs",
+            "scripts/check_runtime_math_epic_closure.sh"
+          ]
+        },
+        "R9": {
+          "name": "Format / Locale",
+          "legacy_surfaces": [
+            "stdio-common",
+            "libio",
+            "locale",
+            "iconv",
+            "wcsmbs"
+          ],
+          "math_families": [
+            "conformal",
+            "eprocess",
+            "grobner",
+            "higher_topos"
+          ],
+          "verification_paths": [
+            "scripts/check_reverse_round_contracts.sh",
+            "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+            "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+            "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs"
+          ]
+        },
+        "R10": {
+          "name": "NSS / resolv",
+          "legacy_surfaces": [
+            "nss",
+            "resolv",
+            "nscd",
+            "sunrpc"
+          ],
+          "math_families": [
+            "changepoint",
+            "pomdp",
+            "serre_spectral",
+            "wasserstein"
+          ],
+          "verification_paths": [
+            "scripts/check_reverse_round_contracts.sh",
+            "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+            "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+            "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+            "scripts/check_runtime_math_epic_closure.sh"
+          ]
+        },
+        "R11": {
+          "name": "libm / fenv",
+          "legacy_surfaces": [
+            "math",
+            "soft-fp",
+            "ieee754",
+            "fenv"
+          ],
+          "math_families": [
+            "clifford",
+            "design",
+            "loss_minimizer",
+            "padic"
+          ],
+          "verification_paths": [
+            "scripts/check_reverse_round_contracts.sh",
+            "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+            "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+            "crates/frankenlibc-harness/tests/math_governance_test.rs",
+            "scripts/check_runtime_math_epic_closure.sh"
+          ]
+        }
+      },
+      "required_gate_log_fields": [
+        "trace_id",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "artifact_refs"
+      ],
+      "required_cross_round_integrations": [
+        "loader_allocator",
+        "loader_resolver",
+        "loader_time64_bridge"
+      ],
+      "required_milestones": [
+        "bootstrap_surface",
+        "loader_temporal_policy_surface"
+      ]
+    },
+    "implementation_refs": [
+      {
+        "id": "generator",
+        "path": "scripts/generate_reverse_round_contracts.py",
+        "required_text": [
+          "R7",
+          "R8",
+          "R9",
+          "R10",
+          "R11",
+          "legacy_surfaces",
+          "verification_strategy",
+          "branch_diversity"
+        ]
+      },
+      {
+        "id": "gate",
+        "path": "scripts/check_reverse_round_contracts.sh",
+        "required_text": [
+          "reverse_round.contracts.check",
+          "reverse_round.contracts.summary",
+          "trace_id",
+          "mode",
+          "api_family",
+          "symbol",
+          "decision_path",
+          "healing_action",
+          "latency_ns",
+          "artifact_refs"
+        ]
+      },
+      {
+        "id": "source_harness",
+        "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+        "required_text": [
+          "contracts_r7_r11_verification_hooks_capture_all_declared_paths",
+          "gate_script_emits_report_and_structured_log",
+          "reverse_round_plan_doc_sections_include_execution_contracts",
+          "contracts_reproducible"
+        ]
+      }
+    ],
+    "test_sources": {
+      "reverse_round_harness": {
+        "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+        "required_test_refs": [
+          "contracts_schema_complete",
+          "contracts_all_modules_exist",
+          "contracts_all_invariants_specified",
+          "contracts_branch_diversity",
+          "contracts_legacy_surfaces_anchored",
+          "contracts_r7_r11_verification_hooks_capture_all_declared_paths",
+          "contracts_report_generates_successfully",
+          "gate_script_emits_report_and_structured_log",
+          "contracts_reproducible",
+          "reverse_round_plan_doc_sections_include_execution_contracts"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/reverse_round_r7_r11_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_and_e2e_completion_evidence",
+          "checker_validates_reverse_round_r7_r11_completion_contract",
+          "checker_emits_completion_report_and_jsonl",
+          "checker_rejects_missing_round_binding",
+          "checker_rejects_missing_source_test_ref",
+          "checker_rejects_unimplemented_telemetry_event"
+        ]
+      }
+    },
+    "telemetry_events": [
+      "reverse_round_r7_r11_completion_summary",
+      "reverse_round_r7_r11_round_bindings",
+      "reverse_round_r7_r11_source_bindings",
+      "reverse_round_r7_r11_test_bindings",
+      "reverse_round_r7_r11_completion_contract_pass",
+      "reverse_round_r7_r11_completion_contract_fail"
+    ]
+  }
+}
