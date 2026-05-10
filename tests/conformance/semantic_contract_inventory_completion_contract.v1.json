@@ -1,0 +1,215 @@
+{
+  "schema_version": "semantic_contract_inventory_completion_contract.v1",
+  "original_bead": "bd-bp8fl.1.1",
+  "completion_debt_bead": "bd-bp8fl.1.1.1",
+  "trace_id": "bd-bp8fl-1-1-1-semantic-contract-inventory-completion-v1",
+  "purpose": "Bind the semantic-contract inventory gate to explicit unit, e2e, and telemetry completion evidence for the audit-debt closeout.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.1.1/scorecard.md",
+    "score_before": 550,
+    "score_threshold": 800
+  },
+  "source_artifacts": {
+    "source_manifest": "tests/conformance/semantic_contract_inventory.v1.json",
+    "source_checker": "scripts/check_semantic_contract_inventory.sh",
+    "source_test": "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs",
+    "seed_overlay": "tests/conformance/support_semantic_overlay.v1.json",
+    "support_matrix": "support_matrix.json",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map"
+  },
+  "implementation_refs": [
+    "tests/conformance/semantic_contract_inventory.v1.json:1",
+    "tests/conformance/semantic_contract_inventory.v1.json:7",
+    "tests/conformance/semantic_contract_inventory.v1.json:12",
+    "tests/conformance/semantic_contract_inventory.v1.json:19",
+    "tests/conformance/semantic_contract_inventory.v1.json:24",
+    "tests/conformance/semantic_contract_inventory.v1.json:472",
+    "scripts/check_semantic_contract_inventory.sh:1",
+    "scripts/check_semantic_contract_inventory.sh:53",
+    "scripts/check_semantic_contract_inventory.sh:98",
+    "scripts/check_semantic_contract_inventory.sh:115",
+    "scripts/check_semantic_contract_inventory.sh:129",
+    "scripts/check_semantic_contract_inventory.sh:155",
+    "scripts/check_semantic_contract_inventory.sh:175",
+    "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs:72",
+    "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs:122",
+    "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs:147",
+    "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs:208",
+    "scripts/check_semantic_contract_inventory_completion_contract.sh:1",
+    "crates/frankenlibc-harness/tests/semantic_contract_inventory_completion_contract_test.rs:1"
+  ],
+  "source_contract": {
+    "manifest": {
+      "path": "tests/conformance/semantic_contract_inventory.v1.json",
+      "schema_version": "v1",
+      "bead": "bd-bp8fl.1.1",
+      "min_entry_count": 18,
+      "min_seed_overlay_covered": 10,
+      "required_semantic_classes": [
+        "compat_noop",
+        "deterministic_fallback",
+        "limited_bootstrap",
+        "unsupported_platform_contract",
+        "abort_only"
+      ],
+      "required_entry_fields": [
+        "id",
+        "surface",
+        "symbols",
+        "module",
+        "source_path",
+        "source_line",
+        "line_marker",
+        "support_matrix_status",
+        "semantic_class",
+        "contract_kind",
+        "current_behavior",
+        "user_risk",
+        "required_followup",
+        "evidence_artifacts"
+      ],
+      "required_claim_policy": [
+        "support_matrix_stub_zero_is_not_full_parity",
+        "full_replacement_claim_requires_exhaustive_inventory",
+        "readme_feature_parity_release_notes_may_advance_without_machine_evidence"
+      ],
+      "required_blocked_claim_fragment": "Stub=0 in support_matrix.json is compatible with this inventory only as a symbol-presence taxonomy"
+    },
+    "checker": {
+      "path": "scripts/check_semantic_contract_inventory.sh",
+      "required_checks": [
+        "json_parse",
+        "top_level_shape",
+        "entries_present",
+        "entry_schema",
+        "unique_ids",
+        "seed_overlay_coverage",
+        "summary_counts",
+        "source_summary_counts",
+        "source_markers"
+      ],
+      "required_needles": [
+        "semantic_contract_inventory.report.json",
+        "semantic_contract_inventory.log.jsonl",
+        "checks[\"seed_overlay_coverage\"]",
+        "checks[\"source_markers\"]",
+        "summary.get(\"entry_count\")",
+        "\"trace_id\": \"bd-bp8fl.1.1-semantic-contract-inventory\"",
+        "\"artifact_refs\"",
+        "\"decision_path\""
+      ],
+      "required_report_fields": [
+        "schema_version",
+        "bead",
+        "status",
+        "checks",
+        "entry_count",
+        "seed_overlay_entries",
+        "seed_overlay_covered",
+        "semantic_class_counts",
+        "source_path_counts",
+        "errors",
+        "artifact_refs",
+        "source_commit"
+      ],
+      "source_report_path": "target/conformance/semantic_contract_inventory.report.json",
+      "source_log_path": "target/conformance/semantic_contract_inventory.log.jsonl"
+    },
+    "source_tests": {
+      "path": "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs",
+      "required_test_refs": [
+        "artifact_exists_and_has_required_shape",
+        "seed_overlay_entries_are_all_covered",
+        "summary_counts_match_entries_and_sources_are_linked",
+        "gate_script_passes_and_emits_structured_report_and_log"
+      ]
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "type": "unit",
+      "evidence_refs": [
+        "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs::artifact_exists_and_has_required_shape",
+        "crates/frankenlibc-harness/tests/semantic_contract_inventory_completion_contract_test.rs::manifest_binds_source_inventory_and_missing_items"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "type": "e2e",
+      "evidence_refs": [
+        "scripts/check_semantic_contract_inventory.sh",
+        "scripts/check_semantic_contract_inventory_completion_contract.sh",
+        "crates/frankenlibc-harness/tests/semantic_contract_inventory_completion_contract_test.rs::checker_runs_source_gate_and_emits_completion_evidence"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "type": "telemetry",
+      "evidence_refs": [
+        "target/conformance/semantic_contract_inventory.log.jsonl",
+        "target/conformance/semantic_contract_inventory_completion_contract.log.jsonl",
+        "crates/frankenlibc-harness/tests/semantic_contract_inventory_completion_contract_test.rs::checker_runs_source_gate_and_emits_completion_evidence"
+      ]
+    }
+  ],
+  "completion_debt_evidence": {
+    "required_test_refs": [
+      "manifest_binds_source_inventory_and_missing_items",
+      "source_checker_and_tests_are_anchored",
+      "checker_runs_source_gate_and_emits_completion_evidence",
+      "checker_rejects_missing_seed_overlay_coverage",
+      "checker_rejects_missing_telemetry_trace_id"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "original_bead",
+      "completion_debt_bead",
+      "trace_id",
+      "status",
+      "source_commit",
+      "source_inventory",
+      "source_checker",
+      "source_tests",
+      "missing_item_bindings",
+      "summary",
+      "artifact_refs",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "stream",
+      "gate",
+      "scenario_id",
+      "runtime_mode",
+      "replacement_level",
+      "api_family",
+      "symbol",
+      "oracle_kind",
+      "expected",
+      "actual",
+      "source_commit",
+      "target_dir",
+      "failure_signature",
+      "artifact_refs"
+    ],
+    "required_events": [
+      "semantic_contract_inventory_source_gate",
+      "semantic_contract_inventory_source_checker_gate",
+      "semantic_contract_inventory_source_tests_gate",
+      "semantic_contract_inventory_completion_contract_validated",
+      "semantic_contract_inventory_completion_contract_failed"
+    ]
+  },
+  "claim_policy": {
+    "completion_must_fail_closed_if_seed_overlay_coverage_regresses": true,
+    "completion_must_fail_closed_if_source_report_or_log_paths_drift": true,
+    "completion_must_fail_closed_if_completion_structured_log_fields_are_removed": true,
+    "completion_must_fail_closed_if_required_source_tests_are_removed": true
+  }
+}
