@@ -1,0 +1,109 @@
+{
+  "schema_version": "fixture_verification_regression_completion_contract.v1",
+  "bead": "bd-2hh.5.1",
+  "original_bead": "bd-2hh.5",
+  "title": "Conformance fixture verification and regression completion contract",
+  "audit_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-2hh.5/scorecard.md",
+  "source_artifacts": {
+    "generator": {
+      "path": "scripts/generate_conformance_fixture_unit_tests.py",
+      "required_markers": [
+        "def validate_fixture",
+        "def build_regression_baseline",
+        "def make_log_row",
+        "baseline_fixture_digest"
+      ],
+      "deterministic_timestamp": "2026-05-10T00:00:00Z"
+    },
+    "source_gate": {
+      "path": "scripts/check_conformance_fixture_unit_tests.sh",
+      "required_markers": [
+        "total_cases < 100",
+        "baseline_symbols < 50",
+        "fixtures missing content hash",
+        "check_conformance_fixture_unit_tests: PASS"
+      ]
+    },
+    "source_report": {
+      "path": "tests/conformance/fixture_unit_tests.v1.json",
+      "minimum_fixture_files": 50,
+      "minimum_cases": 100,
+      "minimum_symbols": 50,
+      "expected_invalid_fixture_files": 0,
+      "expected_issue_count": 0,
+      "expected_regression_status": "clean"
+    },
+    "source_unit_tests": {
+      "path": "crates/frankenlibc-harness/tests/conformance_fixture_unit_tests_test.rs",
+      "required_functions": [
+        "fixture_unit_report_schema_complete",
+        "fixture_unit_invalid_fixture_is_reported_deterministically",
+        "fixture_unit_determinism_verified",
+        "fixture_unit_regression_baseline_populated",
+        "fixture_unit_all_have_hashes",
+        "fixture_unit_log_emission_contains_required_fields"
+      ]
+    },
+    "fixture_root": {
+      "path": "tests/conformance/fixtures",
+      "minimum_fixture_files": 50
+    }
+  },
+  "completion_obligations": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "description": "Fixture report schema, deterministic parsing, per-symbol baseline, and fixture hash assertions are bound to source unit tests.",
+      "source_refs": [
+        "crates/frankenlibc-harness/tests/conformance_fixture_unit_tests_test.rs::fixture_unit_report_schema_complete",
+        "crates/frankenlibc-harness/tests/conformance_fixture_unit_tests_test.rs::fixture_unit_regression_baseline_populated",
+        "crates/frankenlibc-harness/tests/conformance_fixture_unit_tests_test.rs::fixture_unit_all_have_hashes"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "description": "The fixture unit gate and generator replay are bound to deterministic pass/fail thresholds and structured logs.",
+      "source_refs": [
+        "scripts/check_conformance_fixture_unit_tests.sh",
+        "scripts/generate_conformance_fixture_unit_tests.py --log"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "description": "The checked-in fixture report covers fixture file validity, regression baselines, content hashes, and deterministic fixture loading.",
+      "source_refs": [
+        "tests/conformance/fixture_unit_tests.v1.json",
+        "tests/conformance/fixtures"
+      ]
+    }
+  ],
+  "generated_log_contract": {
+    "minimum_rows": 51,
+    "required_fields": [
+      "timestamp",
+      "trace_id",
+      "bead_id",
+      "scenario_id",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs",
+      "event",
+      "outcome"
+    ],
+    "summary_event": "fixture_validation_summary",
+    "per_fixture_event": "fixture_validation_result"
+  },
+  "failure_signatures": [
+    "missing source unit binding",
+    "fixture regression baseline below completion minimum",
+    "generated fixture report drifted from checked-in source report",
+    "generated log missing required field"
+  ]
+}

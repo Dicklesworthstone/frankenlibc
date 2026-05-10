@@ -3,21 +3,21 @@
   "bead": "bd-2hh.5",
   "generated_at": "2026-03-19T17:47:00Z",
   "summary": {
-    "total_fixture_files": 56,
-    "valid_fixture_files": 56,
+    "total_fixture_files": 58,
+    "valid_fixture_files": 58,
     "invalid_fixture_files": 0,
-    "total_cases": 1249,
+    "total_cases": 1294,
     "total_issues": 0,
     "total_warnings": 0,
-    "unique_families": 55,
-    "unique_symbols": 384,
+    "unique_families": 57,
+    "unique_symbols": 421,
     "determinism_verified": true
   },
   "regression_detection": {
     "status": "clean",
     "invalid_fixture_files": [],
     "invalid_fixture_issue_counts": {},
-    "baseline_fixture_digest": "4b3fa27c679d9ddb589f6c6289bec606d8adc4516a6866fe53935b33c92f0aaf"
+    "baseline_fixture_digest": "6eb52e566e70fd32188328da6fd90beaff6850c37b240cbdbfdfe76a806f4eee"
   },
   "fixture_results": [
     {
@@ -36,6 +36,16 @@
       "family": "backtrace_ops",
       "case_count": 5,
       "fixture_hash": "aa44dadcef4e24b3",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "c11threads_ops.json",
+      "version": "v1",
+      "family": "c11threads/ops",
+      "case_count": 23,
+      "fixture_hash": "18fc2a96e492a3b4",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -64,8 +74,8 @@
       "file": "dlfcn_ops.json",
       "version": "v1",
       "family": "dlfcn_ops",
-      "case_count": 7,
-      "fixture_hash": "b7dc2f68346047d6",
+      "case_count": 9,
+      "fixture_hash": "44117e90e2556574",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -186,6 +196,16 @@
       "family": "memory_ops",
       "case_count": 11,
       "fixture_hash": "c870298b53f8fd75",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "mntent_ops.json",
+      "version": "v1",
+      "family": "mntent",
+      "case_count": 6,
+      "fixture_hash": "ddcd44eb374be4af",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -374,8 +394,8 @@
       "file": "signal_ops.json",
       "version": "v1",
       "family": "signal_ops",
-      "case_count": 48,
-      "fixture_hash": "dfc5c0d603d1ecf5",
+      "case_count": 49,
+      "fixture_hash": "aa94cd6b8d7b7848",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -474,8 +494,8 @@
       "file": "string_ops.json",
       "version": "v1",
       "family": "string/narrow",
-      "case_count": 19,
-      "fixture_hash": "a47cd033f828bb22",
+      "case_count": 32,
+      "fixture_hash": "6b0ab3cf096e69a1",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -582,8 +602,8 @@
     }
   ],
   "regression_baseline": {
-    "symbol_count": 384,
-    "total_cases": 1249,
+    "symbol_count": 421,
+    "total_cases": 1294,
     "symbols": {
       "DnsHeader::new_query": {
         "count": 1,
@@ -825,6 +845,18 @@
           "startup_ops.json"
         ]
       },
+      "__memcmpeq": {
+        "count": 1,
+        "fixtures": [
+          "string_ops.json"
+        ]
+      },
+      "__mempcpy": {
+        "count": 2,
+        "fixtures": [
+          "string_ops.json"
+        ]
+      },
       "__pthread_mutex_trylock": {
         "count": 1,
         "fixtures": [
@@ -835,6 +867,66 @@
         "count": 1,
         "fixtures": [
           "pthread_mutex.json"
+        ]
+      },
+      "__rawmemchr": {
+        "count": 1,
+        "fixtures": [
+          "string_ops.json"
+        ]
+      },
+      "__stpcpy": {
+        "count": 1,
+        "fixtures": [
+          "string_ops.json"
+        ]
+      },
+      "__stpcpy_small": {
+        "count": 1,
+        "fixtures": [
+          "string_ops.json"
+        ]
+      },
+      "__stpncpy": {
+        "count": 1,
+        "fixtures": [
+          "string_ops.json"
+        ]
+      },
+      "__strcasecmp": {
+        "count": 1,
+        "fixtures": [
+          "string_ops.json"
+        ]
+      },
+      "__strcasecmp_l": {
+        "count": 1,
+        "fixtures": [
+          "string_ops.json"
+        ]
+      },
+      "__strcasestr": {
+        "count": 1,
+        "fixtures": [
+          "string_ops.json"
+        ]
+      },
+      "__strcoll_l": {
+        "count": 1,
+        "fixtures": [
+          "string_ops.json"
+        ]
+      },
+      "__strcpy_small": {
+        "count": 1,
+        "fixtures": [
+          "string_ops.json"
+        ]
+      },
+      "__strcspn_c1": {
+        "count": 1,
+        "fixtures": [
+          "string_ops.json"
         ]
       },
       "_setjmp": {
@@ -922,6 +1014,12 @@
           "stdlib_sort.json"
         ]
       },
+      "call_once": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
       "calloc": {
         "count": 1,
         "fixtures": [
@@ -982,6 +1080,36 @@
           "dirent_ops.json"
         ]
       },
+      "cnd_broadcast": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "cnd_destroy": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "cnd_init": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "cnd_signal": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "cnd_timedwait": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
       "compute_relocation": {
         "count": 5,
         "fixtures": [
@@ -1007,8 +1135,9 @@
         ]
       },
       "dlclose": {
-        "count": 2,
+        "count": 4,
         "fixtures": [
+          "dlfcn_ops.json",
           "loader_edges.json"
         ]
       },
@@ -1309,6 +1438,12 @@
           "session_ops.json"
         ]
       },
+      "getmntent_r": {
+        "count": 3,
+        "fixtures": [
+          "mntent_ops.json"
+        ]
+      },
       "getpid": {
         "count": 3,
         "fixtures": [
@@ -1381,6 +1516,12 @@
         "count": 8,
         "fixtures": [
           "signal_ops.json"
+        ]
+      },
+      "hasmntopt": {
+        "count": 3,
+        "fixtures": [
+          "mntent_ops.json"
         ]
       },
       "hsearch": {
@@ -1510,7 +1651,7 @@
         ]
       },
       "kill": {
-        "count": 3,
+        "count": 4,
         "fixtures": [
           "signal_ops.json"
         ]
@@ -1655,6 +1796,42 @@
         "count": 1,
         "fixtures": [
           "sysv_ipc_ops.json"
+        ]
+      },
+      "mtx_destroy": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "mtx_init": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "mtx_lock": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "mtx_timedlock": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "mtx_trylock": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "mtx_unlock": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
         ]
       },
       "munmap": {
@@ -2723,6 +2900,48 @@
           "math_ops.json"
         ]
       },
+      "thrd_create": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "thrd_current": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "thrd_detach": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "thrd_equal": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "thrd_join": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "thrd_sleep": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "thrd_yield": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
       "time": {
         "count": 2,
         "fixtures": [
@@ -2745,6 +2964,30 @@
         "count": 1,
         "fixtures": [
           "search_ops.json"
+        ]
+      },
+      "tss_create": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "tss_delete": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "tss_get": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
+      "tss_set": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
         ]
       },
       "twalk": {
@@ -2934,9 +3177,10 @@
   "fixture_hashes": {
     "allocator.json": "0ca36dd7fc898456",
     "backtrace_ops.json": "aa44dadcef4e24b3",
+    "c11threads_ops.json": "18fc2a96e492a3b4",
     "ctype_ops.json": "ce64b3a410dc1f75",
     "dirent_ops.json": "f1a75d458bf894e6",
-    "dlfcn_ops.json": "b7dc2f68346047d6",
+    "dlfcn_ops.json": "44117e90e2556574",
     "elf_loader.json": "a564323dcac2924a",
     "errno_ops.json": "1dd9b2d822578222",
     "grp_ops.json": "ddb9255ac967ca8b",
@@ -2949,6 +3193,7 @@
     "membrane_mode_split.json": "bd8641139f333985",
     "memcpy_strict.json": "019955b8e8a3eb83",
     "memory_ops.json": "c870298b53f8fd75",
+    "mntent_ops.json": "ddcd44eb374be4af",
     "poll_ops.json": "a8f77cb3431d3108",
     "pressure_sensing.json": "591a298eb979e2e1",
     "printf_conformance.json": "6e76e237fd05d15c",
@@ -2967,7 +3212,7 @@
     "session_ops.json": "5af770c141efd100",
     "setjmp_nested_edges.json": "d4f724d9db09826b",
     "setjmp_ops.json": "5f4c3e9a87d89872",
-    "signal_ops.json": "dfc5c0d603d1ecf5",
+    "signal_ops.json": "aa94cd6b8d7b7848",
     "socket_ops.json": "e4d160e2c6d32a95",
     "spawn_exec_ops.json": "9f1653399ce4ec14",
     "startup_ops.json": "c9eda25f37ddc3a8",
@@ -2977,7 +3222,7 @@
     "stdlib_numeric.json": "2525cd9c74b24312",
     "stdlib_sort.json": "008e876fb94f9b92",
     "string_memory_full.json": "7a37d26dbfc77fef",
-    "string_ops.json": "a47cd033f828bb22",
+    "string_ops.json": "6b0ab3cf096e69a1",
     "string_strtok.json": "b7ce10d14d2f264f",
     "strlen_strict.json": "f00af792a6de77ad",
     "sysv_ipc_ops.json": "73fcb6006a564a29",
