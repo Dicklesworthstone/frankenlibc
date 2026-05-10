@@ -10388,6 +10388,27 @@ fn execute_dlclose_case(
     let handle_kind = parse_string(inputs, "handle")?;
 
     let (impl_output, host_output) = match handle_kind.as_str() {
+        "self_handle" => {
+            clear_impl_dlerror();
+            let impl_handle = run_impl_dlopen(None, libc::RTLD_NOW)?;
+            let impl_rc = if impl_handle.is_null() {
+                -1
+            } else {
+                // SAFETY: run_impl_dlopen returned a non-null handle from this process.
+                unsafe { frankenlibc_abi::dlfcn_abi::dlclose(impl_handle) }
+            };
+
+            clear_host_dlerror();
+            let host_handle = run_host_dlopen(None, libc::RTLD_NOW)?;
+            let host_rc = if host_handle.is_null() {
+                -1
+            } else {
+                // SAFETY: run_host_dlopen returned a non-null host handle from this process.
+                unsafe { libc::dlclose(host_handle) }
+            };
+
+            (impl_rc.to_string(), host_rc.to_string())
+        }
         "already_closed_handle" => {
             clear_impl_dlerror();
             let impl_handle = run_impl_dlopen(None, libc::RTLD_NOW)?;

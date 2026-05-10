@@ -192,6 +192,30 @@ fn dlfcn_ops_covers_dlsym() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Coverage validation: dlclose
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn dlfcn_ops_covers_dlclose() {
+    let fixture = load_fixture("dlfcn_ops");
+
+    assert!(
+        fixture
+            .cases
+            .iter()
+            .any(|case| case.function == "dlclose" && case.mode == "strict"),
+        "dlfcn_ops must include strict fixture coverage for dlclose"
+    );
+    assert!(
+        fixture
+            .cases
+            .iter()
+            .any(|case| case.function == "dlclose" && case.mode == "hardened"),
+        "dlfcn_ops must include hardened fixture coverage for dlclose"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Coverage validation: dlerror
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -268,7 +292,7 @@ fn dlfcn_ops_covers_both_modes() {
 fn dlfcn_ops_case_count_stable() {
     let fixture = load_fixture("dlfcn_ops");
 
-    const EXPECTED_MIN_CASES: usize = 5;
+    const EXPECTED_MIN_CASES: usize = 9;
 
     assert!(
         fixture.cases.len() >= EXPECTED_MIN_CASES,

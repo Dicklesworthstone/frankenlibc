@@ -2,7 +2,7 @@
   "version": "v1",
   "family": "dlfcn_ops",
   "captured_at": "2026-02-13T00:00:00Z",
-  "description": "Mode-specific parity fixtures for dynamic linking operations (dlopen, dlsym, dlclose, dlerror). All GlibcCallThrough. Strict: host-glibc parity. Hardened: null handle safety.",
+  "description": "Mode-specific parity fixtures for dynamic linking operations (dlopen, dlsym, dlclose, dlerror). Strict: host-glibc parity. Hardened: safety and pointer-shape parity.",
   "spec_reference": "POSIX dlopen, dlsym, dlclose, dlerror",
   "cases": [
     {
@@ -45,6 +45,16 @@
       "mode": "strict"
     },
     {
+      "name": "dlclose_self_handle_strict",
+      "function": "dlclose",
+      "spec_section": "POSIX dlclose",
+      "inputs": { "handle": "self_handle" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Closing a handle opened for the main program succeeds"
+    },
+    {
       "name": "dlerror_after_success_strict",
       "function": "dlerror",
       "spec_section": "POSIX dlerror",
@@ -71,6 +81,16 @@
       "expected_output": "FUNC_PTR",
       "expected_errno": 0,
       "mode": "hardened"
+    },
+    {
+      "name": "dlclose_self_handle_hardened",
+      "function": "dlclose",
+      "spec_section": "POSIX dlclose",
+      "inputs": { "handle": "self_handle" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "Hardened mode preserves normal dlclose success for a valid self handle"
     }
   ]
 }
