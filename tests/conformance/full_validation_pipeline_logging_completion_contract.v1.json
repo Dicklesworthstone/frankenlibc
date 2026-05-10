@@ -1,0 +1,335 @@
+{
+  "schema_version": "full_validation_pipeline_logging_completion_contract.v1",
+  "original_bead": "bd-2icq.14",
+  "completion_debt_bead": "bd-2icq.14.1",
+  "trace_id": "bd-2icq-14-1-full-validation-pipeline-logging-completion-v1",
+  "purpose": "Bind the Gentoo E2E full validation pipeline closeout to machine-checkable unit, e2e, and telemetry evidence without requiring Docker during the completion-debt gate.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-2icq.14/scorecard.md",
+    "score_before": 535,
+    "score_threshold": 800
+  },
+  "source_artifacts": {
+    "common_logging_library": "tests/gentoo/e2e/lib/common.sh",
+    "run_all_e2e": "tests/gentoo/e2e/run_all_e2e.sh",
+    "single_package": "tests/gentoo/e2e/test_single_package.sh",
+    "build_wave": "tests/gentoo/e2e/test_build_wave.sh",
+    "test_suite": "tests/gentoo/e2e/test_test_suite.sh",
+    "full_pipeline": "tests/gentoo/e2e/test_full_pipeline.sh",
+    "failure_recovery": "tests/gentoo/e2e/test_failure_recovery.sh",
+    "progress_reporting": "tests/gentoo/e2e/test_progress_reporting.sh",
+    "e2e_readme": "tests/gentoo/e2e/README.md"
+  },
+  "implementation_refs": [
+    "tests/gentoo/e2e/lib/common.sh:41",
+    "tests/gentoo/e2e/lib/common.sh:48",
+    "tests/gentoo/e2e/lib/common.sh:67",
+    "tests/gentoo/e2e/lib/common.sh:73",
+    "tests/gentoo/e2e/lib/common.sh:99",
+    "tests/gentoo/e2e/lib/common.sh:118",
+    "tests/gentoo/e2e/lib/common.sh:138",
+    "tests/gentoo/e2e/lib/common.sh:240",
+    "tests/gentoo/e2e/lib/common.sh:273",
+    "tests/gentoo/e2e/run_all_e2e.sh:30",
+    "tests/gentoo/e2e/run_all_e2e.sh:56",
+    "tests/gentoo/e2e/run_all_e2e.sh:205",
+    "tests/gentoo/e2e/test_single_package.sh:20",
+    "tests/gentoo/e2e/test_build_wave.sh:20",
+    "tests/gentoo/e2e/test_test_suite.sh:20",
+    "tests/gentoo/e2e/test_full_pipeline.sh:20",
+    "tests/gentoo/e2e/test_failure_recovery.sh:20",
+    "tests/gentoo/e2e/test_progress_reporting.sh:20",
+    "scripts/check_full_validation_pipeline_logging_completion_contract.sh:1",
+    "crates/frankenlibc-harness/tests/full_validation_pipeline_logging_completion_contract_test.rs:1"
+  ],
+  "run_all_contract": {
+    "script": "tests/gentoo/e2e/run_all_e2e.sh",
+    "required_all_tests": [
+      "single_package:test_single_package.sh:5",
+      "build_wave:test_build_wave.sh:10",
+      "test_suite:test_test_suite.sh:15",
+      "full_pipeline:test_full_pipeline.sh:30",
+      "failure_recovery:test_failure_recovery.sh:10",
+      "progress_reporting:test_progress_reporting.sh:5"
+    ],
+    "required_fast_tests": [
+      "single_package:test_single_package.sh:5",
+      "failure_recovery:test_failure_recovery.sh:10",
+      "progress_reporting:test_progress_reporting.sh:5"
+    ],
+    "required_summary_fields": [
+      "timestamp",
+      "mode",
+      "total_tests",
+      "passed",
+      "failed",
+      "skipped",
+      "duration_seconds"
+    ],
+    "summary_path": "/tmp/frankenlibc-e2e/e2e_summary.json"
+  },
+  "common_logging_contract": {
+    "script": "tests/gentoo/e2e/lib/common.sh",
+    "required_functions": [
+      "log_timestamp",
+      "log",
+      "log_info",
+      "log_warn",
+      "log_error",
+      "log_success",
+      "log_step",
+      "e2e_init",
+      "e2e_finish",
+      "run_cmd",
+      "check_docker",
+      "ensure_image",
+      "ensure_frankenlibc",
+      "run_emerge",
+      "validate_jsonl",
+      "count_healing_actions",
+      "skip_test",
+      "assert_file_exists"
+    ],
+    "required_needles": [
+      "date -u +\"%Y-%m-%dT%H:%M:%SZ\"",
+      "tee -a \"${E2E_LOG_FILE:-/dev/null}\"",
+      "[Step ${E2E_STEP_CURRENT}/${E2E_STEP_TOTAL}]",
+      "E2E_RESULT_DIR=\"${E2E_ARTIFACTS}/${test_name}-${timestamp}\"",
+      "E2E_LOG_FILE=\"${E2E_RESULT_DIR}/test.log\"",
+      "\"duration_seconds\": ${duration}",
+      "\"log_file\": \"${E2E_LOG_FILE}\"",
+      "\"mode\": \"${FRANKENLIBC_MODE}\"",
+      "FRANKENLIBC_LOG_FILE=/results/frankenlibc.jsonl",
+      "jq empty"
+    ],
+    "required_summary_fields": [
+      "test_name",
+      "result",
+      "duration_seconds",
+      "timestamp",
+      "log_file",
+      "image",
+      "mode"
+    ]
+  },
+  "scenario_contracts": [
+    {
+      "id": "single_package",
+      "script": "tests/gentoo/e2e/test_single_package.sh",
+      "e2e_name": "single-package-build",
+      "step_count": 6,
+      "runtime_target_minutes": 5,
+      "required_needles": [
+        "TEST_PACKAGE",
+        "check_docker",
+        "ensure_image",
+        "ensure_frankenlibc",
+        "run_emerge",
+        "validate_jsonl",
+        "count_healing_actions",
+        "assert_file_exists"
+      ],
+      "artifact_paths": [
+        "package/build.log",
+        "package/frankenlibc.jsonl",
+        "summary.json"
+      ]
+    },
+    {
+      "id": "build_wave",
+      "script": "tests/gentoo/e2e/test_build_wave.sh",
+      "e2e_name": "build-wave",
+      "step_count": 5,
+      "runtime_target_minutes": 10,
+      "required_needles": [
+        "WAVE_PACKAGES",
+        "pids+=",
+        "results_dirs+=",
+        "run_emerge",
+        "wave_summary.json",
+        "conflict"
+      ],
+      "artifact_paths": [
+        "wave_summary.json",
+        "<package>/build.log",
+        "<package>/frankenlibc.jsonl",
+        "summary.json"
+      ]
+    },
+    {
+      "id": "test_suite",
+      "script": "tests/gentoo/e2e/test_test_suite.sh",
+      "e2e_name": "test-suite",
+      "step_count": 5,
+      "runtime_target_minutes": 15,
+      "required_needles": [
+        "run_tests",
+        "parse_test_results",
+        "baseline",
+        "instrumented",
+        "comparison.json",
+        "verdict",
+        "FRANKENLIBC_PORTAGE_ENABLE"
+      ],
+      "artifact_paths": [
+        "baseline/test.log",
+        "instrumented/test.log",
+        "instrumented/frankenlibc.jsonl",
+        "comparison.json",
+        "summary.json"
+      ]
+    },
+    {
+      "id": "full_pipeline",
+      "script": "tests/gentoo/e2e/test_full_pipeline.sh",
+      "e2e_name": "full-pipeline",
+      "step_count": 5,
+      "runtime_target_minutes": 30,
+      "required_needles": [
+        "PIPELINE_PACKAGES",
+        "build_results",
+        "test_results",
+        "healing_by_package",
+        "pipeline_report.json",
+        "run_emerge"
+      ],
+      "artifact_paths": [
+        "build/<package>/build.log",
+        "test/<package>/test.log",
+        "pipeline_report.json",
+        "summary.json"
+      ]
+    },
+    {
+      "id": "failure_recovery",
+      "script": "tests/gentoo/e2e/test_failure_recovery.sh",
+      "e2e_name": "failure-recovery",
+      "step_count": 5,
+      "runtime_target_minutes": 10,
+      "required_needles": [
+        "FAILING_PACKAGE",
+        "failure_info.json",
+        "state.json",
+        "deps.json",
+        "recovery_instructions.txt",
+        "package_not_found"
+      ],
+      "artifact_paths": [
+        "failed_build/build.log",
+        "failed_build/failure_info.json",
+        "state/state.json",
+        "state/deps.json",
+        "recovery_instructions.txt",
+        "summary.json"
+      ]
+    },
+    {
+      "id": "progress_reporting",
+      "script": "tests/gentoo/e2e/test_progress_reporting.sh",
+      "e2e_name": "progress-reporting",
+      "step_count": 5,
+      "runtime_target_minutes": 5,
+      "required_needles": [
+        "PROGRESS_TEST_PACKAGES",
+        "progress.jsonl",
+        "package_start",
+        "package_end",
+        "eta_seconds",
+        "webhook_payload.json",
+        "progress_report.txt"
+      ],
+      "artifact_paths": [
+        "progress/progress.jsonl",
+        "progress/webhook_payload.json",
+        "progress/progress_report.txt",
+        "summary.json"
+      ]
+    }
+  ],
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "type": "unit",
+      "evidence_refs": [
+        "crates/frankenlibc-harness/tests/full_validation_pipeline_logging_completion_contract_test.rs::manifest_binds_all_e2e_scenarios_and_missing_items",
+        "crates/frankenlibc-harness/tests/full_validation_pipeline_logging_completion_contract_test.rs::shared_logging_library_pins_timestamp_steps_and_summary_fields"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "type": "e2e",
+      "evidence_refs": [
+        "scripts/check_full_validation_pipeline_logging_completion_contract.sh",
+        "crates/frankenlibc-harness/tests/full_validation_pipeline_logging_completion_contract_test.rs::checker_validates_scripts_run_all_registry_and_emits_artifacts"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "type": "telemetry",
+      "evidence_refs": [
+        "tests/conformance/full_validation_pipeline_logging_completion_contract.v1.json",
+        "crates/frankenlibc-harness/tests/full_validation_pipeline_logging_completion_contract_test.rs::checker_validates_scripts_run_all_registry_and_emits_artifacts"
+      ]
+    }
+  ],
+  "completion_debt_evidence": {
+    "required_test_refs": [
+      "manifest_binds_all_e2e_scenarios_and_missing_items",
+      "shared_logging_library_pins_timestamp_steps_and_summary_fields",
+      "checker_validates_scripts_run_all_registry_and_emits_artifacts",
+      "checker_rejects_missing_required_scenario",
+      "checker_rejects_missing_telemetry_trace_id"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "original_bead",
+      "completion_debt_bead",
+      "trace_id",
+      "source_commit",
+      "status",
+      "scenario_contracts",
+      "run_all_contract",
+      "common_logging_contract",
+      "missing_item_bindings",
+      "summary",
+      "artifact_refs",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "stream",
+      "gate",
+      "scenario_id",
+      "runtime_mode",
+      "replacement_level",
+      "api_family",
+      "symbol",
+      "oracle_kind",
+      "expected",
+      "actual",
+      "source_commit",
+      "target_dir",
+      "failure_signature",
+      "artifact_refs"
+    ],
+    "required_events": [
+      "full_validation_pipeline_logging_source_gate",
+      "full_validation_pipeline_logging_run_all_gate",
+      "full_validation_pipeline_logging_common_gate",
+      "full_validation_pipeline_logging_completion_contract_validated",
+      "full_validation_pipeline_logging_completion_contract_failed"
+    ]
+  },
+  "claim_policy": {
+    "docker_execution_not_required_for_completion_contract": true,
+    "live_e2e_scripts_remain_independently_runnable": true,
+    "completion_must_fail_closed_if_any_required_scenario_is_missing": true,
+    "completion_must_fail_closed_if_timestamped_step_logging_contract_drifts": true,
+    "completion_must_fail_closed_if_report_or_jsonl_fields_are_removed": true
+  }
+}
