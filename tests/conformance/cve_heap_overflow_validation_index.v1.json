@@ -1,0 +1,75 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "cve-heap-overflow-validation-index",
+  "bead": "bd-1m5.1",
+  "completion_debt_bead": "bd-1m5.1.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "667b2dfe3085d7b0fcd62107448b3a5bf130813a",
+  "purpose": "Conformance + telemetry index for the CVE heap-overflow validation gate originally landed under bd-1m5.1 (closed 2026-02-26 with the close reason `Validation evidence complete; strict heap-overflow gate passes`; audit pass 2026-05-10T03-16-16Z scored it 470/1000 because the deterministic spec-extractor + evidence-gatherer couldn't link `tests.unit.primary`, `tests.e2e.primary`, or `telemetry.primary`). This sibling manifest names the existing artifacts at file:line so the next audit pass can attach evidence.",
+  "primary_unit_test_file": "crates/frankenlibc-harness/tests/cve_heap_overflow_validation_test.rs",
+  "primary_unit_test_functions": [
+    "heap_overflow_report_schema_complete",
+    "heap_overflow_all_manifests_valid",
+    "heap_overflow_c_triggers_compile",
+    "heap_overflow_clampsize_exercised",
+    "heap_overflow_coverage_matrix_complete"
+  ],
+  "primary_e2e_test_file": "crates/frankenlibc-harness/tests/cve_heap_overflow_validation_test.rs",
+  "primary_e2e_test_function": "heap_overflow_report_generates_successfully",
+  "e2e_evidence_generator_script": "scripts/generate_cve_heap_overflow_validation.py",
+  "telemetry_emission_contract": {
+    "report_artifact_path": "tests/cve_arena/results/heap_overflow_validation.v1.json",
+    "report_artifact_kind": "json",
+    "report_emission_command": "python3 scripts/generate_cve_heap_overflow_validation.py -o tests/cve_arena/results/heap_overflow_validation.v1.json",
+    "required_summary_fields": [
+      "total_heap_overflow_tests",
+      "manifests_valid",
+      "with_trigger_files",
+      "unique_healing_actions",
+      "heap_cwes_covered"
+    ],
+    "required_top_level_fields": [
+      "schema_version",
+      "bead",
+      "summary",
+      "tests",
+      "coverage_matrix_check"
+    ],
+    "rationale": "The e2e test invokes the python validator which scans the CVE arena, executes/inspects each heap-overflow trigger, and emits a deterministic JSON report with per-CVE manifest-validity flags + a coverage_matrix_check. Downstream gates consume this report as the canonical telemetry signal that the heap-overflow CVE corpus is intact."
+  },
+  "policy": {
+    "fail_closed_when_primary_unit_test_file_missing": true,
+    "fail_closed_when_primary_e2e_test_file_missing": true,
+    "fail_closed_when_e2e_generator_script_missing": true,
+    "fail_closed_when_telemetry_report_path_drifts": true,
+    "fail_closed_when_required_summary_field_missing_from_emitted_report": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_primary_unit_test_file",
+    "missing_primary_e2e_test_file",
+    "missing_e2e_generator_script",
+    "telemetry_report_path_drift",
+    "telemetry_report_required_field_missing"
+  ],
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-1m5.1/scorecard.md",
+    "spec_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-1m5.1/spec.json",
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "score_before": 470,
+    "score_threshold": 700
+  },
+  "summary": {
+    "bead": "bd-1m5.1",
+    "completion_debt_bead": "bd-1m5.1.1",
+    "primary_unit_tests_pinned": 5,
+    "primary_e2e_tests_pinned": 1,
+    "telemetry_report_required_summary_fields": 5,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
