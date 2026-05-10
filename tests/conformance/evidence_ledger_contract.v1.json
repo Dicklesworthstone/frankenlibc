@@ -1,0 +1,192 @@
+{
+  "schema_version": "evidence_ledger_contract.v1",
+  "manifest_id": "evidence-ledger-contract",
+  "bead": "bd-28tf",
+  "generated_at_utc": "2026-05-10T06:24:00Z",
+  "canonical_checker": "scripts/check_evidence_ledger_contract.sh",
+  "purpose": "Pin the unified evidence ledger contract for JSONL replay, OTLP-shaped live dashboard export, cross-stream correlation IDs, and privacy redaction.",
+  "source_modules": [
+    "crates/frankenlibc-membrane/src/evidence_ledger.rs",
+    "crates/frankenlibc-membrane/src/heal.rs",
+    "crates/frankenlibc-membrane/src/ids.rs"
+  ],
+  "jsonl_contract": {
+    "export_function": "frankenlibc_membrane::EvidenceLedger::export_jsonl",
+    "filtered_export_function": "frankenlibc_membrane::EvidenceLedger::export_jsonl_filtered",
+    "required_fields": [
+      "timestamp",
+      "evidence_seqno",
+      "trace_id",
+      "decision_id",
+      "policy_id",
+      "schema_version",
+      "category",
+      "level",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "outcome",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "details",
+      "artifact_refs",
+      "redaction_policy"
+    ],
+    "required_categories": [
+      "metrics_snapshot",
+      "healing_action",
+      "validation_decision",
+      "conformance_result",
+      "runtime_math_decision"
+    ]
+  },
+  "otlp_contract": {
+    "export_function": "frankenlibc_membrane::EvidenceLedger::otlp_export",
+    "serialization_function": "frankenlibc_membrane::OtlpExport::to_json",
+    "schema": "logs/v1",
+    "required_resource_attributes": [
+      "service.name",
+      "telemetry.sdk.name",
+      "frankenlibc.schema_version",
+      "frankenlibc.redaction_policy"
+    ],
+    "required_log_attributes": [
+      "frankenlibc.trace_id",
+      "frankenlibc.evidence_seqno",
+      "frankenlibc.decision_id",
+      "frankenlibc.policy_id",
+      "frankenlibc.schema_version",
+      "frankenlibc.category",
+      "frankenlibc.level",
+      "frankenlibc.mode",
+      "frankenlibc.api_family",
+      "frankenlibc.symbol",
+      "frankenlibc.decision_path",
+      "frankenlibc.outcome",
+      "frankenlibc.healing_action",
+      "frankenlibc.errno",
+      "frankenlibc.latency_ns",
+      "frankenlibc.details",
+      "frankenlibc.artifact_refs",
+      "frankenlibc.redaction_policy"
+    ]
+  },
+  "correlation_contract": {
+    "required_identifiers": [
+      "trace_id",
+      "decision_id",
+      "policy_id",
+      "evidence_seqno"
+    ],
+    "correlation_function": "frankenlibc_membrane::EvidenceLedger::correlation_index",
+    "monotonic_sequence": true,
+    "bounded_retention": true
+  },
+  "privacy_redaction_policy": {
+    "default_policy": "redact_pointers",
+    "accepted_policies": [
+      "none",
+      "redact_pointers",
+      "full"
+    ],
+    "redacted_pointer_marker": "[REDACTED]",
+    "full_redaction_symbol_prefix": "redacted_"
+  },
+  "telemetry_contract": {
+    "default_report_path": "target/conformance/evidence_ledger_contract.report.json",
+    "default_log_path": "target/conformance/evidence_ledger_contract.log.jsonl",
+    "required_events": [
+      "evidence_ledger_contract_validated",
+      "evidence_ledger_contract_failed"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "bead_id",
+      "completion_debt_bead",
+      "event",
+      "status",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs",
+      "failure_signature"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-28tf.1",
+    "original_bead": "bd-28tf",
+    "audit_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-28tf/scorecard.md",
+    "original_audit_score": 470,
+    "next_audit_score_threshold": 800,
+    "test_source": "crates/frankenlibc-membrane/src/evidence_ledger.rs",
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/evidence_ledger.rs:362",
+      "crates/frankenlibc-membrane/src/evidence_ledger.rs:404",
+      "crates/frankenlibc-membrane/src/evidence_ledger.rs:427",
+      "crates/frankenlibc-membrane/src/evidence_ledger.rs:447",
+      "crates/frankenlibc-membrane/src/evidence_ledger.rs:617",
+      "crates/frankenlibc-membrane/src/evidence_ledger.rs:704"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "next_audit_score_threshold": 800,
+      "description": "Unit coverage for append sequencing, ring retention, correlation IDs, validation decisions, and completion-debt contract binding.",
+      "required_test_names": [
+        "append_assigns_monotonic_seqno",
+        "ring_buffer_evicts_oldest_on_overflow",
+        "correlation_index_groups_by_trace_id",
+        "record_validation_with_deny_sets_warn_level",
+        "evidence_ledger_contract_binds_completion_debt_items"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "next_audit_score_threshold": 800,
+      "description": "End-to-end checker execution over the conformance contract, including a stale-test negative fixture.",
+      "checker_script": "scripts/check_evidence_ledger_contract.sh",
+      "required_test_names": [
+        "evidence_ledger_contract_checker_accepts_contract",
+        "evidence_ledger_contract_checker_rejects_stale_test_binding"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "next_audit_score_threshold": 800,
+      "description": "Conformance artifact pins the JSONL field set, OTLP log attributes, correlation identifiers, and redaction policy.",
+      "artifact": "tests/conformance/evidence_ledger_contract.v1.json",
+      "required_test_names": [
+        "evidence_ledger_contract_binds_completion_debt_items",
+        "jsonl_and_otlp_exports_cover_completion_contract_fields"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "next_audit_score_threshold": 800,
+      "description": "Structured report and JSONL telemetry emitted by the evidence ledger contract checker.",
+      "default_report_path": "target/conformance/evidence_ledger_contract.report.json",
+      "default_log_path": "target/conformance/evidence_ledger_contract.log.jsonl",
+      "required_events": [
+        "evidence_ledger_contract_validated",
+        "evidence_ledger_contract_failed"
+      ],
+      "required_test_names": [
+        "evidence_ledger_contract_checker_accepts_contract",
+        "jsonl_and_otlp_exports_cover_completion_contract_fields",
+        "otlp_export_applies_pointer_redaction",
+        "redacted_ledger_masks_pointers_in_jsonl"
+      ]
+    }
+  },
+  "artifact_refs": [
+    "tests/conformance/evidence_ledger_contract.v1.json",
+    "scripts/check_evidence_ledger_contract.sh",
+    "crates/frankenlibc-membrane/src/evidence_ledger.rs"
+  ]
+}

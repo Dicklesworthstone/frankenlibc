@@ -950,6 +950,105 @@ mod tests {
             .and_then(|attr| attr["value"]["stringValue"].as_str())
     }
 
+    fn workspace_root() -> std::path::PathBuf {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        manifest
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("membrane crate should live under workspace/crates")
+            .to_path_buf()
+    }
+
+    fn evidence_ledger_contract_path(root: &std::path::Path) -> std::path::PathBuf {
+        root.join("tests/conformance/evidence_ledger_contract.v1.json")
+    }
+
+    fn load_json(path: &std::path::Path) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(path).expect("JSON file should be readable"))
+            .expect("JSON file should parse")
+    }
+
+    fn write_json(path: &std::path::Path, value: &serde_json::Value) {
+        let content = serde_json::to_string_pretty(value).expect("JSON should serialize");
+        std::fs::write(path, format!("{content}\n")).expect("JSON fixture should be writable");
+    }
+
+    fn unique_contract_dir(root: &std::path::Path, label: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        let dir = root
+            .join("target/conformance/evidence-ledger-contract")
+            .join(format!("{label}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("test output dir should be created");
+        dir
+    }
+
+    fn run_contract_checker(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        contract_override: Option<&std::path::Path>,
+    ) -> std::process::Output {
+        let mut command = std::process::Command::new("bash");
+        command
+            .arg(root.join("scripts/check_evidence_ledger_contract.sh"))
+            .current_dir(root)
+            .env(
+                "FRANKENLIBC_EVIDENCE_LEDGER_REPORT",
+                dir.join("report.json"),
+            )
+            .env("FRANKENLIBC_EVIDENCE_LEDGER_LOG", dir.join("log.jsonl"));
+        if let Some(path) = contract_override {
+            command.env("FRANKENLIBC_EVIDENCE_LEDGER_CONTRACT", path);
+        }
+        command.output().expect("checker should run")
+    }
+
+    fn string_set(value: &serde_json::Value, key: &str) -> std::collections::BTreeSet<String> {
+        value[key]
+            .as_array()
+            .expect("field should be an array")
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .expect("array item should be a string")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn assert_contract_file_line_ref(root: &std::path::Path, value: &serde_json::Value) {
+        let reference = value.as_str().expect("file line ref should be string");
+        let (path, line) = reference
+            .rsplit_once(':')
+            .expect("reference should have file:line shape");
+        let line: usize = line.parse().expect("line should parse");
+        let content = std::fs::read_to_string(root.join(path)).expect("referenced file exists");
+        let source_line = content
+            .lines()
+            .nth(line.saturating_sub(1))
+            .expect("line should exist");
+        assert!(
+            !source_line.trim().is_empty(),
+            "{reference} should not point at a blank line"
+        );
+    }
+
+    fn assert_required_tests_exist(completion: &serde_json::Value, section: &str, source: &str) {
+        let required = completion[section]["required_test_names"]
+            .as_array()
+            .expect("required_test_names should be an array");
+        assert!(!required.is_empty(), "{section} should list tests");
+        for test_name in required {
+            let test_name = test_name.as_str().expect("test name should be string");
+            assert!(
+                source.contains(&format!("fn {test_name}(")),
+                "{section} references missing test {test_name}"
+            );
+        }
+    }
+
     #[test]
     fn empty_ledger_has_zero_counts() {
         let ledger = make_test_ledger();
@@ -1352,6 +1451,152 @@ mod tests {
         assert_eq!(parsed["symbol"], "memcpy");
         assert_eq!(parsed["outcome"], "allow");
         assert_eq!(parsed["latency_ns"], 42);
+    }
+
+    #[test]
+    fn evidence_ledger_contract_binds_completion_debt_items() {
+        let root = workspace_root();
+        let contract = load_json(&evidence_ledger_contract_path(&root));
+        assert_eq!(contract["schema_version"], "evidence_ledger_contract.v1");
+        assert_eq!(contract["bead"], "bd-28tf");
+
+        let completion = &contract["completion_debt_evidence"];
+        assert_eq!(completion["bead"], "bd-28tf.1");
+        assert_eq!(completion["original_bead"], "bd-28tf");
+        assert_eq!(completion["original_audit_score"], 470);
+        assert!(
+            completion["next_audit_score_threshold"]
+                .as_u64()
+                .is_some_and(|score| score >= 800)
+        );
+
+        let source_path = root.join(
+            completion["test_source"]
+                .as_str()
+                .expect("test_source should be string"),
+        );
+        let source = std::fs::read_to_string(source_path).expect("test source should be readable");
+        for reference in completion["implementation_refs"]
+            .as_array()
+            .expect("implementation refs should be array")
+        {
+            assert_contract_file_line_ref(&root, reference);
+        }
+        for (section, missing_item) in [
+            ("unit_primary", "tests.unit.primary"),
+            ("e2e_primary", "tests.e2e.primary"),
+            ("conformance_primary", "tests.conformance.primary"),
+            ("telemetry_primary", "telemetry.primary"),
+        ] {
+            assert_eq!(completion[section]["missing_item_id"], missing_item);
+            assert!(
+                completion[section]["next_audit_score_threshold"]
+                    .as_u64()
+                    .is_some_and(|score| score >= 800)
+            );
+            assert_required_tests_exist(completion, section, &source);
+        }
+    }
+
+    #[test]
+    fn jsonl_and_otlp_exports_cover_completion_contract_fields() {
+        let root = workspace_root();
+        let contract = load_json(&evidence_ledger_contract_path(&root));
+        let ledger = make_test_ledger();
+        ledger.record_validation(ValidationEvidence {
+            trace_id: TraceId::new("contract::validation::0x7fffffffe000".to_string()),
+            decision_id: DecisionId::from_raw(101),
+            policy_id: PolicyId::from_raw(9),
+            api_family: "allocator".to_string(),
+            symbol: "malloc".to_string(),
+            decision_path: "tsm::validate::full".to_string(),
+            outcome: "deny".to_string(),
+            errno_val: 22,
+            latency_ns: 777,
+            details_json: "{\"reason\":\"contract_probe\"}".to_string(),
+        });
+
+        let jsonl_line = ledger.export_jsonl();
+        let jsonl: serde_json::Value =
+            serde_json::from_str(jsonl_line.trim()).expect("JSONL export should parse");
+        for field in string_set(&contract["jsonl_contract"], "required_fields") {
+            assert!(jsonl.get(&field).is_some(), "JSONL missing {field}");
+        }
+
+        let otlp: serde_json::Value =
+            serde_json::from_str(&ledger.otlp_export().to_json()).expect("OTLP export parses");
+        assert_eq!(otlp["otlp_schema"], "logs/v1");
+        let resource_attrs = otlp["resourceLogs"][0]["resource"]["attributes"]
+            .as_array()
+            .expect("resource attributes should be present");
+        let resource_attr_keys: std::collections::BTreeSet<_> = resource_attrs
+            .iter()
+            .filter_map(|attr| attr["key"].as_str())
+            .collect();
+        for key in string_set(&contract["otlp_contract"], "required_resource_attributes") {
+            assert!(
+                resource_attr_keys.contains(key.as_str()),
+                "resource attrs missing {key}"
+            );
+        }
+        let log_attrs = otlp["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["attributes"]
+            .as_array()
+            .expect("log attributes should be present");
+        let log_attr_keys: std::collections::BTreeSet<_> = log_attrs
+            .iter()
+            .filter_map(|attr| attr["key"].as_str())
+            .collect();
+        for key in string_set(&contract["otlp_contract"], "required_log_attributes") {
+            assert!(
+                log_attr_keys.contains(key.as_str()),
+                "log attrs missing {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn evidence_ledger_contract_checker_accepts_contract() {
+        let root = workspace_root();
+        let dir = unique_contract_dir(&root, "accepts-contract");
+        let output = run_contract_checker(&root, &dir, None);
+        assert!(
+            output.status.success(),
+            "checker should pass\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report = load_json(&dir.join("report.json"));
+        assert_eq!(report["status"], "pass");
+        assert_eq!(report["completion_debt_bead"], "bd-28tf.1");
+        let log_text = std::fs::read_to_string(dir.join("log.jsonl")).expect("log is readable");
+        let log_row: serde_json::Value =
+            serde_json::from_str(log_text.trim()).expect("log row parses");
+        assert_eq!(log_row["event"], "evidence_ledger_contract_validated");
+        assert_eq!(log_row["completion_debt_bead"], "bd-28tf.1");
+    }
+
+    #[test]
+    fn evidence_ledger_contract_checker_rejects_stale_test_binding() {
+        let root = workspace_root();
+        let dir = unique_contract_dir(&root, "rejects-stale-binding");
+        let mut contract = load_json(&evidence_ledger_contract_path(&root));
+        contract["completion_debt_evidence"]["unit_primary"]["required_test_names"] =
+            serde_json::json!(["missing_evidence_ledger_contract_test"]);
+        let stale_contract = dir.join("stale-contract.json");
+        write_json(&stale_contract, &contract);
+
+        let output = run_contract_checker(&root, &dir, Some(&stale_contract));
+        assert!(!output.status.success(), "stale test binding should fail");
+        let report = load_json(&dir.join("report.json"));
+        assert_eq!(report["status"], "fail");
+        let errors = report["errors"]
+            .as_array()
+            .expect("errors should be an array");
+        assert!(errors.iter().any(|error| {
+            error
+                .as_str()
+                .is_some_and(|text| text.contains("missing_evidence_ledger_contract_test"))
+        }));
     }
 
     #[test]
