@@ -262,23 +262,17 @@ fn printf_conformance_covers_special_values() {
 // whose exact output is non-deterministic) are skipped here — their
 // validation belongs in a dedicated bytes/pattern path.
 
-/// Fixture cases with an outstanding implementation gap in
-/// frankenlibc-core's printf. The harness-matrix path records the gap
-/// rather than failing so dispatch/packaging coverage stays green; each
-/// underlying gap is tracked in its own bead.
-const KNOWN_IMPL_GAPS: &[(&str, &str)] = &[
-    // bd-luc3d: long double (%Lf/%Le) is 80-bit on x86_64 and has no
-    // Rust representation, so we cannot preserve it across the
-    // varargs boundary from a JSON f64 fixture value.
-    ("sprintf_Lf_basic", "bd-luc3d"),
-    ("sprintf_Le_basic", "bd-luc3d"),
-];
+/// Cases where FrankenLibC's fixture output is correct, but the host
+/// oracle path cannot yet push an x86_64 `long double` through Rust's
+/// C-variadic boundary and currently observes `nan`.
+const HOST_LONG_DOUBLE_ORACLE_GAPS: &[&str] = &["sprintf_Lf_basic", "sprintf_Le_basic"];
 
-fn case_is_known_impl_gap(name: &str) -> Option<&'static str> {
-    KNOWN_IMPL_GAPS
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, bead)| *bead)
+fn case_has_host_long_double_oracle_gap(name: &str) -> bool {
+    HOST_LONG_DOUBLE_ORACLE_GAPS.contains(&name)
+}
+
+fn host_output_is_nan(value: &str) -> bool {
+    matches!(value, "nan" | "-nan")
 }
 
 #[test]
@@ -288,8 +282,8 @@ fn printf_conformance_fixture_cases_match_execute_fixture_case() {
     let mut skipped = 0usize;
 
     for case in &fixture.cases {
-        if let Some(bead) = case_is_known_impl_gap(&case.name) {
-            eprintln!("skip {} — tracked implementation gap ({bead})", case.name);
+        if case_has_host_long_double_oracle_gap(&case.name) {
+            eprintln!("skip {} — host long-double oracle gap", case.name);
             skipped += 1;
             continue;
         }
@@ -399,14 +393,96 @@ fn execute_case_via_harness(
 }
 
 #[test]
+fn printf_long_double_host_oracle_gap_is_explicit_in_process() -> Result<(), &'static str> {
+    let fixture = load_fixture("printf_conformance");
+    let mut seen = Vec::new();
+
+    for case in &fixture.cases {
+        if !matches!(case.name.as_str(), "sprintf_Lf_basic" | "sprintf_Le_basic") {
+            continue;
+        }
+        let expected_output = case
+            .expected_output
+            .as_deref()
+            .ok_or("long-double printf fixture missing expected_output")?;
+        let result = execute_fixture_case(&case.function, &case.inputs, "strict")
+            .map_err(|_| "long-double printf fixture failed in process")?;
+        assert_eq!(
+            result.impl_output, expected_output,
+            "FrankenLibC long-double fixture output mismatch for {}",
+            case.name
+        );
+        assert!(
+            !result.host_parity,
+            "host long-double oracle gap should remain explicit for {}",
+            case.name
+        );
+        assert!(
+            host_output_is_nan(&result.host_output),
+            "host long-double oracle should expose a malformed varargs NaN for {}: host={}, impl={}",
+            case.name,
+            result.host_output,
+            result.impl_output
+        );
+        seen.push(case.name.as_str());
+    }
+
+    assert_eq!(
+        seen,
+        vec!["sprintf_Lf_basic", "sprintf_Le_basic"],
+        "long-double printf fixtures must execute instead of being skipped"
+    );
+    Ok(())
+}
+
+#[test]
+fn printf_long_double_host_oracle_gap_is_explicit_via_harness_matrix() -> Result<(), &'static str> {
+    let fixture = load_fixture("printf_conformance");
+    let mut seen = Vec::new();
+
+    for case in &fixture.cases {
+        if !matches!(case.name.as_str(), "sprintf_Lf_basic" | "sprintf_Le_basic") {
+            continue;
+        }
+        let expected_output = case
+            .expected_output
+            .as_deref()
+            .ok_or("long-double printf fixture missing expected_output")?;
+        let result = execute_case_via_harness(&case.function, &case.inputs, "strict")
+            .map_err(|_| "long-double printf fixture failed via harness")?;
+        assert!(
+            !result.host_parity,
+            "host long-double oracle gap should remain explicit via harness for {}",
+            case.name
+        );
+        assert!(
+            host_output_is_nan(&result.host_output),
+            "host long-double oracle should expose a malformed varargs NaN via harness for {}: host={}, impl={}",
+            case.name,
+            result.host_output,
+            result.impl_output
+        );
+        assert_eq!(result.impl_output, expected_output);
+        seen.push(case.name.as_str());
+    }
+
+    assert_eq!(
+        seen,
+        vec!["sprintf_Lf_basic", "sprintf_Le_basic"],
+        "long-double printf fixtures must execute through the harness matrix"
+    );
+    Ok(())
+}
+
+#[test]
 fn printf_conformance_fixture_executes_with_host_parity_via_harness_matrix() {
     let fixture = load_fixture("printf_conformance");
     let mut executed = 0usize;
     let mut skipped = 0usize;
 
     for case in &fixture.cases {
-        if let Some(bead) = case_is_known_impl_gap(&case.name) {
-            eprintln!("skip {} — tracked implementation gap ({bead})", case.name);
+        if case_has_host_long_double_oracle_gap(&case.name) {
+            eprintln!("skip {} — host long-double oracle gap", case.name);
             skipped += 1;
             continue;
         }
