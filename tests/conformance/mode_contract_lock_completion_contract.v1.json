@@ -1,0 +1,282 @@
+{
+  "schema_version": "mode_contract_lock_completion_contract.v1",
+  "manifest_id": "bd-w2c3.3.3-mode-contract-lock-completion-contract",
+  "original_bead": "bd-w2c3.3.3",
+  "completion_debt_bead": "bd-w2c3.3.3.1",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.3.3/scorecard.md",
+  "source_artifacts": {
+    "mode_contract_lock": "tests/conformance/mode_contract_lock.v1.json",
+    "mode_contract_lock_checker": "scripts/check_mode_contract_lock.sh",
+    "mode_contract_lock_source_test": "crates/frankenlibc-harness/tests/mode_contract_lock_test.rs",
+    "runtime_env_inventory": "tests/conformance/runtime_env_inventory.v1.json",
+    "docs_env_inventory": "tests/conformance/docs_env_inventory.v1.json",
+    "mode_semantics_matrix": "tests/conformance/mode_semantics_matrix.json",
+    "mode_semantics_checker": "scripts/check_mode_semantics.sh",
+    "mode_semantics_source_test": "crates/frankenlibc-harness/tests/mode_semantics_test.rs",
+    "runtime_env_inventory_source_test": "crates/frankenlibc-harness/tests/runtime_env_inventory_test.rs",
+    "runtime_mode_evidence_logging_coverage": "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+    "runtime_mode_evidence_logging_checker": "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+    "runtime_mode_evidence_logging_source_test": "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs",
+    "membrane_config": "crates/frankenlibc-membrane/src/config.rs",
+    "completion_checker": "scripts/check_mode_contract_lock_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/mode_contract_lock_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "implementation_refs": [
+      {
+        "id": "mode-contract-lock-artifact-freezes-frankenlibc-mode",
+        "path": "tests/conformance/mode_contract_lock.v1.json",
+        "required_text": [
+          "\"bead\": \"bd-w2c3.3.3\"",
+          "\"env_key\": \"FRANKENLIBC_MODE\"",
+          "\"allowed_values\": [\"strict\", \"hardened\"]",
+          "\"default_value\": \"strict\"",
+          "\"unknown_value_behavior\": \"fallback_to_strict\"",
+          "\"mutability\": \"process-immutable after first resolution\"",
+          "\"mode_cache_state\""
+        ]
+      },
+      {
+        "id": "source-gate-locks-artifact-inventory-parser-and-anchors",
+        "path": "scripts/check_mode_contract_lock.sh",
+        "required_text": [
+          "check_mode_contract_lock.sh",
+          "FRANKENLIBC_MODE",
+          "runtime_inventory_alignment",
+          "docs_inventory_alignment",
+          "cross_inventory_gate_paths",
+          "config_parser_contract",
+          "startup_reentrant_anchors",
+          "mode_cache_state",
+          "mode_contract_lock.log.jsonl"
+        ]
+      },
+      {
+        "id": "config-parser-has-immutable-startup-and-reentrant-anchors",
+        "path": "crates/frankenlibc-membrane/src/config.rs",
+        "required_text": [
+          "fn parse_runtime_mode_env",
+          "\"strict\" | \"default\" | \"abi\" => SafetyLevel::Strict",
+          "\"hardened\" | \"repair\" | \"tsm\" | \"full\" => SafetyLevel::Hardened",
+          "runtime_mode_parser_is_strict_or_hardened_only",
+          "cached_mode_is_process_sticky_until_cache_reset",
+          "resolving_state_returns_strict_safe_default"
+        ]
+      },
+      {
+        "id": "runtime-mode-evidence-gate-proves-subprocess-override-and-startup-logging",
+        "path": "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+        "required_text": [
+          "runtime_mode_evidence_logging_coverage.v1",
+          "FRANKENLIBC_MODE",
+          "subprocess override policy must be explicit",
+          "startup_evidence_missing",
+          "runtime_mode_evidence_logging_coverage_validated",
+          "RUNTIME_MODE_EVIDENCE_LOGGING_COVERAGE_REPORT",
+          "RUNTIME_MODE_EVIDENCE_LOGGING_COVERAGE_LOG"
+        ]
+      },
+      {
+        "id": "completion-checker-binds-mode-lock-source-gates-and-telemetry",
+        "path": "scripts/check_mode_contract_lock_completion_contract.sh",
+        "required_text": [
+          "mode_contract_lock_completion_contract.v1",
+          "scripts/check_mode_contract_lock.sh",
+          "scripts/check_mode_semantics.sh",
+          "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+          "mode_contract_lock_source_gate_bindings",
+          "mode_contract_lock_runtime_evidence_bindings",
+          "FRANKENLIBC_MODE_CONTRACT_LOCK_COMPLETION_REPORT",
+          "FRANKENLIBC_MODE_CONTRACT_LOCK_COMPLETION_LOG"
+        ]
+      }
+    ],
+    "test_sources": {
+      "mode_contract_lock_source_test": {
+        "path": "crates/frankenlibc-harness/tests/mode_contract_lock_test.rs",
+        "required_test_refs": [
+          "artifact_contract_shape_is_valid",
+          "startup_reentrant_anchors_are_declared",
+          "gate_script_passes_and_emits_provenance_artifacts"
+        ]
+      },
+      "mode_semantics_source_test": {
+        "path": "crates/frankenlibc-harness/tests/mode_semantics_test.rs",
+        "required_test_refs": [
+          "matrix_exists_and_valid",
+          "all_families_have_required_fields",
+          "family_modules_exist_in_abi_source",
+          "behaviors_have_matching_scenarios",
+          "summary_consistent_with_entries",
+          "gate_script_exists_and_executable",
+          "no_duplicate_families"
+        ]
+      },
+      "runtime_env_inventory_source_test": {
+        "path": "crates/frankenlibc-harness/tests/runtime_env_inventory_test.rs",
+        "required_test_refs": [
+          "inventory_file_exists_and_has_schema",
+          "unknown_or_ambiguous_is_empty",
+          "each_entry_has_semantic_metadata_and_accesses",
+          "expected_key_set_matches_inventory",
+          "gate_script_exists_and_is_executable"
+        ]
+      },
+      "runtime_mode_evidence_logging_source_test": {
+        "path": "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs",
+        "required_test_refs": [
+          "runtime_mode_coverage_gate_passes_current_contract",
+          "runtime_mode_coverage_gate_fails_when_startup_evidence_is_removed",
+          "isolated_conformance_child_overrides_ambient_mode_and_logs_startup"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/mode_contract_lock_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_e2e_and_telemetry_evidence",
+          "checker_validates_existing_mode_contract_lock_gate",
+          "checker_emits_report_and_jsonl_with_source_gate_rows",
+          "checker_rejects_missing_startup_anchor",
+          "checker_rejects_wrong_allowed_mode_expectation",
+          "checker_rejects_missing_telemetry_event"
+        ]
+      }
+    }
+  },
+  "required_source_contract": {
+    "env_key": "FRANKENLIBC_MODE",
+    "allowed_values": [
+      "strict",
+      "hardened"
+    ],
+    "default_value": "strict",
+    "unknown_value_behavior": "fallback_to_strict",
+    "required_mutability_substring": "immutable",
+    "selection_timing": "first membrane mode resolution",
+    "required_provenance_fields": [
+      "trace_id",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs",
+      "resolved_mode",
+      "mode_source",
+      "mode_cache_state"
+    ],
+    "startup_anchor_names": [
+      "runtime_mode_parser_is_strict_or_hardened_only",
+      "cached_mode_is_process_sticky_until_cache_reset",
+      "resolving_state_returns_strict_safe_default"
+    ],
+    "required_mode_lock_checks": [
+      "artifact_shape",
+      "runtime_inventory_alignment",
+      "docs_inventory_alignment",
+      "cross_inventory_gate_paths",
+      "config_parser_contract",
+      "startup_reentrant_anchors"
+    ],
+    "runtime_evidence_policy": {
+      "allowed_modes": [
+        "strict",
+        "hardened"
+      ],
+      "process_immutable_after_startup": true,
+      "subprocess_rows_must_override_inherited_mode": true,
+      "startup_evidence_required": true,
+      "trace_id_required": true,
+      "ambient_tz_dependency_allowed": false,
+      "mismatch_behavior_required": true,
+      "coverage_row_count": 7
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_test_refs": [
+        "artifact_contract_shape_is_valid",
+        "startup_reentrant_anchors_are_declared",
+        "runtime_mode_parser_is_strict_or_hardened_only",
+        "cached_mode_is_process_sticky_until_cache_reset",
+        "resolving_state_returns_strict_safe_default",
+        "manifest_binds_unit_e2e_and_telemetry_evidence"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-membrane config::tests::runtime_mode_parser_is_strict_or_hardened_only -- --exact --nocapture",
+        "rch exec -- cargo test -p frankenlibc-membrane config::tests::cached_mode_is_process_sticky_until_cache_reset -- --exact --nocapture",
+        "rch exec -- cargo test -p frankenlibc-membrane config::tests::resolving_state_returns_strict_safe_default -- --exact --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test mode_contract_lock_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "required_test_refs": [
+        "gate_script_passes_and_emits_provenance_artifacts",
+        "runtime_mode_coverage_gate_passes_current_contract",
+        "isolated_conformance_child_overrides_ambient_mode_and_logs_startup",
+        "checker_validates_existing_mode_contract_lock_gate"
+      ],
+      "required_commands": [
+        "bash scripts/check_mode_contract_lock.sh",
+        "bash scripts/check_mode_semantics.sh",
+        "bash scripts/check_runtime_mode_evidence_logging_coverage.sh --validate-only",
+        "bash scripts/check_mode_contract_lock_completion_contract.sh"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "required_test_refs": [
+        "checker_emits_report_and_jsonl_with_source_gate_rows",
+        "checker_rejects_missing_telemetry_event"
+      ],
+      "required_commands": [
+        "jq -s empty target/conformance/mode_contract_lock.log.jsonl",
+        "jq -s empty target/conformance/mode_contract_lock_completion_contract.log.jsonl",
+        "jq -s empty target/conformance/runtime_mode_evidence_logging_coverage.log.jsonl"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_commit",
+      "summary",
+      "mode_contract_lock_report",
+      "mode_contract_lock_log",
+      "runtime_mode_evidence_report",
+      "runtime_mode_evidence_log",
+      "source_gate_outputs",
+      "source_log_row_counts",
+      "events",
+      "errors"
+    ],
+    "required_events": [
+      "mode_contract_lock_completion_summary",
+      "mode_contract_lock_source_gate_bindings",
+      "mode_contract_lock_runtime_evidence_bindings",
+      "mode_contract_lock_completion_contract_pass"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome",
+      "source_commit",
+      "artifact_refs"
+    ]
+  }
+}
