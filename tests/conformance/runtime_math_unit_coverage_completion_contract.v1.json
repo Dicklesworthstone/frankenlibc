@@ -1,0 +1,265 @@
+{
+  "schema_version": "runtime_math_unit_coverage_completion_contract.v1",
+  "bead": "bd-5vr.6",
+  "completion_debt_bead": "bd-5vr.6.1",
+  "description": "Completion-debt evidence binding for runtime-math unit coverage: per-kernel correctness, numerical stability, certificate verification, property tests, and deterministic e2e gates.",
+  "next_audit_score_threshold": 800,
+  "source_contract": {
+    "coverage_groups": [
+      {
+        "name": "per_kernel_correctness",
+        "description": "Representative runtime controllers have pinned unit tests for cadence, isolation, bounded summaries, routing, replay, and snapshot correctness.",
+        "implementation_refs": [
+          "crates/frankenlibc-membrane/src/runtime_math/risk.rs:101",
+          "crates/frankenlibc-membrane/src/runtime_math/control.rs:175",
+          "crates/frankenlibc-membrane/src/runtime_math/bandit.rs:184",
+          "crates/frankenlibc-membrane/src/runtime_math/conformal.rs:251",
+          "crates/frankenlibc-membrane/src/runtime_math/alpha_investing.rs:646",
+          "crates/frankenlibc-membrane/src/runtime_math/mod.rs:7123",
+          "crates/frankenlibc-membrane/src/runtime_math/mod.rs:7278"
+        ],
+        "required_test_refs": [
+          {"source": "risk", "name": "recomputes_on_cadence_boundary"},
+          {"source": "risk", "name": "adverse_outcomes_increase_upper_bound"},
+          {"source": "risk", "name": "high_index_family_isolated_from_loader"},
+          {"source": "control", "name": "thresholds_do_not_move_before_cadence_boundary"},
+          {"source": "control", "name": "limits_remain_bounded_under_long_trace"},
+          {"source": "bandit", "name": "hardened_contention_gate_prefers_full"},
+          {"source": "bandit", "name": "ucb_cache_isolated_per_family"},
+          {"source": "conformal", "name": "transitions_out_of_calibrating_at_warmup_boundary"},
+          {"source": "conformal", "name": "summary_fields_bounded"},
+          {"source": "alpha_investing", "name": "deterministic_regression_golden"},
+          {"source": "alpha_investing", "name": "wealth_non_negative_invariant"},
+          {"source": "runtime_math_mod", "name": "runtime_kernel_snapshot_schema_and_literal_cover_all_fields"},
+          {"source": "runtime_math_mod", "name": "snapshot_decision_and_evidence_counters_are_monotone"},
+          {"source": "runtime_math_mod", "name": "deterministic_replay_produces_identical_decisions_and_evidence"}
+        ]
+      },
+      {
+        "name": "numerical_stability",
+        "description": "Long traces, bounded summaries, extreme SOS inputs, and saturated quadratic evaluators pin numerical stability and overflow behavior.",
+        "implementation_refs": [
+          "crates/frankenlibc-membrane/src/runtime_math/risk.rs:148",
+          "crates/frankenlibc-membrane/src/runtime_math/control.rs:198",
+          "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs:1469",
+          "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs:1486"
+        ],
+        "required_test_refs": [
+          {"source": "risk", "name": "upper_bound_is_always_valid_ppm"},
+          {"source": "risk", "name": "same_adverse_rate_tightens_with_more_samples"},
+          {"source": "control", "name": "limits_remain_bounded_under_long_trace"},
+          {"source": "sos_barrier", "name": "quadratic_form_saturates_under_extreme_inputs"},
+          {"source": "sos_barrier", "name": "barrier_evaluators_stay_stable_on_extreme_inputs"},
+          {"source": "sos_barrier", "name": "thread_safety_barrier_monotone_in_writer_pressure"}
+        ]
+      },
+      {
+        "name": "certificate_verification",
+        "description": "SOS certificates, Gram matrices, tamper checks, and golden snapshot hashes are bound to explicit tests and artifacts.",
+        "implementation_refs": [
+          "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs:1315",
+          "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs:1383",
+          "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs:1431",
+          "crates/frankenlibc-harness/tests/runtime_math_determinism_proofs_test.rs:36"
+        ],
+        "required_test_refs": [
+          {"source": "sos_barrier", "name": "certificate_hash_matches_static_fragmentation_artifact"},
+          {"source": "sos_barrier", "name": "certificate_hash_matches_static_thread_safety_artifact"},
+          {"source": "sos_barrier", "name": "certificate_hash_matches_static_size_class_artifact"},
+          {"source": "sos_barrier", "name": "generated_task_source_hash_is_hex_sha256"},
+          {"source": "sos_barrier", "name": "generated_task_source_hash_matches_checked_in_artifacts"},
+          {"source": "sos_barrier", "name": "certificate_tamper_is_detected"},
+          {"source": "sos_barrier", "name": "fragmentation_gram_matrix_is_positive_semidefinite"},
+          {"source": "sos_barrier", "name": "thread_safety_gram_matrix_is_positive_semidefinite"},
+          {"source": "sos_barrier", "name": "size_class_gram_matrix_is_positive_semidefinite"},
+          {"source": "determinism_gate", "name": "runtime_math_kernel_snapshot_golden_checksum_matches_manifest"}
+        ]
+      },
+      {
+        "name": "property_coverage",
+        "description": "Metamorphic and proptest coverage pins lattice algebra, allocation fingerprints, canary detection, bloom filter monotonicity, and oracle accounting.",
+        "implementation_refs": [
+          "crates/frankenlibc-membrane/src/lattice.rs:629",
+          "crates/frankenlibc-membrane/src/fingerprint.rs:482",
+          "crates/frankenlibc-membrane/src/check_oracle.rs:468",
+          "crates/frankenlibc-membrane/src/bloom.rs:230"
+        ],
+        "required_test_refs": [
+          {"source": "lattice", "name": "prop_join_commutative"},
+          {"source": "lattice", "name": "prop_join_associative"},
+          {"source": "lattice", "name": "prop_join_idempotent"},
+          {"source": "lattice", "name": "prop_absorption_join"},
+          {"source": "lattice", "name": "prop_join_never_grants_new_read_permission"},
+          {"source": "fingerprint", "name": "prop_fingerprint_roundtrip"},
+          {"source": "fingerprint", "name": "prop_canary_detects_any_byte_flip"},
+          {"source": "check_oracle", "name": "prop_pack_unpack_roundtrip"},
+          {"source": "check_oracle", "name": "prop_oracle_total_calls_monotonic"},
+          {"source": "bloom", "name": "prop_insert_is_monotonic"}
+        ]
+      },
+      {
+        "name": "deterministic_e2e",
+        "description": "Harness-level gates validate runtime-math linkage, classification matrix, HJI viability, golden determinism, and this completion contract.",
+        "implementation_refs": [
+          "crates/frankenlibc-harness/tests/runtime_math_hji_viability_proofs_test.rs:47",
+          "crates/frankenlibc-harness/tests/runtime_math_linkage_proofs_test.rs:47",
+          "crates/frankenlibc-harness/tests/runtime_math_classification_matrix_test.rs:48",
+          "crates/frankenlibc-harness/tests/runtime_math_determinism_proofs_test.rs:115"
+        ],
+        "required_test_refs": [
+          {"source": "hji_gate", "name": "gate_script_emits_logs_and_report"},
+          {"source": "linkage_gate", "name": "gate_script_emits_logs_and_report"},
+          {"source": "classification_gate", "name": "matrix_exists_and_valid"},
+          {"source": "classification_gate", "name": "gate_script_emits_structured_logs"},
+          {"source": "determinism_gate", "name": "gate_script_emits_logs_and_report"},
+          {"source": "completion_harness", "name": "checker_emits_report_log_and_validates_coverage"}
+        ]
+      }
+    ],
+    "required_artifacts": [
+      "tests/runtime_math/production_kernel_manifest.v1.json",
+      "tests/runtime_math/runtime_math_linkage.v1.json",
+      "tests/runtime_math/runtime_math_classification_matrix.v1.json",
+      "tests/runtime_math/hji_viability_computation.json",
+      "tests/runtime_math/golden/kernel_snapshot_smoke.v1.json",
+      "tests/runtime_math/golden/sha256sums.txt",
+      "tests/conformance/proof_traceability_check.json"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-5vr.6.1",
+    "original_bead": "bd-5vr.6",
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.property.primary"
+    ],
+    "test_sources": {
+      "risk": "crates/frankenlibc-membrane/src/runtime_math/risk.rs",
+      "control": "crates/frankenlibc-membrane/src/runtime_math/control.rs",
+      "bandit": "crates/frankenlibc-membrane/src/runtime_math/bandit.rs",
+      "conformal": "crates/frankenlibc-membrane/src/runtime_math/conformal.rs",
+      "alpha_investing": "crates/frankenlibc-membrane/src/runtime_math/alpha_investing.rs",
+      "sos_barrier": "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs",
+      "runtime_math_mod": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "lattice": "crates/frankenlibc-membrane/src/lattice.rs",
+      "fingerprint": "crates/frankenlibc-membrane/src/fingerprint.rs",
+      "check_oracle": "crates/frankenlibc-membrane/src/check_oracle.rs",
+      "bloom": "crates/frankenlibc-membrane/src/bloom.rs",
+      "hji_gate": "crates/frankenlibc-harness/tests/runtime_math_hji_viability_proofs_test.rs",
+      "linkage_gate": "crates/frankenlibc-harness/tests/runtime_math_linkage_proofs_test.rs",
+      "classification_gate": "crates/frankenlibc-harness/tests/runtime_math_classification_matrix_test.rs",
+      "determinism_gate": "crates/frankenlibc-harness/tests/runtime_math_determinism_proofs_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/runtime_math_unit_coverage_completion_contract_test.rs"
+    },
+    "gate": "scripts/check_runtime_math_unit_coverage_completion_contract.sh",
+    "report_path": "target/conformance/runtime_math_unit_coverage_completion_contract.report.json",
+    "log_path": "target/conformance/runtime_math_unit_coverage_completion_contract.log.jsonl",
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Unit coverage binds representative per-kernel correctness tests for runtime risk, control, bandit, conformal, FDR, SOS barrier, and snapshot controllers.",
+      "required_test_refs": [
+        {"source": "risk", "name": "recomputes_on_cadence_boundary"},
+        {"source": "risk", "name": "adverse_outcomes_increase_upper_bound"},
+        {"source": "risk", "name": "upper_bound_is_always_valid_ppm"},
+        {"source": "risk", "name": "high_index_family_isolated_from_loader"},
+        {"source": "control", "name": "thresholds_do_not_move_before_cadence_boundary"},
+        {"source": "control", "name": "limits_remain_bounded_under_long_trace"},
+        {"source": "bandit", "name": "hardened_contention_gate_prefers_full"},
+        {"source": "bandit", "name": "ucb_cache_isolated_per_family"},
+        {"source": "conformal", "name": "transitions_out_of_calibrating_at_warmup_boundary"},
+        {"source": "conformal", "name": "summary_fields_bounded"},
+        {"source": "alpha_investing", "name": "wealth_non_negative_invariant"},
+        {"source": "alpha_investing", "name": "deterministic_regression_golden"},
+        {"source": "sos_barrier", "name": "certificate_hash_matches_static_fragmentation_artifact"},
+        {"source": "sos_barrier", "name": "certificate_tamper_is_detected"},
+        {"source": "sos_barrier", "name": "fragmentation_gram_matrix_is_positive_semidefinite"},
+        {"source": "sos_barrier", "name": "barrier_evaluators_stay_stable_on_extreme_inputs"},
+        {"source": "runtime_math_mod", "name": "runtime_kernel_snapshot_schema_and_literal_cover_all_fields"},
+        {"source": "runtime_math_mod", "name": "snapshot_decision_and_evidence_counters_are_monotone"},
+        {"source": "runtime_math_mod", "name": "deterministic_replay_produces_identical_decisions_and_evidence"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_math::risk::tests --lib -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_math::control::tests --lib -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_math::bandit::tests --lib -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_math::sos_barrier::tests --lib -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_kernel_snapshot_schema_and_literal_cover_all_fields --lib -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "E2E coverage binds runtime-math linkage, HJI viability, classification matrix, determinism golden, and this contract gate to harness-level tests and report/log artifacts.",
+      "required_scripts": [
+        "scripts/check_runtime_math_hji_viability_proofs.sh",
+        "scripts/check_runtime_math_linkage_proofs.sh",
+        "scripts/check_runtime_math_classification_matrix.sh",
+        "scripts/check_runtime_math_determinism_proofs.sh",
+        "scripts/check_runtime_math_unit_coverage_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {"source": "hji_gate", "name": "gate_script_emits_logs_and_report"},
+        {"source": "linkage_gate", "name": "gate_script_emits_logs_and_report"},
+        {"source": "classification_gate", "name": "matrix_exists_and_valid"},
+        {"source": "classification_gate", "name": "gate_script_emits_structured_logs"},
+        {"source": "determinism_gate", "name": "runtime_math_kernel_snapshot_golden_checksum_matches_manifest"},
+        {"source": "determinism_gate", "name": "gate_script_emits_logs_and_report"},
+        {"source": "completion_harness", "name": "checker_emits_report_log_and_validates_coverage"},
+        {"source": "completion_harness", "name": "checker_rejects_stale_unit_test_binding"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_hji_viability_proofs_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_linkage_proofs_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_classification_matrix_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_determinism_proofs_test -- --nocapture",
+        "bash scripts/check_runtime_math_unit_coverage_completion_contract.sh"
+      ]
+    },
+    "property_primary": {
+      "missing_item_id": "tests.property.primary",
+      "description": "Property coverage binds algebraic, allocation-integrity, canary, bloom-filter, and oracle metamorphic tests to the runtime-math unit coverage contract.",
+      "required_test_refs": [
+        {"source": "lattice", "name": "prop_join_commutative"},
+        {"source": "lattice", "name": "prop_join_associative"},
+        {"source": "lattice", "name": "prop_join_idempotent"},
+        {"source": "lattice", "name": "prop_absorption_join"},
+        {"source": "lattice", "name": "prop_join_never_grants_new_read_permission"},
+        {"source": "fingerprint", "name": "prop_fingerprint_roundtrip"},
+        {"source": "fingerprint", "name": "prop_canary_detects_any_byte_flip"},
+        {"source": "check_oracle", "name": "prop_pack_unpack_roundtrip"},
+        {"source": "check_oracle", "name": "prop_oracle_total_calls_monotonic"},
+        {"source": "bloom", "name": "prop_insert_is_monotonic"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane prop_join_commutative --lib -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane prop_canary_detects_any_byte_flip --lib -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane prop_oracle_total_calls_monotonic --lib -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane prop_insert_is_monotonic --lib -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "description": "The completion checker writes structured telemetry naming the completion-debt bead, original bead, coverage groups, tests, artifacts, and failure signature.",
+      "required_events": [
+        "runtime_math_unit_coverage_completion_contract_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "coverage_group_count",
+        "unit_test_refs",
+        "e2e_test_refs",
+        "property_test_refs",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "required_test_refs": [
+        {"source": "completion_harness", "name": "checker_emits_report_log_and_validates_coverage"}
+      ]
+    }
+  }
+}
