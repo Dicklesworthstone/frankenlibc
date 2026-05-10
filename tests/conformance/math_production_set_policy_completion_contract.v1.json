@@ -1,0 +1,172 @@
+{
+  "schema_version": "math_production_set_policy_completion_contract.v1",
+  "manifest_id": "bd-25pf.1-math-production-set-policy-completion",
+  "original_bead": "bd-25pf",
+  "completion_debt_bead": "bd-25pf.1",
+  "source_artifacts": {
+    "production_set_policy": "tests/conformance/math_production_set_policy.v1.json",
+    "production_set_policy_gate": "scripts/check_math_production_set_policy.sh",
+    "source_harness_test": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+    "production_manifest": "tests/runtime_math/production_kernel_manifest.v1.json",
+    "governance": "tests/conformance/math_governance.json",
+    "linkage": "tests/runtime_math/runtime_math_linkage.v1.json",
+    "value_proof": "tests/conformance/math_value_proof.json",
+    "retirement_policy": "tests/conformance/math_retirement_policy.json",
+    "admission_report": "tests/runtime_math/admission_gate_report.v1.json",
+    "completion_checker": "scripts/check_math_production_set_policy_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/math_production_set_policy_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "required_policy_contract": {
+      "schema_version": 1,
+      "bead": "bd-25pf",
+      "summary": {
+        "total_production_modules": 25,
+        "production_tier_modules": 25,
+        "research_tier_modules": 0,
+        "waived_research_modules": 0,
+        "missing_classification": 0,
+        "missing_linkage": 0,
+        "missing_value_proof": 0,
+        "missing_retirement_waiver": 0,
+        "missing_retirement_migration_entry": 0
+      },
+      "change_gate": {
+        "manifest_sha256": "b47cd1f6283dc3bb151fb0c57b7f8ef5c1b1afe526cf2b333d92eecc37ef257b",
+        "module_count": 25,
+        "retention_threshold": 2.0
+      },
+      "source_paths": {
+        "production_manifest": "tests/runtime_math/production_kernel_manifest.v1.json",
+        "governance": "tests/conformance/math_governance.json",
+        "linkage": "tests/runtime_math/runtime_math_linkage.v1.json",
+        "value_proof": "tests/conformance/math_value_proof.json",
+        "retirement_policy": "tests/conformance/math_retirement_policy.json"
+      },
+      "required_admission_requirements": [
+        "classification entry required for every manifest module",
+        "linkage entry required for every manifest module",
+        "production tiers (production_core/production_monitor) require value-proof assessment",
+        "research tier modules remaining in manifest require active retirement waiver and migration-wave entry"
+      ],
+      "required_source_gate_stdout": "PASS: production-set policy gate validated 25 modules",
+      "required_source_report": "target/conformance/math_production_set_policy.report.json",
+      "required_source_log": "target/conformance/math_production_set_policy.log.jsonl",
+      "required_source_log_fields": [
+        "timestamp",
+        "trace_id",
+        "mode",
+        "symbol",
+        "outcome",
+        "errno",
+        "timing_ns",
+        "gate",
+        "classification",
+        "linkage_status",
+        "reasons"
+      ]
+    },
+    "implementation_refs": [
+      {
+        "id": "policy_gate",
+        "path": "scripts/check_math_production_set_policy.sh",
+        "required_text": [
+          "canonical_set_sha256",
+          "missing_classification",
+          "missing_linkage",
+          "missing_value_proof",
+          "math_production_set_policy.log.jsonl",
+          "PASS: production-set policy gate validated"
+        ]
+      },
+      {
+        "id": "source_harness",
+        "path": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+        "required_text": [
+          "policy_summary_matches_current_artifacts",
+          "gate_script_emits_logs_and_report",
+          "log line count must equal production module count"
+        ]
+      }
+    ],
+    "test_sources": {
+      "source_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+        "required_test_refs": [
+          "policy_exists_and_basic_fields_are_valid",
+          "policy_summary_matches_current_artifacts",
+          "gate_script_exists_and_executable",
+          "gate_script_emits_logs_and_report"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/math_production_set_policy_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_completion_evidence",
+          "checker_validates_math_production_set_policy_contract",
+          "checker_emits_completion_report_and_jsonl",
+          "checker_rejects_missing_policy_source_binding",
+          "checker_rejects_missing_source_test_ref",
+          "checker_rejects_unimplemented_telemetry_event"
+        ]
+      }
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_artifacts": [
+        "tests/conformance/math_production_set_policy.v1.json",
+        "scripts/check_math_production_set_policy.sh",
+        "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+        "crates/frankenlibc-harness/tests/math_production_set_policy_completion_contract_test.rs"
+      ],
+      "required_test_refs": [
+        "policy_exists_and_basic_fields_are_valid",
+        "policy_summary_matches_current_artifacts",
+        "gate_script_exists_and_executable",
+        "gate_script_emits_logs_and_report",
+        "manifest_binds_unit_completion_evidence",
+        "checker_validates_math_production_set_policy_contract"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_commit",
+      "summary",
+      "source_artifacts",
+      "required_policy_contract",
+      "test_refs",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome",
+      "source_commit",
+      "schema_version",
+      "artifact_refs",
+      "test_refs",
+      "failure_signature"
+    ],
+    "required_events": [
+      "math_production_set_policy_completion_summary",
+      "math_production_set_policy_source_bindings",
+      "math_production_set_policy_test_bindings",
+      "math_production_set_policy_completion_contract_pass",
+      "math_production_set_policy_completion_contract_fail"
+    ]
+  }
+}
