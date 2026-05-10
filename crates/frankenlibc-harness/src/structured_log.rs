@@ -1011,6 +1011,16 @@ pub fn validate_log_line(
             }),
         }
 
+        match obj.get("parent_span_id").and_then(|v| v.as_str()) {
+            Some(parent) if !parent.trim().is_empty() => {}
+            _ => errors.push(LogValidationError {
+                line_number,
+                field: "parent_span_id".to_string(),
+                message: "runtime_decision events must include non-empty parent_span_id"
+                    .to_string(),
+            }),
+        }
+
         if obj.get("decision").is_none() {
             errors.push(LogValidationError {
                 line_number,

@@ -165,18 +165,26 @@ impl DecisionTraceReport {
                 missing.push("span_id");
             }
             if obj
+                .get("parent_span_id")
+                .and_then(|v| v.as_str())
+                .is_none_or(str::is_empty)
+            {
+                missing.push("parent_span_id");
+            }
+            match obj.get("decision_id").and_then(|v| v.as_u64()) {
+                Some(0) | None => missing.push("decision_id"),
+                Some(_) => {}
+            }
+            if obj
                 .get("controller_id")
                 .and_then(|v| v.as_str())
                 .is_none_or(str::is_empty)
             {
                 missing.push("controller_id");
             }
-            if obj
-                .get("decision_action")
-                .and_then(|v| v.as_str())
-                .is_none_or(str::is_empty)
-            {
-                missing.push("decision_action");
+            match obj.get("decision_action").and_then(|v| v.as_str()) {
+                Some(action) if ["Allow", "FullValidate", "Repair", "Deny"].contains(&action) => {}
+                Some(_) | None => missing.push("decision_action"),
             }
             if !obj
                 .get("risk_inputs")
@@ -2113,11 +2121,13 @@ mod tests {
         assert!(!report.fully_explainable());
         assert_eq!(report.findings.len(), 1);
         assert!(report.findings[0].reason.contains("risk_inputs"));
+        assert!(report.findings[0].reason.contains("parent_span_id"));
+        assert!(report.findings[0].reason.contains("decision_id"));
     }
 
     #[test]
     fn decision_trace_report_accepts_complete_decision_chain() {
-        let jsonl = r#"{"timestamp":"2026-02-12T00:00:00Z","trace_id":"bd-33p.2::run::002","span_id":"abi::malloc::decision::0000000000000001","parent_span_id":"abi::malloc::entry::0000000000000001","level":"info","event":"runtime_decision","symbol":"malloc","decision":"FullValidate","controller_id":"runtime_math_kernel.v1","decision_action":"FullValidate","risk_inputs":{"requested_bytes":128,"bloom_negative":false}}"#;
+        let jsonl = r#"{"timestamp":"2026-02-12T00:00:00Z","trace_id":"bd-33p.2::run::002","span_id":"abi::malloc::decision::0000000000000001","parent_span_id":"abi::malloc::entry::0000000000000001","level":"info","event":"runtime_decision","symbol":"malloc","decision":"FullValidate","decision_id":42,"policy_id":7,"evidence_seqno":11,"controller_id":"runtime_math_kernel.v1","decision_action":"FullValidate","risk_inputs":{"requested_bytes":128,"bloom_negative":false}}"#;
         let report = DecisionTraceReport::from_jsonl_str(jsonl);
         assert_eq!(report.total_events, 1);
         assert_eq!(report.decision_events, 1);
@@ -2125,6 +2135,20 @@ mod tests {
         assert_eq!(report.missing_explainability, 0);
         assert!(report.fully_explainable());
         assert!(report.findings.is_empty());
+    }
+
+    #[test]
+    fn decision_trace_report_rejects_unjoinable_decision_rows() {
+        let jsonl = r#"{"timestamp":"2026-02-12T00:00:00Z","trace_id":"bd-33p.2::run::003","span_id":"abi::free::decision::0000000000000002","level":"error","event":"runtime_decision","symbol":"free","decision":"Deny","decision_id":0,"controller_id":"runtime_math_kernel.v1","decision_action":"Deny","risk_inputs":{"requested_bytes":0,"bloom_negative":true}}"#;
+        let report = DecisionTraceReport::from_jsonl_str(jsonl);
+
+        assert_eq!(report.decision_events, 1);
+        assert_eq!(report.explainable_decision_events, 0);
+        assert_eq!(report.missing_explainability, 1);
+        assert!(!report.fully_explainable());
+        assert_eq!(report.findings.len(), 1);
+        assert!(report.findings[0].reason.contains("parent_span_id"));
+        assert!(report.findings[0].reason.contains("decision_id"));
     }
 
     fn sample_fixture_set() -> FixtureSet {

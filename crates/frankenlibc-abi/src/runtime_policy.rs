@@ -2106,6 +2106,58 @@ mod tests {
     }
 
     #[test]
+    fn bd_33p_2_completion_debt_unit_trace_ids_are_joinable() {
+        reset_decision_contract_machine_for_tests();
+        let _scope = entrypoint_scope("free");
+        let decision = RuntimeDecision {
+            action: MembraneAction::Deny,
+            profile: ValidationProfile::Full,
+            policy_id: 7,
+            risk_upper_bound_ppm: 900_001,
+            evidence_seqno: 11,
+        };
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0xdead_beef,
+            requested_bytes: 0,
+            is_write: true,
+            contention_hint: 4,
+            bloom_negative: true,
+        };
+
+        record_last_explainability(
+            SafetyLevel::Hardened,
+            ctx,
+            decision,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
+        let explain = take_last_explainability().expect("decision explainability should exist");
+        let trace_id = explain.trace_id();
+        let span_id = explain.span_id();
+        let parent_span_id = explain.parent_span_id();
+
+        assert_eq!(explain.symbol, "free");
+        assert_eq!(explain.controller_id, CONTROLLER_ID_RUNTIME_MATH);
+        assert_eq!(explain.decision_gate, DECISION_GATE_RUNTIME_POLICY);
+        assert_eq!(explain.mode, SafetyLevel::Hardened);
+        assert_eq!(explain.family, ApiFamily::Allocator);
+        assert_eq!(explain.profile, ValidationProfile::Full);
+        assert_eq!(explain.decision_action(), "Deny");
+        assert_eq!(explain.policy_id, 7);
+        assert_eq!(explain.risk_upper_bound_ppm, 900_001);
+        assert_eq!(explain.requested_bytes, 0);
+        assert_eq!(explain.addr_hint, 0xdead_beef);
+        assert!(explain.is_write);
+        assert!(explain.bloom_negative);
+        assert_eq!(explain.contention_hint, 4);
+        assert_eq!(explain.evidence_seqno, 11);
+        assert!(trace_id.starts_with("abi::free::"));
+        assert!(span_id.starts_with("abi::free::decision::"));
+        assert!(parent_span_id.starts_with("abi::free::entry::"));
+        assert_ne!(span_id, parent_span_id);
+    }
+
+    #[test]
     fn missing_scope_uses_fallback_context() {
         reset_decision_contract_machine_for_tests();
         let decision = RuntimeDecision {

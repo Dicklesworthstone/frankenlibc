@@ -11,8 +11,10 @@
 
 use std::path::{Path, PathBuf};
 
+use frankenlibc_harness::report::DecisionTraceReport;
 use frankenlibc_harness::structured_log::{
-    ArtifactIndex, LogEmitter, LogEntry, LogLevel, Outcome, validate_log_file, validate_log_line,
+    ArtifactIndex, Decision, LogEmitter, LogEntry, LogLevel, Outcome, StreamKind,
+    validate_log_file, validate_log_line,
 };
 
 fn workspace_root() -> PathBuf {
@@ -284,4 +286,74 @@ fn decision_event_without_explainability_is_rejected() {
     let line = r#"{"timestamp":"2026-02-11T00:00:00Z","trace_id":"bd-144::run-1::006","level":"error","event":"runtime_decision","decision":"Deny","outcome":"fail"}"#;
     let result = validate_log_line(line, 1);
     assert!(result.is_err(), "Missing explainability should fail");
+}
+
+#[test]
+fn bd_33p_2_completion_debt_e2e_failure_trace_chain_is_joinable() {
+    let trace_id = "bd-33p.2::e2e-failure::001";
+    let span_id = "abi::free::decision::000000000000002a";
+    let parent_span_id = "abi::free::entry::000000000000002a";
+    let line = LogEntry::new(trace_id, LogLevel::Error, "runtime_decision")
+        .with_bead("bd-33p.2")
+        .with_stream(StreamKind::E2e)
+        .with_gate("e2e_failure_path")
+        .with_mode("hardened")
+        .with_api("malloc", "free")
+        .with_span(span_id, Some(parent_span_id.to_string()))
+        .with_join_keys(Some(42), Some(7), Some(11))
+        .with_decision(Decision::Deny)
+        .with_decision_explainability(
+            "runtime_math_kernel.v1",
+            "Deny",
+            serde_json::json!({
+                "requested_bytes": 0,
+                "addr_hint": 3735928559_u64,
+                "is_write": true,
+                "bloom_negative": true,
+                "contention_hint": 4
+            }),
+        )
+        .with_outcome(Outcome::Fail)
+        .with_errno(22)
+        .with_failure_signature("foreign_free_rejected")
+        .with_artifacts(vec![
+            "tests/conformance/logs/bd-33p.2-e2e.jsonl".to_string(),
+        ])
+        .to_jsonl()
+        .expect("runtime decision row serializes");
+
+    validate_log_line(&line, 1).expect("complete failure-path decision row validates");
+    let report = DecisionTraceReport::from_jsonl_str(&line);
+    assert_eq!(report.decision_events, 1);
+    assert_eq!(report.explainable_decision_events, 1);
+    assert!(report.fully_explainable());
+
+    let parsed: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
+    assert_eq!(parsed["trace_id"], trace_id);
+    assert_eq!(parsed["span_id"], span_id);
+    assert_eq!(parsed["parent_span_id"], parent_span_id);
+    assert_eq!(parsed["symbol"], "free");
+    assert_eq!(parsed["decision"], "Deny");
+    assert_eq!(parsed["decision_id"], 42);
+    assert_eq!(parsed["policy_id"], 7);
+    assert_eq!(parsed["evidence_seqno"], 11);
+    assert_eq!(parsed["controller_id"], "runtime_math_kernel.v1");
+    assert_eq!(parsed["decision_action"], "Deny");
+    assert!(parsed["risk_inputs"].is_object());
+}
+
+#[test]
+fn bd_33p_2_completion_debt_e2e_rejects_missing_parent_span() {
+    let line = r#"{"timestamp":"2026-02-12T00:00:00Z","trace_id":"bd-33p.2::e2e-failure::002","span_id":"abi::free::decision::000000000000002b","level":"error","event":"runtime_decision","symbol":"free","decision":"Deny","decision_id":43,"policy_id":7,"evidence_seqno":12,"controller_id":"runtime_math_kernel.v1","decision_action":"Deny","risk_inputs":{"requested_bytes":0,"bloom_negative":true},"outcome":"fail"}"#;
+    let errors = validate_log_line(line, 1).expect_err("parent span is required");
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e.field.as_str(), "parent_span_id"))
+    );
+
+    let report = DecisionTraceReport::from_jsonl_str(line);
+    assert_eq!(report.explainable_decision_events, 0);
+    assert_eq!(report.missing_explainability, 1);
+    assert!(report.findings[0].reason.contains("parent_span_id"));
 }
