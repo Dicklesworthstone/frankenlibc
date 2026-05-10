@@ -1,0 +1,259 @@
+{
+  "schema_version": "trace_weighted_symbol_tiers_completion_contract.v1",
+  "bead": "bd-2vv.10",
+  "completion_debt_bead": "bd-2vv.10.1",
+  "title": "Trace-weighted symbol tiers + family wave roadmap completion contract",
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "score_before": 485,
+    "target_score": 700,
+    "scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-2vv.10/scorecard.md",
+    "evidence": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-2vv.10/evidence.json"
+  },
+  "source_paths": {
+    "generator": "scripts/generate_symbol_tiers_roadmap.py",
+    "legacy_checker": "scripts/check_symbol_tiers_roadmap.sh",
+    "legacy_harness": "crates/frankenlibc-harness/tests/symbol_tiers_roadmap_test.rs",
+    "roadmap_report": "tests/conformance/symbol_tiers_roadmap.v1.json",
+    "completion_contract": "tests/conformance/trace_weighted_symbol_tiers_completion_contract.v1.json",
+    "completion_checker": "scripts/check_trace_weighted_symbol_tiers_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/trace_weighted_symbol_tiers_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    {
+      "kind": "tier_boundaries",
+      "path": "scripts/generate_symbol_tiers_roadmap.py",
+      "line": 38,
+      "anchor": "TIER_BOUNDARIES"
+    },
+    {
+      "kind": "wave_definitions",
+      "path": "scripts/generate_symbol_tiers_roadmap.py",
+      "line": 46,
+      "anchor": "WAVE_DEFINITIONS"
+    },
+    {
+      "kind": "acceptance_checklist",
+      "path": "scripts/generate_symbol_tiers_roadmap.py",
+      "line": 104,
+      "anchor": "WAVE_ACCEPTANCE_CHECKLIST"
+    },
+    {
+      "kind": "tier_assignment",
+      "path": "scripts/generate_symbol_tiers_roadmap.py",
+      "line": 144,
+      "anchor": "def assign_tier"
+    },
+    {
+      "kind": "stable_hash",
+      "path": "scripts/generate_symbol_tiers_roadmap.py",
+      "line": 152,
+      "anchor": "def compute_roadmap_hash"
+    },
+    {
+      "kind": "roadmap_report",
+      "path": "tests/conformance/symbol_tiers_roadmap.v1.json",
+      "line": 1,
+      "anchor": "\"bead\": \"bd-2vv.10\""
+    },
+    {
+      "kind": "legacy_checker",
+      "path": "scripts/check_symbol_tiers_roadmap.sh",
+      "line": 48,
+      "anchor": "Must have all symbols tiered"
+    },
+    {
+      "kind": "legacy_harness",
+      "path": "crates/frankenlibc-harness/tests/symbol_tiers_roadmap_test.rs",
+      "line": 23,
+      "anchor": "fn tiers_roadmap_generates_successfully"
+    },
+    {
+      "kind": "completion_contract",
+      "path": "tests/conformance/trace_weighted_symbol_tiers_completion_contract.v1.json",
+      "line": 1,
+      "anchor": "trace_weighted_symbol_tiers_completion_contract.v1"
+    },
+    {
+      "kind": "completion_checker",
+      "path": "scripts/check_trace_weighted_symbol_tiers_completion_contract.sh",
+      "line": 1,
+      "anchor": "trace_weighted_symbol_tiers_completion_contract"
+    },
+    {
+      "kind": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/trace_weighted_symbol_tiers_completion_contract_test.rs",
+      "line": 1,
+      "anchor": "trace_weighted_symbol_tiers_completion_contract"
+    }
+  ],
+  "source_anchors": {
+    "generator": [
+      "TIER_BOUNDARIES",
+      "WAVE_DEFINITIONS",
+      "WAVE_ACCEPTANCE_CHECKLIST",
+      "def assign_tier",
+      "def compute_roadmap_hash",
+      "\"tiered_symbols\"",
+      "\"wave_roadmap\"",
+      "\"family_readiness\""
+    ],
+    "legacy_checker": [
+      "Top50 tier correctly populated",
+      "All {total} symbols assigned to waves",
+      "Output is reproducible"
+    ],
+    "legacy_harness": [
+      "fn tiers_roadmap_generates_successfully",
+      "fn tiers_roadmap_schema_complete",
+      "fn tiers_correct_distribution",
+      "fn waves_cover_all_symbols",
+      "fn family_readiness_populated",
+      "fn acceptance_checklist_has_mandatory_items",
+      "fn tiers_roadmap_reproducible"
+    ],
+    "roadmap_report": [
+      "\"bead\": \"bd-2vv.10\"",
+      "\"roadmap_hash\"",
+      "\"tiered_symbols\"",
+      "\"wave_roadmap\"",
+      "\"family_readiness\"",
+      "\"wave_acceptance_checklist\""
+    ]
+  },
+  "roadmap_contract": {
+    "minimum_symbols": 100,
+    "required_tiers": [
+      "top50",
+      "top100",
+      "top200"
+    ],
+    "required_top50_count": 50,
+    "minimum_waves": 3,
+    "minimum_mandatory_checklist_items": 3,
+    "required_symbol_fields": [
+      "symbol",
+      "family",
+      "priority_score",
+      "rank",
+      "tier",
+      "wave"
+    ]
+  },
+  "telemetry_contract": {
+    "events": [
+      "trace_weighted_symbol_tier_validated",
+      "trace_weighted_symbol_tiers_completion_contract_failed"
+    ],
+    "required_fields": [
+      "trace_id",
+      "symbol",
+      "tier",
+      "family",
+      "planned_wave",
+      "rationale",
+      "artifact_refs",
+      "failure_signature",
+      "latency_ns",
+      "source_commit"
+    ],
+    "artifact_refs": [
+      "tests/conformance/symbol_tiers_roadmap.v1.json",
+      "target/conformance/trace_weighted_symbol_tiers.generated.v1.json",
+      "target/conformance/trace_weighted_symbol_tiers_completion_contract.report.json",
+      "target/conformance/trace_weighted_symbol_tiers_completion_contract.jsonl"
+    ]
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "crates/frankenlibc-harness/tests/symbol_tiers_roadmap_test.rs:47",
+        "crates/frankenlibc-harness/tests/symbol_tiers_roadmap_test.rs:67",
+        "crates/frankenlibc-harness/tests/symbol_tiers_roadmap_test.rs:91",
+        "crates/frankenlibc-harness/tests/symbol_tiers_roadmap_test.rs:122",
+        "crates/frankenlibc-harness/tests/symbol_tiers_roadmap_test.rs:149"
+      ],
+      "test_refs": [
+        {
+          "name": "tiers_roadmap_schema_complete",
+          "source": "legacy_harness"
+        },
+        {
+          "name": "tiers_correct_distribution",
+          "source": "legacy_harness"
+        },
+        {
+          "name": "waves_cover_all_symbols",
+          "source": "legacy_harness"
+        },
+        {
+          "name": "family_readiness_populated",
+          "source": "legacy_harness"
+        },
+        {
+          "name": "acceptance_checklist_has_mandatory_items",
+          "source": "legacy_harness"
+        }
+      ],
+      "validation_command": "rch exec -- env CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-GrayWolf-bd-2vv-10-1 cargo test -p frankenlibc-harness --test trace_weighted_symbol_tiers_completion_contract_test -- --nocapture"
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "scripts/generate_symbol_tiers_roadmap.py:162",
+        "scripts/check_symbol_tiers_roadmap.sh:93",
+        "crates/frankenlibc-harness/tests/symbol_tiers_roadmap_test.rs:23",
+        "crates/frankenlibc-harness/tests/symbol_tiers_roadmap_test.rs:179"
+      ],
+      "test_refs": [
+        {
+          "name": "tiers_roadmap_generates_successfully",
+          "source": "legacy_harness"
+        },
+        {
+          "name": "tiers_roadmap_reproducible",
+          "source": "legacy_harness"
+        },
+        {
+          "name": "checker_emits_report_and_symbol_telemetry_rows",
+          "source": "completion_harness"
+        }
+      ],
+      "validation_command": "scripts/check_trace_weighted_symbol_tiers_completion_contract.sh"
+    },
+    {
+      "missing_item_id": "telemetry.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "scripts/check_trace_weighted_symbol_tiers_completion_contract.sh:1",
+        "crates/frankenlibc-harness/tests/trace_weighted_symbol_tiers_completion_contract_test.rs:1"
+      ],
+      "required_fields": [
+        "trace_id",
+        "symbol",
+        "tier",
+        "family",
+        "planned_wave",
+        "rationale",
+        "artifact_refs",
+        "failure_signature",
+        "latency_ns",
+        "source_commit"
+      ],
+      "test_refs": [
+        {
+          "name": "checker_emits_report_and_symbol_telemetry_rows",
+          "source": "completion_harness"
+        },
+        {
+          "name": "checker_fails_closed_when_telemetry_coverage_is_removed",
+          "source": "completion_harness"
+        }
+      ],
+      "validation_command": "scripts/check_trace_weighted_symbol_tiers_completion_contract.sh"
+    }
+  ]
+}
