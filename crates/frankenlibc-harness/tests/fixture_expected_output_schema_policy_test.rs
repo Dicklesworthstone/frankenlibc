@@ -117,6 +117,39 @@ fn contract_declares_adapter_normalized_policy() {
         contract["migration_notes"]["no_broad_fixture_rewrite"].as_bool(),
         Some(true)
     );
+    assert_eq!(
+        contract["migration_controls"]["id"].as_str(),
+        Some("fixture_expected_output_adapter_migration.v1")
+    );
+    assert_eq!(
+        contract["migration_controls"]["downstream_schema_gate"].as_str(),
+        Some("tests/conformance/fixture_schema_validation.v1.json")
+    );
+    assert!(
+        contract["migration_controls"]["required_migration_steps"]
+            .as_array()
+            .expect("migration steps should be an array")
+            .iter()
+            .any(|step| step.as_str()
+                == Some("Consume this policy from the whole-tree fixture schema validation gate")),
+        "migration controls must bind the downstream schema gate"
+    );
+    assert!(
+        contract["migration_controls"]["prohibited_migrations"]
+            .as_array()
+            .expect("prohibited migrations should be an array")
+            .iter()
+            .any(|step| step.as_str() == Some("No broad fixture rewrite")),
+        "migration controls must keep broad fixture rewrites prohibited"
+    );
+    assert_eq!(
+        contract["conformance_gate"]["harness_test"].as_str(),
+        Some("crates/frankenlibc-harness/tests/fixture_expected_output_schema_policy_test.rs")
+    );
+    assert_eq!(
+        contract["conformance_gate"]["validated_focus_case_count"].as_u64(),
+        Some(58)
+    );
 
     let tags = contract["expectation_tag_precedence"]
         .as_array()
@@ -185,6 +218,23 @@ fn checker_passes_and_reports_all_focus_cases() {
     assert_eq!(
         report["summary"]["expected_output_value_kinds"]["number"].as_u64(),
         Some(5)
+    );
+    assert_eq!(
+        report["summary"]["migration_contract"].as_str(),
+        Some("fixture_expected_output_adapter_migration.v1")
+    );
+    assert_eq!(report["summary"]["migration_step_count"].as_u64(), Some(5));
+    assert_eq!(
+        report["summary"]["prohibited_migration_count"].as_u64(),
+        Some(4)
+    );
+    assert_eq!(
+        report["summary"]["conformance_gate"].as_str(),
+        Some("fixture_expected_output_schema_policy_conformance.v1")
+    );
+    assert_eq!(
+        report["summary"]["conformance_harness_test"].as_str(),
+        Some("crates/frankenlibc-harness/tests/fixture_expected_output_schema_policy_test.rs")
     );
 
     let focus = report["focus_fixtures"]
@@ -258,6 +308,57 @@ fn checker_rejects_missing_focus_fixture_inventory() {
         "unexpected stderr: {stderr}"
     );
     assert_failure_outputs(&root, "focus_fixture_missing");
+}
+
+#[test]
+fn checker_rejects_migration_control_drift() {
+    let _guard = gate_lock();
+    let root = workspace_root();
+    let contract_path =
+        root.join("tests/conformance/fixture_expected_output_schema_policy.v1.json");
+    let mut contract = load_json(&contract_path);
+    let steps = contract["migration_controls"]["required_migration_steps"]
+        .as_array_mut()
+        .expect("migration steps should exist");
+    steps.retain(|step| {
+        step.as_str() != Some("Fail closed when undocumented expected_* supplemental fields appear")
+    });
+    let mutation = write_mutation(&root, "missing_migration_step", &contract);
+
+    let output = run_checker(&root, Some(&mutation));
+    assert!(
+        !output.status.success(),
+        "checker should reject missing migration-control steps"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("migration_controls_invalid"),
+        "unexpected stderr: {stderr}"
+    );
+    assert_failure_outputs(&root, "migration_controls_invalid");
+}
+
+#[test]
+fn checker_rejects_conformance_gate_drift() {
+    let _guard = gate_lock();
+    let root = workspace_root();
+    let contract_path =
+        root.join("tests/conformance/fixture_expected_output_schema_policy.v1.json");
+    let mut contract = load_json(&contract_path);
+    contract["conformance_gate"]["validated_focus_case_count"] = serde_json::Value::from(57);
+    let mutation = write_mutation(&root, "stale_conformance_gate", &contract);
+
+    let output = run_checker(&root, Some(&mutation));
+    assert!(
+        !output.status.success(),
+        "checker should reject stale conformance-gate counts"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("conformance_gate_invalid"),
+        "unexpected stderr: {stderr}"
+    );
+    assert_failure_outputs(&root, "conformance_gate_invalid");
 }
 
 #[test]

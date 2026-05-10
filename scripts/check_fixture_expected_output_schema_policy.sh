@@ -49,7 +49,22 @@ start_ns = time.time_ns()
 EXPECTED_SCHEMA = "fixture_expected_output_schema_policy.v1"
 EXPECTED_BEAD = "bd-0agsk.5"
 EXPECTED_POLICY = "adapter_normalized_tagged_values"
+EXPECTED_MIGRATION_ID = "fixture_expected_output_adapter_migration.v1"
+EXPECTED_CONFORMANCE_GATE_ID = "fixture_expected_output_schema_policy_conformance.v1"
 REQUIRED_FOCUS_IDS = ["elf_loader", "resolver", "time_ops", "termios_ops"]
+REQUIRED_MIGRATION_STEPS = [
+    "Inventory mixed JSON expected_output values before whole-tree schema validation",
+    "Preserve adapter-normalized string comparison inside the harness",
+    "Fail closed when a fixture case lacks a primary expectation tag",
+    "Fail closed when undocumented expected_* supplemental fields appear",
+    "Consume this policy from the whole-tree fixture schema validation gate",
+]
+REQUIRED_PROHIBITED_MIGRATIONS = [
+    "No broad fixture rewrite",
+    "No string-only JSON-boundary downgrade",
+    "No silent expected_* field skipping",
+    "No host libc execution in the schema-policy checker",
+]
 EXPECTED_ADAPTER_TOKENS = [
     "fn expected_output_from_raw_case",
     "fn normalize_expected_output_value",
@@ -138,6 +153,13 @@ def count_map(counter: Counter) -> dict:
     return {key: counter[key] for key in sorted(counter)}
 
 
+def require_string_list(container: dict, field: str, signature: str, source_commit: str) -> list[str]:
+    values = container.get(field)
+    if not isinstance(values, list) or not values or not all(isinstance(value, str) for value in values):
+        fail(signature, f"{field} must be a non-empty string array", source_commit=source_commit)
+    return values
+
+
 def primary_tag_for_case(case: dict, tag_rows: list[dict]) -> str | None:
     for row in tag_rows:
         fields = row.get("fields", [])
@@ -177,6 +199,72 @@ if policy.get("internal_comparison_type") != "string":
     fail("canonical_policy_mismatch", "internal comparison type must remain string", source_commit=source_commit)
 if policy.get("preserves_existing_harness_behavior") is not True:
     fail("canonical_policy_mismatch", "policy must explicitly preserve existing harness behavior", source_commit=source_commit)
+
+source_policy_artifact = "tests/conformance/fixture_expected_output_schema_policy.v1.json"
+downstream_schema_gate = "tests/conformance/fixture_schema_validation.v1.json"
+migration_controls = contract.get("migration_controls")
+if not isinstance(migration_controls, dict):
+    fail("migration_controls_invalid", "migration_controls must be an object", source_commit=source_commit)
+if migration_controls.get("id") != EXPECTED_MIGRATION_ID:
+    fail("migration_controls_invalid", f"migration_controls.id must be {EXPECTED_MIGRATION_ID}", source_commit=source_commit)
+if migration_controls.get("source_policy_artifact") != source_policy_artifact:
+    fail("migration_controls_invalid", "source_policy_artifact must name the canonical policy artifact", source_commit=source_commit)
+if migration_controls.get("downstream_schema_gate") != downstream_schema_gate:
+    fail("migration_controls_invalid", "downstream_schema_gate must name the whole-tree schema gate", source_commit=source_commit)
+if not (root / downstream_schema_gate).is_file():
+    fail("migration_controls_invalid", f"downstream schema gate missing: {downstream_schema_gate}", source_commit=source_commit)
+
+migration_steps = require_string_list(
+    migration_controls,
+    "required_migration_steps",
+    "migration_controls_invalid",
+    source_commit,
+)
+missing_steps = [step for step in REQUIRED_MIGRATION_STEPS if step not in migration_steps]
+if missing_steps:
+    fail(
+        "migration_controls_invalid",
+        "migration controls are missing required steps",
+        source_commit=source_commit,
+        missing_steps=missing_steps,
+    )
+prohibited_migrations = require_string_list(
+    migration_controls,
+    "prohibited_migrations",
+    "migration_controls_invalid",
+    source_commit,
+)
+missing_prohibitions = [
+    item for item in REQUIRED_PROHIBITED_MIGRATIONS if item not in prohibited_migrations
+]
+if missing_prohibitions:
+    fail(
+        "migration_controls_invalid",
+        "migration controls are missing prohibited migration guardrails",
+        source_commit=source_commit,
+        missing_prohibitions=missing_prohibitions,
+    )
+
+conformance_gate = contract.get("conformance_gate")
+if not isinstance(conformance_gate, dict):
+    fail("conformance_gate_invalid", "conformance_gate must be an object", source_commit=source_commit)
+if conformance_gate.get("id") != EXPECTED_CONFORMANCE_GATE_ID:
+    fail("conformance_gate_invalid", f"conformance_gate.id must be {EXPECTED_CONFORMANCE_GATE_ID}", source_commit=source_commit)
+if conformance_gate.get("checker") != "scripts/check_fixture_expected_output_schema_policy.sh --validate-only":
+    fail("conformance_gate_invalid", "conformance gate checker must be the validate-only command", source_commit=source_commit)
+harness_test = str(conformance_gate.get("harness_test", ""))
+if harness_test != "crates/frankenlibc-harness/tests/fixture_expected_output_schema_policy_test.rs":
+    fail("conformance_gate_invalid", "conformance gate harness_test must name the focused harness test", source_commit=source_commit)
+if not (root / harness_test).is_file():
+    fail("conformance_gate_invalid", f"conformance harness test missing: {harness_test}", source_commit=source_commit)
+if int(conformance_gate.get("validated_focus_fixture_count", -1)) != len(REQUIRED_FOCUS_IDS):
+    fail("conformance_gate_invalid", "validated_focus_fixture_count must match required focus fixtures", source_commit=source_commit)
+if int(conformance_gate.get("validated_focus_case_count", -1)) != 58:
+    fail("conformance_gate_invalid", "validated_focus_case_count must match current focus cases", source_commit=source_commit)
+if conformance_gate.get("report_json") != "target/conformance/fixture_expected_output_schema_policy.report.json":
+    fail("conformance_gate_invalid", "conformance gate report_json drifted", source_commit=source_commit)
+if conformance_gate.get("log_jsonl") != "target/conformance/fixture_expected_output_schema_policy.log.jsonl":
+    fail("conformance_gate_invalid", "conformance gate log_jsonl drifted", source_commit=source_commit)
 
 adapter_source = root / str(policy.get("primary_adapter_source", ""))
 if not adapter_source.is_file():
@@ -383,6 +471,11 @@ report = {
         "expected_output_value_kinds": count_map(global_kind_counter),
         "primary_expectation_tags": count_map(global_tag_counter),
         "adapter_source": str(adapter_source.relative_to(root)),
+        "migration_contract": EXPECTED_MIGRATION_ID,
+        "migration_step_count": len(migration_steps),
+        "prohibited_migration_count": len(prohibited_migrations),
+        "conformance_gate": EXPECTED_CONFORMANCE_GATE_ID,
+        "conformance_harness_test": harness_test,
         "string_only_fixture_ids": [
             row["id"]
             for row in classified_rows
@@ -401,6 +494,8 @@ report = {
         "all_focus_cases_classified": "pass",
         "expected_output_kind_inventory_current": "pass",
         "supplemental_expected_fields_current": "pass",
+        "migration_controls_valid": "pass",
+        "conformance_gate_valid": "pass",
     },
     "focus_fixtures": classified_rows,
 }

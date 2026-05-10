@@ -173,6 +173,33 @@
     "supplemental_field_rule": "Extra expected_* fields are allowed only as documented supplemental fields; they do not replace the selected primary expectation tag.",
     "no_broad_fixture_rewrite": true
   },
+  "migration_controls": {
+    "id": "fixture_expected_output_adapter_migration.v1",
+    "source_policy_artifact": "tests/conformance/fixture_expected_output_schema_policy.v1.json",
+    "downstream_schema_gate": "tests/conformance/fixture_schema_validation.v1.json",
+    "required_migration_steps": [
+      "Inventory mixed JSON expected_output values before whole-tree schema validation",
+      "Preserve adapter-normalized string comparison inside the harness",
+      "Fail closed when a fixture case lacks a primary expectation tag",
+      "Fail closed when undocumented expected_* supplemental fields appear",
+      "Consume this policy from the whole-tree fixture schema validation gate"
+    ],
+    "prohibited_migrations": [
+      "No broad fixture rewrite",
+      "No string-only JSON-boundary downgrade",
+      "No silent expected_* field skipping",
+      "No host libc execution in the schema-policy checker"
+    ]
+  },
+  "conformance_gate": {
+    "id": "fixture_expected_output_schema_policy_conformance.v1",
+    "checker": "scripts/check_fixture_expected_output_schema_policy.sh --validate-only",
+    "harness_test": "crates/frankenlibc-harness/tests/fixture_expected_output_schema_policy_test.rs",
+    "validated_focus_fixture_count": 4,
+    "validated_focus_case_count": 58,
+    "report_json": "target/conformance/fixture_expected_output_schema_policy.report.json",
+    "log_jsonl": "target/conformance/fixture_expected_output_schema_policy.log.jsonl"
+  },
   "report_outputs": {
     "report_json": "target/conformance/fixture_expected_output_schema_policy.report.json",
     "log_jsonl": "target/conformance/fixture_expected_output_schema_policy.log.jsonl"
@@ -186,6 +213,8 @@
     "fixture_case_unclassified",
     "primary_expectation_tag_mismatch",
     "expected_output_kind_mismatch",
-    "supplemental_field_mismatch"
+    "supplemental_field_mismatch",
+    "migration_controls_invalid",
+    "conformance_gate_invalid"
   ]
 }
