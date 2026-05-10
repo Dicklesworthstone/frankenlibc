@@ -1,0 +1,190 @@
+{
+  "schema_version": "allocator_membrane_unit_property_contract.v1",
+  "manifest_id": "bd-2x5.4.1-allocator-membrane-unit-property-contract",
+  "generated_utc": "2026-05-10T06:50:00Z",
+  "description": "Completion-debt evidence binding for allocator and membrane unit/property coverage around generation counters, quarantine, corruption detection, UAF, double-free, and foreign-pointer paths.",
+  "bead": "bd-2x5.4",
+  "source_modules": [
+    "crates/frankenlibc-membrane/src/arena.rs",
+    "crates/frankenlibc-membrane/src/fingerprint.rs",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs",
+    "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs"
+  ],
+  "completion_debt_evidence": {
+    "bead": "bd-2x5.4.1",
+    "original_bead": "bd-2x5.4",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-2x5.4/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "test_sources": {
+      "arena_unit": "crates/frankenlibc-membrane/src/arena.rs",
+      "fingerprint_unit": "crates/frankenlibc-membrane/src/fingerprint.rs",
+      "ptr_validator_unit": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "allocator_sequences": "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs",
+      "contract_harness": "crates/frankenlibc-harness/tests/allocator_membrane_unit_property_contract_test.rs"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/arena.rs:172",
+      "crates/frankenlibc-membrane/src/arena.rs:263",
+      "crates/frankenlibc-membrane/src/arena.rs:457",
+      "crates/frankenlibc-membrane/src/fingerprint.rs:36",
+      "crates/frankenlibc-membrane/src/fingerprint.rs:83",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:626",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:1782",
+      "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs:45",
+      "scripts/check_allocator_membrane_unit_property_contract.sh:1",
+      "tests/conformance/allocator_membrane_unit_property_contract.v1.json:1"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "next_audit_score_threshold": 800,
+      "required_test_refs": [
+        {
+          "source": "arena_unit",
+          "name": "generation_increases"
+        },
+        {
+          "source": "arena_unit",
+          "name": "free_promotes_slot_to_quarantined_with_new_generation"
+        },
+        {
+          "source": "arena_unit",
+          "name": "proof_uaf_detection_probability_one"
+        },
+        {
+          "source": "arena_unit",
+          "name": "proof_double_free_always_detected"
+        },
+        {
+          "source": "arena_unit",
+          "name": "canary_corruption_detected"
+        },
+        {
+          "source": "arena_unit",
+          "name": "foreign_pointer_detected"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "foreign_free_reported"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "double_free_reported"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "canary_corruption_detected_via_pipeline_free"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "tls_cache_does_not_allow_uaf_after_free"
+        },
+        {
+          "source": "fingerprint_unit",
+          "name": "canary_detects_corruption"
+        }
+      ],
+      "required_commands": [
+        "cargo test -p frankenlibc-membrane generation_increases -- --nocapture",
+        "cargo test -p frankenlibc-membrane proof_uaf_detection_probability_one -- --nocapture",
+        "cargo test -p frankenlibc-membrane double_free_reported -- --nocapture",
+        "cargo test -p frankenlibc-membrane canary_corruption_detected_via_pipeline_free -- --nocapture"
+      ],
+      "evidence_summary": "Inline membrane unit tests cover generation monotonicity, quarantine promotion/draining, UAF detection, double-free detection, canary corruption, foreign free, and TLS cache invalidation."
+    },
+    "property_primary": {
+      "missing_item_id": "tests.property.primary",
+      "next_audit_score_threshold": 800,
+      "required_test_refs": [
+        {
+          "source": "fingerprint_unit",
+          "name": "prop_fingerprint_roundtrip"
+        },
+        {
+          "source": "fingerprint_unit",
+          "name": "prop_fingerprint_verify_correct_addr"
+        },
+        {
+          "source": "fingerprint_unit",
+          "name": "prop_canary_detects_any_byte_flip"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "allocated_pointer_property_validates_as_live"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "freed_pointer_property_becomes_temporal_violation"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "dependency_safe_order_property_holds"
+        },
+        {
+          "source": "allocator_sequences",
+          "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"
+        },
+        {
+          "source": "allocator_sequences",
+          "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"
+        }
+      ],
+      "required_commands": [
+        "cargo test -p frankenlibc-membrane prop_canary_detects_any_byte_flip -- --nocapture",
+        "cargo test -p frankenlibc-membrane dependency_safe_order_property_holds -- --nocapture",
+        "cargo test -p frankenlibc-membrane --test allocator_membrane_invariants_sequences_test deterministic_allocator_membrane_sequences_hold_core_invariants -- --nocapture"
+      ],
+      "evidence_summary": "Property-style proptest cases and deterministic sequence/fault matrices cover fingerprint/canary invariants, validation-stage ordering, live/freed pointer state transitions, and adversarial pointer patterns."
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "next_audit_score_threshold": 800,
+      "default_report_path": "target/conformance/allocator_membrane_unit_property_contract.report.json",
+      "default_log_path": "target/conformance/allocator_membrane_unit_property_contract.log.jsonl",
+      "required_test_refs": [
+        {
+          "source": "ptr_validator_unit",
+          "name": "validation_log_export_includes_trace_and_decision_ids"
+        },
+        {
+          "source": "allocator_sequences",
+          "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"
+        },
+        {
+          "source": "contract_harness",
+          "name": "checker_emits_report_and_log"
+        },
+        {
+          "source": "contract_harness",
+          "name": "checker_rejects_stale_property_test_binding"
+        }
+      ],
+      "required_events": [
+        "allocator_membrane_unit_property_contract_validated",
+        "allocator_membrane_unit_property_contract_failed",
+        "validation_stage",
+        "fault_injection_matrix",
+        "fault_injection_log",
+        "double_free_report"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "level",
+        "bead_id",
+        "completion_debt_bead",
+        "original_bead",
+        "status",
+        "source_commit",
+        "missing_items_bound",
+        "test_refs",
+        "required_events",
+        "required_fields",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "evidence_summary": "Pointer-validator JSONL logs, fault-injection matrix rows, double-free stress reports, and this checker report bind telemetry evidence to bd-2x5.4.1."
+    }
+  }
+}
