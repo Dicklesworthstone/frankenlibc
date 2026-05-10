@@ -6,8 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARTIFACT="${ARCH_TODO_RECONCILIATION_ARTIFACT:-${ROOT}/tests/conformance/architecture_todo_reconciliation.v1.json}"
 LEDGER="${ARCH_TODO_RECONCILIATION_LEDGER:-${ROOT}/docs/architecture_investigation_todo.md}"
 OUT_DIR="${ROOT}/target/conformance"
-REPORT="${OUT_DIR}/architecture_todo_reconciliation.report.json"
-LOG="${OUT_DIR}/architecture_todo_reconciliation.log.jsonl"
+REPORT="${ARCH_TODO_RECONCILIATION_REPORT:-${OUT_DIR}/architecture_todo_reconciliation.report.json}"
+LOG="${ARCH_TODO_RECONCILIATION_LOG:-${OUT_DIR}/architecture_todo_reconciliation.log.jsonl}"
 
 TRACE_ID="bd-0agsk.2.1::run-$(date -u +%Y%m%dT%H%M%SZ)-$$::001"
 START_NS="$(python3 - <<'PY'
@@ -16,7 +16,7 @@ print(time.time_ns())
 PY
 )"
 
-mkdir -p "${OUT_DIR}"
+mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
 
 for path in "${ARTIFACT}" "${LEDGER}"; do
   if [[ ! -f "${path}" ]]; then

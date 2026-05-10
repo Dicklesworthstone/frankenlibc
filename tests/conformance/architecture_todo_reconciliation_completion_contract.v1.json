@@ -1,0 +1,157 @@
+{
+  "schema_version": "architecture_todo_reconciliation_completion_contract.v1",
+  "manifest_id": "bd-0agsk.1.1-architecture-todo-reconciliation-completion-contract",
+  "completion_debt_bead": "bd-0agsk.1.1",
+  "original_bead": "bd-0agsk.1",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-0agsk.1/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.conformance.primary",
+      "migrations.primary",
+      "theater.todo_wording.primary"
+    ],
+    "test_sources": {
+      "source_harness": "crates/frankenlibc-harness/tests/architecture_todo_reconciliation_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/architecture_todo_reconciliation_completion_contract_test.rs",
+      "source_checker": "scripts/check_architecture_todo_reconciliation.sh",
+      "completion_checker": "scripts/check_architecture_todo_reconciliation_completion_contract.sh"
+    },
+    "source_contract": {
+      "artifact": "tests/conformance/architecture_todo_reconciliation.v1.json",
+      "ledger": "docs/architecture_investigation_todo.md",
+      "checker": "scripts/check_architecture_todo_reconciliation.sh",
+      "harness_test": "crates/frankenlibc-harness/tests/architecture_todo_reconciliation_test.rs",
+      "schema_version": "architecture_todo_reconciliation.v1",
+      "generated_by_bead": "bd-0agsk.1",
+      "claim_status": "report_only",
+      "replacement_level_change": "forbidden",
+      "expected_counts": {
+        "row_count": 73,
+        "status_completed": 30,
+        "status_in_progress": 3,
+        "status_pending": 40,
+        "already_closed_by_ledger_or_closed_bead_evidence": 30,
+        "routed_to_new_open_bead": 43,
+        "stale_doc_only": 0,
+        "blocked_by_missing_artifact": 0
+      },
+      "required_new_beads": [
+        "bd-0agsk",
+        "bd-0agsk.1",
+        "bd-0agsk.2",
+        "bd-0agsk.18"
+      ],
+      "required_log_events": [
+        "architecture_todo_reconciliation_validated",
+        "architecture_todo_reconciliation_row_validated"
+      ]
+    },
+    "tests_conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "required_artifacts": [
+        "tests/conformance/architecture_todo_reconciliation.v1.json",
+        "scripts/check_architecture_todo_reconciliation.sh",
+        "crates/frankenlibc-harness/tests/architecture_todo_reconciliation_test.rs",
+        "scripts/check_architecture_todo_reconciliation_completion_contract.sh",
+        "crates/frankenlibc-harness/tests/architecture_todo_reconciliation_completion_contract_test.rs"
+      ],
+      "required_commands": [
+        "jq empty tests/conformance/architecture_todo_reconciliation.v1.json",
+        "jq empty tests/conformance/architecture_todo_reconciliation_completion_contract.v1.json",
+        "bash -n scripts/check_architecture_todo_reconciliation.sh",
+        "bash -n scripts/check_architecture_todo_reconciliation_completion_contract.sh",
+        "scripts/check_architecture_todo_reconciliation.sh",
+        "scripts/check_architecture_todo_reconciliation_completion_contract.sh",
+        "CARGO_TARGET_DIR=/tmp/.cargo-target-frankenlibc-GreenFern-bd-0agsk-1-1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test architecture_todo_reconciliation_test -- --nocapture",
+        "CARGO_TARGET_DIR=/tmp/.cargo-target-frankenlibc-GreenFern-bd-0agsk-1-1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test architecture_todo_reconciliation_completion_contract_test -- --nocapture"
+      ],
+      "required_test_refs": [
+        {
+          "source": "source_harness",
+          "name": "checker_passes_and_emits_report_and_log"
+        },
+        {
+          "source": "source_harness",
+          "name": "checker_fails_when_ledger_mapping_is_missing"
+        },
+        {
+          "source": "completion_harness",
+          "name": "contract_binds_architecture_source_gate_and_missing_items"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_completion_report_log_and_replays_source_gate"
+        }
+      ]
+    },
+    "migrations_primary": {
+      "missing_item_id": "migrations.primary",
+      "required_artifacts": [
+        "tests/conformance/architecture_todo_reconciliation.v1.json",
+        "docs/architecture_investigation_todo.md"
+      ],
+      "required_invariants": [
+        "all 73 source ledger rows are mapped exactly once",
+        "30 completed rows are bound to existing ledger or closed-bead evidence",
+        "43 pending or in-progress rows are routed to the bd-0agsk child graph",
+        "report_only claim status forbids replacement-level promotion"
+      ],
+      "required_test_refs": [
+        {
+          "source": "source_harness",
+          "name": "artifact_has_required_report_only_shape"
+        },
+        {
+          "source": "source_harness",
+          "name": "completion_debt_evidence_binds_conformance_and_telemetry_items"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_source_artifact_count_drift"
+        }
+      ]
+    },
+    "theater_todo_wording_primary": {
+      "missing_item_id": "theater.todo_wording.primary",
+      "resolution_policy": "TODO/NEXT wording is allowed only as a quoted source-ledger token. Completion evidence must prove every such token is mapped to current artifact or tracker evidence and must not use WIP/draft/TODO wording as proof of implementation.",
+      "forbidden_completion_claims": [
+        "wip_is_done",
+        "draft_is_done",
+        "todo_word_is_completion",
+        "report_only_promotes_replacement_level"
+      ],
+      "required_test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_theater_resolution"
+        }
+      ]
+    },
+    "telemetry": {
+      "default_report_path": "target/conformance/architecture_todo_reconciliation_completion_contract.report.json",
+      "default_log_path": "target/conformance/architecture_todo_reconciliation_completion_contract.log.jsonl",
+      "required_events": [
+        "architecture_todo_reconciliation_completion_validated",
+        "architecture_todo_reconciliation_source_gate_replayed",
+        "architecture_todo_reconciliation_completion_failed"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "level",
+        "bead_id",
+        "completion_debt_bead",
+        "original_bead",
+        "status",
+        "row_count",
+        "mapped_row_count",
+        "missing_items_bound",
+        "source_report",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    }
+  }
+}
