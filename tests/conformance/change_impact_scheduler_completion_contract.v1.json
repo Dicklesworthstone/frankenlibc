@@ -1,0 +1,304 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "change-impact-scheduler-completion-contract",
+  "bead": "bd-26xb.2",
+  "completion_debt_bead": "bd-26xb.2.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "purpose": "Completion-debt contract for the Flagship 2 change-impact oracle and budget-aware test scheduler. The contract binds deterministic impact rules, selective/full-suite scheduling scenarios, false-negative sentinel escalation, and unit/e2e evidence to a fail-closed checker.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-26xb.2/scorecard.md",
+    "spec_path": "passes/2026-05-10T03-16-16Z/beads/bd-26xb.2/spec.json",
+    "score_before": 570,
+    "score_threshold": 800
+  },
+  "runtime_target": {
+    "max_seconds": 45,
+    "external_services_allowed": false,
+    "coverage_artifacts": [
+      "target/conformance/change_impact_scheduler_completion_contract.report.json",
+      "target/conformance/change_impact_scheduler_completion_contract.log.jsonl"
+    ],
+    "allowed_command_prefixes": [
+      "bash scripts/check_change_impact_scheduler_completion_contract.sh"
+    ],
+    "forbidden_command_substrings": [
+      "cargo ",
+      "cargo\t",
+      "git reset --hard",
+      "git clean -fd",
+      "rm -rf"
+    ]
+  },
+  "source_artifacts": [
+    {
+      "artifact_id": "support_matrix",
+      "kind": "symbol_inventory",
+      "path": "support_matrix.json",
+      "required_needles": [
+        "\"symbol\": \"strlen\"",
+        "\"symbol\": \"malloc\"",
+        "\"symbol\": \"printf\"",
+        "\"perf_class\": \"strict_hotpath\""
+      ]
+    },
+    {
+      "artifact_id": "perf_budget_policy",
+      "kind": "budget_policy",
+      "path": "tests/conformance/perf_budget_policy.json",
+      "required_needles": [
+        "\"strict_hotpath\"",
+        "\"hardened_hotpath\"",
+        "\"workload_budget_extension\"",
+        "\"required_log_fields\""
+      ]
+    },
+    {
+      "artifact_id": "workload_latency_join_contract",
+      "kind": "budget_join",
+      "path": "tests/conformance/workload_latency_budget_join.v1.json",
+      "required_needles": [
+        "\"budget_resolution_policy\"",
+        "\"overload_policy\"",
+        "\"required_output_fields\"",
+        "\"failure_signature_schema\""
+      ]
+    },
+    {
+      "artifact_id": "workload_latency_join_checker",
+      "kind": "e2e_gate",
+      "path": "scripts/check_workload_latency_budget_join.sh",
+      "required_needles": [
+        "workload_latency_missing_latency",
+        "workload_latency_over_budget",
+        "workload_latency_overloaded_skip",
+        "budget_resolution_policy"
+      ]
+    }
+  ],
+  "impact_rules": [
+    {
+      "rule_id": "string_hotpath",
+      "api_family": "string",
+      "changed_path_prefixes": [
+        "crates/frankenlibc-core/src/string/",
+        "crates/frankenlibc-abi/src/string_abi.rs"
+      ],
+      "symbols": [
+        "strlen",
+        "memcpy"
+      ],
+      "budget_class": "strict_hotpath",
+      "confidence": 0.95,
+      "required_tests": [
+        "crates/frankenlibc-abi/tests/string_abi_test.rs",
+        "crates/frankenlibc-harness/tests/string_memory_full_conformance_test.rs"
+      ]
+    },
+    {
+      "rule_id": "malloc_hotpath",
+      "api_family": "malloc",
+      "changed_path_prefixes": [
+        "crates/frankenlibc-core/src/malloc/",
+        "crates/frankenlibc-abi/src/malloc_abi.rs"
+      ],
+      "symbols": [
+        "malloc",
+        "free"
+      ],
+      "budget_class": "strict_hotpath",
+      "confidence": 0.94,
+      "required_tests": [
+        "crates/frankenlibc-abi/tests/malloc_abi_test.rs",
+        "crates/frankenlibc-harness/tests/allocator_conformance_test.rs"
+      ]
+    },
+    {
+      "rule_id": "stdio_format",
+      "api_family": "stdio",
+      "changed_path_prefixes": [
+        "crates/frankenlibc-core/src/stdio/",
+        "crates/frankenlibc-abi/src/stdio_abi.rs"
+      ],
+      "symbols": [
+        "printf",
+        "snprintf"
+      ],
+      "budget_class": "strict_hotpath",
+      "confidence": 0.9,
+      "required_tests": [
+        "crates/frankenlibc-abi/tests/stdio_abi_test.rs",
+        "crates/frankenlibc-harness/tests/printf_scanf_conformance_test.rs"
+      ]
+    },
+    {
+      "rule_id": "runtime_math_policy",
+      "api_family": "runtime_math",
+      "changed_path_prefixes": [
+        "crates/frankenlibc-membrane/src/runtime_math/",
+        "tests/runtime_math/"
+      ],
+      "symbols": [
+        "runtime_math::control",
+        "runtime_math::design"
+      ],
+      "budget_class": "hardened_hotpath",
+      "confidence": 0.88,
+      "required_tests": [
+        "crates/frankenlibc-harness/tests/runtime_math_controller_manifest_completion_contract_test.rs",
+        "crates/frankenlibc-harness/tests/runtime_math_determinism_proofs_test.rs"
+      ]
+    }
+  ],
+  "budget_profiles": [
+    {
+      "profile_id": "low_pressure",
+      "pressure": "low",
+      "max_selected_tests": 2,
+      "decision": "selective",
+      "full_suite_required": false
+    },
+    {
+      "profile_id": "medium_pressure",
+      "pressure": "medium",
+      "max_selected_tests": 4,
+      "decision": "selective",
+      "full_suite_required": false
+    },
+    {
+      "profile_id": "high_pressure",
+      "pressure": "high",
+      "max_selected_tests": 0,
+      "decision": "full_suite",
+      "full_suite_required": true
+    }
+  ],
+  "e2e_scenarios": [
+    {
+      "scenario_id": "string_low_pressure_selective",
+      "changed_files": [
+        "crates/frankenlibc-core/src/string/mod.rs"
+      ],
+      "pressure": "low",
+      "expected_decision": "selective",
+      "expected_rule_ids": [
+        "string_hotpath"
+      ],
+      "expected_tests": [
+        "crates/frankenlibc-abi/tests/string_abi_test.rs",
+        "crates/frankenlibc-harness/tests/string_memory_full_conformance_test.rs"
+      ]
+    },
+    {
+      "scenario_id": "malloc_medium_pressure_selective",
+      "changed_files": [
+        "crates/frankenlibc-core/src/malloc/mod.rs",
+        "tests/conformance/perf_budget_policy.json"
+      ],
+      "pressure": "medium",
+      "expected_decision": "selective",
+      "expected_rule_ids": [
+        "malloc_hotpath"
+      ],
+      "expected_tests": [
+        "crates/frankenlibc-abi/tests/malloc_abi_test.rs",
+        "crates/frankenlibc-harness/tests/allocator_conformance_test.rs"
+      ]
+    },
+    {
+      "scenario_id": "runtime_math_high_pressure_full_suite",
+      "changed_files": [
+        "crates/frankenlibc-membrane/src/runtime_math/control.rs"
+      ],
+      "pressure": "high",
+      "expected_decision": "full_suite",
+      "expected_rule_ids": [
+        "runtime_math_policy"
+      ],
+      "expected_tests": [
+        "crates/frankenlibc-harness/tests/runtime_math_controller_manifest_completion_contract_test.rs",
+        "crates/frankenlibc-harness/tests/runtime_math_determinism_proofs_test.rs"
+      ]
+    },
+    {
+      "scenario_id": "false_negative_sentinel_full_suite",
+      "changed_files": [
+        "crates/frankenlibc-core/src/stdio/printf.rs"
+      ],
+      "pressure": "low",
+      "false_negative_sentinel": true,
+      "expected_decision": "full_suite",
+      "expected_reason": "false_negative_sentinel",
+      "expected_rule_ids": [
+        "stdio_format"
+      ],
+      "expected_tests": [
+        "crates/frankenlibc-abi/tests/stdio_abi_test.rs",
+        "crates/frankenlibc-harness/tests/printf_scanf_conformance_test.rs"
+      ]
+    },
+    {
+      "scenario_id": "unknown_change_full_suite",
+      "changed_files": [
+        "tools/stdio_synth/src/generated.rs"
+      ],
+      "pressure": "medium",
+      "expected_decision": "full_suite",
+      "expected_reason": "unknown_impact",
+      "expected_rule_ids": [],
+      "expected_tests": []
+    }
+  ],
+  "unit_primary": {
+    "missing_item_id": "tests.unit.primary",
+    "test_source": "crates/frankenlibc-harness/tests/change_impact_scheduler_completion_contract_test.rs",
+    "required_test_names": [
+      "manifest_anchors_completion_debt",
+      "impact_rules_are_file_and_budget_backed",
+      "scheduler_scenarios_cover_selective_and_full_suite",
+      "checker_rejects_missing_required_test_binding",
+      "checker_rejects_missing_false_negative_sentinel"
+    ]
+  },
+  "e2e_primary": {
+    "missing_item_id": "tests.e2e.primary",
+    "checker_script": "scripts/check_change_impact_scheduler_completion_contract.sh",
+    "scenarios": [
+      {
+        "scenario_id": "run_change_impact_contract_checker",
+        "command": "bash scripts/check_change_impact_scheduler_completion_contract.sh",
+        "expected_exit": 0,
+        "expected_output_needles": [
+          "change_impact_scheduler_completion_contract: PASS"
+        ]
+      },
+      {
+        "scenario_id": "simulate_selective_low_pressure",
+        "command": "bash scripts/check_change_impact_scheduler_completion_contract.sh",
+        "expected_exit": 0,
+        "expected_report": {
+          "string_low_pressure_selective.decision": "selective"
+        }
+      },
+      {
+        "scenario_id": "simulate_sentinel_full_suite",
+        "command": "bash scripts/check_change_impact_scheduler_completion_contract.sh",
+        "expected_exit": 0,
+        "expected_report": {
+          "false_negative_sentinel_full_suite.decision": "full_suite"
+        }
+      }
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-26xb.2.1",
+    "original_bead": "bd-26xb.2",
+    "next_audit_score_threshold": 800,
+    "required_events": [
+      "change_impact_component",
+      "change_impact_rule",
+      "change_impact_scenario",
+      "change_impact_summary"
+    ]
+  }
+}
