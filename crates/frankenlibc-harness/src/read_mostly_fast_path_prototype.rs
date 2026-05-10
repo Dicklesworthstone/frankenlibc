@@ -375,6 +375,35 @@ pub fn run_live_measurement_pair(
     })
 }
 
+/// Convenience wrapper around [`run_live_measurement`] that fills the
+/// `environment_fingerprint` field from
+/// [`crate::system_fingerprint::environment_fingerprint`] (bd-6epxt).
+/// `FRANKENLIBC_ENV_FINGERPRINT` is honored end-to-end.
+pub fn run_live_measurement_with_detected_fingerprint(
+    lane: LaneId,
+    profile_id: &str,
+    n: u64,
+    seed: u64,
+    source_commit: &str,
+) -> Result<LiveMeasurementRow, LiveMeasurementError> {
+    let fp = crate::system_fingerprint::environment_fingerprint();
+    run_live_measurement(lane, profile_id, n, seed, &fp, source_commit)
+}
+
+/// Convenience wrapper around [`run_live_measurement_pair`] that fills
+/// the `environment_fingerprint` field from
+/// [`crate::system_fingerprint::environment_fingerprint`] (bd-6epxt).
+/// `FRANKENLIBC_ENV_FINGERPRINT` is honored end-to-end.
+pub fn run_live_measurement_pair_with_detected_fingerprint(
+    profile_id: &str,
+    n: u64,
+    seed: u64,
+    source_commit: &str,
+) -> Result<LiveMeasurementPair, LiveMeasurementError> {
+    let fp = crate::system_fingerprint::environment_fingerprint();
+    run_live_measurement_pair(profile_id, n, seed, &fp, source_commit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

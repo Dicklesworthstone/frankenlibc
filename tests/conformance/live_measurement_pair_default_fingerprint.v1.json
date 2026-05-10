@@ -1,0 +1,39 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "live-measurement-pair-default-fingerprint",
+  "bead": "bd-gxgr5",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "cee26b198733e70d6b5a70b72ab257106ccbb1f8",
+  "purpose": "Pin the default-fingerprint convenience helpers that wrap bd-juvqm.3 / bd-8b70o's run_live_measurement and run_live_measurement_pair so that callers no longer have to invoke environment_fingerprint() (bd-6epxt) themselves before constructing a LiveMeasurementRow / LiveMeasurementPair. The wrappers fail closed by inheriting every existing precondition of the underlying functions; their only added behavior is calling system_fingerprint::environment_fingerprint() at invocation time.",
+  "default_fingerprint_pair_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair_with_detected_fingerprint",
+  "default_fingerprint_single_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_with_detected_fingerprint",
+  "underlying_pair_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair",
+  "underlying_single_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement",
+  "fingerprint_source_function": "frankenlibc_harness::system_fingerprint::environment_fingerprint",
+  "env_override": {
+    "var_name": "FRANKENLIBC_ENV_FINGERPRINT",
+    "behavior": "When set to a non-empty trimmed string, both convenience helpers return rows whose environment_fingerprint field equals that override value verbatim, because the helpers funnel through system_fingerprint::environment_fingerprint() which honors the override (bd-6epxt)."
+  },
+  "policy": {
+    "default_helpers_must_route_through_environment_fingerprint": true,
+    "underlying_helpers_signature_unchanged": true,
+    "fingerprint_must_propagate_to_both_lanes_in_pair": true
+  },
+  "downstream_consumers": [
+    {
+      "bead": "bd-juvqm.3",
+      "consumes": "LiveMeasurementRow construction — convenience helper saves callers the explicit environment_fingerprint() call."
+    },
+    {
+      "bead": "bd-8b70o",
+      "consumes": "LiveMeasurementPair construction with anchored environment_fingerprint."
+    }
+  ],
+  "summary": {
+    "bead": "bd-gxgr5",
+    "convenience_helpers_added": 2,
+    "underlying_signature_unchanged": true,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
