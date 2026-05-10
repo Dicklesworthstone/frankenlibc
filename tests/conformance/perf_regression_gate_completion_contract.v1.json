@@ -1,0 +1,269 @@
+{
+  "schema_version": "perf_regression_gate_completion_contract.v1",
+  "manifest_id": "bd-30o.3-perf-regression-gate-completion-contract",
+  "original_bead": "bd-30o.3",
+  "completion_debt_bead": "bd-30o.3.1",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-30o.3/scorecard.md",
+  "source_artifacts": {
+    "attribution_policy": "tests/conformance/perf_regression_attribution.v1.json",
+    "perf_baseline": "scripts/perf_baseline.json",
+    "perf_gate": "scripts/perf_gate.sh",
+    "gate_checker": "scripts/check_perf_regression_gate.sh",
+    "scenario_script": "scripts/e2e_perf_regression_scenario.sh",
+    "benchmark_gate_wrapper": "scripts/check_benchmark_gate.sh",
+    "ci_script": "scripts/ci.sh",
+    "source_harness_test": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
+    "completion_checker": "scripts/check_perf_regression_gate_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/perf_regression_gate_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "implementation_refs": [
+      {
+        "id": "attribution-policy-defines-thresholds-and-triage",
+        "path": "tests/conformance/perf_regression_attribution.v1.json",
+        "required_text": [
+          "\"supersedes\": [",
+          "\"bd-30o.3\"",
+          "\"warning_policy\"",
+          "\"threshold_policy\"",
+          "\"suspect_component_map\"",
+          "\"logging_contract\"",
+          "\"auto_throttle_policy\"",
+          "\"triage_guide\"",
+          "\"intentional_regression_scenario\""
+        ]
+      },
+      {
+        "id": "perf-gate-emits-attributed-structured-results",
+        "path": "scripts/perf_gate.sh",
+        "required_text": [
+          "FRANKENLIBC_PERF_INJECT_RESULTS",
+          "FRANKENLIBC_PERF_EVENT_LOG",
+          "FRANKENLIBC_PERF_REPORT",
+          "resolve_threshold_pct",
+          "resolve_suspect_component",
+          "emit_regression_event",
+          "emit_throttle_event",
+          "baseline_regression_detected"
+        ]
+      },
+      {
+        "id": "source-checker-runs-policy-and-e2e-scenarios",
+        "path": "scripts/check_perf_regression_gate.sh",
+        "required_text": [
+          "Perf Regression Attribution Gate",
+          "Threshold policy + benchmark mapping",
+          "Intentional regression E2E scenario",
+          "Overloaded-host auto-throttle E2E scenario",
+          "check_perf_regression_gate: PASS"
+        ]
+      },
+      {
+        "id": "scenario-script-proves-regression-and-overload-paths",
+        "path": "scripts/e2e_perf_regression_scenario.sh",
+        "required_text": [
+          "--scenario regression",
+          "--scenario overloaded",
+          "runtime_math/decide",
+          "baseline_regression_detected",
+          "auto_throttled",
+          "e2e_perf_regression_scenario: PASS"
+        ]
+      },
+      {
+        "id": "benchmark-wrapper-runs-perf-gate-through-rch",
+        "path": "scripts/check_benchmark_gate.sh",
+        "required_text": [
+          "running criterion regression gate via rch",
+          "rch exec -- env",
+          "FRANKENLIBC_PERF_MAX_REGRESSION_PCT",
+          "FRANKENLIBC_PERF_EVENT_LOG",
+          "bash scripts/perf_gate.sh"
+        ]
+      },
+      {
+        "id": "ci-extended-gate-includes-regression-attribution",
+        "path": "scripts/ci.sh",
+        "required_text": [
+          "perf regression attribution gate",
+          "scripts/check_perf_regression_gate.sh"
+        ]
+      }
+    ],
+    "test_sources": {
+      "source_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
+        "required_test_refs": [
+          "threshold_resolver_deterministic",
+          "warning_threshold_resolver_deterministic",
+          "regression_classifier_stable",
+          "attribution_map_covers_baseline_benchmarks",
+          "logging_contract_complete",
+          "auto_throttle_contract_complete",
+          "triage_contract_complete",
+          "e2e_intentional_regression_script_passes",
+          "e2e_overloaded_host_script_passes",
+          "full_gate_script_passes",
+          "benchmark_gate_wrapper_invokes_rch_with_expected_contract"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/perf_regression_gate_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_e2e_and_telemetry_evidence",
+          "checker_validates_perf_regression_gate_contract",
+          "checker_emits_report_and_jsonl",
+          "checker_rejects_missing_regression_class",
+          "checker_rejects_missing_required_telemetry_event"
+        ]
+      }
+    }
+  },
+  "required_source_contract": {
+    "policy_summary_exact": {
+      "mapped_benchmarks": 25,
+      "regression_classes": 5,
+      "required_log_fields": 13,
+      "triage_playbooks": 4,
+      "auto_throttle_actions": 1
+    },
+    "required_policy_sections": [
+      "warning_policy",
+      "threshold_policy",
+      "attribution",
+      "logging_contract",
+      "auto_throttle_policy",
+      "triage_guide",
+      "intentional_regression_scenario"
+    ],
+    "required_regression_classes": [
+      "ok",
+      "baseline_warning",
+      "baseline_regression",
+      "target_budget_violation",
+      "baseline_and_budget_violation"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "mode",
+      "benchmark_id",
+      "threshold",
+      "observed",
+      "regression_class",
+      "suspect_component",
+      "confidence",
+      "commit_window",
+      "host_state",
+      "throttle_action"
+    ],
+    "required_auto_throttle_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "host_state",
+      "throttle_action",
+      "load1",
+      "cpus",
+      "threshold",
+      "max_load_factor",
+      "load_source"
+    ],
+    "required_auto_throttle_report_fields": [
+      "status",
+      "host_state",
+      "throttle_action",
+      "host_context",
+      "summary",
+      "event_log_path"
+    ],
+    "required_mapped_benchmark_ids": [
+      "runtime_math/decide",
+      "runtime_math/observe_fast",
+      "membrane/validate_known",
+      "errno/errno_location_fastpath"
+    ],
+    "required_gate_features": [
+      "policy_mapping",
+      "structured_event_log",
+      "structured_report",
+      "injected_regression_replay",
+      "auto_throttle_replay",
+      "rch_wrapper",
+      "ci_extended_gate"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_test_refs": [
+        "threshold_resolver_deterministic",
+        "warning_threshold_resolver_deterministic",
+        "regression_classifier_stable",
+        "attribution_map_covers_baseline_benchmarks",
+        "manifest_binds_unit_e2e_and_telemetry_evidence"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test perf_regression_gate_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test perf_regression_gate_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "required_test_refs": [
+        "e2e_intentional_regression_script_passes",
+        "e2e_overloaded_host_script_passes",
+        "full_gate_script_passes",
+        "checker_validates_perf_regression_gate_contract"
+      ],
+      "required_commands": [
+        "bash scripts/e2e_perf_regression_scenario.sh --scenario regression",
+        "bash scripts/e2e_perf_regression_scenario.sh --scenario overloaded",
+        "bash scripts/check_perf_regression_gate.sh",
+        "bash scripts/check_perf_regression_gate_completion_contract.sh"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "required_test_refs": [
+        "checker_emits_report_and_jsonl",
+        "checker_rejects_missing_required_telemetry_event"
+      ],
+      "required_commands": [
+        "jq empty target/conformance/perf_regression_gate_completion_contract.report.json",
+        "jq -s empty target/conformance/perf_regression_gate_completion_contract.log.jsonl"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "policy_summary",
+      "gate_features",
+      "missing_item_bindings",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome"
+    ],
+    "required_events": [
+      "perf_regression_gate_completion_summary",
+      "perf_regression_gate_e2e_bindings",
+      "perf_regression_gate_completion_contract_pass"
+    ]
+  }
+}
