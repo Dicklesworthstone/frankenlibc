@@ -1,0 +1,264 @@
+{
+  "schema_version": "hard_parts_unit_packs_completion_contract.v1",
+  "bead_id": "bd-1ff3.1",
+  "original_bead": "bd-1ff3",
+  "trace_id": "bd-1ff3.1::hard-parts-unit-packs::v1",
+  "generated_at_utc": "2026-05-10T14:30:00Z",
+  "purpose": "Bind the bd-1ff3 startup, NSS, iconv, and setjmp hard-parts unit packs to a machine-checkable completion-debt contract for tests.unit.primary.",
+  "source_artifacts": [
+    {
+      "id": "startup_unit_pack",
+      "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+      "role": "startup ABI phase-0 hard-parts unit pack"
+    },
+    {
+      "id": "setjmp_unit_pack",
+      "path": "crates/frankenlibc-core/src/setjmp/mod.rs",
+      "role": "setjmp/longjmp phase-1 hard-parts unit pack"
+    },
+    {
+      "id": "conformance_unit_pack",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "role": "NSS and iconv differential hard-parts unit pack"
+    },
+    {
+      "id": "resolver_fixture_pack",
+      "path": "tests/conformance/fixtures/resolver.json",
+      "role": "NSS resolver fixture pack"
+    },
+    {
+      "id": "iconv_fixture_pack",
+      "path": "tests/conformance/fixtures/iconv_phase1.json",
+      "role": "iconv phase-1 fixture pack"
+    }
+  ],
+  "unit_pack_contract": {
+    "required_subsystem_count": 4,
+    "required_unit_test_count": 41,
+    "required_fixture_case_count": 17,
+    "required_subsystems": [
+      {
+        "id": "startup",
+        "evidence_path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+        "required_tests": [
+          "startup_phase0_executes_main_and_captures_invariants",
+          "startup_phase0_rejects_missing_main",
+          "startup_phase0_rejects_argc_argv_mismatch",
+          "startup_snapshot_rejects_null_output",
+          "startup_phase0_rejects_unterminated_argv_scan_window",
+          "startup_phase0_rejects_unterminated_envp_scan_window",
+          "startup_phase0_rejects_unterminated_auxv_scan_window",
+          "startup_phase0_negative_argc_normalizes_to_zero",
+          "startup_phase0_main_can_use_stdio_without_bootstrap_crash",
+          "libc_start_main_phase0_disabled_delegates_to_host",
+          "libc_start_main_phase0_unsafe_path_falls_back_to_host",
+          "libc_start_main_phase0_missing_main_does_not_fallback",
+          "startup_capability_lattice_detects_use_before_env_resolution",
+          "startup_init_order_certificate_is_embedded_and_persisted"
+        ],
+        "required_markers": [
+          "STARTUP_TEST_SEED",
+          "StartupContractCase",
+          "assert_startup_errno_contract",
+          "append_startup_trace",
+          "startup_init_order_certificate_json"
+        ],
+        "fixture_cases": []
+      },
+      {
+        "id": "setjmp",
+        "evidence_path": "crates/frankenlibc-core/src/setjmp/mod.rs",
+        "required_tests": [
+          "jmpbuf_serialization_roundtrip",
+          "jmpbuf_layout_is_stable_for_placeholder_contract",
+          "phase1_capture_and_restore_roundtrip_in_strict_mode",
+          "phase1_longjmp_zero_normalizes_to_one",
+          "phase1_nested_capture_assigns_distinct_context_ids",
+          "phase1_hardened_rejects_corrupted_context",
+          "phase1_rejects_mode_mismatch_between_capture_and_restore",
+          "phase1_rejects_foreign_thread_restore_attempts",
+          "setjmp_returns_zero_and_captures_context_metadata",
+          "longjmp_panics_with_deferred_backend_transfer_message",
+          "longjmp_panics_with_normalized_zero_value",
+          "longjmp_panics_with_invalid_context_error_for_uninitialized_env"
+        ],
+        "required_markers": [
+          "SETJMP_TEST_SEED",
+          "Phase1Mode::Hardened",
+          "Phase1JumpError::ForeignContext",
+          "assert_contract_panic_contains",
+          "POSIX longjmp"
+        ],
+        "fixture_cases": []
+      },
+      {
+        "id": "iconv",
+        "evidence_path": "crates/frankenlibc_conformance/src/lib.rs",
+        "required_tests": [
+          "execute_iconv_case_strict_success",
+          "execute_iconv_case_strict_e2big",
+          "execute_iconv_case_utf32_conversion_matches_host_shape",
+          "execute_iconv_case_hardened_success",
+          "execute_iconv_case_hardened_unsupported_encoding_denied",
+          "execute_iconv_open_case_hardened_supported_descriptor",
+          "execute_iconv_close_case_hardened_valid_descriptor",
+          "execute_iconv_case_strict_eilseq_seeded_adversarial",
+          "execute_iconv_case_strict_einval_incomplete_sequence_seeded"
+        ],
+        "required_markers": [
+          "HARD_PARTS_TEST_SEED",
+          "assert_differential_contract",
+          "seeded_invalid_utf8_pair"
+        ],
+        "fixture_cases": [
+          {
+            "fixture": "tests/conformance/fixtures/iconv_phase1.json",
+            "case": "strict_utf8_to_utf16le_basic"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/iconv_phase1.json",
+            "case": "strict_latin1_to_utf8_multibyte"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/iconv_phase1.json",
+            "case": "strict_e2big_preserves_progress"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/iconv_phase1.json",
+            "case": "strict_eilseq_invalid_utf8"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/iconv_phase1.json",
+            "case": "strict_einval_incomplete_utf8"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/iconv_phase1.json",
+            "case": "strict_utf8_to_utf32_with_bom"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/iconv_phase1.json",
+            "case": "hardened_utf16le_to_utf8"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/iconv_phase1.json",
+            "case": "hardened_unsupported_encoding_denied"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/iconv_phase1.json",
+            "case": "iconv_open_hardened_utf8_to_utf16le"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/iconv_phase1.json",
+            "case": "iconv_close_hardened_valid"
+          }
+        ]
+      },
+      {
+        "id": "nss",
+        "evidence_path": "crates/frankenlibc_conformance/src/lib.rs",
+        "required_tests": [
+          "execute_getaddrinfo_hosts_subset_hardened_matches_fixture_shape",
+          "execute_lookup_hosts_case_handles_inline_comments_and_aliases",
+          "execute_lookup_hosts_case_seeded_adversarial_noise",
+          "execute_lookup_hosts_case_unknown_name_returns_empty_set",
+          "execute_getaddrinfo_case_uses_hosts_subset_when_provided",
+          "execute_gethostbyname_case_numeric_ipv4_returns_pointer_shape"
+        ],
+        "required_markers": [
+          "HARD_PARTS_TEST_SEED",
+          "assert_differential_contract",
+          "seeded_hosts_fixture"
+        ],
+        "fixture_cases": [
+          {
+            "fixture": "tests/conformance/fixtures/resolver.json",
+            "case": "hosts_lookup_basic"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/resolver.json",
+            "case": "hosts_lookup_case_insensitive"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/resolver.json",
+            "case": "hosts_lookup_inline_comments_and_aliases"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/resolver.json",
+            "case": "getaddrinfo_hosts_file_subset"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/resolver.json",
+            "case": "gethostbyname_numeric_ipv4"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/resolver.json",
+            "case": "getaddrinfo_hosts_file_subset_hardened"
+          },
+          {
+            "fixture": "tests/conformance/fixtures/resolver.json",
+            "case": "gethostbyname_numeric_ipv4_hardened"
+          }
+        ]
+      }
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "spec_item": "tests.unit.primary",
+      "implementation_refs": [
+        "tests/conformance/hard_parts_unit_packs_completion_contract.v1.json",
+        "scripts/check_hard_parts_unit_packs_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/hard_parts_unit_packs_completion_contract_test.rs"
+      ],
+      "required_positive_tests": [
+        "manifest_binds_bd_1ff3_unit_pack_sources",
+        "manifest_covers_startup_nss_iconv_setjmp",
+        "checker_accepts_unit_pack_contract"
+      ],
+      "required_negative_tests": [
+        "checker_rejects_missing_startup_unit_test",
+        "checker_rejects_missing_subsystem",
+        "checker_rejects_missing_fixture_case",
+        "checker_rejects_missing_unit_binding"
+      ]
+    }
+  ],
+  "completion_output_contract": {
+    "report_path": "target/conformance/hard_parts_unit_packs_completion_contract.report.json",
+    "log_path": "target/conformance/hard_parts_unit_packs_completion_contract.log.jsonl",
+    "required_report_fields": [
+      "schema_version",
+      "bead_id",
+      "original_bead",
+      "trace_id",
+      "source_commit",
+      "status",
+      "summary",
+      "source_artifacts",
+      "subsystems",
+      "missing_item_bindings",
+      "artifact_refs",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "bead_id",
+      "event",
+      "status",
+      "artifact_refs",
+      "source_commit",
+      "target_dir",
+      "failure_signature"
+    ],
+    "required_events": [
+      "source_artifacts_validated",
+      "subsystem_unit_packs_validated",
+      "fixture_cases_validated",
+      "missing_item_bindings_validated",
+      "hard_parts_unit_packs_completion_contract_validated"
+    ]
+  }
+}
