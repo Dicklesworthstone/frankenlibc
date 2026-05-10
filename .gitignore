@@ -192,3 +192,6 @@ tests/conformance/*-case-runner-*.bin
 # Exit-code scratch files left by some test/CI harnesses (each is a
 # 2-byte file containing just "0\n"). Recurring untracked noise.
 tmp.*.ec
+
+# Beads compliance audit dir (managed by /beads-compliance-and-completion-verification skill)
+/beads_compliance_audit/
