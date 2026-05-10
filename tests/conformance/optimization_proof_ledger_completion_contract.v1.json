@@ -1,0 +1,148 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "optimization-proof-ledger-completion-contract",
+  "bead": "bd-30o.2",
+  "completion_debt_bead": "bd-30o.2.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "purpose": "Completion-debt contract for the optimization proof ledger. The audit pass required explicit unit and E2E evidence, so this manifest binds the checked-in proof ledger, original validator, unit-test anchors, E2E replay scenarios, and completion checker telemetry.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-30o.2/scorecard.md",
+    "spec_path": "passes/2026-05-10T03-16-16Z/beads/bd-30o.2/spec.json",
+    "score_before": 570,
+    "score_threshold": 800
+  },
+  "source_artifacts": {
+    "ledger": "tests/conformance/optimization_proof_ledger.v1.json",
+    "ledger_checker": "scripts/check_optimization_proof_ledger.sh",
+    "ledger_unit_test": "crates/frankenlibc-harness/tests/optimization_proof_ledger_test.rs",
+    "completion_checker": "scripts/check_optimization_proof_ledger_completion_contract.sh",
+    "completion_unit_test": "crates/frankenlibc-harness/tests/optimization_proof_ledger_completion_contract_test.rs",
+    "perf_baseline": "scripts/perf_baseline.json",
+    "profile_pipeline": "scripts/profile_pipeline.sh"
+  },
+  "ledger_contract": {
+    "bead": "bd-30o.2",
+    "schema_version": 1,
+    "expected_candidate_ids": [
+      "cand-rtm-decide-fastpath",
+      "cand-futex-stage-reorder",
+      "cand-bloom-prefetch"
+    ],
+    "expected_trace_ids": {
+      "cand-rtm-decide-fastpath": "bd-30o.2::strict::cand-rtm-decide-fastpath::001",
+      "cand-futex-stage-reorder": "bd-30o.2::hardened::cand-futex-stage-reorder::001",
+      "cand-bloom-prefetch": "bd-30o.2::strict::cand-bloom-prefetch::001"
+    },
+    "required_template_fields": [
+      "trace_id",
+      "candidate_id",
+      "bead_id",
+      "module",
+      "symbol",
+      "proof_status",
+      "measurement",
+      "behavior_checks",
+      "acceptance_reason"
+    ],
+    "required_logging_fields": [
+      "trace_id",
+      "candidate_id",
+      "proof_status",
+      "perf_delta",
+      "acceptance_reason"
+    ],
+    "required_input_classes": [
+      "null_ptr",
+      "in_bounds",
+      "boundary",
+      "oversize"
+    ],
+    "summary": {
+      "total_candidates": 3,
+      "verified": 1,
+      "rejected": 1,
+      "pending": 1,
+      "waived": 0,
+      "required_log_fields": 5,
+      "required_input_classes": 4
+    }
+  },
+  "checker_contract": {
+    "script": "scripts/check_optimization_proof_ledger.sh",
+    "required_script_needles": [
+      "Optimization Proof Ledger Gate (bd-30o.2)",
+      "CANDIDATE_ERRORS=",
+      "SUMMARY_ERRORS=",
+      "LOG_ROWS=",
+      "required_log_fields",
+      "check_optimization_proof_ledger: PASS"
+    ]
+  },
+  "unit_primary": {
+    "missing_item_id": "tests.unit.primary",
+    "test_file": "crates/frankenlibc-harness/tests/optimization_proof_ledger_test.rs",
+    "required_test_names": [
+      "ledger_exists_and_valid",
+      "template_defines_required_contract",
+      "parser_extracts_candidate_fields",
+      "parser_rejects_missing_trace_id",
+      "validator_accepts_verified_sample",
+      "validator_rejects_failed_check_in_verified_candidate",
+      "validator_rejects_missing_coverage_in_verified_candidate",
+      "summary_consistent",
+      "gate_script_exists_and_executable",
+      "e2e_gate_script_passes"
+    ]
+  },
+  "e2e_primary": {
+    "missing_item_id": "tests.e2e.primary",
+    "scenarios": [
+      {
+        "scenario_id": "optimization_proof_ledger_gate_passes",
+        "command": "bash scripts/check_optimization_proof_ledger.sh",
+        "expected_exit": 0
+      },
+      {
+        "scenario_id": "completion_checker_replays_ledger_gate",
+        "command": "bash scripts/check_optimization_proof_ledger_completion_contract.sh",
+        "expected_exit": 0
+      },
+      {
+        "scenario_id": "rust_completion_contract_exercises_positive_and_negative_paths",
+        "command": "rch cargo test -p frankenlibc-harness --test optimization_proof_ledger_completion_contract_test -- --nocapture",
+        "expected_exit": 0
+      }
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-30o.2.1",
+    "original_bead": "bd-30o.2",
+    "next_audit_score_threshold": 800,
+    "test_source": "crates/frankenlibc-harness/tests/optimization_proof_ledger_completion_contract_test.rs",
+    "required_test_names": [
+      "manifest_anchors_completion_debt",
+      "source_artifacts_are_file_backed",
+      "ledger_contract_binds_checked_in_ledger",
+      "checker_contract_binds_original_gate_script",
+      "unit_primary_binds_original_unit_tests",
+      "e2e_primary_scenarios_are_explicit_and_rch_safe",
+      "completion_evidence_names_this_test_suite",
+      "checker_accepts_manifest_and_emits_report",
+      "checker_rejects_missing_unit_test_anchor",
+      "checker_rejects_stale_summary_count",
+      "checker_rejects_missing_candidate_binding",
+      "checker_rejects_missing_completion_test_binding"
+    ]
+  },
+  "telemetry_contract": {
+    "required_log_events": [
+      "optimization_proof_ledger_completion_source",
+      "optimization_proof_ledger_completion_ledger",
+      "optimization_proof_ledger_completion_checker",
+      "optimization_proof_ledger_completion_unit",
+      "optimization_proof_ledger_completion_e2e",
+      "optimization_proof_ledger_completion_summary"
+    ]
+  }
+}
