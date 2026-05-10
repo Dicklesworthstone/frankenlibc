@@ -1,0 +1,245 @@
+{
+  "schema_version": "release_claim_control_completion_contract.v1",
+  "manifest_id": "bd-w2c3.10.4-release-claim-control-completion-contract",
+  "original_bead": "bd-w2c3.10",
+  "completion_debt_bead": "bd-w2c3.10.4",
+  "description": "Completion-debt evidence binding for Track 9 release claim-control and closure protocol gates.",
+  "source_artifacts": {
+    "release_claim_gate": "scripts/release/check_replacement_claim_evidence.sh",
+    "release_claim_harness": "crates/frankenlibc-harness/tests/release_claim_gate_test.rs",
+    "replacement_levels_contract": "tests/conformance/replacement_levels.json",
+    "replacement_levels_checker": "scripts/check_replacement_levels.sh",
+    "replacement_levels_test": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+    "support_matrix": "support_matrix.json",
+    "support_matrix_report": "tests/conformance/support_matrix_maintenance_report.v1.json",
+    "support_matrix_checker": "scripts/check_support_matrix_maintenance.sh",
+    "support_matrix_test": "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs",
+    "release_dossier_report": "tests/release/dossier_validation_report.v1.json",
+    "release_dossier_checker": "scripts/check_release_dossier.sh",
+    "release_dossier_test": "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+    "claim_reconciliation_report": "tests/conformance/claim_reconciliation_report.v1.json",
+    "claim_reconciliation_checker": "scripts/check_claim_reconciliation.sh",
+    "claim_reconciliation_test": "crates/frankenlibc-harness/tests/claim_reconciliation_test.rs",
+    "closure_sweep_report": "tests/conformance/closure_sweep_report.v1.json",
+    "closure_sweep_checker": "scripts/check_closure_sweep.sh",
+    "closure_sweep_test": "crates/frankenlibc-harness/tests/closure_sweep_test.rs",
+    "completion_checker": "scripts/check_release_claim_control_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/release_claim_control_completion_contract_test.rs"
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "description": "Unit evidence pins replacement-level claim drift, support-matrix maintenance schema, current L0 release policy, and this completion manifest binding.",
+      "required_test_refs": [
+        {
+          "source": "replacement_levels_test",
+          "name": "status_progression_consistent"
+        },
+        {
+          "source": "replacement_levels_test",
+          "name": "claim_drift_guard_consistent_with_readme_and_release_policy"
+        },
+        {
+          "source": "support_matrix_test",
+          "name": "maintenance_report_schema_complete"
+        },
+        {
+          "source": "release_claim_harness",
+          "name": "current_l0_release_policy_passes_without_l1_evidence"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "manifest_binds_release_claim_control_completion_items"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_claim_control_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "description": "E2E evidence binds the replacement-level, support-matrix, release-dossier, claim-reconciliation, closure-sweep, and release-claim gates to machine-checkable pass/fail artifacts.",
+      "required_test_refs": [
+        {
+          "source": "release_claim_harness",
+          "name": "l3_release_tag_without_standalone_matrix_fails_closed"
+        },
+        {
+          "source": "release_dossier_test",
+          "name": "dossier_validator_produces_valid_report"
+        },
+        {
+          "source": "claim_reconciliation_test",
+          "name": "claim_reconciliation_gate_passes"
+        },
+        {
+          "source": "closure_sweep_test",
+          "name": "closure_sweep_passes"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_validates_release_claim_control_contract_and_emits_report_log"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_replacement_levels.sh",
+        "bash scripts/check_support_matrix_maintenance.sh",
+        "bash scripts/check_release_dossier.sh",
+        "bash scripts/check_claim_reconciliation.sh",
+        "bash scripts/check_closure_sweep.sh",
+        "scripts/release/check_replacement_claim_evidence.sh --report <report> --log <log>",
+        "bash scripts/check_release_claim_control_completion_contract.sh"
+      ]
+    }
+  ],
+  "required_release_control_contract": {
+    "replacement_levels": {
+      "schema_version": 1,
+      "bead": "bd-2bu",
+      "current_level": "L0",
+      "current_release_level": "L0",
+      "current_release_tag_example": "v0.1.0-L0",
+      "level_status": {
+        "L0": "achieved",
+        "L1": "in_progress",
+        "L2": "planned",
+        "L3": "roadmap"
+      },
+      "current_assessment": {
+        "total_symbols": 4119,
+        "implemented": 3705,
+        "raw_syscall": 414,
+        "callthrough": 0,
+        "stub": 0,
+        "implemented_pct": 90,
+        "raw_syscall_pct": 10,
+        "callthrough_pct": 0,
+        "stub_pct": 0
+      }
+    },
+    "support_matrix_maintenance": {
+      "schema_version": "v1",
+      "bead": "bd-3g4p",
+      "summary": {
+        "total_symbols": 4119,
+        "status_validated": 4119,
+        "status_invalid": 0,
+        "status_valid_pct": 100.0,
+        "fixture_linked": 403,
+        "fixture_unlinked": 3716
+      },
+      "status_counts": {
+        "Implemented": 3705,
+        "RawSyscall": 414,
+        "WrapsHostLibc": 0,
+        "GlibcCallThrough": 0,
+        "Stub": 0
+      },
+      "native_coverage_pct": 100.0
+    },
+    "release_dossier": {
+      "schema_version": "v1",
+      "bead": "bd-5fw.3",
+      "status": "pass",
+      "verdict": "PASS",
+      "summary": {
+        "total_artifacts": 15,
+        "valid": 14,
+        "critical_missing": 0,
+        "errors": 0
+      }
+    },
+    "claim_reconciliation": {
+      "schema_version": "v1",
+      "bead": "bd-w2c3.10.1",
+      "status": "pass",
+      "summary": {
+        "critical": 0,
+        "errors": 0,
+        "warnings": 0,
+        "total_findings": 0
+      }
+    },
+    "closure_sweep": {
+      "schema_version": "v1",
+      "bead": "bd-w2c3.10.3",
+      "status": "pass",
+      "drift_gates_status": "armed",
+      "summary": {
+        "errors": 0,
+        "warnings": 0,
+        "total_findings": 0,
+        "callthrough_remaining": 0,
+        "open_gap_beads": 0,
+        "closure_ready": false
+      }
+    },
+    "release_claim_gate": {
+      "schema_version": "v1",
+      "bead": "bd-bp8fl.6.4",
+      "current_status": "pass",
+      "current_release_claim_id": "current-release-policy",
+      "current_release_level": "L0",
+      "current_actual_decision": "claim_allowed",
+      "current_expected_decision": "claim_allowed",
+      "required_log_fields": [
+        "trace_id",
+        "bead_id",
+        "release_claim_id",
+        "replacement_level",
+        "required_evidence",
+        "present_evidence",
+        "expected_decision",
+        "actual_decision",
+        "artifact_refs",
+        "source_commit",
+        "failure_signature"
+      ],
+      "fail_closed_signatures": [
+        "release_claim_missing_l2_evidence",
+        "release_claim_missing_l3_evidence"
+      ]
+    }
+  },
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "release_control_summary",
+      "source_gate_results",
+      "current_claim_report",
+      "current_claim_log",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ],
+    "required_events": [
+      "release_claim_control_manifest_verified",
+      "replacement_levels_policy_verified",
+      "support_matrix_maintenance_bound",
+      "release_dossier_policy_bound",
+      "claim_reconciliation_bound",
+      "closure_protocol_bound",
+      "release_claim_current_l0_replayed",
+      "release_claim_control_completion_contract_pass"
+    ],
+    "forbidden_pass_events": [
+      "release_claim_control_completion_contract_fail"
+    ]
+  }
+}
