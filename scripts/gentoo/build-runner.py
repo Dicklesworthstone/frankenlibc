@@ -106,6 +106,11 @@ class PackageResult:
     timestamp: str
     attempts: int
     reason: str = ""
+    telemetry_log: str = ""
+    portage_hook_log: str = ""
+    portage_log_dir: str = ""
+    instrumented_phase_events: int = 0
+    frankenlibc_log_files: int = 0
 
 
 class BuildRunner:
@@ -205,6 +210,9 @@ class BuildRunner:
 
         started = time.time()
         if self.config.dry_run:
+            telemetry_log = attempt_dir / "build-telemetry.jsonl"
+            portage_hook_log = attempt_dir / "portage-hooks.jsonl"
+            portage_log_dir = attempt_dir / "portage-frankenlibc"
             result = PackageResult(
                 package=package,
                 version="",
@@ -219,6 +227,44 @@ class BuildRunner:
                 timestamp=utc_now(),
                 attempts=attempt,
                 reason="dry_run",
+                telemetry_log=str(telemetry_log),
+                portage_hook_log=str(portage_hook_log),
+                portage_log_dir=str(portage_log_dir),
+                instrumented_phase_events=1,
+                frankenlibc_log_files=1,
+            )
+            portage_log_dir.mkdir(parents=True, exist_ok=True)
+            portage_hook_log.write_text(
+                json.dumps(
+                    {
+                        "timestamp": utc_now(),
+                        "event": "enable",
+                        "package": package,
+                        "phase": "dry_run",
+                        "mode": self.config.mode,
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            telemetry_log.write_text(
+                json.dumps(
+                    {
+                        "timestamp": utc_now(),
+                        "event": "finish",
+                        "package": package,
+                        "result": "success",
+                        "exit_code": 0,
+                        "frankenlibc_mode": self.config.mode,
+                        "portage_enabled": "1",
+                        "instrumented_phase_events": 1,
+                        "frankenlibc_log_files": 1,
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
             )
             metadata_path.write_text(json.dumps(asdict(result), indent=2) + "\n", encoding="utf-8")
             return result
@@ -231,6 +277,14 @@ class BuildRunner:
             f"FRANKENLIBC_MODE={self.config.mode}",
             "-e",
             f"FLC_BUILD_TIMEOUT_SECONDS={self.config.timeout_seconds}",
+            "-e",
+            "FRANKENLIBC_PORTAGE_ENABLE=1",
+            "-e",
+            "FRANKENLIBC_LOG_DIR=/results/portage-frankenlibc",
+            "-e",
+            "FRANKENLIBC_PORTAGE_LOG=/results/portage-hooks.jsonl",
+            "-e",
+            "FRANKENLIBC_RUNNER_TELEMETRY=/results/build-telemetry.jsonl",
             "-v",
             f"{attempt_dir.resolve()}:/results",
             "-v",
@@ -262,6 +316,11 @@ class BuildRunner:
                 timestamp=str(payload.get("timestamp", utc_now())),
                 attempts=attempt,
                 reason=str(payload.get("reason", "")),
+                telemetry_log=str(payload.get("telemetry_log", attempt_dir / "build-telemetry.jsonl")),
+                portage_hook_log=str(payload.get("portage_hook_log", attempt_dir / "portage-hooks.jsonl")),
+                portage_log_dir=str(payload.get("portage_log_dir", attempt_dir / "portage-frankenlibc")),
+                instrumented_phase_events=int(payload.get("instrumented_phase_events", 0)),
+                frankenlibc_log_files=int(payload.get("frankenlibc_log_files", 0)),
             )
             return result
 
@@ -281,6 +340,9 @@ class BuildRunner:
             timestamp=utc_now(),
             attempts=attempt,
             reason="",
+            telemetry_log=str(attempt_dir / "build-telemetry.jsonl"),
+            portage_hook_log=str(attempt_dir / "portage-hooks.jsonl"),
+            portage_log_dir=str(attempt_dir / "portage-frankenlibc"),
         )
 
     def _build_package(self, package: str) -> PackageResult:
@@ -346,6 +408,7 @@ def main() -> int:
     cfg = BuildConfig.from_toml(Path(args.config).resolve())
     if args.dry_run:
         cfg.dry_run = True
+        cfg.resume = False
 
     runner = BuildRunner(cfg)
     if args.package:
@@ -362,6 +425,10 @@ def main() -> int:
         "timestamp": utc_now(),
         "total_packages": len(results),
         "by_result": by_result,
+        "instrumented_phase_events": sum(record.instrumented_phase_events for record in results.values()),
+        "telemetry_logs": sorted(
+            record.telemetry_log for record in results.values() if record.telemetry_log
+        ),
         "state_file": str(cfg.state_file),
     }
     print(json.dumps(summary, indent=2, sort_keys=True))

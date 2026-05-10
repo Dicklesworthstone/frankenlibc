@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -143,6 +145,106 @@ class BuildRunnerTests(unittest.TestCase):
         self.assertEqual(results["sys-devel/binutils"].result, "success")
         self.assertEqual(results["sys-devel/gcc"].result, "success")
         mocked.assert_called_once()
+
+    def test_dry_run_writes_telemetry_contract(self) -> None:
+        self.config.dry_run = True
+        runner = self.module.BuildRunner(self.config)
+
+        results = runner.run()
+
+        result = results["sys-devel/binutils"]
+        self.assertEqual(result.result, "success")
+        self.assertEqual(result.reason, "dry_run")
+        self.assertEqual(result.instrumented_phase_events, 1)
+        self.assertEqual(result.frankenlibc_log_files, 1)
+
+        telemetry_log = Path(result.telemetry_log)
+        portage_hook_log = Path(result.portage_hook_log)
+        self.assertTrue(telemetry_log.exists())
+        self.assertTrue(portage_hook_log.exists())
+
+        telemetry_event = json.loads(telemetry_log.read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(telemetry_event["event"], "finish")
+        self.assertEqual(telemetry_event["package"], "sys-devel/binutils")
+        self.assertEqual(telemetry_event["portage_enabled"], "1")
+        self.assertEqual(telemetry_event["instrumented_phase_events"], 1)
+
+        state_payload = json.loads(self.config.state_file.read_text(encoding="utf-8"))
+        state_record = state_payload["results"]["sys-devel/binutils"]
+        self.assertEqual(state_record["telemetry_log"], result.telemetry_log)
+        self.assertEqual(state_record["portage_hook_log"], result.portage_hook_log)
+
+    def test_docker_command_enables_portage_instrumentation_env(self) -> None:
+        runner = self.module.BuildRunner(self.config)
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        with patch.object(self.module.subprocess, "run", return_value=completed) as mocked:
+            result = runner._run_package_once("sys-devel/binutils", 1)
+
+        self.assertEqual(result.result, "success")
+        cmd = mocked.call_args.args[0]
+        env_values = [cmd[index + 1] for index, value in enumerate(cmd[:-1]) if value == "-e"]
+        self.assertIn("FRANKENLIBC_MODE=hardened", env_values)
+        self.assertIn("FLC_BUILD_TIMEOUT_SECONDS=30", env_values)
+        self.assertIn("FRANKENLIBC_PORTAGE_ENABLE=1", env_values)
+        self.assertIn("FRANKENLIBC_LOG_DIR=/results/portage-frankenlibc", env_values)
+        self.assertIn("FRANKENLIBC_PORTAGE_LOG=/results/portage-hooks.jsonl", env_values)
+        self.assertIn("FRANKENLIBC_RUNNER_TELEMETRY=/results/build-telemetry.jsonl", env_values)
+        self.assertIn("/opt/frankenlibc/scripts/gentoo/build-package.sh sys-devel/binutils /results", cmd[-1])
+
+    def test_build_package_wrapper_emits_telemetry_contract(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        wrapper = repo_root / "scripts/gentoo/build-package.sh"
+        bin_dir = self.root / "bin"
+        out_dir = self.root / "wrapper-out"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+
+        fake_emerge = bin_dir / "emerge"
+        fake_emerge.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "${FRANKENLIBC_LOG_DIR}/app-misc__hello"
+printf '{"event":"enable","message":"enabled: fake emerge"}\n' >> "${FRANKENLIBC_PORTAGE_LOG}"
+printf '{"call":"malloc","action":"ClampSize"}\n' >> "${FRANKENLIBC_LOG_DIR}/app-misc__hello/src_test.jsonl"
+printf '{"call":"free","action":"ReturnSafeDefault"}\n' >> "${FRANKENLIBC_LOG_FILE}"
+printf 'fake emerge %s\n' "$*"
+""",
+            encoding="utf-8",
+        )
+        fake_emerge.chmod(0o755)
+
+        env = os.environ.copy()
+        env["PATH"] = f"{bin_dir}:{env['PATH']}"
+        env["FRANKENLIBC_MODE"] = "strict"
+
+        completed = subprocess.run(
+            ["bash", str(wrapper), "app-misc/hello", str(out_dir)],
+            cwd=repo_root,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        metadata = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["package"], "app-misc/hello")
+        self.assertEqual(metadata["result"], "success")
+        self.assertEqual(metadata["frankenlibc_mode"], "strict")
+        self.assertEqual(metadata["frankenlibc_healing_actions"], 2)
+        self.assertEqual(metadata["instrumented_phase_events"], 1)
+        self.assertGreaterEqual(metadata["frankenlibc_log_files"], 2)
+        self.assertEqual(metadata["telemetry_log"], str(out_dir / "build-telemetry.jsonl"))
+        self.assertEqual(metadata["portage_hook_log"], str(out_dir / "portage-hooks.jsonl"))
+        self.assertEqual(metadata["portage_log_dir"], str(out_dir / "portage-frankenlibc"))
+
+        telemetry_events = [
+            json.loads(line)
+            for line in (out_dir / "build-telemetry.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual([event["event"] for event in telemetry_events], ["start", "finish"])
+        self.assertEqual(telemetry_events[-1]["result"], "success")
+        self.assertEqual(telemetry_events[-1]["healing_actions"], 2)
+        self.assertEqual(telemetry_events[-1]["instrumented_phase_events"], 1)
 
 
 if __name__ == "__main__":
