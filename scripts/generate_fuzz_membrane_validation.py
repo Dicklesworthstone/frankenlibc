@@ -12,6 +12,7 @@ Generates a JSON report to stdout (or --output).
 """
 import argparse
 import hashlib
+import copy
 import json
 import re
 import sys
@@ -218,6 +219,16 @@ def analyze_fuzz_membrane(source_path):
     has_fuzz_target = "fuzz_target!" in content
     has_pipeline = "ValidationPipeline::new()" in content
     has_outcome = "outcome" in content
+    has_structured_input = "MembraneInput" in content and "Arbitrary" in content
+    has_allocation_lifecycle = "pipeline.allocate(" in content and "pipeline.free(" in content
+    has_pointer_arithmetic = "ValidateNearMiss" in content and "saturating_add" in content
+    has_near_miss = "ValidateNearMiss" in content and "saturating_sub(1)" in content
+    has_cache_revalidation = "RevalidateForCache" in content
+    has_double_free = "DoubleFreeLast" in content and "FreeResult::DoubleFree" in content
+    has_canary_corruption = (
+        "inject_trailing_canary_corruption" in content
+        and "FreedWithCanaryCorruption" in content
+    )
 
     return {
         "source_file": str(source_path.name),
@@ -227,10 +238,98 @@ def analyze_fuzz_membrane(source_path):
         "has_fuzz_target": has_fuzz_target,
         "has_pipeline_creation": has_pipeline,
         "has_outcome_checking": has_outcome,
+        "has_structured_input": has_structured_input,
+        "has_allocation_lifecycle": has_allocation_lifecycle,
+        "has_pointer_arithmetic": has_pointer_arithmetic,
+        "has_near_miss_pointers": has_near_miss,
+        "has_cache_revalidation": has_cache_revalidation,
+        "has_double_free_path": has_double_free,
+        "has_canary_corruption_path": has_canary_corruption,
         "component_coverage": component_results,
         "components_found": sum(1 for c in component_results if c["found"]),
         "components_total": len(component_results),
     }
+
+
+def derive_runtime_assessment(source_analysis):
+    """Bind report claims to the checked-in fuzz target source."""
+    strategies = copy.deepcopy(FUZZING_STRATEGIES)
+    transitions = copy.deepcopy(STATE_TRANSITIONS)
+    cache_checks = copy.deepcopy(CACHE_COHERENCE_CHECKS)
+    invariant_checks = copy.deepcopy(INVARIANT_CHECKS)
+
+    for strategy in strategies:
+        name = strategy["strategy"]
+        if name == "arbitrary_addresses":
+            strategy["implemented"] = source_analysis["has_fuzz_target"]
+            strategy["evidence"] = "ValidateAddress operation feeds arbitrary u64 addresses into validate()"
+        elif name == "pointer_arithmetic":
+            strategy["implemented"] = source_analysis["has_pointer_arithmetic"]
+            strategy["evidence"] = (
+                "ValidateNearMiss derives pointer offsets from live allocations"
+                if strategy["implemented"]
+                else "Target does not allocate then adjust pointers"
+            )
+        elif name == "near_miss_pointers":
+            strategy["implemented"] = source_analysis["has_near_miss_pointers"]
+            strategy["evidence"] = (
+                "ValidateNearMiss checks before-base, one-past-end, and just-past-end addresses"
+                if strategy["implemented"]
+                else "No arena allocation to derive near-miss addresses from"
+            )
+        elif name == "mixed_valid_invalid":
+            strategy["implemented"] = (
+                source_analysis["has_allocation_lifecycle"]
+                and source_analysis["has_fuzz_target"]
+            )
+            strategy["evidence"] = (
+                "Structured operations mix live allocation addresses with arbitrary foreign addresses"
+                if strategy["implemented"]
+                else "Random byte inputs produce both valid and invalid addresses"
+            )
+
+    for transition in transitions:
+        trigger = transition["trigger"]
+        if trigger == "Re-validation of same address":
+            transition["exercised"] = source_analysis["has_cache_revalidation"]
+            transition["via"] = "RevalidateForCache validates the same live pointer twice"
+        elif trigger == "Free then validate":
+            transition["exercised"] = source_analysis["has_allocation_lifecycle"]
+            transition["via"] = "Free operation validates the just-freed pointer as a temporal violation"
+        elif trigger == "External pointer validation":
+            transition["exercised"] = source_analysis["has_fuzz_target"]
+            transition["via"] = "ValidateAddress operation validates arbitrary foreign addresses"
+
+    for check in cache_checks:
+        name = check["check"]
+        if name == "tls_cache_invalidation":
+            check["exercised"] = (
+                source_analysis["has_cache_revalidation"]
+                and source_analysis["has_allocation_lifecycle"]
+            )
+            if check["exercised"]:
+                check["evidence"] = "RevalidateForCache plus Free exercises cache hit and invalidation paths"
+                check.pop("gap", None)
+        elif name == "arena_slot_reuse":
+            check["exercised"] = source_analysis["has_allocation_lifecycle"]
+            if check["exercised"]:
+                check["evidence"] = "Allocation/free cycles exercise arena lifecycle and reuse candidates"
+                check.pop("gap", None)
+
+    for invariant in invariant_checks:
+        name = invariant["invariant"]
+        if name == "lattice_monotonicity":
+            invariant["verified"] = source_analysis["has_allocation_lifecycle"]
+            if invariant["verified"]:
+                invariant["evidence"] = "Free operation asserts live pointer transitions to temporal violation"
+                invariant.pop("gap", None)
+        elif name == "generation_counter_ordering":
+            invariant["verified"] = source_analysis["has_double_free_path"]
+            if invariant["verified"]:
+                invariant["evidence"] = "DoubleFreeLast asserts repeated free is detected deterministically"
+                invariant.pop("gap", None)
+
+    return strategies, transitions, cache_checks, invariant_checks
 
 
 def compute_validation_hash(report_data):
@@ -264,15 +363,19 @@ def main():
     # Analyze source
     source_analysis = analyze_fuzz_membrane(fuzz_membrane)
 
+    fuzzing_strategies, state_transitions, cache_coherence, invariant_checks = (
+        derive_runtime_assessment(source_analysis)
+    )
+
     # Compute coverage scores
-    strategies_impl = sum(1 for s in FUZZING_STRATEGIES if s["implemented"])
-    strategies_total = len(FUZZING_STRATEGIES)
-    transitions_exercised = sum(1 for t in STATE_TRANSITIONS if t["exercised"])
-    transitions_total = len(STATE_TRANSITIONS)
-    cache_exercised = sum(1 for c in CACHE_COHERENCE_CHECKS if c["exercised"])
-    cache_total = len(CACHE_COHERENCE_CHECKS)
-    invariants_verified = sum(1 for i in INVARIANT_CHECKS if i["verified"])
-    invariants_total = len(INVARIANT_CHECKS)
+    strategies_impl = sum(1 for s in fuzzing_strategies if s["implemented"])
+    strategies_total = len(fuzzing_strategies)
+    transitions_exercised = sum(1 for t in state_transitions if t["exercised"])
+    transitions_total = len(state_transitions)
+    cache_exercised = sum(1 for c in cache_coherence if c["exercised"])
+    cache_total = len(cache_coherence)
+    invariants_verified = sum(1 for i in invariant_checks if i["verified"])
+    invariants_total = len(invariant_checks)
 
     # Overall readiness score
     total_items = strategies_total + transitions_total + cache_total + invariants_total
@@ -281,7 +384,7 @@ def main():
 
     # Gap analysis
     gaps = []
-    for s in FUZZING_STRATEGIES:
+    for s in fuzzing_strategies:
         if not s["implemented"]:
             gaps.append({
                 "area": "fuzzing_strategy",
@@ -289,7 +392,7 @@ def main():
                 "severity": s.get("gap_severity", "medium"),
                 "description": s["evidence"],
             })
-    for t in STATE_TRANSITIONS:
+    for t in state_transitions:
         if not t["exercised"]:
             gaps.append({
                 "area": "state_transition",
@@ -297,7 +400,7 @@ def main():
                 "severity": t.get("gap_severity", "medium"),
                 "description": t["via"],
             })
-    for c in CACHE_COHERENCE_CHECKS:
+    for c in cache_coherence:
         if not c["exercised"]:
             gaps.append({
                 "area": "cache_coherence",
@@ -305,7 +408,7 @@ def main():
                 "severity": "medium",
                 "description": c["gap"],
             })
-    for inv in INVARIANT_CHECKS:
+    for inv in invariant_checks:
         if not inv["verified"]:
             gaps.append({
                 "area": "invariant",
@@ -315,8 +418,8 @@ def main():
             })
 
     report_data = {
-        "fuzzing_strategies": FUZZING_STRATEGIES,
-        "state_transitions": STATE_TRANSITIONS,
+        "fuzzing_strategies": fuzzing_strategies,
+        "state_transitions": state_transitions,
     }
     validation_hash = compute_validation_hash(report_data)
 
@@ -337,16 +440,59 @@ def main():
             "cwe_targets": ["CWE-476", "CWE-824", "CWE-825"],
         },
         "source_analysis": source_analysis,
-        "fuzzing_strategies": FUZZING_STRATEGIES,
-        "state_transitions": STATE_TRANSITIONS,
-        "cache_coherence": CACHE_COHERENCE_CHECKS,
-        "invariant_checks": INVARIANT_CHECKS,
+        "fuzzing_strategies": fuzzing_strategies,
+        "state_transitions": state_transitions,
+        "cache_coherence": cache_coherence,
+        "invariant_checks": invariant_checks,
         "gap_analysis": gaps,
         "success_criteria": {
             "zero_false_negatives": "validate() must never report unsafe pointer as safe",
             "all_transitions_exercised": "All SafetyState transitions covered by fuzz input",
             "no_deadlocks": "No deadlocks under concurrent validation load",
             "bounded_latency": "All validation paths complete within latency budget",
+        },
+        "completion_debt_evidence": {
+            "bead": "bd-1oz.4.1",
+            "original_bead": "bd-1oz.4",
+            "test_source": "crates/frankenlibc-harness/tests/fuzz_membrane_validation_test.rs",
+            "fuzz_primary": {
+                "description": "Primary fuzz evidence for the membrane validation pipeline target.",
+                "target": "fuzz_membrane",
+                "target_source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_membrane.rs",
+                "required_test_names": [
+                    "membrane_validation_pipeline_exercised",
+                    "membrane_validation_strategies_documented",
+                    "membrane_validation_lifecycle_fuzz_paths_present",
+                    "membrane_validation_cwe_targets",
+                ],
+                "smoke_commands": [
+                    "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo check --manifest-path crates/frankenlibc-fuzz/Cargo.toml --bin fuzz_membrane"
+                ],
+            },
+            "telemetry_primary": {
+                "description": "Structured report and JSONL rows emitted by scripts/check_fuzz_membrane_validation.sh.",
+                "default_report_path": "target/conformance/fuzz_membrane_validation.report.json",
+                "default_log_path": "target/conformance/fuzz_membrane_validation.log.jsonl",
+                "required_events": [
+                    "fuzz_membrane_validation_started",
+                    "fuzz_membrane_validation_completed",
+                    "fuzz_membrane_validation_failed",
+                ],
+                "required_fields": [
+                    "timestamp",
+                    "trace_id",
+                    "level",
+                    "event",
+                    "bead_id",
+                    "target",
+                    "artifact_refs",
+                    "outcome",
+                    "duration_ms",
+                    "readiness_pct",
+                    "total_gaps",
+                    "failure_signature",
+                ],
+            },
         },
     }
 

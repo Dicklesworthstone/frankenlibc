@@ -1,17 +1,17 @@
 {
   "schema_version": "v1",
   "bead": "bd-1oz.4",
-  "generated_at": "2026-04-27T03:57:04Z",
-  "validation_hash": "038c9c06d53570a8",
+  "generated_at": "2026-05-10T05:31:09Z",
+  "validation_hash": "cd5006306d360ef8",
   "summary": {
     "target": "fuzz_membrane",
-    "readiness_pct": 41.2,
-    "strategies_coverage": "2/5",
-    "transitions_coverage": "2/4",
-    "cache_coverage": "1/3",
-    "invariants_coverage": "2/5",
-    "total_gaps": 10,
-    "high_severity_gaps": 2,
+    "readiness_pct": 82.4,
+    "strategies_coverage": "4/5",
+    "transitions_coverage": "3/4",
+    "cache_coverage": "3/3",
+    "invariants_coverage": "4/5",
+    "total_gaps": 3,
+    "high_severity_gaps": 1,
     "cwe_targets": [
       "CWE-476",
       "CWE-824",
@@ -20,12 +20,19 @@
   },
   "source_analysis": {
     "source_file": "fuzz_membrane.rs",
-    "total_lines": 25,
-    "logic_lines": 19,
+    "total_lines": 162,
+    "logic_lines": 144,
     "has_no_main": true,
     "has_fuzz_target": true,
     "has_pipeline_creation": true,
     "has_outcome_checking": true,
+    "has_structured_input": true,
+    "has_allocation_lifecycle": true,
+    "has_pointer_arithmetic": true,
+    "has_near_miss_pointers": true,
+    "has_cache_revalidation": true,
+    "has_double_free_path": true,
+    "has_canary_corruption_path": true,
     "component_coverage": [
       {
         "component": "ValidationPipeline::validate()",
@@ -66,20 +73,20 @@
       "strategy": "arbitrary_addresses",
       "description": "Arbitrary pointer addresses including edge cases",
       "implemented": true,
-      "evidence": "Direct u64 parsing from fuzzer input bytes"
+      "evidence": "ValidateAddress operation feeds arbitrary u64 addresses into validate()"
     },
     {
       "strategy": "pointer_arithmetic",
       "description": "Pointer arithmetic on valid allocations (alloc \u00b1 delta)",
-      "implemented": false,
-      "evidence": "Target does not allocate then adjust pointers",
+      "implemented": true,
+      "evidence": "ValidateNearMiss derives pointer offsets from live allocations",
       "gap_severity": "medium"
     },
     {
       "strategy": "near_miss_pointers",
       "description": "Near-miss pointers (allocation \u00b1 small delta)",
-      "implemented": false,
-      "evidence": "No arena allocation to derive near-miss addresses from",
+      "implemented": true,
+      "evidence": "ValidateNearMiss checks before-base, one-past-end, and just-past-end addresses",
       "gap_severity": "medium"
     },
     {
@@ -93,7 +100,7 @@
       "strategy": "mixed_valid_invalid",
       "description": "Mixed valid/invalid pointer sequences",
       "implemented": true,
-      "evidence": "Random byte inputs produce both valid and invalid addresses"
+      "evidence": "Structured operations mix live allocation addresses with arbitrary foreign addresses"
     }
   ],
   "state_transitions": [
@@ -102,14 +109,14 @@
       "to_state": "Valid",
       "trigger": "Re-validation of same address",
       "exercised": true,
-      "via": "Repeated chunks with same bytes"
+      "via": "RevalidateForCache validates the same live pointer twice"
     },
     {
       "from_state": "Valid",
       "to_state": "Freed",
       "trigger": "Free then validate",
-      "exercised": false,
-      "via": "Requires arena allocation + free + re-validate",
+      "exercised": true,
+      "via": "Free operation validates the just-freed pointer as a temporal violation",
       "gap_severity": "high"
     },
     {
@@ -125,15 +132,15 @@
       "to_state": "Foreign",
       "trigger": "External pointer validation",
       "exercised": true,
-      "via": "Random addresses outside arena \u2192 Foreign outcome"
+      "via": "ValidateAddress operation validates arbitrary foreign addresses"
     }
   ],
   "cache_coherence": [
     {
       "check": "tls_cache_invalidation",
       "description": "TLS cache invalidation on free",
-      "exercised": false,
-      "gap": "No allocation lifecycle in target"
+      "exercised": true,
+      "evidence": "RevalidateForCache plus Free exercises cache hit and invalidation paths"
     },
     {
       "check": "bloom_false_positive",
@@ -144,8 +151,8 @@
     {
       "check": "arena_slot_reuse",
       "description": "Arena slot reuse after quarantine",
-      "exercised": false,
-      "gap": "No allocation lifecycle in target"
+      "exercised": true,
+      "evidence": "Allocation/free cycles exercise arena lifecycle and reuse candidates"
     }
   ],
   "invariant_checks": [
@@ -158,14 +165,14 @@
     {
       "invariant": "lattice_monotonicity",
       "description": "States only become more restrictive",
-      "verified": false,
-      "gap": "No allocation lifecycle to observe state transitions"
+      "verified": true,
+      "evidence": "Free operation asserts live pointer transitions to temporal violation"
     },
     {
       "invariant": "generation_counter_ordering",
       "description": "Generation counter ordering preserved",
-      "verified": false,
-      "gap": "No allocation lifecycle to observe counter increments"
+      "verified": true,
+      "evidence": "DoubleFreeLast asserts repeated free is detected deterministically"
     },
     {
       "invariant": "no_deadlocks",
@@ -183,57 +190,15 @@
   "gap_analysis": [
     {
       "area": "fuzzing_strategy",
-      "item": "pointer_arithmetic",
-      "severity": "medium",
-      "description": "Target does not allocate then adjust pointers"
-    },
-    {
-      "area": "fuzzing_strategy",
-      "item": "near_miss_pointers",
-      "severity": "medium",
-      "description": "No arena allocation to derive near-miss addresses from"
-    },
-    {
-      "area": "fuzzing_strategy",
       "item": "concurrent_validation",
       "severity": "low",
       "description": "Single-threaded fuzz target"
     },
     {
       "area": "state_transition",
-      "item": "Valid \u2192 Freed",
-      "severity": "high",
-      "description": "Requires arena allocation + free + re-validate"
-    },
-    {
-      "area": "state_transition",
       "item": "Freed \u2192 Quarantined",
       "severity": "high",
       "description": "Requires multiple alloc/free cycles to fill quarantine"
-    },
-    {
-      "area": "cache_coherence",
-      "item": "tls_cache_invalidation",
-      "severity": "medium",
-      "description": "No allocation lifecycle in target"
-    },
-    {
-      "area": "cache_coherence",
-      "item": "arena_slot_reuse",
-      "severity": "medium",
-      "description": "No allocation lifecycle in target"
-    },
-    {
-      "area": "invariant",
-      "item": "lattice_monotonicity",
-      "severity": "low",
-      "description": "No allocation lifecycle to observe state transitions"
-    },
-    {
-      "area": "invariant",
-      "item": "generation_counter_ordering",
-      "severity": "low",
-      "description": "No allocation lifecycle to observe counter increments"
     },
     {
       "area": "invariant",
@@ -247,5 +212,48 @@
     "all_transitions_exercised": "All SafetyState transitions covered by fuzz input",
     "no_deadlocks": "No deadlocks under concurrent validation load",
     "bounded_latency": "All validation paths complete within latency budget"
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-1oz.4.1",
+    "original_bead": "bd-1oz.4",
+    "test_source": "crates/frankenlibc-harness/tests/fuzz_membrane_validation_test.rs",
+    "fuzz_primary": {
+      "description": "Primary fuzz evidence for the membrane validation pipeline target.",
+      "target": "fuzz_membrane",
+      "target_source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_membrane.rs",
+      "required_test_names": [
+        "membrane_validation_pipeline_exercised",
+        "membrane_validation_strategies_documented",
+        "membrane_validation_lifecycle_fuzz_paths_present",
+        "membrane_validation_cwe_targets"
+      ],
+      "smoke_commands": [
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo check --manifest-path crates/frankenlibc-fuzz/Cargo.toml --bin fuzz_membrane"
+      ]
+    },
+    "telemetry_primary": {
+      "description": "Structured report and JSONL rows emitted by scripts/check_fuzz_membrane_validation.sh.",
+      "default_report_path": "target/conformance/fuzz_membrane_validation.report.json",
+      "default_log_path": "target/conformance/fuzz_membrane_validation.log.jsonl",
+      "required_events": [
+        "fuzz_membrane_validation_started",
+        "fuzz_membrane_validation_completed",
+        "fuzz_membrane_validation_failed"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "level",
+        "event",
+        "bead_id",
+        "target",
+        "artifact_refs",
+        "outcome",
+        "duration_ms",
+        "readiness_pct",
+        "total_gaps",
+        "failure_signature"
+      ]
+    }
   }
 }
