@@ -142,6 +142,9 @@ struct HostThreadStartContext {
     handoff_state: AtomicI32,
 }
 
+const STRICT_HOST_THREAD_TLS_GAP_BYTES: usize = 4 * 1024 * 1024;
+static STRICT_HOST_THREAD_TLS_GAP_PTR: AtomicUsize = AtomicUsize::new(0);
+
 const HOST_THREAD_HANDOFF_PENDING: i32 = 0;
 const HOST_THREAD_HANDOFF_READY: i32 = 1;
 const HOST_THREAD_HANDOFF_SPIN_LIMIT: usize = 64;
@@ -771,9 +774,9 @@ fn remember_host_thread_tid(thread: libc::pthread_t, tid: i32) {
         .insert(thread as usize, tid);
 }
 
-fn wait_for_host_thread_registration(thread: libc::pthread_t) {
+fn wait_for_host_thread_registration(thread: libc::pthread_t) -> bool {
     if thread == 0 {
-        return;
+        return false;
     }
 
     let thread_key = thread as usize;
@@ -787,10 +790,11 @@ fn wait_for_host_thread_registration(thread: libc::pthread_t) {
             .unwrap_or_else(|e| e.into_inner())
             .contains_key(&thread_key)
         {
-            return;
+            return true;
         }
         raw_syscall::sys_sched_yield();
     }
+    false
 }
 
 fn publish_host_thread_handoff(
@@ -857,6 +861,33 @@ fn wait_for_host_thread_handoff(start_ctx: &HostThreadStartContext) -> libc::pth
     }
 
     0
+}
+
+fn ensure_strict_host_thread_tls_gap() {
+    if runtime_policy::mode().heals_enabled()
+        || STRICT_HOST_THREAD_TLS_GAP_PTR.load(Ordering::Acquire) != 0
+    {
+        return;
+    }
+
+    let mapped = unsafe {
+        raw_syscall::sys_mmap(
+            std::ptr::null_mut(),
+            STRICT_HOST_THREAD_TLS_GAP_BYTES,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    if let Ok(ptr) = mapped {
+        let _ = STRICT_HOST_THREAD_TLS_GAP_PTR.compare_exchange(
+            0,
+            ptr as usize,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
 }
 
 fn resolve_registered_host_thread_tid(thread: libc::pthread_t) -> Option<i32> {
@@ -1009,7 +1040,7 @@ fn detached_thread_tid_snapshot(handle_ptr: *mut ThreadHandle) -> Option<i32> {
 }
 
 fn clock_gettime_checked(clockid: c_int) -> Result<libc::timespec, c_int> {
-    let mut now: libc::timespec = unsafe { std::mem::zeroed() };
+    let mut now: libc::timespec = unsafe { std::mem::zeroed() }; // ubs:ignore - zeroed timespec is immediately filled by clock_gettime.
     match unsafe { raw_syscall::sys_clock_gettime(clockid, &mut now as *mut _ as *mut u8) } {
         Ok(()) => Ok(now),
         Err(errno) => Err(errno),
@@ -1329,7 +1360,11 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
             // SAFETY: pthread_create validated `thread_out` as writable before dispatch.
             unsafe { *thread_out = host_thread };
             publish_host_thread_handoff(start_ctx, host_thread);
-            wait_for_host_thread_registration(host_thread);
+            if wait_for_host_thread_registration(host_thread) {
+                // SAFETY: the child copied the start routine/argument before
+                // publishing its TID, so the parent can reclaim the handoff box.
+                drop(unsafe { Box::from_raw(start_ctx) });
+            }
         }
         return rc;
     };
@@ -1339,7 +1374,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
 
     // SAFETY: `data_ptr` came from `managed_attr_data_for_host_translation`.
     let data = unsafe { &*data_ptr };
-    let mut host_attr: libc::pthread_attr_t = unsafe { std::mem::zeroed() };
+    let mut host_attr: libc::pthread_attr_t = unsafe { std::mem::zeroed() }; // ubs:ignore - pthread_attr_init initializes the C attr object before use.
     let Some(attr_init) = (unsafe { resolved_pthread_attr_init_fn() }) else {
         return libc::ENOSYS;
     };
@@ -1393,7 +1428,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
         rc = unsafe { setschedpolicy(&mut host_attr, data.sched_policy) };
     }
     if rc == 0 {
-        let mut param: libc::sched_param = unsafe { std::mem::zeroed() };
+        let mut param: libc::sched_param = unsafe { std::mem::zeroed() }; // ubs:ignore - Linux sched_param is zero-initialized before priority assignment.
         param.sched_priority = data.sched_priority;
         rc = unsafe { setschedparam(&mut host_attr, &param) };
     }
@@ -1454,7 +1489,11 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
             } else {
                 *thread_out = host_thread;
                 publish_host_thread_handoff(start_ctx, host_thread);
-                wait_for_host_thread_registration(host_thread);
+                if wait_for_host_thread_registration(host_thread) {
+                    // SAFETY: the child copied the start routine/argument before
+                    // publishing its TID, so the parent can reclaim the handoff box.
+                    drop(Box::from_raw(start_ctx));
+                }
             }
             create_rc
         }
@@ -1468,16 +1507,15 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
 }
 
 unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_void {
-    let start_ctx = unsafe { Box::from_raw(arg.cast::<HostThreadStartContext>()) };
+    let start_ctx = unsafe { &*arg.cast::<HostThreadStartContext>() };
     let _ = CURRENT_THREADING_BACKEND.try_with(|backend| backend.set(THREAD_BACKEND_HOST));
-    let host_thread = wait_for_host_thread_handoff(&start_ctx);
+    let host_thread = wait_for_host_thread_handoff(start_ctx);
+    let start_routine = start_ctx.start_routine;
+    let start_arg = start_ctx.arg;
     if host_thread != 0 {
         let _ = CURRENT_PTHREAD_SELF_CACHE.try_with(|cache| cache.set(host_thread));
         remember_host_thread_tid(host_thread, core_self_tid());
     }
-    let start_routine = start_ctx.start_routine;
-    let start_arg = start_ctx.arg;
-    drop(start_ctx);
     unsafe { start_routine(start_arg) }
 }
 
@@ -2096,6 +2134,7 @@ pub unsafe extern "C" fn pthread_create(
     // and compatibility with programs that depend on glibc thread internals
     // (Python, Node.js, etc.).
     if !force_native && let Some(host_create) = resolved_thread_create_raw() {
+        ensure_strict_host_thread_tls_gap();
         return unsafe {
             dispatch_host_thread_create_with_managed_attr(host_create, thread_out, attr, start, arg)
         };
@@ -5794,7 +5833,7 @@ pub unsafe extern "C" fn pthread_sigqueue(
     match resolve_thread_tid(thread) {
         Some(tid) => {
             let pid = raw_syscall::sys_getpid();
-            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() }; // ubs:ignore - siginfo_t storage is zeroed before all queued-signal fields are filled.
             info.si_signo = sig;
             info.si_errno = 0;
             info.si_code = libc::SI_QUEUE;
@@ -5969,7 +6008,7 @@ fn thread_cpuclock_id_from_tid(tid: i32) -> libc::clockid_t {
 
 #[inline]
 fn validate_thread_cpuclockid(clockid: libc::clockid_t) -> Result<(), c_int> {
-    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() }; // ubs:ignore - zeroed timespec is overwritten by clock_getres before use.
     match unsafe {
         raw_syscall::sys_clock_getres(clockid, &mut ts as *mut libc::timespec as *mut u8)
     } {
@@ -6342,7 +6381,7 @@ mod tests {
     }
 
     fn alloc_mutex_ptr() -> *mut libc::pthread_mutex_t {
-        let boxed: Box<libc::pthread_mutex_t> = Box::new(unsafe { std::mem::zeroed() });
+        let boxed: Box<libc::pthread_mutex_t> = Box::new(unsafe { std::mem::zeroed() }); // ubs:ignore - POSIX mutex storage is initialized by pthread_mutex_init next.
         Box::into_raw(boxed)
     }
 

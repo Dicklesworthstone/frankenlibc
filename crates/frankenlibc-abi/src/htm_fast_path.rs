@@ -183,13 +183,7 @@ impl HtmSite {
     }
 
     pub fn run<R>(&self, f: impl FnOnce() -> R) -> Result<R, HtmFallbackReason> {
-        let now = now_ms();
         let mode = current_test_mode();
-
-        if self.disable_until_ms.load(Ordering::Acquire) > now {
-            self.record_fallback(HtmFallbackReason::Disabled);
-            return Err(HtmFallbackReason::Disabled);
-        }
 
         match mode {
             HtmTestMode::ForceUnsupported => {
@@ -197,12 +191,20 @@ impl HtmSite {
                 Err(HtmFallbackReason::Unsupported)
             }
             HtmTestMode::ForceCommit => {
+                if self.disabled_now() {
+                    self.record_fallback(HtmFallbackReason::Disabled);
+                    return Err(HtmFallbackReason::Disabled);
+                }
                 let attempt_number = self.record_attempt();
                 let out = f();
                 self.record_commit(attempt_number);
                 Ok(out)
             }
             HtmTestMode::ForceAbort => {
+                if self.disabled_now() {
+                    self.record_fallback(HtmFallbackReason::Disabled);
+                    return Err(HtmFallbackReason::Disabled);
+                }
                 let attempt_number = self.record_attempt();
                 let code = HTM_TEST_ABORT_CODE.load(Ordering::Acquire);
                 self.record_abort(attempt_number, code);
@@ -212,6 +214,10 @@ impl HtmSite {
                 if !real_htm_supported() {
                     self.record_fallback(HtmFallbackReason::Unsupported);
                     return Err(HtmFallbackReason::Unsupported);
+                }
+                if self.disabled_now() {
+                    self.record_fallback(HtmFallbackReason::Disabled);
+                    return Err(HtmFallbackReason::Disabled);
                 }
 
                 #[cfg(target_arch = "x86_64")]
@@ -237,6 +243,11 @@ impl HtmSite {
                 }
             }
         }
+    }
+
+    #[inline]
+    fn disabled_now(&self) -> bool {
+        self.disable_until_ms.load(Ordering::Acquire) > now_ms()
     }
 
     pub fn snapshot(&self) -> HtmSiteSnapshot {
@@ -512,5 +523,29 @@ mod tests {
         assert_eq!(snapshot.commits, 0);
         assert_eq!(snapshot.aborts, 0);
         assert_eq!(snapshot.fallbacks, 1);
+    }
+
+    #[test]
+    fn real_unsupported_skips_cooldown_clock_before_fallback() {
+        let _guard = test_lock().lock().expect("test lock poisoned");
+        static SITE: HtmSite = HtmSite::new("unit::real_unsupported");
+        SITE.reset_for_tests();
+        let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::Real);
+        let previous_support = HTM_SUPPORT_CACHE.swap(HTM_SUPPORT_UNAVAILABLE, Ordering::AcqRel);
+        HTM_EPOCH_NS.store(0, Ordering::Relaxed);
+
+        let result = SITE.run(|| 5usize);
+        let fallback_count = SITE.fallbacks.load(Ordering::Relaxed);
+        let epoch_after_run = HTM_EPOCH_NS.load(Ordering::Relaxed);
+
+        htm_restore_test_mode_for_tests(previous_mode);
+        HTM_SUPPORT_CACHE.store(previous_support, Ordering::Release);
+
+        assert_eq!(result, Err(HtmFallbackReason::Unsupported));
+        assert_eq!(fallback_count, 1);
+        assert_eq!(
+            epoch_after_run, 0,
+            "unsupported real-mode fallback should not read the cooldown clock"
+        );
     }
 }

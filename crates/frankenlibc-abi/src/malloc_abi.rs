@@ -12,7 +12,7 @@ use std::cell::{Cell, UnsafeCell};
 use std::ffi::{c_int, c_void};
 use std::fmt::Write as _;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use frankenlibc_core::errno::{EINVAL, ENOMEM};
 use frankenlibc_membrane::MEMBRANE_SCHEMA_VERSION;
@@ -386,7 +386,6 @@ pub fn malloc_stats_init_for_tests() {
 #[doc(hidden)]
 pub fn malloc_stats_reset_for_harness() {
     let stats = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
-    ALLOC_STATS_SLOT_INDEX.with(|slot| slot.set(None));
     stats.reset();
 }
 
@@ -430,7 +429,7 @@ unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
         resolved
     };
     let result = if ptr != 0 {
-        let f: HostMallocFn = unsafe { std::mem::transmute(ptr) };
+        let f: HostMallocFn = unsafe { std::mem::transmute(ptr) }; // ubs:ignore - host malloc symbol is resolved as this exact ABI fn pointer.
         unsafe { f(size) }
     } else {
         unsafe { bump_alloc(size) }
@@ -461,7 +460,7 @@ unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
         resolved
     };
     let result = if ptr != 0 {
-        let host_calloc: HostCallocFn = unsafe { std::mem::transmute(ptr) };
+        let host_calloc: HostCallocFn = unsafe { std::mem::transmute(ptr) }; // ubs:ignore - host calloc symbol is resolved as this exact ABI fn pointer.
         unsafe { host_calloc(nmemb, size) }
     } else {
         let total = nmemb.checked_mul(size).unwrap_or(0);
@@ -506,7 +505,7 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         resolved
     };
     let result = if host_ptr != 0 {
-        let host_realloc: HostReallocFn = unsafe { std::mem::transmute(host_ptr) };
+        let host_realloc: HostReallocFn = unsafe { std::mem::transmute(host_ptr) }; // ubs:ignore - host realloc symbol is resolved as this exact ABI fn pointer.
         unsafe { host_realloc(ptr, size) }
     } else if let Some(old_size) = unsafe { bump_allocation_size(ptr) } {
         let out = unsafe { bump_alloc(size) };
@@ -544,7 +543,7 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
         resolved
     };
     if host_ptr != 0 {
-        let host_free: HostFreeFn = unsafe { std::mem::transmute(host_ptr) };
+        let host_free: HostFreeFn = unsafe { std::mem::transmute(host_ptr) }; // ubs:ignore - host free symbol is resolved as this exact ABI fn pointer.
         unsafe { host_free(ptr) };
     }
     leave_reentry_guard(&NATIVE_FREE_REENTRY_TLS);
@@ -602,8 +601,6 @@ thread_local! {
 }
 
 const MALLOC_STATS_BIN_COUNT: usize = frankenlibc_core::malloc::size_class::NUM_SIZE_CLASSES + 1;
-const FLAT_COMBINER_SLOT_COUNT: usize = 512;
-const FC_OP_NONE: usize = 0;
 const FC_OP_ALLOC: usize = 1;
 const FC_OP_FREE: usize = 2;
 const FC_OP_SNAPSHOT: usize = 3;
@@ -659,49 +656,8 @@ impl MallocStatsState {
     }
 }
 
-#[repr(align(128))]
-struct PublicationSlot {
-    op: AtomicUsize,
-    request_id: AtomicU64,
-    completed_id: AtomicU64,
-    size: AtomicUsize,
-    bin: AtomicUsize,
-    active: AtomicBool,
-    age: AtomicU32,
-    result_allocation_events: AtomicUsize,
-    result_free_events: AtomicUsize,
-    result_total_allocated: AtomicUsize,
-    result_total_freed: AtomicUsize,
-    result_active_allocations: AtomicUsize,
-    result_live_bytes: AtomicUsize,
-    result_peak_usage: AtomicUsize,
-}
-
-impl PublicationSlot {
-    const fn new() -> Self {
-        Self {
-            op: AtomicUsize::new(FC_OP_NONE),
-            request_id: AtomicU64::new(0),
-            completed_id: AtomicU64::new(0),
-            size: AtomicUsize::new(0),
-            bin: AtomicUsize::new(0),
-            active: AtomicBool::new(false),
-            age: AtomicU32::new(0),
-            result_allocation_events: AtomicUsize::new(0),
-            result_free_events: AtomicUsize::new(0),
-            result_total_allocated: AtomicUsize::new(0),
-            result_total_freed: AtomicUsize::new(0),
-            result_active_allocations: AtomicUsize::new(0),
-            result_live_bytes: AtomicUsize::new(0),
-            result_peak_usage: AtomicUsize::new(0),
-        }
-    }
-}
-
 struct FlatCombiningStats {
     combiner_lock: AtomicBool,
-    next_slot: AtomicUsize,
-    slots: [PublicationSlot; FLAT_COMBINER_SLOT_COUNT],
     state: UnsafeCell<MallocStatsState>,
 }
 
@@ -714,136 +670,27 @@ impl FlatCombiningStats {
     fn new() -> Self {
         Self {
             combiner_lock: AtomicBool::new(false),
-            next_slot: AtomicUsize::new(0),
-            slots: [const { PublicationSlot::new() }; FLAT_COMBINER_SLOT_COUNT],
             state: UnsafeCell::new(MallocStatsState::new()),
         }
     }
 
-    fn slot_index(&self) -> usize {
-        ALLOC_STATS_SLOT_INDEX.with(|slot| match slot.get() {
-            Some(idx) => idx,
-            None => {
-                // Use a stride to reduce collisions between sibling threads.
-                let idx = self
-                    .next_slot
-                    .fetch_add(13, Ordering::Relaxed)
-                    .wrapping_rem(FLAT_COMBINER_SLOT_COUNT);
-                slot.set(Some(idx));
-                idx
-            }
-        })
-    }
-
     fn apply_op(&self, op: usize, size: usize, bin: usize) -> MallocStatsSnapshot {
-        let idx = self.slot_index();
-        let slot = &self.slots[idx];
-
-        let request_id = slot.request_id.fetch_add(1, Ordering::AcqRel) + 1;
-        slot.size.store(size, Ordering::Relaxed);
-        slot.bin
-            .store(bin.min(MALLOC_STATS_BIN_COUNT - 1), Ordering::Relaxed);
-        slot.age.fetch_add(1, Ordering::Relaxed);
-        slot.active.store(true, Ordering::Release);
-        slot.op.store(op, Ordering::Release);
-
-        self.try_combine_round();
-
-        let mut spins = 0_u32;
-        while slot.completed_id.load(Ordering::Acquire) < request_id {
-            self.try_combine_round();
-            if spins < 256 {
-                spins += 1;
-                std::hint::spin_loop();
-            } else {
-                spins = 0;
-                std::thread::yield_now();
-            }
-        }
-
-        MallocStatsSnapshot {
-            allocation_events: slot.result_allocation_events.load(Ordering::Acquire),
-            free_events: slot.result_free_events.load(Ordering::Acquire),
-            total_allocated: slot.result_total_allocated.load(Ordering::Acquire),
-            total_freed: slot.result_total_freed.load(Ordering::Acquire),
-            active_allocations: slot.result_active_allocations.load(Ordering::Acquire),
-            live_bytes: slot.result_live_bytes.load(Ordering::Acquire),
-            peak_usage: slot.result_peak_usage.load(Ordering::Acquire),
-        }
-    }
-
-    fn try_combine_round(&self) {
-        if self.try_combine_round_htm() {
-            return;
-        }
-
-        if self
-            .combiner_lock
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return;
-        }
-
-        // SAFETY: `combiner_lock` is held exclusively for this combining round.
-        let state = unsafe { &mut *self.state.get() };
-        self.combine_with_state(state);
-        self.combiner_lock.store(false, Ordering::Release);
-    }
-
-    fn try_combine_round_htm(&self) -> bool {
-        matches!(
-            MALLOC_STATS_HTM_SITE.run(|| {
-                if self.combiner_lock.load(Ordering::Acquire) {
-                    return false;
-                }
-
-                // SAFETY: speculative mutation is safe because any conflicting
-                // fallback combiner mutates either `combiner_lock` or `state`,
-                // which forces the transaction to abort before commit.
-                let state = unsafe { &mut *self.state.get() };
-                self.combine_with_state(state);
-                true
-            }),
-            Ok(true)
-        )
-    }
-
-    fn combine_with_state(&self, state: &mut MallocStatsState) {
-        for slot in &self.slots {
-            // Capture req_id before swap to ensure we acknowledge exactly the
-            // request we are about to process (or NONE if it hasn't arrived).
-            let req_id = slot.request_id.load(Ordering::Acquire);
-            let op = slot.op.swap(FC_OP_NONE, Ordering::AcqRel);
-            if op == FC_OP_NONE {
-                continue;
+        if let Ok(Some(snapshot)) = MALLOC_STATS_HTM_SITE.run(|| {
+            if self.combiner_lock.load(Ordering::Acquire) {
+                return None;
             }
 
-            let size = slot.size.load(Ordering::Relaxed);
-            let bin = slot
-                .bin
-                .load(Ordering::Relaxed)
-                .min(MALLOC_STATS_BIN_COUNT - 1);
-            Self::apply_locked(state, op, size, bin);
-            let snapshot = state.snapshot();
-
-            slot.result_allocation_events
-                .store(snapshot.allocation_events, Ordering::Release);
-            slot.result_free_events
-                .store(snapshot.free_events, Ordering::Release);
-            slot.result_total_allocated
-                .store(snapshot.total_allocated, Ordering::Release);
-            slot.result_total_freed
-                .store(snapshot.total_freed, Ordering::Release);
-            slot.result_active_allocations
-                .store(snapshot.active_allocations, Ordering::Release);
-            slot.result_live_bytes
-                .store(snapshot.live_bytes, Ordering::Release);
-            slot.result_peak_usage
-                .store(snapshot.peak_usage, Ordering::Release);
-
-            slot.completed_id.store(req_id, Ordering::Release);
+            // SAFETY: speculative mutation is safe because any conflicting
+            // fallback combiner mutates either `combiner_lock` or `state`,
+            // which forces the transaction to abort before commit.
+            let state = unsafe { &mut *self.state.get() };
+            Self::apply_locked(state, op, size, bin.min(MALLOC_STATS_BIN_COUNT - 1));
+            Some(state.snapshot())
+        }) {
+            return snapshot;
         }
+
+        self.apply_op_with_lock(op, size, bin.min(MALLOC_STATS_BIN_COUNT - 1))
     }
 
     fn apply_locked(state: &mut MallocStatsState, op: usize, size: usize, bin: usize) {
@@ -866,6 +713,25 @@ impl FlatCombiningStats {
             FC_OP_SNAPSHOT => {}
             _ => {}
         }
+    }
+
+    fn apply_op_with_lock(&self, op: usize, size: usize, bin: usize) -> MallocStatsSnapshot {
+        while self
+            .combiner_lock
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+
+        // SAFETY: `combiner_lock` is held exclusively for this stats update.
+        let snapshot = unsafe {
+            let state = &mut *self.state.get();
+            Self::apply_locked(state, op, size, bin);
+            state.snapshot()
+        };
+        self.combiner_lock.store(false, Ordering::Release);
+        snapshot
     }
 
     fn record_alloc(&self, size: usize, bin: usize) {
@@ -893,33 +759,12 @@ impl FlatCombiningStats {
         unsafe {
             *self.state.get() = MallocStatsState::new();
         }
-        self.next_slot.store(0, Ordering::Relaxed);
-        for slot in &self.slots {
-            slot.op.store(FC_OP_NONE, Ordering::Relaxed);
-            slot.request_id.store(0, Ordering::Relaxed);
-            slot.completed_id.store(0, Ordering::Relaxed);
-            slot.size.store(0, Ordering::Relaxed);
-            slot.bin.store(0, Ordering::Relaxed);
-            slot.active.store(false, Ordering::Relaxed);
-            slot.age.store(0, Ordering::Relaxed);
-            slot.result_allocation_events.store(0, Ordering::Relaxed);
-            slot.result_free_events.store(0, Ordering::Relaxed);
-            slot.result_total_allocated.store(0, Ordering::Relaxed);
-            slot.result_total_freed.store(0, Ordering::Relaxed);
-            slot.result_active_allocations.store(0, Ordering::Relaxed);
-            slot.result_live_bytes.store(0, Ordering::Relaxed);
-            slot.result_peak_usage.store(0, Ordering::Relaxed);
-        }
 
         self.combiner_lock.store(false, Ordering::Release);
     }
 }
 
 static GLOBAL_ALLOC_STATS: OnceLock<FlatCombiningStats> = OnceLock::new();
-
-thread_local! {
-    static ALLOC_STATS_SLOT_INDEX: Cell<Option<usize>> = const { Cell::new(None) };
-}
 
 fn global_alloc_stats() -> Option<&'static FlatCombiningStats> {
     // Use get() not get_or_init() — OnceLock futex deadlocks during early init.
@@ -1381,6 +1226,14 @@ pub(crate) fn check_ownership(addr: usize) -> bool {
 /// Returns `None` if the pipeline is not yet initialized (reentrant guard).
 #[must_use]
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
+    if runtime_policy::in_policy_reentry_context()
+        || in_allocator_reentry_context()
+        || crate::membrane_state::pipeline_initialization_active()
+        || frankenlibc_membrane::ptr_validator::in_validation_context()
+    {
+        return fallback_remaining(addr);
+    }
+
     validate_ptr(addr)
         .and_then(|abs| abs.remaining)
         .or_else(|| fallback_remaining(addr))
@@ -1528,14 +1381,15 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         let _ = fallback_remove(ptr);
         return;
     }
-    if strict_allocator_host_path_active()
-        && let Some(size) = fallback_remove_sized(ptr)
-    {
-        // SAFETY: strict-mode allocations are tracked in the fallback table and
-        // must be released by the host allocator to preserve host heap
-        // semantics.
+    if strict_allocator_host_path_active() {
+        let tracked_size = fallback_remove_sized(ptr);
+        // SAFETY: strict-mode preserves host allocator semantics. Some glibc
+        // internals allocate without crossing our public malloc symbol, so
+        // unknown pointers must still be returned to the host allocator.
         unsafe { native_libc_free(ptr) };
-        record_free_stats(size);
+        if let Some(size) = tracked_size {
+            record_free_stats(size);
+        }
         return;
     }
     let _trace_scope = runtime_policy::entrypoint_scope("free");
@@ -1830,10 +1684,10 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             return out;
         }
 
-        // Unknown pointer in strict mode: preserve historical behavior by
-        // allocating a fresh host buffer rather than invoking undefined
-        // realloc semantics on a foreign pointer.
-        let out = unsafe { native_libc_malloc(size.max(1)) };
+        // Unknown pointer in strict mode: preserve host allocator semantics.
+        // glibc internals can pass allocations that never crossed our public
+        // malloc symbol, and strict mode must not rewrite those realloc calls.
+        let out = unsafe { native_libc_realloc(ptr, size) };
         if !out.is_null() {
             fallback_insert_sized(out, size.max(1));
             record_alloc_stats(size.max(1));

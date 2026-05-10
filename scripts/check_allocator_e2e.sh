@@ -14,7 +14,11 @@ RUN_DIR="${OUT_ROOT}/${RUN_ID}"
 BIN_DIR="${RUN_DIR}/bin"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
 
-LIB_CANDIDATES=(
+LIB_CANDIDATES=()
+if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+  LIB_CANDIDATES+=("${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so")
+fi
+LIB_CANDIDATES+=(
   "${ROOT}/target/release/libfrankenlibc_abi.so"
   "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
 )
