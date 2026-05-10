@@ -1,0 +1,213 @@
+{
+  "schema_version": "allocator_e2e_completion_contract.v1",
+  "original_bead": "bd-2x5.5",
+  "completion_debt_bead": "bd-2x5.5.1",
+  "title": "Allocator E2E and conformance completion binding",
+  "purpose": "Bind the allocator strict+hardened E2E gate, malloc stress fixtures, and allocator conformance fixture harness to explicit completion evidence for bd-2x5.5.1.",
+  "source_artifacts": {
+    "allocator_e2e_gate": "scripts/check_allocator_e2e.sh",
+    "c_fixture_spec": "tests/conformance/c_fixture_spec.json",
+    "malloc_fixture": "tests/integration/fixture_malloc.c",
+    "malloc_stress_fixture": "tests/integration/fixture_malloc_stress.c",
+    "allocator_conformance_fixture": "tests/conformance/fixtures/allocator.json",
+    "allocator_conformance_harness": "crates/frankenlibc-harness/tests/allocator_conformance_test.rs",
+    "completion_checker": "scripts/check_allocator_e2e_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/allocator_e2e_completion_contract_test.rs"
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "required_test_refs": [
+        "allocator_e2e_gate_runs_host_strict_hardened",
+        "allocator_e2e_gate_compiles_malloc_and_stress_fixtures",
+        "allocator_e2e_gate_diffs_strict_hardened_against_host",
+        "malloc_fixture_covers_basic_allocator_lifecycle",
+        "malloc_stress_fixture_covers_concurrency_fragmentation_and_signature",
+        "checker_validates_allocator_e2e_completion_contract",
+        "checker_emits_allocator_completion_report_and_jsonl",
+        "checker_rejects_missing_stress_fixture_binding",
+        "checker_rejects_missing_conformance_test_ref",
+        "checker_rejects_unknown_telemetry_event"
+      ],
+      "evidence": [
+        "host/strict/hardened LD_PRELOAD allocator gate",
+        "concurrent alloc/free stress fixture",
+        "fragmentation wave and conformance signature fixture"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "required_test_refs": [
+        "allocator_fixture_exists",
+        "allocator_fixture_valid_schema",
+        "allocator_covers_malloc",
+        "allocator_covers_calloc",
+        "allocator_covers_free",
+        "allocator_covers_realloc",
+        "allocator_modes_valid",
+        "allocator_case_count_stable",
+        "allocator_has_posix_references",
+        "allocator_error_codes_valid",
+        "allocator_covers_edge_cases",
+        "allocator_fixture_executes_via_isolated_harness",
+        "checker_validates_allocator_e2e_completion_contract"
+      ],
+      "evidence": [
+        "allocator fixture schema and POSIX references",
+        "malloc/calloc/free/realloc coverage",
+        "isolated harness execution with host parity"
+      ]
+    }
+  ],
+  "completion_debt_evidence": {
+    "required_e2e_gate": {
+      "script": "scripts/check_allocator_e2e.sh",
+      "bead": "bd-2x5.5",
+      "fixtures": [
+        "fixture_malloc",
+        "fixture_malloc_stress"
+      ],
+      "modes": [
+        "host",
+        "strict",
+        "hardened"
+      ],
+      "required_env": [
+        "FRANKENLIBC_MODE",
+        "LD_PRELOAD",
+        "TIMEOUT_SECONDS"
+      ],
+      "required_report_fields": [
+        "schema_version",
+        "bead",
+        "run_dir",
+        "fixtures",
+        "overall_ok",
+        "matches_host",
+        "fixture_ok"
+      ],
+      "required_stdout_markers": [
+        "allocator_e2e: PASS",
+        "fixture_malloc",
+        "fixture_malloc_stress",
+        "strict_match",
+        "hardened_match"
+      ]
+    },
+    "required_fixture_spec": {
+      "path": "tests/conformance/c_fixture_spec.json",
+      "fixtures": {
+        "fixture_malloc": {
+          "source": "tests/integration/fixture_malloc.c",
+          "tests": 6,
+          "covered_symbols": [
+            "malloc",
+            "free",
+            "calloc",
+            "realloc",
+            "memset"
+          ]
+        },
+        "fixture_malloc_stress": {
+          "source": "tests/integration/fixture_malloc_stress.c",
+          "tests": 3,
+          "covered_symbols": [
+            "malloc",
+            "free",
+            "calloc",
+            "realloc",
+            "memset",
+            "pthread_create",
+            "pthread_join"
+          ],
+          "link_flags": [
+            "-pthread"
+          ],
+          "mode_expectations": [
+            "strict",
+            "hardened"
+          ]
+        }
+      }
+    },
+    "required_malloc_fixture_checks": [
+      "test_malloc_free",
+      "test_calloc_zeroed",
+      "test_realloc_grow",
+      "test_realloc_shrink",
+      "test_malloc_zero",
+      "test_realloc_null",
+      "fixture_malloc: PASS (6 tests)"
+    ],
+    "required_stress_fixture_checks": [
+      "STRESS_THREADS 4",
+      "STRESS_ITERS 5000",
+      "test_concurrent_alloc_free",
+      "test_fragmentation_wave",
+      "test_conformance_signature",
+      "pthread_create",
+      "pthread_join",
+      "checksum=",
+      "fixture_malloc_stress: PASS (3 tests)"
+    ],
+    "required_conformance_fixture": {
+      "path": "tests/conformance/fixtures/allocator.json",
+      "version": "v1",
+      "family": "allocator",
+      "required_functions": [
+        "malloc",
+        "calloc",
+        "free",
+        "realloc"
+      ],
+      "min_cases": 5,
+      "required_case_names": [
+        "malloc_basic",
+        "malloc_zero",
+        "calloc_basic",
+        "free_null",
+        "realloc_null_is_malloc"
+      ]
+    },
+    "test_sources": {
+      "allocator_conformance_harness": {
+        "path": "crates/frankenlibc-harness/tests/allocator_conformance_test.rs",
+        "required_test_refs": [
+          "allocator_fixture_exists",
+          "allocator_fixture_valid_schema",
+          "allocator_covers_malloc",
+          "allocator_covers_calloc",
+          "allocator_covers_free",
+          "allocator_covers_realloc",
+          "allocator_modes_valid",
+          "allocator_case_count_stable",
+          "allocator_has_posix_references",
+          "allocator_error_codes_valid",
+          "allocator_covers_edge_cases",
+          "allocator_fixture_executes_via_isolated_harness"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/allocator_e2e_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_e2e_and_conformance_completion_evidence",
+          "checker_validates_allocator_e2e_completion_contract",
+          "checker_emits_allocator_completion_report_and_jsonl",
+          "checker_rejects_missing_stress_fixture_binding",
+          "checker_rejects_missing_conformance_test_ref",
+          "checker_rejects_unknown_telemetry_event"
+        ]
+      }
+    },
+    "telemetry_events": [
+      "allocator_e2e_completion_summary",
+      "allocator_e2e_fixture_bindings",
+      "allocator_e2e_conformance_bindings",
+      "allocator_e2e_test_bindings",
+      "allocator_e2e_completion_contract_pass",
+      "allocator_e2e_completion_contract_fail"
+    ]
+  }
+}
