@@ -1,0 +1,352 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "counterfactual-policy-simulator-completion-contract",
+  "bead": "bd-26xb.5",
+  "completion_debt_bead": "bd-26xb.5.1",
+  "generated_utc": "2026-05-10T15:10:00Z",
+  "purpose": "Completion-debt contract for Flagship 5. It binds deterministic counterfactual replay, safe-promotion constraints, structured decision logs, and unit/e2e evidence to a fail-closed checker so policy-table/runtime-math changes cannot enter the production path without a replay dossier.",
+  "source_artifacts": [
+    {
+      "artifact_id": "runtime_evidence_replay_gate",
+      "path": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "required_needles": [
+        "\"required_decisions\"",
+        "\"artifact_refs\"",
+        "\"failure_signature\""
+      ]
+    },
+    {
+      "artifact_id": "runtime_evidence_replay_checker",
+      "path": "scripts/check_runtime_evidence_replay_gate.sh",
+      "required_needles": [
+        "validate_replay_record",
+        "runtime_replay_decision_mismatch",
+        "source_commit_is_current"
+      ]
+    },
+    {
+      "artifact_id": "runtime_evidence_module",
+      "path": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+      "required_needles": [
+        "counterfactual_action",
+        "decision_path",
+        "healing_action",
+        "latency_ns",
+        "artifact_refs"
+      ]
+    },
+    {
+      "artifact_id": "pareto_regret_controller",
+      "path": "crates/frankenlibc-membrane/src/runtime_math/pareto.rs",
+      "required_needles": [
+        "counterfactual",
+        "cumulative_regret_milli",
+        "regret_cap_milli"
+      ]
+    },
+    {
+      "artifact_id": "proof_carrying_policy_audit",
+      "path": "tests/conformance/proof_carrying_policy_audit.v1.json",
+      "required_needles": [
+        "\"proof-carrying-policy-audit\"",
+        "\"StrictRepairNotAllowed\"",
+        "\"RiskMonotonicityViolation\""
+      ]
+    },
+    {
+      "artifact_id": "policy_table_loader",
+      "path": "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs",
+      "required_needles": [
+        "StrictRepairNotAllowed",
+        "RiskMonotonicityViolation",
+        "ModeRefinementViolation"
+      ]
+    }
+  ],
+  "promotion_policy": {
+    "default_decision": "block_until_counterfactual_dossier_passes",
+    "strict_repair_allowed": false,
+    "max_latency_regression_ns": 20,
+    "max_risk_regression_ppm": 0,
+    "max_regret_ppm": 0,
+    "required_terminal_decisions": [
+      "Allow",
+      "FullValidate",
+      "Repair",
+      "Deny"
+    ],
+    "required_failure_signatures": [
+      "none",
+      "missing_counterfactual_dossier",
+      "strict_repair_candidate",
+      "risk_regression",
+      "latency_regression",
+      "regret_budget_exceeded"
+    ]
+  },
+  "structured_log_contract": {
+    "required_fields": [
+      "trace_id",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs",
+      "counterfactual_action",
+      "promotion_decision",
+      "failure_signature"
+    ],
+    "required_events": [
+      "counterfactual_source",
+      "counterfactual_case",
+      "promotion_decision",
+      "counterfactual_summary"
+    ],
+    "retention_policy": {
+      "report": "target/conformance/counterfactual_policy_simulator_completion_contract.report.json",
+      "log": "target/conformance/counterfactual_policy_simulator_completion_contract.log.jsonl",
+      "deterministic_names": true
+    }
+  },
+  "counterfactual_cases": [
+    {
+      "case_id": "strict-string-allow-promotes",
+      "mode": "strict",
+      "api_family": "string",
+      "symbol": "strlen",
+      "decision_path": "policy_decide>validation_fast_path>allow",
+      "healing_action": "None",
+      "errno": 0,
+      "baseline": {
+        "action": "Allow",
+        "latency_ns": 12,
+        "risk_ppm": 0
+      },
+      "candidate": {
+        "action": "Allow",
+        "latency_ns": 11,
+        "risk_ppm": 0,
+        "estimated_regret_ppm": 0
+      },
+      "counterfactual": {
+        "action": "FullValidate",
+        "latency_ns": 32,
+        "risk_ppm": 0
+      },
+      "expected_promotion_decision": "promote_candidate",
+      "expected_failure_signature": "none",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/runtime_evidence_replay_gate.v1.json"
+      ]
+    },
+    {
+      "case_id": "hardened-malloc-repair-promotes",
+      "mode": "hardened",
+      "api_family": "malloc",
+      "symbol": "free",
+      "decision_path": "policy_decide>arena_generation_check>repair",
+      "healing_action": "IgnoreDoubleFree",
+      "errno": 0,
+      "baseline": {
+        "action": "Deny",
+        "latency_ns": 126,
+        "risk_ppm": 40
+      },
+      "candidate": {
+        "action": "Repair",
+        "latency_ns": 136,
+        "risk_ppm": 20,
+        "estimated_regret_ppm": 0
+      },
+      "counterfactual": {
+        "action": "Deny",
+        "latency_ns": 126,
+        "risk_ppm": 40
+      },
+      "expected_promotion_decision": "promote_candidate",
+      "expected_failure_signature": "none",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+        "tests/conformance/proof_carrying_policy_audit.v1.json"
+      ]
+    },
+    {
+      "case_id": "strict-repair-candidate-blocked",
+      "mode": "strict",
+      "api_family": "string",
+      "symbol": "memcpy",
+      "decision_path": "policy_decide>bounds_check>repair",
+      "healing_action": "TruncateWithNull",
+      "errno": 0,
+      "baseline": {
+        "action": "Deny",
+        "latency_ns": 21,
+        "risk_ppm": 0
+      },
+      "candidate": {
+        "action": "Repair",
+        "latency_ns": 22,
+        "risk_ppm": 0,
+        "estimated_regret_ppm": 0
+      },
+      "counterfactual": {
+        "action": "Deny",
+        "latency_ns": 21,
+        "risk_ppm": 0
+      },
+      "expected_promotion_decision": "block_promotion",
+      "expected_failure_signature": "strict_repair_candidate",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs"
+      ]
+    },
+    {
+      "case_id": "stdio-latency-regression-blocked",
+      "mode": "hardened",
+      "api_family": "stdio",
+      "symbol": "printf",
+      "decision_path": "policy_decide>format_scan>full_validate",
+      "healing_action": "None",
+      "errno": 0,
+      "baseline": {
+        "action": "FullValidate",
+        "latency_ns": 175,
+        "risk_ppm": 5
+      },
+      "candidate": {
+        "action": "FullValidate",
+        "latency_ns": 222,
+        "risk_ppm": 5,
+        "estimated_regret_ppm": 0
+      },
+      "counterfactual": {
+        "action": "FullValidate",
+        "latency_ns": 175,
+        "risk_ppm": 5
+      },
+      "expected_promotion_decision": "block_promotion",
+      "expected_failure_signature": "latency_regression",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/pareto.rs",
+        "tests/conformance/runtime_evidence_replay_gate.v1.json"
+      ]
+    },
+    {
+      "case_id": "runtime-risk-regression-blocked",
+      "mode": "hardened",
+      "api_family": "runtime_math",
+      "symbol": "policy_table_lookup",
+      "decision_path": "policy_decide>risk_budget_check>allow",
+      "healing_action": "None",
+      "errno": 0,
+      "baseline": {
+        "action": "FullValidate",
+        "latency_ns": 144,
+        "risk_ppm": 8
+      },
+      "candidate": {
+        "action": "Allow",
+        "latency_ns": 118,
+        "risk_ppm": 9,
+        "estimated_regret_ppm": 0
+      },
+      "counterfactual": {
+        "action": "FullValidate",
+        "latency_ns": 144,
+        "risk_ppm": 8
+      },
+      "expected_promotion_decision": "block_promotion",
+      "expected_failure_signature": "risk_regression",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs",
+        "tests/conformance/proof_carrying_policy_audit.v1.json"
+      ]
+    },
+    {
+      "case_id": "runtime-regret-budget-blocked",
+      "mode": "hardened",
+      "api_family": "runtime_math",
+      "symbol": "pareto_record_outcome",
+      "decision_path": "policy_decide>pareto_selector>full_validate",
+      "healing_action": "None",
+      "errno": 0,
+      "baseline": {
+        "action": "FullValidate",
+        "latency_ns": 130,
+        "risk_ppm": 4
+      },
+      "candidate": {
+        "action": "FullValidate",
+        "latency_ns": 132,
+        "risk_ppm": 4,
+        "estimated_regret_ppm": 3
+      },
+      "counterfactual": {
+        "action": "FullValidate",
+        "latency_ns": 130,
+        "risk_ppm": 4
+      },
+      "expected_promotion_decision": "block_promotion",
+      "expected_failure_signature": "regret_budget_exceeded",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/pareto.rs"
+      ]
+    }
+  ],
+  "negative_cases": [
+    {
+      "case_id": "missing-counterfactual-dossier-blocks",
+      "mutation": "remove_counterfactual",
+      "target_case_id": "strict-string-allow-promotes",
+      "expected_failure_signature": "missing_counterfactual_dossier"
+    },
+    {
+      "case_id": "strict-repair-candidate-blocks",
+      "mutation": "candidate_action_repair_in_strict",
+      "target_case_id": "strict-string-allow-promotes",
+      "expected_failure_signature": "strict_repair_candidate"
+    },
+    {
+      "case_id": "risk-regression-blocks",
+      "mutation": "raise_candidate_risk",
+      "target_case_id": "strict-string-allow-promotes",
+      "expected_failure_signature": "risk_regression"
+    },
+    {
+      "case_id": "latency-regression-blocks",
+      "mutation": "raise_candidate_latency",
+      "target_case_id": "strict-string-allow-promotes",
+      "expected_failure_signature": "latency_regression"
+    }
+  ],
+  "completion_debt_evidence": {
+    "bead": "bd-26xb.5.1",
+    "original_bead": "bd-26xb.5",
+    "next_audit_score_threshold": 800,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ],
+    "unit_primary": {
+      "test_source": "crates/frankenlibc-harness/tests/counterfactual_policy_simulator_completion_contract_test.rs",
+      "required_test_names": [
+        "manifest_anchors_completion_debt",
+        "policy_cases_cover_safe_and_blocking_promotion",
+        "structured_log_fields_bind_acceptance_contract",
+        "checker_rejects_missing_counterfactual_dossier",
+        "checker_rejects_missing_required_test_binding"
+      ]
+    },
+    "e2e_primary": {
+      "checker_script": "scripts/check_counterfactual_policy_simulator_completion_contract.sh",
+      "required_test_names": [
+        "checker_accepts_manifest_and_emits_logs",
+        "checker_rejects_strict_repair_policy_drift"
+      ]
+    }
+  }
+}
