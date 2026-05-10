@@ -1,0 +1,65 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "fixture-expected-output-schema-policy-migration",
+  "bead": "bd-0agsk.5",
+  "completion_debt_bead": "bd-0agsk.5.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "a6c32515b3028623a6923decf035473aaa6fd891",
+  "purpose": "Conformance migration ledger for the fixture expected_output schema policy originally landed under bd-0agsk.5 (closed 2026-05-06; score 470/1000 because the audit pass 2026-05-10T03-16-16Z couldn't link the existing artifacts to tests.conformance.primary or migrations.primary). This sibling manifest is the canonical migration ledger: it pins the CURRENT schema_version of the upstream policy manifest, names the canonical conformance test that exercises it, and freezes the migration policy that any future v2 ratchet must satisfy. The harness gate that consumes this manifest fails closed if the upstream manifest's schema_version drifts from the version pinned here without a paired migration entry, OR if the named conformance test file disappears.",
+  "current_policy_manifest_path": "tests/conformance/fixture_expected_output_schema_policy.v1.json",
+  "current_schema_version": "fixture_expected_output_schema_policy.v1",
+  "primary_conformance_test_file": "crates/frankenlibc-harness/tests/fixture_expected_output_schema_policy_test.rs",
+  "primary_conformance_test_functions": [
+    "contract_declares_adapter_normalized_policy",
+    "checker_passes_and_reports_all_focus_cases",
+    "checker_rejects_string_only_policy_downgrade",
+    "checker_rejects_missing_focus_fixture_inventory",
+    "checker_rejects_migration_control_drift",
+    "checker_rejects_conformance_gate_drift",
+    "checker_rejects_resolver_kind_inventory_drift"
+  ],
+  "migration_history": [
+    {
+      "version": "fixture_expected_output_schema_policy.v1",
+      "introduced_at_commit": "(initial — bd-0agsk.5 closure 2026-05-06)",
+      "summary": "First locked schema policy. Required canonical_policy.id == adapter_normalized_tagged_values, adapter_functions = [expected_output_from_raw_case, normalize_expected_output_value, format_return_and_values], expectation_tag_precedence covering 5 tags (expected_output, expected_return+expected_values, expected_output_bytes, expected_output_pattern, expected_return)."
+    }
+  ],
+  "migration_invariants_for_future_v2": [
+    "canonical_policy.id MUST remain `adapter_normalized_tagged_values`",
+    "primary_adapter_source MUST remain `crates/frankenlibc-harness/src/fixtures.rs`",
+    "adapter_functions list MUST be a non-strict superset of v1 (no adapter may be silently removed)",
+    "expectation_tag_precedence MUST keep all v1 tags; reordering is allowed only with a paired evidence-conversion migration"
+  ],
+  "policy": {
+    "fail_closed_when_upstream_schema_version_drifts": true,
+    "fail_closed_when_primary_conformance_test_file_missing": true,
+    "fail_closed_when_canonical_policy_id_changes_silently": true,
+    "fail_closed_when_adapter_functions_shrink": true
+  },
+  "rejected_evidence_kinds": [
+    "upstream_schema_version_drift",
+    "missing_primary_conformance_test_file",
+    "canonical_policy_id_silent_change",
+    "adapter_functions_shrunk"
+  ],
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-0agsk.5/scorecard.md",
+    "spec_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-0agsk.5/spec.json",
+    "missing_item_ids": [
+      "tests.conformance.primary",
+      "migrations.primary"
+    ],
+    "score_before": 470,
+    "score_threshold": 700
+  },
+  "summary": {
+    "bead": "bd-0agsk.5",
+    "completion_debt_bead": "bd-0agsk.5.1",
+    "current_pinned_version": "fixture_expected_output_schema_policy.v1",
+    "migration_invariants_pinned": 4,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
