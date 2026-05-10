@@ -108,7 +108,7 @@ fn contract_declares_full_fixture_schema_gate() {
     );
     assert_eq!(
         contract["expected_inventory"]["standard_case_count"].as_u64(),
-        Some(1282)
+        Some(1284)
     );
     assert_eq!(
         contract["expected_inventory"]["expected_errno_optional_cases"].as_u64(),
@@ -138,11 +138,11 @@ fn checker_passes_for_current_fixture_corpus() {
     assert_eq!(report["summary"]["fixture_file_count"].as_u64(), Some(58));
     assert_eq!(
         report["summary"]["standard_case_count"].as_u64(),
-        Some(1282)
+        Some(1284)
     );
     assert_eq!(
         report["summary"]["primary_expectation_tags"]["expected_output"].as_u64(),
-        Some(1165)
+        Some(1167)
     );
     assert_eq!(
         report["summary"]["primary_expectation_tags"]["expected_return+expected_values"].as_u64(),

@@ -99,13 +99,13 @@
     "fixture_file_count": 58,
     "standard_fixture_files": 57,
     "structured_fixture_files": 1,
-    "standard_case_count": 1282,
+    "standard_case_count": 1284,
     "structured_program_scenarios": 2,
     "structured_unsupported_scenarios": 3,
-    "expected_errno_required_cases": 1240,
+    "expected_errno_required_cases": 1242,
     "expected_errno_optional_cases": 42,
     "primary_expectation_tags": {
-      "expected_output": 1165,
+      "expected_output": 1167,
       "expected_output_bytes": 1,
       "expected_output_pattern": 8,
       "expected_return": 2,
@@ -116,7 +116,7 @@
       "boolean": 1,
       "number": 28,
       "object": 19,
-      "string": 1111
+      "string": 1113
     },
     "supplemental_expectation_fields": {
       "expected_hex": 2,
