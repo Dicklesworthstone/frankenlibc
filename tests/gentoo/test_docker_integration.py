@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -273,6 +274,105 @@ class TestResultCollection(unittest.TestCase):
 
         # File should be readable
         self.assertTrue(os.access(log_file, os.R_OK))
+
+
+class TestFrankenLibCIntegrationTelemetry(unittest.TestCase):
+    """Non-Docker proof that the integration telemetry contract is enforced."""
+
+    def setUp(self) -> None:
+        self.repo_root = Path(__file__).resolve().parents[2]
+        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_log_analysis_telemetry_contract(self) -> None:
+        """Replay hook and runtime logs and verify telemetry summary fields."""
+        log_root = self.tmp_path / "logs" / "portage"
+        log_root.mkdir(parents=True)
+        (log_root / "hooks.jsonl").write_text(
+            json.dumps(
+                {
+                    "timestamp": "2026-02-13T00:00:00Z",
+                    "event": "enable",
+                    "atom": "sys-apps/coreutils-9.9-r1",
+                    "phase": "src_test",
+                    "pid": 123,
+                    "message": "sample",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (log_root / "runtime.jsonl").write_text(
+            json.dumps(
+                {
+                    "timestamp": "2026-02-13T00:00:01Z",
+                    "package": "sys-apps/coreutils-9.9-r1",
+                    "phase": "src_test",
+                    "pid": 124,
+                    "call": "malloc",
+                    "args": {"size": 4096},
+                    "action": "ClampSize",
+                    "original_size": 4096,
+                    "clamped_size": 4096,
+                    "latency_ns": 180,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        summary_path = self.tmp_path / "summary.json"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(self.repo_root / "scripts/gentoo/analyze-logs.py"),
+                str(self.tmp_path / "logs"),
+                "--output",
+                str(summary_path),
+                "--json-only",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        try:
+            summary = json.JSONDecoder().decode(summary_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as err:
+            self.fail(f"invalid analyzer summary JSON: {err}")
+
+        self.assertEqual(summary["records_total"], 2)
+        self.assertEqual(summary["parse_errors"], 0)
+        self.assertEqual(summary["events"]["enable"], 1)
+        self.assertIn(["malloc", 1], summary["top_calls"])
+        self.assertIn(["ClampSize", 1], summary["top_actions"])
+        self.assertEqual(
+            summary["latency_ns"],
+            {"count": 1, "min": 180, "max": 180, "avg": 180},
+        )
+
+    def test_docker_integration_script_checks_telemetry_summary(self) -> None:
+        """Keep the Docker integration script tied to the telemetry contract."""
+        script = (self.repo_root / "tests/gentoo/test-integration.sh").read_text(
+            encoding="utf-8"
+        )
+        required_fragments = [
+            "FRANKENLIBC_INTEGRATION_TELEMETRY_ONLY",
+            "collect-logs.sh",
+            "analyze-logs.py",
+            '\\"call\\":\\"malloc\\"',
+            '\\"action\\":\\"ClampSize\\"',
+            '\\"latency_ns\\":180',
+            'summary["records_total"] == 2',
+            'summary["parse_errors"] == 0',
+            'summary["latency_ns"] == {"count": 1, "min": 180, "max": 180, "avg": 180}',
+        ]
+
+        for fragment in required_fragments:
+            self.assertIn(fragment, script)
 
 
 class TestMemoryLimits(unittest.TestCase):
