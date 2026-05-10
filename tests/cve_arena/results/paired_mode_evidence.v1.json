@@ -1,7 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-1m5.7",
-  "generated_at": "2026-04-27T03:56:49Z",
+  "completion_debt_bead": "bd-1m5.7.1",
+  "generated_at": "2026-05-10T00:00:00Z",
   "summary": {
     "total_paired_scenarios": 12,
     "strict_detected": 12,
@@ -27,11 +28,111 @@
       "unsafe_printf",
       "use_after_free"
     ],
+    "unique_healing_actions": [
+      "ClampSize",
+      "FreedWithCanaryCorruption",
+      "IgnoreDoubleFree",
+      "IgnoreForeignFree",
+      "ReallocAsMalloc",
+      "ReturnSafeDefault",
+      "TruncateWithNull",
+      "UpgradeToSafeVariant"
+    ],
     "unique_dossier_ids": 12,
     "entries_with_complete_artifact_bundle": 12,
     "unique_artifact_paths": 84,
     "validation_errors": 0,
     "validation_warnings": 0
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-1m5.7.1",
+    "original_bead": "bd-1m5.7",
+    "test_source": "crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs",
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Unit-level assertions for strict detection verdicts, hardened prevention verdicts, unique dossier IDs, and join keys.",
+      "required_test_names": [
+        "paired_report_schema_complete",
+        "paired_all_strict_detected",
+        "paired_all_hardened_prevented",
+        "paired_unique_dossier_ids",
+        "paired_evidence_bundles_joinable"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "End-to-end generator/checker evidence for the paired-mode report and structured telemetry log.",
+      "generator_script": "scripts/generate_cve_paired_mode_runner.py",
+      "checker_script": "scripts/check_cve_paired_mode_runner.sh",
+      "required_test_names": [
+        "paired_report_generates_successfully",
+        "paired_mode_checker_accepts_completion_debt_bindings"
+      ]
+    },
+    "fuzz_primary": {
+      "missing_item_id": "tests.fuzz.primary",
+      "description": "Deterministic fuzz-seed metadata derived from each strict/hardened paired-mode scenario.",
+      "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+      "required_entry_field": "paired_fuzz_seed",
+      "required_seed_fields": [
+        "seed_payload_schema",
+        "seed_id",
+        "seed_sha256",
+        "mutation_axes",
+        "replay_modes",
+        "strict_detection_flags",
+        "hardened_healing_actions",
+        "artifact_paths"
+      ],
+      "required_test_names": [
+        "paired_entries_define_fuzz_replay_seed_contract",
+        "paired_fuzz_replay_seed_keys_are_deterministic"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "description": "Conformance-level pairing checks across normalized corpus entries, hardened assertions, strict detection flags, and canonical evidence bundles.",
+      "artifact": "tests/cve_arena/results/paired_mode_evidence.v1.json",
+      "required_test_names": [
+        "paired_report_schema_complete",
+        "paired_no_validation_errors",
+        "paired_entries_define_fuzz_replay_seed_contract"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "Structured JSON report and JSONL telemetry emitted by the paired-mode checker.",
+      "default_report_path": "tests/cve_arena/results/paired_mode_evidence.v1.json",
+      "default_log_path": "tests/cve_arena/results/paired_mode_evidence.log.jsonl",
+      "required_test_names": [
+        "structured_log_contains_paired_mode_evidence",
+        "paired_mode_checker_accepts_completion_debt_bindings"
+      ],
+      "required_events": [
+        "paired_mode_scenario",
+        "paired_mode_summary"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "api_family",
+        "event",
+        "bead_id",
+        "completion_debt_bead",
+        "parent_bead",
+        "artifact_refs",
+        "outcome",
+        "failure_signature",
+        "cve_id",
+        "dossier_id",
+        "test_name",
+        "strict_verdict",
+        "hardened_verdict",
+        "detection_flags",
+        "healing_actions",
+        "paired_fuzz_seed_id"
+      ]
+    }
   },
   "paired_evidence": [
     {
@@ -86,6 +187,44 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-8cca65617f9b",
+        "cve_id": "CVE-2023-6246",
+        "test_name": "syslog_heap_overflow_suite",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "arithmetic_violation",
+          "bounds_violation",
+          "integer_overflow",
+          "out_of_bounds_write",
+          "size_miscalculation"
+        ],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "TruncateWithNull"
+        ],
+        "artifact_paths": [
+          "dossier-8cca65617f9b/strict/stdout.log",
+          "dossier-8cca65617f9b/strict/stderr.log",
+          "dossier-8cca65617f9b/strict/metrics.json",
+          "dossier-8cca65617f9b/hardened/stdout.log",
+          "dossier-8cca65617f9b/hardened/stderr.log",
+          "dossier-8cca65617f9b/hardened/metrics.json",
+          "dossier-8cca65617f9b/paired_verdict.json"
+        ],
+        "seed_sha256": "47a492fa56b8779e6daea587c464b7f9ac9079b16ab7d99ef0a6c83acaca904e",
+        "seed_id": "paired-47a492fa56b8779e"
       }
     },
     {
@@ -134,6 +273,40 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-04fe53b4a67c",
+        "cve_id": "CVE-2024-2961",
+        "test_name": "iconv_iso2022cn_ext_buffer_overflow",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "bounds_violation",
+          "out_of_bounds_write"
+        ],
+        "hardened_healing_actions": [
+          "ClampSize"
+        ],
+        "artifact_paths": [
+          "dossier-04fe53b4a67c/strict/stdout.log",
+          "dossier-04fe53b4a67c/strict/stderr.log",
+          "dossier-04fe53b4a67c/strict/metrics.json",
+          "dossier-04fe53b4a67c/hardened/stdout.log",
+          "dossier-04fe53b4a67c/hardened/stderr.log",
+          "dossier-04fe53b4a67c/hardened/metrics.json",
+          "dossier-04fe53b4a67c/paired_verdict.json"
+        ],
+        "seed_sha256": "e41c35d76bffd8082e8017990a9410449a4916fa6d129e8b1446da6c580a8453",
+        "seed_id": "paired-e41c35d76bffd808"
       }
     },
     {
@@ -191,6 +364,46 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-cffcb20dfd00",
+        "cve_id": "CVE-2024-33599",
+        "test_name": "nscd_netgroup_cache_memory_corruption_suite",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "bounds_violation",
+          "memory_safety",
+          "null_dereference",
+          "null_pointer",
+          "out_of_bounds_write",
+          "stack_overflow_detected",
+          "uninitialized_read"
+        ],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "ReturnSafeDefault"
+        ],
+        "artifact_paths": [
+          "dossier-cffcb20dfd00/strict/stdout.log",
+          "dossier-cffcb20dfd00/strict/stderr.log",
+          "dossier-cffcb20dfd00/strict/metrics.json",
+          "dossier-cffcb20dfd00/hardened/stdout.log",
+          "dossier-cffcb20dfd00/hardened/stderr.log",
+          "dossier-cffcb20dfd00/hardened/metrics.json",
+          "dossier-cffcb20dfd00/paired_verdict.json"
+        ],
+        "seed_sha256": "bac8b5be10165e4d63f20ac3692dd187c3e54573f57b1f88744ae1fd1bef375f",
+        "seed_id": "paired-bac8b5be10165e4d"
       }
     },
     {
@@ -239,6 +452,40 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-00ed24f9a8b1",
+        "cve_id": "CVE-2025-8058",
+        "test_name": "regcomp_double_free_on_alloc_failure",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "double_free",
+          "invalid_free"
+        ],
+        "hardened_healing_actions": [
+          "IgnoreDoubleFree"
+        ],
+        "artifact_paths": [
+          "dossier-00ed24f9a8b1/strict/stdout.log",
+          "dossier-00ed24f9a8b1/strict/stderr.log",
+          "dossier-00ed24f9a8b1/strict/metrics.json",
+          "dossier-00ed24f9a8b1/hardened/stdout.log",
+          "dossier-00ed24f9a8b1/hardened/stderr.log",
+          "dossier-00ed24f9a8b1/hardened/metrics.json",
+          "dossier-00ed24f9a8b1/paired_verdict.json"
+        ],
+        "seed_sha256": "03353bbe0a29a6294a3a56eb89e4e2463c081f8310a3ba67abb33467f6ec92a3",
+        "seed_id": "paired-03353bbe0a29a629"
       }
     },
     {
@@ -288,6 +535,41 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-f62d4ecb58e8",
+        "cve_id": "CVE-2024-38812 (synthetic)",
+        "test_name": "dcerpc_heap_overflow_cve_2024_38812",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "bounds_violation",
+          "heap_overflow_detected"
+        ],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "FreedWithCanaryCorruption"
+        ],
+        "artifact_paths": [
+          "dossier-f62d4ecb58e8/strict/stdout.log",
+          "dossier-f62d4ecb58e8/strict/stderr.log",
+          "dossier-f62d4ecb58e8/strict/metrics.json",
+          "dossier-f62d4ecb58e8/hardened/stdout.log",
+          "dossier-f62d4ecb58e8/hardened/stderr.log",
+          "dossier-f62d4ecb58e8/hardened/metrics.json",
+          "dossier-f62d4ecb58e8/paired_verdict.json"
+        ],
+        "seed_sha256": "fd01de089db38229068b996c1db30f1965b96f77e98fe8a85b12edab8bfd63f6",
+        "seed_id": "paired-fd01de089db38229"
       }
     },
     {
@@ -336,6 +618,40 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-6395aa19eab9",
+        "cve_id": "CVE-2024-23113 (synthetic)",
+        "test_name": "format_string_cve_2024_23113",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "format_string_violation",
+          "unsafe_printf"
+        ],
+        "hardened_healing_actions": [
+          "UpgradeToSafeVariant"
+        ],
+        "artifact_paths": [
+          "dossier-6395aa19eab9/strict/stdout.log",
+          "dossier-6395aa19eab9/strict/stderr.log",
+          "dossier-6395aa19eab9/strict/metrics.json",
+          "dossier-6395aa19eab9/hardened/stdout.log",
+          "dossier-6395aa19eab9/hardened/stderr.log",
+          "dossier-6395aa19eab9/hardened/metrics.json",
+          "dossier-6395aa19eab9/paired_verdict.json"
+        ],
+        "seed_sha256": "a344985b98eacc48cf3b3eff7fb5e0d938d6ebbc55ec08d398ef5c1021822f89",
+        "seed_id": "paired-a344985b98eacc48"
       }
     },
     {
@@ -385,6 +701,41 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-2704c3f4d1db",
+        "cve_id": "CVE-2024-24990 (synthetic)",
+        "test_name": "quic_uaf_cve_2024_24990",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "dangling_pointer",
+          "use_after_free"
+        ],
+        "hardened_healing_actions": [
+          "ReturnSafeDefault",
+          "IgnoreDoubleFree"
+        ],
+        "artifact_paths": [
+          "dossier-2704c3f4d1db/strict/stdout.log",
+          "dossier-2704c3f4d1db/strict/stderr.log",
+          "dossier-2704c3f4d1db/strict/metrics.json",
+          "dossier-2704c3f4d1db/hardened/stdout.log",
+          "dossier-2704c3f4d1db/hardened/stderr.log",
+          "dossier-2704c3f4d1db/hardened/metrics.json",
+          "dossier-2704c3f4d1db/paired_verdict.json"
+        ],
+        "seed_sha256": "0a7f1e7b25c757b46a8ed64bb6e37ba5e6ba3cf893ff17c8e5c65086573a7b53",
+        "seed_id": "paired-0a7f1e7b25c757b4"
       }
     },
     {
@@ -435,6 +786,41 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-0971c8e2d14f",
+        "cve_id": "CVE-2024-6197",
+        "test_name": "curl_asn1_stack_use_after_free",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "dangling_pointer",
+          "expired_pointer",
+          "use_after_free"
+        ],
+        "hardened_healing_actions": [
+          "IgnoreForeignFree"
+        ],
+        "artifact_paths": [
+          "dossier-0971c8e2d14f/strict/stdout.log",
+          "dossier-0971c8e2d14f/strict/stderr.log",
+          "dossier-0971c8e2d14f/strict/metrics.json",
+          "dossier-0971c8e2d14f/hardened/stdout.log",
+          "dossier-0971c8e2d14f/hardened/stderr.log",
+          "dossier-0971c8e2d14f/hardened/metrics.json",
+          "dossier-0971c8e2d14f/paired_verdict.json"
+        ],
+        "seed_sha256": "2c3935c6e2dc1e294a9ed4fda52d4c95df26c018d0b13d78d04fc62f17d2b114",
+        "seed_id": "paired-2c3935c6e2dc1e29"
       }
     },
     {
@@ -486,6 +872,42 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-c945f72d7ca0",
+        "cve_id": "CVE-2024-56406",
+        "test_name": "perl_tr_transliteration_heap_overflow",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "bounds_violation",
+          "heap_overflow_detected",
+          "out_of_bounds_write"
+        ],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "TruncateWithNull"
+        ],
+        "artifact_paths": [
+          "dossier-c945f72d7ca0/strict/stdout.log",
+          "dossier-c945f72d7ca0/strict/stderr.log",
+          "dossier-c945f72d7ca0/strict/metrics.json",
+          "dossier-c945f72d7ca0/hardened/stdout.log",
+          "dossier-c945f72d7ca0/hardened/stderr.log",
+          "dossier-c945f72d7ca0/hardened/metrics.json",
+          "dossier-c945f72d7ca0/paired_verdict.json"
+        ],
+        "seed_sha256": "d0229060f2fbf7b0583038c2a47d7cf3a3e93b63f0fc62c2903b51155c1c9687",
+        "seed_id": "paired-d0229060f2fbf7b0"
       }
     },
     {
@@ -536,6 +958,41 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-879d016e738d",
+        "cve_id": "CVE-2025-49844",
+        "test_name": "redis_lua_gc_use_after_free",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "dangling_pointer",
+          "use_after_free"
+        ],
+        "hardened_healing_actions": [
+          "IgnoreDoubleFree",
+          "ReturnSafeDefault"
+        ],
+        "artifact_paths": [
+          "dossier-879d016e738d/strict/stdout.log",
+          "dossier-879d016e738d/strict/stderr.log",
+          "dossier-879d016e738d/strict/metrics.json",
+          "dossier-879d016e738d/hardened/stdout.log",
+          "dossier-879d016e738d/hardened/stderr.log",
+          "dossier-879d016e738d/hardened/metrics.json",
+          "dossier-879d016e738d/paired_verdict.json"
+        ],
+        "seed_sha256": "7e3336cd9f2407b260dcca49b0fcbe2d7193b8dc6b71e72b45a77ca0c1072b56",
+        "seed_id": "paired-7e3336cd9f2407b2"
       }
     },
     {
@@ -586,6 +1043,42 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-c9bf18faaf80",
+        "cve_id": "CVE-2021-3156",
+        "test_name": "sudo_baron_samedit_heap_overflow",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "bounds_violation",
+          "heap_overflow_detected",
+          "out_of_bounds_write"
+        ],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "TruncateWithNull"
+        ],
+        "artifact_paths": [
+          "dossier-c9bf18faaf80/strict/stdout.log",
+          "dossier-c9bf18faaf80/strict/stderr.log",
+          "dossier-c9bf18faaf80/strict/metrics.json",
+          "dossier-c9bf18faaf80/hardened/stdout.log",
+          "dossier-c9bf18faaf80/hardened/stderr.log",
+          "dossier-c9bf18faaf80/hardened/metrics.json",
+          "dossier-c9bf18faaf80/paired_verdict.json"
+        ],
+        "seed_sha256": "e73a6be0fb97c0b48e3208514d5c224db4ee5291b40d4a922cd019fddff58578",
+        "seed_id": "paired-e73a6be0fb97c0b4"
       }
     },
     {
@@ -638,6 +1131,43 @@
           "cve_id",
           "test_name"
         ]
+      },
+      "paired_fuzz_seed": {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": "dossier-382e0154a887",
+        "cve_id": "CVE-2024-46461",
+        "test_name": "vlc_mms_integer_overflow_heap_overflow",
+        "mutation_axes": [
+          "runtime_mode",
+          "strict_detection_flag",
+          "hardened_healing_action",
+          "evidence_bundle_path"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "arithmetic_violation",
+          "bounds_violation",
+          "heap_overflow_detected",
+          "integer_overflow"
+        ],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "ReallocAsMalloc"
+        ],
+        "artifact_paths": [
+          "dossier-382e0154a887/strict/stdout.log",
+          "dossier-382e0154a887/strict/stderr.log",
+          "dossier-382e0154a887/strict/metrics.json",
+          "dossier-382e0154a887/hardened/stdout.log",
+          "dossier-382e0154a887/hardened/stderr.log",
+          "dossier-382e0154a887/hardened/metrics.json",
+          "dossier-382e0154a887/paired_verdict.json"
+        ],
+        "seed_sha256": "4c890d508b69378367e578863b09ebdad685548d1820421da543b86f9eb22f4e",
+        "seed_id": "paired-4c890d508b693783"
       }
     }
   ],

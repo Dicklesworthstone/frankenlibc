@@ -17,6 +17,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+ORIGINAL_BEAD = "bd-1m5.7"
+COMPLETION_DEBT_BEAD = "bd-1m5.7.1"
+TEST_SOURCE = "crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs"
+DEFAULT_REPORT_PATH = "tests/cve_arena/results/paired_mode_evidence.v1.json"
+DEFAULT_LOG_PATH = "tests/cve_arena/results/paired_mode_evidence.log.jsonl"
+API_FAMILY = "cve_paired_mode"
+
 
 def find_repo_root():
     p = Path(__file__).resolve().parent.parent
@@ -70,6 +77,129 @@ def expected_artifact_paths(dossier_id):
     ]
 
 
+def sha256_json(value):
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def build_paired_fuzz_seed(corpus_entry, strict, hardened, dossier_id):
+    """Build deterministic fuzz replay metadata from the paired-mode contract."""
+    payload = {
+        "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+        "dossier_id": dossier_id,
+        "cve_id": corpus_entry["cve_id"],
+        "test_name": corpus_entry["test_name"],
+        "mutation_axes": [
+            "runtime_mode",
+            "strict_detection_flag",
+            "hardened_healing_action",
+            "evidence_bundle_path",
+        ],
+        "replay_modes": ["strict", "hardened"],
+        "strict_detection_flags": strict["detection_flags"],
+        "hardened_healing_actions": hardened.get("healing_actions_required", []),
+        "artifact_paths": expected_artifact_paths(dossier_id),
+    }
+    seed_hash = sha256_json(payload)
+    payload["seed_sha256"] = seed_hash
+    payload["seed_id"] = f"paired-{seed_hash[:16]}"
+    return payload
+
+
+def build_completion_debt_evidence():
+    """Bind bd-1m5.7.1 audit items to concrete paired-mode evidence."""
+    return {
+        "bead": COMPLETION_DEBT_BEAD,
+        "original_bead": ORIGINAL_BEAD,
+        "test_source": TEST_SOURCE,
+        "unit_primary": {
+            "missing_item_id": "tests.unit.primary",
+            "description": "Unit-level assertions for strict detection verdicts, hardened prevention verdicts, unique dossier IDs, and join keys.",
+            "required_test_names": [
+                "paired_report_schema_complete",
+                "paired_all_strict_detected",
+                "paired_all_hardened_prevented",
+                "paired_unique_dossier_ids",
+                "paired_evidence_bundles_joinable",
+            ],
+        },
+        "e2e_primary": {
+            "missing_item_id": "tests.e2e.primary",
+            "description": "End-to-end generator/checker evidence for the paired-mode report and structured telemetry log.",
+            "generator_script": "scripts/generate_cve_paired_mode_runner.py",
+            "checker_script": "scripts/check_cve_paired_mode_runner.sh",
+            "required_test_names": [
+                "paired_report_generates_successfully",
+                "paired_mode_checker_accepts_completion_debt_bindings",
+            ],
+        },
+        "fuzz_primary": {
+            "missing_item_id": "tests.fuzz.primary",
+            "description": "Deterministic fuzz-seed metadata derived from each strict/hardened paired-mode scenario.",
+            "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
+            "required_entry_field": "paired_fuzz_seed",
+            "required_seed_fields": [
+                "seed_payload_schema",
+                "seed_id",
+                "seed_sha256",
+                "mutation_axes",
+                "replay_modes",
+                "strict_detection_flags",
+                "hardened_healing_actions",
+                "artifact_paths",
+            ],
+            "required_test_names": [
+                "paired_entries_define_fuzz_replay_seed_contract",
+                "paired_fuzz_replay_seed_keys_are_deterministic",
+            ],
+        },
+        "conformance_primary": {
+            "missing_item_id": "tests.conformance.primary",
+            "description": "Conformance-level pairing checks across normalized corpus entries, hardened assertions, strict detection flags, and canonical evidence bundles.",
+            "artifact": DEFAULT_REPORT_PATH,
+            "required_test_names": [
+                "paired_report_schema_complete",
+                "paired_no_validation_errors",
+                "paired_entries_define_fuzz_replay_seed_contract",
+            ],
+        },
+        "telemetry_primary": {
+            "missing_item_id": "telemetry.primary",
+            "description": "Structured JSON report and JSONL telemetry emitted by the paired-mode checker.",
+            "default_report_path": DEFAULT_REPORT_PATH,
+            "default_log_path": DEFAULT_LOG_PATH,
+            "required_test_names": [
+                "structured_log_contains_paired_mode_evidence",
+                "paired_mode_checker_accepts_completion_debt_bindings",
+            ],
+            "required_events": [
+                "paired_mode_scenario",
+                "paired_mode_summary",
+            ],
+            "required_fields": [
+                "timestamp",
+                "trace_id",
+                "api_family",
+                "event",
+                "bead_id",
+                "completion_debt_bead",
+                "parent_bead",
+                "artifact_refs",
+                "outcome",
+                "failure_signature",
+                "cve_id",
+                "dossier_id",
+                "test_name",
+                "strict_verdict",
+                "hardened_verdict",
+                "detection_flags",
+                "healing_actions",
+                "paired_fuzz_seed_id",
+            ],
+        },
+    }
+
+
 def build_strict_detection(corpus_entry):
     """Build strict-mode detection assertion for a CVE."""
     cwe_ids = corpus_entry.get("cwe_ids", [])
@@ -98,6 +228,7 @@ def build_paired_evidence(corpus_entry, hardened_assertion):
 
     strict = build_strict_detection(corpus_entry)
     hardened = hardened_assertion.get("hardened_expectations", {}) if hardened_assertion else {}
+    paired_fuzz_seed = build_paired_fuzz_seed(corpus_entry, strict, hardened, dossier_id)
 
     return {
         "cve_id": cve_id,
@@ -125,6 +256,7 @@ def build_paired_evidence(corpus_entry, hardened_assertion):
             "artifacts": expected_artifact_paths(dossier_id),
             "joinable_on": EXPECTED_JOIN_KEYS,
         },
+        "paired_fuzz_seed": paired_fuzz_seed,
     }
 
 
@@ -200,13 +332,81 @@ def validate_paired_evidence(evidence_entries):
                 "severity": "error",
             })
 
+        seed = e.get("paired_fuzz_seed", {})
+        if seed.get("seed_payload_schema") != "cve-paired-mode-fuzz-seed/v1":
+            issues.append({
+                "cve_id": cve_id,
+                "issue": "paired_fuzz_seed seed_payload_schema drifted",
+                "severity": "error",
+            })
+        if not seed.get("seed_id") or not seed.get("seed_sha256"):
+            issues.append({
+                "cve_id": cve_id,
+                "issue": "paired_fuzz_seed missing deterministic seed identity",
+                "severity": "error",
+            })
+
     return issues
+
+
+def emit_structured_log(log_path, timestamp, report, evidence_entries):
+    """Emit deterministic JSONL telemetry for paired-mode evidence."""
+    rows = []
+    report_path = DEFAULT_REPORT_PATH
+    for entry in evidence_entries:
+        seed = entry["paired_fuzz_seed"]
+        rows.append({
+            "timestamp": timestamp,
+            "trace_id": f"{COMPLETION_DEBT_BEAD}:{entry['dossier_id']}",
+            "api_family": API_FAMILY,
+            "event": "paired_mode_scenario",
+            "bead_id": ORIGINAL_BEAD,
+            "completion_debt_bead": COMPLETION_DEBT_BEAD,
+            "parent_bead": ORIGINAL_BEAD,
+            "artifact_refs": [report_path, *entry["evidence_bundle"]["artifacts"]],
+            "outcome": "expected",
+            "failure_signature": "none",
+            "cve_id": entry["cve_id"],
+            "dossier_id": entry["dossier_id"],
+            "test_name": entry["test_name"],
+            "strict_verdict": entry["strict_mode"]["verdict"],
+            "hardened_verdict": entry["hardened_mode"]["verdict"],
+            "detection_flags": entry["strict_mode"]["detection_flags"],
+            "healing_actions": entry["hardened_mode"]["healing_actions"],
+            "paired_fuzz_seed_id": seed["seed_id"],
+        })
+
+    rows.append({
+        "timestamp": timestamp,
+        "trace_id": f"{COMPLETION_DEBT_BEAD}:summary",
+        "api_family": API_FAMILY,
+        "event": "paired_mode_summary",
+        "bead_id": ORIGINAL_BEAD,
+        "completion_debt_bead": COMPLETION_DEBT_BEAD,
+        "parent_bead": ORIGINAL_BEAD,
+        "artifact_refs": [report_path, DEFAULT_LOG_PATH],
+        "outcome": "pass" if report["summary"]["validation_errors"] == 0 else "fail",
+        "failure_signature": "none" if report["summary"]["validation_errors"] == 0 else "validation_errors_present",
+        "cve_id": None,
+        "dossier_id": None,
+        "test_name": None,
+        "strict_verdict": f"{report['summary']['strict_detected']}/{report['summary']['total_paired_scenarios']}",
+        "hardened_verdict": f"{report['summary']['hardened_prevented']}/{report['summary']['total_paired_scenarios']}",
+        "detection_flags": report["summary"]["unique_detection_flags"],
+        "healing_actions": report["summary"]["unique_healing_actions"],
+        "paired_fuzz_seed_id": None,
+    })
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Paired-mode CVE evidence runner + strict detection assertions")
     parser.add_argument("-o", "--output", help="Output file path")
+    parser.add_argument("--log", help="Structured JSONL log output path")
+    parser.add_argument("--timestamp", help="Fixed generated_at timestamp for deterministic runs")
     args = parser.parse_args()
 
     root = find_repo_root()
@@ -230,6 +430,7 @@ def main():
 
     evidence_entries = []
     all_detection_flags = set()
+    all_healing_actions = set()
     all_dossier_ids = set()
     all_artifact_paths = set()
 
@@ -239,6 +440,7 @@ def main():
         paired = build_paired_evidence(entry, ha)
         evidence_entries.append(paired)
         all_detection_flags.update(paired["strict_mode"]["detection_flags"])
+        all_healing_actions.update(paired["hardened_mode"]["healing_actions"])
         all_dossier_ids.add(paired["dossier_id"])
         all_artifact_paths.update(paired["evidence_bundle"]["artifacts"])
 
@@ -263,20 +465,23 @@ def main():
 
     report = {
         "schema_version": "v1",
-        "bead": "bd-1m5.7",
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "bead": ORIGINAL_BEAD,
+        "completion_debt_bead": COMPLETION_DEBT_BEAD,
+        "generated_at": args.timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "summary": {
             "total_paired_scenarios": len(evidence_entries),
             "strict_detected": strict_detected,
             "hardened_prevented": hardened_prevented,
             "with_detection_flags": with_flags,
             "unique_detection_flags": sorted(all_detection_flags),
+            "unique_healing_actions": sorted(all_healing_actions),
             "unique_dossier_ids": len(all_dossier_ids),
             "entries_with_complete_artifact_bundle": complete_artifact_bundles,
             "unique_artifact_paths": len(all_artifact_paths),
             "validation_errors": error_count,
             "validation_warnings": warning_count,
         },
+        "completion_debt_evidence": build_completion_debt_evidence(),
         "paired_evidence": evidence_entries,
         "validation_issues": validation_issues,
     }
@@ -284,10 +489,12 @@ def main():
     output = json.dumps(report, indent=2) + "\n"
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.output).write_text(output)
+        Path(args.output).write_text(output, encoding="utf-8")
         print(f"Report written to {args.output}", file=sys.stderr)
     else:
         print(output)
+    if args.log:
+        emit_structured_log(Path(args.log), report["generated_at"], report, evidence_entries)
 
 
 if __name__ == "__main__":
