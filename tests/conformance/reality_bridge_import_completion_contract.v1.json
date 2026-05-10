@@ -1,0 +1,157 @@
+{
+  "schema_version": "reality_bridge_import_completion_contract.v1",
+  "manifest_id": "bd-bp8fl.2.2.1-reality-bridge-import-completion-contract",
+  "bead": "bd-bp8fl.2.2",
+  "description": "Completion-debt evidence binding for the reality-check bridge backlog and feature-ledger import reconciliation.",
+  "source_modules": [
+    "tests/conformance/reality_bridge_import_reconciliation.v1.json",
+    "tests/conformance/reality_check_bridge_backlog.v1.json",
+    "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "tests/conformance/feature_parity_gap_bead_coverage.v1.json",
+    "scripts/generate_reality_bridge_import_reconciliation.py",
+    "scripts/check_reality_bridge_import_reconciliation.sh",
+    "crates/frankenlibc-harness/tests/reality_bridge_import_reconciliation_test.rs"
+  ],
+  "completion_debt_evidence": {
+    "bead": "bd-bp8fl.2.2.1",
+    "original_bead": "bd-bp8fl.2.2",
+    "audit_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.2.2/scorecard.md",
+    "source_artifacts": {
+      "reconciliation_artifact": "tests/conformance/reality_bridge_import_reconciliation.v1.json",
+      "bridge_backlog": "tests/conformance/reality_check_bridge_backlog.v1.json",
+      "feature_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+      "feature_gap_coverage": "tests/conformance/feature_parity_gap_bead_coverage.v1.json",
+      "generator": "scripts/generate_reality_bridge_import_reconciliation.py",
+      "checker": "scripts/check_reality_bridge_import_reconciliation.sh",
+      "reconciliation_harness": "crates/frankenlibc-harness/tests/reality_bridge_import_reconciliation_test.rs"
+    },
+    "test_sources": {
+      "reality_bridge_test": "crates/frankenlibc-harness/tests/reality_bridge_import_reconciliation_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/reality_bridge_import_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "tests/conformance/reality_bridge_import_reconciliation.v1.json:1",
+      "tests/conformance/reality_check_bridge_backlog.v1.json:1",
+      "tests/conformance/feature_parity_gap_ledger.v1.json:1",
+      "tests/conformance/feature_parity_gap_bead_coverage.v1.json:1",
+      "scripts/generate_reality_bridge_import_reconciliation.py:1",
+      "scripts/check_reality_bridge_import_reconciliation.sh:1",
+      "crates/frankenlibc-harness/tests/reality_bridge_import_reconciliation_test.rs:1",
+      "scripts/check_reality_bridge_import_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/reality_bridge_import_completion_contract_test.rs:1"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "reality_bridge_test",
+          "name": "artifact_defines_import_mapping_contract"
+        },
+        {
+          "source": "reality_bridge_test",
+          "name": "backlog_and_feature_gap_rows_are_preserved_without_rejections"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_reality_bridge_completion_evidence"
+        }
+      ],
+      "required_commands": [
+        "cargo test -p frankenlibc-harness --test reality_bridge_import_reconciliation_test artifact_defines_import_mapping_contract -- --nocapture",
+        "cargo test -p frankenlibc-harness --test reality_bridge_import_reconciliation_test backlog_and_feature_gap_rows_are_preserved_without_rejections -- --nocapture",
+        "cargo test -p frankenlibc-harness --test reality_bridge_import_completion_contract_test manifest_binds_reality_bridge_completion_evidence -- --nocapture"
+      ],
+      "evidence_summary": "Unit evidence binds the import mapping contract, lossless backlog/feature-gap counts, and completion-debt manifest identity."
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_test_refs": [
+        {
+          "source": "reality_bridge_test",
+          "name": "fixture_replay_emits_report_logs_and_negative_cases"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_completion_report_and_log"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_reality_bridge_import_reconciliation.sh --fixture-replay",
+        "bash scripts/check_reality_bridge_import_completion_contract.sh"
+      ],
+      "evidence_summary": "E2E evidence binds deterministic fixture replay, negative-case signatures, completion report emission, and JSONL telemetry."
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "required_artifacts": [
+        "tests/conformance/reality_bridge_import_reconciliation.v1.json",
+        "tests/conformance/reality_check_bridge_backlog.v1.json",
+        "tests/conformance/feature_parity_gap_ledger.v1.json",
+        "tests/conformance/feature_parity_gap_bead_coverage.v1.json"
+      ],
+      "required_counts": {
+        "backlog_source_rows": 10,
+        "backlog_import_rows": 10,
+        "feature_ledger_rows": 170,
+        "feature_ledger_unresolved_gaps": 111,
+        "feature_gap_import_rows": 111,
+        "feature_gap_batches": 10,
+        "unique_target_issue_count": 64,
+        "rejected_row_count": 0,
+        "missing_target_issue_count": 0,
+        "missing_acceptance_target_count": 0,
+        "missing_dependency_count": 0,
+        "stale_source_snapshot_count": 0,
+        "lost_feature_gap_count": 0
+      },
+      "required_negative_cases": [
+        "duplicate_source_row",
+        "missing_required_field",
+        "stale_source_snapshot",
+        "missing_dependency",
+        "missing_acceptance",
+        "no_feature_loss"
+      ],
+      "required_test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_lost_feature_gap_binding"
+        }
+      ],
+      "evidence_summary": "Conformance evidence binds live import counts, source freshness, zero rejected/missing rows, and fixture mutation signatures."
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "default_report_path": "target/conformance/reality_bridge_import_completion_contract.report.json",
+      "default_log_path": "target/conformance/reality_bridge_import_completion_contract.log.jsonl",
+      "required_events": [
+        "reality_bridge_import_completion_contract_validated",
+        "reality_bridge_import_completion_contract_failed"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "level",
+        "schema_version",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "missing_items_bound",
+        "test_refs",
+        "artifact_refs",
+        "backlog_source_rows",
+        "feature_gap_import_rows",
+        "unique_target_issue_count",
+        "failure_signature"
+      ],
+      "required_test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_completion_report_and_log"
+        }
+      ],
+      "evidence_summary": "Telemetry evidence binds completion-debt report rows to trace IDs, source commit, missing audit items, import counts, and artifact refs."
+    }
+  }
+}
