@@ -1,0 +1,413 @@
+{
+  "schema_version": "per_symbol_fixture_tests_completion_contract.v1",
+  "bead": "bd-ldj.5",
+  "completion_debt_bead": "bd-ldj.5.1",
+  "description": "Completion-debt evidence binding for per-symbol conformance fixtures: generator coverage, canonical golden report, source gate, and harness tests.",
+  "next_audit_score_threshold": 800,
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-ldj.5/scorecard.md",
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.golden.primary",
+      "tests.conformance.primary"
+    ]
+  },
+  "source_paths": {
+    "generator": "scripts/generate_per_symbol_fixture_tests.py",
+    "source_gate": "scripts/check_per_symbol_fixture_tests.sh",
+    "golden_report": "tests/conformance/per_symbol_fixture_tests.v1.json",
+    "coverage_baseline": "tests/conformance/conformance_coverage_baseline.v1.json",
+    "support_matrix": "support_matrix.json",
+    "fixtures_dir": "tests/conformance/fixtures",
+    "existing_harness": "crates/frankenlibc-harness/tests/per_symbol_fixture_tests_test.rs",
+    "completion_contract": "tests/conformance/per_symbol_fixture_tests_completion_contract.v1.json",
+    "completion_checker": "scripts/check_per_symbol_fixture_tests_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/per_symbol_fixture_tests_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    {
+      "kind": "fixture_inventory_generator",
+      "path": "scripts/generate_per_symbol_fixture_tests.py",
+      "line": 4,
+      "anchor": "Fixture inventory"
+    },
+    {
+      "kind": "required_case_fields",
+      "path": "scripts/generate_per_symbol_fixture_tests.py",
+      "line": 38,
+      "anchor": "REQUIRED_CASE_FIELDS"
+    },
+    {
+      "kind": "expected_result_contract_fields",
+      "path": "scripts/generate_per_symbol_fixture_tests.py",
+      "line": 39,
+      "anchor": "EXPECTED_CONTRACT_FIELDS"
+    },
+    {
+      "kind": "mode_contract",
+      "path": "scripts/generate_per_symbol_fixture_tests.py",
+      "line": 48,
+      "anchor": "VALID_MODES"
+    },
+    {
+      "kind": "edge_case_categories",
+      "path": "scripts/generate_per_symbol_fixture_tests.py",
+      "line": 51,
+      "anchor": "EDGE_CASE_PATTERNS"
+    },
+    {
+      "kind": "fixture_file_analysis",
+      "path": "scripts/generate_per_symbol_fixture_tests.py",
+      "line": 76,
+      "anchor": "def analyze_fixture_file"
+    },
+    {
+      "kind": "support_matrix_symbol_universe",
+      "path": "scripts/generate_per_symbol_fixture_tests.py",
+      "line": 151,
+      "anchor": "matrix = load_json_file(matrix_path)"
+    },
+    {
+      "kind": "per_symbol_report_rows",
+      "path": "scripts/generate_per_symbol_fixture_tests.py",
+      "line": 227,
+      "anchor": "\"symbol\": sym_name"
+    },
+    {
+      "kind": "uncovered_action_list",
+      "path": "scripts/generate_per_symbol_fixture_tests.py",
+      "line": 260,
+      "anchor": "uncovered_actions = []"
+    },
+    {
+      "kind": "canonical_report_hash",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "line": 5,
+      "anchor": "\"report_hash\""
+    },
+    {
+      "kind": "canonical_fixture_case_count",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "line": 13,
+      "anchor": "\"total_cases\""
+    },
+    {
+      "kind": "canonical_fixture_file_analyses",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "line": 20,
+      "anchor": "\"fixture_file_analyses\""
+    },
+    {
+      "kind": "canonical_per_symbol_report",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "line": 486,
+      "anchor": "\"per_symbol_report\""
+    },
+    {
+      "kind": "canonical_uncovered_actions",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "line": 63688,
+      "anchor": "\"uncovered_action_list\""
+    },
+    {
+      "kind": "source_gate_baseline_check",
+      "path": "scripts/check_per_symbol_fixture_tests.sh",
+      "line": 64,
+      "anchor": "Must not regress below canonical fixture coverage baseline"
+    },
+    {
+      "kind": "source_gate_case_inventory",
+      "path": "scripts/check_per_symbol_fixture_tests.sh",
+      "line": 77,
+      "anchor": "Must still have a meaningful case inventory"
+    },
+    {
+      "kind": "source_gate_format_check",
+      "path": "scripts/check_per_symbol_fixture_tests.sh",
+      "line": 84,
+      "anchor": "No format issues"
+    },
+    {
+      "kind": "existing_harness_generator_test",
+      "path": "crates/frankenlibc-harness/tests/per_symbol_fixture_tests_test.rs",
+      "line": 39,
+      "anchor": "fn per_symbol_report_generates_successfully"
+    },
+    {
+      "kind": "existing_harness_schema_test",
+      "path": "crates/frankenlibc-harness/tests/per_symbol_fixture_tests_test.rs",
+      "line": 62,
+      "anchor": "fn per_symbol_schema_complete"
+    },
+    {
+      "kind": "existing_harness_coverage_test",
+      "path": "crates/frankenlibc-harness/tests/per_symbol_fixture_tests_test.rs",
+      "line": 87,
+      "anchor": "fn per_symbol_coverage_adequate"
+    },
+    {
+      "kind": "existing_harness_status_test",
+      "path": "crates/frankenlibc-harness/tests/per_symbol_fixture_tests_test.rs",
+      "line": 121,
+      "anchor": "fn per_symbol_all_have_valid_status"
+    },
+    {
+      "kind": "existing_harness_edge_case_test",
+      "path": "crates/frankenlibc-harness/tests/per_symbol_fixture_tests_test.rs",
+      "line": 148,
+      "anchor": "fn per_symbol_edge_cases_detected"
+    },
+    {
+      "kind": "existing_harness_reproducible_test",
+      "path": "crates/frankenlibc-harness/tests/per_symbol_fixture_tests_test.rs",
+      "line": 188,
+      "anchor": "fn per_symbol_report_reproducible"
+    },
+    {
+      "kind": "completion_checker",
+      "path": "scripts/check_per_symbol_fixture_tests_completion_contract.sh",
+      "line": 1,
+      "anchor": "per_symbol_fixture_tests_completion_contract"
+    },
+    {
+      "kind": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/per_symbol_fixture_tests_completion_contract_test.rs",
+      "line": 1,
+      "anchor": "bd-ldj.5.1"
+    }
+  ],
+  "source_anchors": {
+    "generator": [
+      "REQUIRED_CASE_FIELDS",
+      "EXPECTED_CONTRACT_FIELDS",
+      "VALID_MODES",
+      "EDGE_CASE_PATTERNS",
+      "def analyze_fixture_file",
+      "fixture_files = sorted(fixtures_dir.glob(\"*.json\"))",
+      "\"per_symbol_report\": per_symbol_report",
+      "\"uncovered_action_list\": uncovered_actions"
+    ],
+    "source_gate": [
+      "baseline_summary",
+      "Fixture coverage",
+      "Fixture-linked symbols",
+      "fixture cases",
+      "No format issues",
+      "uncovered symbols documented with actions"
+    ],
+    "existing_harness": [
+      "fn per_symbol_report_generates_successfully",
+      "fn per_symbol_schema_complete",
+      "fn per_symbol_coverage_adequate",
+      "fn per_symbol_all_have_valid_status",
+      "fn per_symbol_edge_cases_detected",
+      "fn per_symbol_uncovered_actions_present",
+      "fn per_symbol_report_reproducible"
+    ],
+    "completion_checker": [
+      "EXPECTED_MISSING_ITEMS",
+      "validate_manifest",
+      "validate_fixture_report",
+      "validate_generator_roundtrip",
+      "per_symbol_fixture_completion_summary"
+    ],
+    "completion_harness": [
+      "manifest_binds_unit_golden_and_conformance_items",
+      "checker_emits_structured_completion_evidence",
+      "checker_rejects_missing_golden_report_anchor"
+    ]
+  },
+  "fixture_report_contract": {
+    "schema_version": "v1",
+    "bead": "bd-ldj.5",
+    "min_total_symbols": 100,
+    "min_symbols_with_fixtures": 230,
+    "min_total_cases": 200,
+    "min_fixture_files": 50,
+    "min_symbols_with_edge_cases": 20,
+    "max_total_format_issues": 0,
+    "baseline_coverage_slack_pct": 0.25,
+    "required_summary_fields": [
+      "total_symbols",
+      "symbols_with_fixtures",
+      "symbols_without_fixtures",
+      "fixture_coverage_pct",
+      "implemented_coverage_pct",
+      "total_fixture_files",
+      "total_cases",
+      "total_format_issues",
+      "symbols_with_edge_cases",
+      "symbols_with_errno_checks",
+      "total_quality_issues",
+      "uncovered_action_count"
+    ],
+    "required_case_fields": [
+      "name",
+      "function",
+      "inputs",
+      "mode"
+    ],
+    "expected_result_contract_fields": [
+      "expected_hex",
+      "expected_n_value",
+      "expected_output",
+      "expected_output_bytes",
+      "expected_output_pattern",
+      "expected_return",
+      "expected_values"
+    ],
+    "valid_modes": [
+      "strict",
+      "hardened",
+      "both"
+    ],
+    "edge_case_categories": [
+      "null_input",
+      "zero_length",
+      "max_int",
+      "negative",
+      "boundary"
+    ],
+    "valid_symbol_statuses": [
+      "Implemented",
+      "RawSyscall",
+      "WrapsHostLibc",
+      "GlibcCallThrough",
+      "Stub"
+    ]
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "fixture_inventory_generator",
+        "required_case_fields",
+        "expected_result_contract_fields",
+        "fixture_file_analysis",
+        "source_gate_format_check",
+        "existing_harness_generator_test",
+        "existing_harness_schema_test"
+      ],
+      "test_refs": [
+        {
+          "source": "existing_harness",
+          "name": "per_symbol_report_generates_successfully"
+        },
+        {
+          "source": "existing_harness",
+          "name": "per_symbol_schema_complete"
+        },
+        {
+          "source": "existing_harness",
+          "name": "per_symbol_all_have_valid_status"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_golden_and_conformance_items"
+        }
+      ],
+      "validation_commands": [
+        "bash scripts/check_per_symbol_fixture_tests_completion_contract.sh",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-ldj51 rch exec -- cargo test -p frankenlibc-harness --test per_symbol_fixture_tests_test -- --nocapture",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-ldj51 rch exec -- cargo test -p frankenlibc-harness --test per_symbol_fixture_tests_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.golden.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "canonical_report_hash",
+        "canonical_fixture_case_count",
+        "canonical_fixture_file_analyses",
+        "canonical_per_symbol_report",
+        "canonical_uncovered_actions",
+        "existing_harness_reproducible_test"
+      ],
+      "test_refs": [
+        {
+          "source": "existing_harness",
+          "name": "per_symbol_report_reproducible"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_structured_completion_evidence"
+        }
+      ],
+      "validation_commands": [
+        "jq empty tests/conformance/per_symbol_fixture_tests.v1.json",
+        "bash scripts/check_per_symbol_fixture_tests_completion_contract.sh",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-ldj51 rch exec -- cargo test -p frankenlibc-harness --test per_symbol_fixture_tests_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "support_matrix_symbol_universe",
+        "per_symbol_report_rows",
+        "uncovered_action_list",
+        "source_gate_baseline_check",
+        "source_gate_case_inventory",
+        "existing_harness_coverage_test",
+        "existing_harness_edge_case_test"
+      ],
+      "test_refs": [
+        {
+          "source": "existing_harness",
+          "name": "per_symbol_coverage_adequate"
+        },
+        {
+          "source": "existing_harness",
+          "name": "per_symbol_edge_cases_detected"
+        },
+        {
+          "source": "existing_harness",
+          "name": "per_symbol_uncovered_actions_present"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_golden_report_anchor"
+        }
+      ],
+      "validation_commands": [
+        "bash scripts/check_per_symbol_fixture_tests_completion_contract.sh",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-ldj51 rch exec -- cargo test -p frankenlibc-harness --test per_symbol_fixture_tests_test -- --nocapture",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-ldj51 rch exec -- cargo test -p frankenlibc-harness --test per_symbol_fixture_tests_completion_contract_test -- --nocapture"
+      ]
+    }
+  ],
+  "structured_evidence": {
+    "required_events": [
+      "per_symbol_fixture_completion_contract_validated",
+      "per_symbol_fixture_golden_report_validated",
+      "per_symbol_fixture_generator_roundtrip_validated",
+      "per_symbol_fixture_completion_summary"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "stream",
+      "gate",
+      "scenario_id",
+      "mode",
+      "runtime_mode",
+      "api_family",
+      "symbol",
+      "oracle_kind",
+      "expected",
+      "actual",
+      "decision_path",
+      "outcome",
+      "source_commit",
+      "target_dir",
+      "failure_signature",
+      "artifact_refs",
+      "details"
+    ]
+  }
+}
