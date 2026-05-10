@@ -1,0 +1,69 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "closure-gate-index",
+  "bead": "bd-4rl",
+  "completion_debt_bead": "bd-4rl.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "1253d3c47d5cb0e8c06948e0cabe26e06afc5b70",
+  "purpose": "Conformance and telemetry index for the closure-gate evidence enforcement originally landed under bd-4rl (closed 2026-02-11; audit pass 2026-05-10T03-16-16Z scored 470/1000 because the deterministic spec-extractor and evidence-gatherer couldn't link tests.unit.primary, tests.e2e.primary, tests.conformance.primary, or telemetry.primary). This sibling manifest names the existing artifacts at file path so the next audit pass can attach evidence.",
+  "primary_unit_test_file": "crates/frankenlibc-harness/tests/closure_gate_test.rs",
+  "primary_unit_test_functions": [
+    "schema_exists_and_valid",
+    "schema_has_required_evidence_fields",
+    "legacy_exempt_only_contains_closed_critique_beads",
+    "non_exempt_closed_beads_have_matrix_entries",
+    "matrix_rows_have_evidence_fields",
+    "non_exempt_closed_beads_have_evidence"
+  ],
+  "primary_e2e_test_file": "crates/frankenlibc-harness/tests/closure_gate_test.rs",
+  "primary_e2e_test_function": "gate_script_exists_and_executable",
+  "primary_e2e_script": "scripts/check_closure_gate.sh",
+  "primary_conformance_artifacts": [
+    "tests/conformance/closure_evidence_schema.json",
+    "tests/conformance/verification_matrix.json"
+  ],
+  "telemetry_emission_contract": {
+    "report_emission_command": "scripts/check_closure_gate.sh",
+    "stdout_summary_contract": "Final summary line includes total/exempt/pass/fail/warn counts with non-zero fail count producing exit 1.",
+    "exit_code_contract": "exit 0 means all non-exempt closed beads have complete evidence; exit 1 means one or more failed; warnings (legacy exempt) do not fail the gate.",
+    "rationale": "scripts/check_closure_gate.sh emits a deterministic stdout summary plus per-bead diagnostics. Downstream gates consume the exit code as the canonical telemetry signal that bd closures carry full evidence."
+  },
+  "policy": {
+    "fail_closed_when_primary_unit_test_file_missing": true,
+    "fail_closed_when_primary_e2e_test_file_missing": true,
+    "fail_closed_when_e2e_script_missing": true,
+    "fail_closed_when_e2e_script_not_executable": true,
+    "fail_closed_when_evidence_schema_missing": true,
+    "fail_closed_when_verification_matrix_missing": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_primary_unit_test_file",
+    "missing_primary_e2e_test_file",
+    "missing_e2e_script",
+    "e2e_script_not_executable",
+    "missing_evidence_schema",
+    "missing_verification_matrix"
+  ],
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-4rl/scorecard.md",
+    "spec_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-4rl/spec.json",
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "score_before": 470,
+    "score_threshold": 700
+  },
+  "summary": {
+    "bead": "bd-4rl",
+    "completion_debt_bead": "bd-4rl.1",
+    "primary_unit_tests_pinned": 6,
+    "primary_e2e_tests_pinned": 1,
+    "conformance_artifacts_pinned": 2,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
