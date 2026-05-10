@@ -1,0 +1,242 @@
+{
+  "schema_version": "golden_fixture_protocol_completion_contract.v1",
+  "manifest_id": "bd-15n.3-golden-fixture-protocol-completion-contract",
+  "original_bead": "bd-15n.3",
+  "completion_debt_bead": "bd-15n.3.1",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-15n.3/scorecard.md",
+  "source_artifacts": {
+    "golden_fixture_protocol": "tests/conformance/golden_fixture_protocol.v1.json",
+    "conformance_coverage_gate": "scripts/conformance_coverage_gate.py",
+    "conformance_coverage_wrapper": "scripts/check_conformance_coverage.sh",
+    "conformance_coverage_harness_test": "crates/frankenlibc-harness/tests/conformance_coverage_gate_test.rs",
+    "coverage_baseline": "tests/conformance/conformance_coverage_baseline.v1.json",
+    "coverage_snapshot": "tests/conformance/conformance_coverage_snapshot.v1.json",
+    "golden_gate": "scripts/conformance_golden_gate.sh",
+    "golden_update_script": "scripts/update_conformance_golden.sh",
+    "golden_sha256s": "tests/conformance/golden/sha256sums.txt",
+    "golden_markdown": "tests/conformance/golden/fixture_verify_strict_hardened.v1.md",
+    "golden_json": "tests/conformance/golden/fixture_verify_strict_hardened.v1.json",
+    "golden_suite_json": "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json",
+    "completion_checker": "scripts/check_golden_fixture_protocol_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/golden_fixture_protocol_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "required_protocol_contract": {
+      "schema_version": "v1",
+      "generated_by_bead": "bd-15n.3",
+      "capture_command": "scripts/update_conformance_golden.sh",
+      "fixed_timestamp": "1970-01-01T00:00:00Z",
+      "verification_command": "scripts/conformance_golden_gate.sh",
+      "coverage_command": "scripts/check_conformance_coverage.sh",
+      "coverage_baseline": "tests/conformance/conformance_coverage_baseline.v1.json",
+      "coverage_snapshot": "tests/conformance/conformance_coverage_snapshot.v1.json",
+      "required_golden_outputs": [
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.md",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.json",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json",
+        "tests/conformance/golden/sha256sums.txt"
+      ],
+      "sha256_checked_outputs": [
+        "fixture_verify_strict_hardened.v1.md",
+        "fixture_verify_strict_hardened.v1.json"
+      ],
+      "required_regression_rules": [
+        "Fixture file count must not decrease",
+        "Total case count must not decrease",
+        "Symbol coverage percentage must not decrease",
+        "Per-module covered symbol count must not decrease",
+        "No fixture file may be removed without approval"
+      ],
+      "required_ci_gates": [
+        "conformance_golden_gate",
+        "conformance_coverage_gate",
+        "claim_reconciliation_gate"
+      ]
+    },
+    "implementation_refs": [
+      {
+        "id": "protocol-pins-golden-capture-verification-and-coverage",
+        "path": "tests/conformance/golden_fixture_protocol.v1.json",
+        "required_text": [
+          "\"bead\": \"bd-15n.3\"",
+          "\"command\": \"scripts/update_conformance_golden.sh\"",
+          "\"fixed_timestamp\": \"1970-01-01T00:00:00Z\"",
+          "\"command\": \"scripts/conformance_golden_gate.sh\"",
+          "\"command\": \"scripts/check_conformance_coverage.sh\"",
+          "\"baseline\": \"tests/conformance/conformance_coverage_baseline.v1.json\"",
+          "\"snapshot\": \"tests/conformance/conformance_coverage_snapshot.v1.json\"",
+          "\"No fixture file may be removed without approval\""
+        ]
+      },
+      {
+        "id": "coverage-gate-detects-regressions-and-writes-snapshot",
+        "path": "scripts/conformance_coverage_gate.py",
+        "required_text": [
+          "fixture_count_regression",
+          "case_count_regression",
+          "coverage_regression",
+          "module_coverage_regression",
+          "fixture_removed",
+          "update-baseline",
+          "conformance_coverage_snapshot.v1.json"
+        ]
+      },
+      {
+        "id": "coverage-wrapper-is-ci-facing",
+        "path": "scripts/check_conformance_coverage.sh",
+        "required_text": [
+          "Conformance Coverage Gate (bd-15n.3)",
+          "python3 scripts/conformance_coverage_gate.py",
+          "PASS: No coverage regressions detected.",
+          "FAIL: Coverage regression detected."
+        ]
+      },
+      {
+        "id": "golden-gate-verifies-fixed-timestamp-goldens",
+        "path": "scripts/conformance_golden_gate.sh",
+        "required_text": [
+          "--timestamp \"1970-01-01T00:00:00Z\"",
+          "sha256sum -c",
+          "fixture_verify_strict_hardened.v1.md",
+          "fixture_verify_strict_hardened.v1.json",
+          "conformance_golden_gate: PASS"
+        ]
+      },
+      {
+        "id": "source-harness-covers-coverage-gate-and-baseline",
+        "path": "crates/frankenlibc-harness/tests/conformance_coverage_gate_test.rs",
+        "required_text": [
+          "fn conformance_coverage_gate_no_regression",
+          "fn conformance_coverage_baseline_exists"
+        ]
+      },
+      {
+        "id": "completion-checker-binds-four-test-classes",
+        "path": "scripts/check_golden_fixture_protocol_completion_contract.sh",
+        "required_text": [
+          "golden_fixture_protocol_completion_contract.v1",
+          "golden_fixture_protocol_completion_summary",
+          "golden_fixture_protocol_source_bindings",
+          "golden_fixture_protocol_test_bindings",
+          "golden_fixture_protocol_completion_contract_pass",
+          "FRANKENLIBC_GOLDEN_FIXTURE_COMPLETION_REPORT",
+          "FRANKENLIBC_GOLDEN_FIXTURE_COMPLETION_LOG"
+        ]
+      }
+    ],
+    "test_sources": {
+      "source_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/conformance_coverage_gate_test.rs",
+        "required_test_refs": [
+          "conformance_coverage_gate_no_regression",
+          "conformance_coverage_baseline_exists"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/golden_fixture_protocol_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_all_completion_debt_evidence_classes",
+          "checker_validates_golden_fixture_protocol_contract",
+          "checker_emits_completion_report_and_jsonl",
+          "checker_rejects_missing_golden_artifact_binding",
+          "checker_rejects_missing_source_test_ref",
+          "checker_rejects_unimplemented_telemetry_event"
+        ]
+      }
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_artifacts": [
+        "crates/frankenlibc-harness/tests/conformance_coverage_gate_test.rs",
+        "crates/frankenlibc-harness/tests/golden_fixture_protocol_completion_contract_test.rs"
+      ],
+      "required_test_refs": [
+        "conformance_coverage_baseline_exists",
+        "manifest_binds_all_completion_debt_evidence_classes",
+        "checker_validates_golden_fixture_protocol_contract"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "required_artifacts": [
+        "scripts/check_conformance_coverage.sh",
+        "scripts/conformance_golden_gate.sh",
+        "tests/conformance/golden_fixture_protocol.v1.json"
+      ],
+      "required_test_refs": [
+        "conformance_coverage_gate_no_regression",
+        "checker_emits_completion_report_and_jsonl"
+      ]
+    },
+    {
+      "id": "tests.golden.primary",
+      "kind": "golden",
+      "required_artifacts": [
+        "tests/conformance/golden_fixture_protocol.v1.json",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.md",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.json",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json",
+        "tests/conformance/golden/sha256sums.txt"
+      ],
+      "required_test_refs": [
+        "checker_validates_golden_fixture_protocol_contract",
+        "checker_rejects_missing_golden_artifact_binding"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "required_artifacts": [
+        "tests/conformance/conformance_coverage_baseline.v1.json",
+        "tests/conformance/conformance_coverage_snapshot.v1.json",
+        "tests/conformance/golden_fixture_protocol_completion_contract.v1.json"
+      ],
+      "required_test_refs": [
+        "conformance_coverage_gate_no_regression",
+        "checker_validates_golden_fixture_protocol_contract",
+        "checker_emits_completion_report_and_jsonl"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_commit",
+      "summary",
+      "source_artifacts",
+      "required_protocol_contract",
+      "test_refs",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome",
+      "source_commit",
+      "schema_version",
+      "artifact_refs",
+      "test_refs",
+      "failure_signature"
+    ],
+    "required_events": [
+      "golden_fixture_protocol_completion_summary",
+      "golden_fixture_protocol_source_bindings",
+      "golden_fixture_protocol_test_bindings",
+      "golden_fixture_protocol_completion_contract_pass",
+      "golden_fixture_protocol_completion_contract_fail"
+    ]
+  }
+}
