@@ -1,0 +1,279 @@
+{
+  "schema_version": "l1_hardened_interpose_graduation_completion_contract.v1",
+  "manifest_id": "bd-gtf.4-l1-hardened-interpose-graduation-completion-contract",
+  "original_bead": "bd-gtf.4",
+  "completion_debt_bead": "bd-gtf.4.1",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-gtf.4/scorecard.md",
+  "source_artifacts": {
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "l1_crt_startup_tls_matrix": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+    "ld_preload_smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "claim_reconciliation_report": "tests/conformance/claim_reconciliation_report.v1.json",
+    "perf_regression_prevention": "tests/conformance/perf_regression_prevention.v1.json",
+    "replacement_zero_unapproved_fixtures": "tests/conformance/replacement_zero_unapproved_fixtures.v1.json",
+    "source_checker": "scripts/check_replacement_levels.sh",
+    "replacement_guard_checker": "scripts/check_replacement_guard.sh",
+    "claim_reconciliation_checker": "scripts/check_claim_reconciliation.sh",
+    "perf_budget_checker": "scripts/check_perf_budget.sh",
+    "source_harness_test": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+    "claim_doc_audit_test": "crates/frankenlibc-harness/tests/replacement_claim_doc_audit_test.rs",
+    "completion_checker": "scripts/check_l1_hardened_interpose_graduation_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/l1_hardened_interpose_graduation_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "implementation_refs": [
+      {
+        "id": "replacement-levels-l1-objective-gate-defines-evidence-bundle",
+        "path": "tests/conformance/replacement_levels.json",
+        "required_text": [
+          "\"level\": \"L1\"",
+          "\"name\": \"Hardened Interpose\"",
+          "\"objective_gate\"",
+          "\"status\": \"blocked\"",
+          "\"required_log_fields\"",
+          "replacement_levels_l1_gate.report.json",
+          "replacement_levels_l1_gate.log.jsonl",
+          "\"stub_free_taxonomy\"",
+          "\"promotion_claim_control\"",
+          "\"crt_startup_tls_proof_matrix\""
+        ]
+      },
+      {
+        "id": "source-checker-emits-l1-report-and-log-artifacts",
+        "path": "scripts/check_replacement_levels.sh",
+        "required_text": [
+          "Structured L1 objective gate artifacts",
+          "replacement_levels_l1_gate",
+          "FLC_REPLACEMENT_LEVELS_REPORT_PATH",
+          "FLC_REPLACEMENT_LEVELS_LOG_PATH",
+          "objective_gate",
+          "l1_crt_startup_tls_proof_matrix",
+          "source_commit",
+          "target_dir"
+        ]
+      },
+      {
+        "id": "source-harness-tests-levels-claim-drift-and-l1-artifact-refresh",
+        "path": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+        "required_text": [
+          "levels_exists_and_valid",
+          "all_four_levels_defined",
+          "assessment_matches_support_matrix",
+          "gate_criteria_monotonically_tighten",
+          "claim_drift_guard_consistent_with_readme_and_release_policy",
+          "gate_script_refreshes_l1_objective_gate_artifacts",
+          "gate_script_rejects_stale_l1_crt_startup_tls_source_commit"
+        ]
+      },
+      {
+        "id": "doc-audit-blocks-l1-overclaim-while-current-level-is-l0",
+        "path": "crates/frankenlibc-harness/tests/replacement_claim_doc_audit_test.rs",
+        "required_text": [
+          "stale_source_commit_policy_blocks_replacement_claim_text",
+          "no_forbidden_overclaim_phrase_appears_in_any_doc_while_current_level_l0",
+          "audit_pins_l1_dry_run_dashboard_as_consuming_gate",
+          "replacement_levels.json"
+        ]
+      }
+    ],
+    "test_sources": {
+      "source_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+        "required_test_refs": [
+          "levels_exists_and_valid",
+          "all_four_levels_defined",
+          "assessment_matches_support_matrix",
+          "gate_criteria_monotonically_tighten",
+          "claim_drift_guard_consistent_with_readme_and_release_policy",
+          "gate_script_exists_and_executable",
+          "gate_script_refreshes_l1_objective_gate_artifacts",
+          "gate_script_rejects_stale_l1_crt_startup_tls_source_commit"
+        ]
+      },
+      "claim_doc_audit_test": {
+        "path": "crates/frankenlibc-harness/tests/replacement_claim_doc_audit_test.rs",
+        "required_test_refs": [
+          "stale_source_commit_policy_blocks_replacement_claim_text",
+          "no_forbidden_overclaim_phrase_appears_in_any_doc_while_current_level_l0",
+          "audit_pins_l1_dry_run_dashboard_as_consuming_gate"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/l1_hardened_interpose_graduation_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence",
+          "checker_validates_existing_l1_gate_artifacts",
+          "checker_emits_report_and_jsonl_with_source_gate_rows",
+          "checker_rejects_missing_objective_obligation",
+          "checker_rejects_wrong_current_level_expectation",
+          "checker_rejects_missing_telemetry_event"
+        ]
+      }
+    }
+  },
+  "required_source_contract": {
+    "current_level": "L0",
+    "current_release_level": "L0",
+    "l1_objective_status": "blocked",
+    "objective_obligation_count": 8,
+    "objective_outcomes": {
+      "pass": 6,
+      "blocked": 2
+    },
+    "l1_crt_proof_row_count": 11,
+    "l1_crt_satisfied_row_count": 5,
+    "l1_crt_blocked_row_count": 6,
+    "script_check_count": 7,
+    "script_failure_count": 0,
+    "required_log_fields": [
+      "trace_id",
+      "level",
+      "obligation_id",
+      "outcome",
+      "artifact_ref"
+    ],
+    "required_script_checks": [
+      "levels_file_valid",
+      "level_definitions",
+      "assessment_matches_support_matrix",
+      "status_progression",
+      "gate_criteria_monotonicity",
+      "claim_drift",
+      "l1_crt_startup_tls_proof_matrix"
+    ],
+    "required_objective_obligations": [
+      "stub_free_taxonomy",
+      "callthrough_pct_within_l1_bound",
+      "implemented_pct_meets_l1_floor",
+      "hardened_smoke_battery",
+      "claim_reconciliation_clean",
+      "perf_budget_alignment",
+      "promotion_claim_control",
+      "crt_startup_tls_proof_matrix"
+    ],
+    "required_evidence_artifacts": [
+      "tests/conformance/replacement_levels.json",
+      "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+      "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "tests/conformance/claim_reconciliation_report.v1.json",
+      "tests/conformance/perf_regression_prevention.v1.json",
+      "tests/conformance/replacement_zero_unapproved_fixtures.v1.json"
+    ],
+    "required_source_log_sources": [
+      "script_check",
+      "objective_gate",
+      "l1_crt_startup_tls_proof_matrix"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "bead_id",
+      "gate_id",
+      "status",
+      "current_level",
+      "objective_gate_status",
+      "required_log_fields",
+      "script_checks",
+      "objective_gate",
+      "l1_crt_startup_tls_proof_matrix",
+      "summary",
+      "artifact_refs"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_test_refs": [
+        "levels_exists_and_valid",
+        "all_four_levels_defined",
+        "assessment_matches_support_matrix",
+        "manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test replacement_levels_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test l1_hardened_interpose_graduation_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "required_test_refs": [
+        "gate_script_refreshes_l1_objective_gate_artifacts",
+        "checker_validates_existing_l1_gate_artifacts",
+        "checker_rejects_wrong_current_level_expectation"
+      ],
+      "required_commands": [
+        "bash scripts/check_replacement_levels.sh",
+        "bash scripts/check_l1_hardened_interpose_graduation_completion_contract.sh"
+      ]
+    },
+    {
+      "id": "tests.fuzz.primary",
+      "kind": "fuzz",
+      "required_test_refs": [
+        "gate_script_rejects_stale_l1_crt_startup_tls_source_commit",
+        "checker_rejects_missing_objective_obligation",
+        "checker_rejects_missing_telemetry_event"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test replacement_levels_test gate_script_rejects_stale_l1_crt_startup_tls_source_commit -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test l1_hardened_interpose_graduation_completion_contract_test checker_rejects -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "required_test_refs": [
+        "claim_drift_guard_consistent_with_readme_and_release_policy",
+        "no_forbidden_overclaim_phrase_appears_in_any_doc_while_current_level_l0",
+        "checker_validates_existing_l1_gate_artifacts"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test replacement_levels_test -- --nocapture",
+        "bash scripts/check_l1_hardened_interpose_graduation_completion_contract.sh"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "required_test_refs": [
+        "gate_script_refreshes_l1_objective_gate_artifacts",
+        "checker_emits_report_and_jsonl_with_source_gate_rows",
+        "checker_rejects_missing_telemetry_event"
+      ],
+      "required_commands": [
+        "jq -s empty target/conformance/replacement_levels_l1_gate.log.jsonl",
+        "jq -s empty target/conformance/l1_hardened_interpose_graduation_completion_contract.log.jsonl"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "summary",
+      "source_gate_report",
+      "source_gate_log",
+      "source_log_row_count",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome"
+    ],
+    "required_events": [
+      "l1_hardened_interpose_completion_summary",
+      "l1_hardened_interpose_source_gate_bindings",
+      "l1_hardened_interpose_objective_gate_bindings",
+      "l1_hardened_interpose_completion_contract_pass"
+    ]
+  }
+}
