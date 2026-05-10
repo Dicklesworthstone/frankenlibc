@@ -1,0 +1,72 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "ld-preload-smoke-e2e-index",
+  "bead": "bd-2cr",
+  "completion_debt_bead": "bd-2cr.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "c9175a876860524c84403ca976877915a77c6f60",
+  "purpose": "Conformance + telemetry index for the LD_PRELOAD smoke harness originally landed under bd-2cr (closed 2026-02-11; audit pass 2026-05-10T03-16-16Z couldn't link tests.unit.primary, tests.e2e.primary, or telemetry.primary). This sibling manifest names the existing harness scripts and integration tests at file:line so the next audit pass can attach evidence.",
+  "primary_unit_test_file": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
+  "primary_unit_test_functions": [
+    "e2e_suite_script_exists",
+    "check_e2e_suite_script_exists",
+    "ld_preload_smoke_script_exists",
+    "ld_preload_smoke_script_declares_abi_parity_contract",
+    "ld_preload_smoke_report_schema_valid_when_present",
+    "e2e_manifest_validator_and_catalog_exist"
+  ],
+  "primary_e2e_test_file": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
+  "primary_e2e_test_functions": [
+    "e2e_suite_runs_and_produces_jsonl",
+    "e2e_suite_supports_manifest_dry_run",
+    "e2e_suite_supports_scenario_filter"
+  ],
+  "primary_e2e_scripts": [
+    "scripts/e2e_suite.sh",
+    "scripts/ld_preload_smoke.sh"
+  ],
+  "telemetry_emission_contract": {
+    "ld_preload_smoke_report_path_template": "target/ld_preload_smoke/<run-id>/abi_compat_report.json",
+    "ld_preload_smoke_trace_path_template": "target/ld_preload_smoke/<run-id>/trace.jsonl",
+    "ld_preload_smoke_run_dir_root": "target/ld_preload_smoke",
+    "report_artifact_kind": "json",
+    "trace_artifact_kind": "jsonl",
+    "rationale": "scripts/ld_preload_smoke.sh emits a deterministic per-run directory under target/ld_preload_smoke/<run-id>/ containing abi_compat_report.json (the parity verdict) and trace.jsonl (the structured event stream). Downstream gates consume both as canonical telemetry signals that LD_PRELOAD parity holds across the strict + hardened modes."
+  },
+  "policy": {
+    "fail_closed_when_primary_unit_test_file_missing": true,
+    "fail_closed_when_primary_e2e_test_file_missing": true,
+    "fail_closed_when_e2e_script_missing": true,
+    "fail_closed_when_e2e_script_not_executable": true,
+    "fail_closed_when_telemetry_run_dir_root_drifts": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_primary_unit_test_file",
+    "missing_primary_e2e_test_file",
+    "missing_e2e_script",
+    "e2e_script_not_executable",
+    "telemetry_run_dir_root_drift"
+  ],
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-2cr/scorecard.md",
+    "spec_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-2cr/spec.json",
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "score_before": 470,
+    "score_threshold": 700
+  },
+  "summary": {
+    "bead": "bd-2cr",
+    "completion_debt_bead": "bd-2cr.1",
+    "primary_unit_tests_pinned": 6,
+    "primary_e2e_tests_pinned": 3,
+    "primary_e2e_scripts_pinned": 2,
+    "telemetry_run_dir_root_pinned": true,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
