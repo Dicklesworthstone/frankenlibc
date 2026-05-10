@@ -36,6 +36,15 @@ manifest_path = Path(sys.argv[5])
 log_path = Path(sys.argv[6])
 
 BEAD_ID = "bd-fp4tm.3"
+COMPLETION_DEBT_BEAD_ID = "bd-26xb.1.1"
+COMPLETION_DEBT_ORIGINAL_BEAD_ID = "bd-26xb.1"
+COMPLETION_DEBT_SECTIONS = {
+    "unit_primary": "tests.unit.primary",
+    "e2e_primary": "tests.e2e.primary",
+    "fuzz_primary": "tests.fuzz.primary",
+    "conformance_primary": "tests.conformance.primary",
+    "telemetry_primary": "telemetry.primary",
+}
 DEFAULT_TIMEOUT_MS = 10000
 DEFAULT_EXCERPT_BYTES = 512
 PASS_SIGNATURES = {"", "none", "ok"}
@@ -146,6 +155,118 @@ def validate_contract(contract: dict[str, Any], errors: list[str]) -> None:
         for field in ["failure_class", "triage_owner_family", "next_safe_action"]:
             if not isinstance(entry.get(field), str) or not entry.get(field):
                 errors.append(f"contract.failure_signature_schema.{signature}.{field} missing")
+
+
+def validate_file_line_ref(ref: Any, errors: list[str], context: str) -> None:
+    if not isinstance(ref, str) or ":" not in ref:
+        errors.append(f"{context} must be a file:line string")
+        return
+    path_text, line_text = ref.rsplit(":", 1)
+    if not path_text or not line_text.isdigit() or int(line_text) <= 0:
+        errors.append(f"{context} must be a file:line string")
+        return
+    path = root / path_text
+    if not path.is_file():
+        errors.append(f"{context} references missing file: {path_text}")
+        return
+    lines = path.read_text(encoding="utf-8").splitlines()
+    line_number = int(line_text)
+    if line_number > len(lines):
+        errors.append(f"{context} references line past EOF: {ref}")
+    elif not lines[line_number - 1].strip():
+        errors.append(f"{context} references a blank line: {ref}")
+
+
+def validate_required_tests(
+    evidence: dict[str, Any],
+    section_name: str,
+    section: dict[str, Any],
+    test_source_text: str,
+    errors: list[str],
+) -> None:
+    tests = section.get("required_test_names")
+    if not isinstance(tests, list) or not tests:
+        errors.append(f"completion_debt_evidence.{section_name}.required_test_names must be non-empty")
+        return
+    for test_name in tests:
+        if not isinstance(test_name, str) or not test_name:
+            errors.append(f"completion_debt_evidence.{section_name} contains invalid test name")
+        elif f"fn {test_name}(" not in test_source_text:
+            errors.append(f"completion_debt_evidence.{section_name} references missing test {test_name}")
+
+    threshold = section.get("next_audit_score_threshold", evidence.get("next_audit_score_threshold"))
+    if not isinstance(threshold, int) or threshold < 700 or threshold > 1000:
+        errors.append(
+            f"completion_debt_evidence.{section_name}.next_audit_score_threshold must be an integer from 700 through 1000"
+        )
+
+
+def validate_completion_debt_evidence(contract: dict[str, Any], errors: list[str]) -> dict[str, Any]:
+    evidence = contract.get("completion_debt_evidence")
+    if not isinstance(evidence, dict):
+        errors.append("completion_debt_evidence must be an object")
+        return {}
+    if evidence.get("bead") != COMPLETION_DEBT_BEAD_ID:
+        errors.append(f"completion_debt_evidence.bead must be {COMPLETION_DEBT_BEAD_ID}")
+    if evidence.get("original_bead") != COMPLETION_DEBT_ORIGINAL_BEAD_ID:
+        errors.append(
+            f"completion_debt_evidence.original_bead must be {COMPLETION_DEBT_ORIGINAL_BEAD_ID}"
+        )
+    if not isinstance(evidence.get("next_audit_score_threshold"), int):
+        errors.append("completion_debt_evidence.next_audit_score_threshold must be an integer")
+
+    test_source = evidence.get("test_source")
+    test_source_text = ""
+    if not isinstance(test_source, str) or not test_source:
+        errors.append("completion_debt_evidence.test_source must be non-empty")
+    else:
+        test_source_path = root / test_source
+        if not test_source_path.is_file():
+            errors.append(f"completion_debt_evidence.test_source missing: {test_source}")
+        else:
+            test_source_text = test_source_path.read_text(encoding="utf-8")
+
+    impl_refs = evidence.get("implementation_refs")
+    if not isinstance(impl_refs, list) or not impl_refs:
+        errors.append("completion_debt_evidence.implementation_refs must be non-empty")
+    else:
+        for index, ref in enumerate(impl_refs):
+            validate_file_line_ref(
+                ref,
+                errors,
+                f"completion_debt_evidence.implementation_refs[{index}]",
+            )
+
+    for section_name, missing_item_id in COMPLETION_DEBT_SECTIONS.items():
+        section = evidence.get(section_name)
+        if not isinstance(section, dict):
+            errors.append(f"completion_debt_evidence.{section_name} must be an object")
+            continue
+        if section.get("missing_item_id") != missing_item_id:
+            errors.append(f"completion_debt_evidence.{section_name}.missing_item_id must be {missing_item_id}")
+        validate_required_tests(evidence, section_name, section, test_source_text, errors)
+
+    fuzz = evidence.get("fuzz_primary", {})
+    axes = fuzz.get("deterministic_mutation_axes") if isinstance(fuzz, dict) else None
+    expected_axes = {"failure_signature", "source_kind", "mode", "required_field_omission"}
+    if not isinstance(axes, list) or not expected_axes.issubset(set(axes)):
+        errors.append("completion_debt_evidence.fuzz_primary.deterministic_mutation_axes is incomplete")
+
+    telemetry = evidence.get("telemetry_primary", {})
+    if isinstance(telemetry, dict):
+        if telemetry.get("default_report_path") != "target/conformance/workload_reproducer_manifest.report.json":
+            errors.append("completion_debt_evidence.telemetry_primary.default_report_path drifted")
+        if telemetry.get("default_log_path") != "target/conformance/workload_reproducer_manifest.log.jsonl":
+            errors.append("completion_debt_evidence.telemetry_primary.default_log_path drifted")
+        events = telemetry.get("required_events")
+        if not isinstance(events, list) or "workload_reproducer_manifest_row" not in events:
+            errors.append("completion_debt_evidence.telemetry_primary.required_events drifted")
+        fields = telemetry.get("required_log_fields")
+        required_log_fields = set(contract.get("required_log_fields", []))
+        if not isinstance(fields, list) or not set(fields).issubset(required_log_fields):
+            errors.append("completion_debt_evidence.telemetry_primary.required_log_fields drifted")
+
+    return evidence
 
 
 def is_failure_row(row: dict[str, Any]) -> bool:
@@ -361,6 +482,7 @@ def materialize_reproducer(
 errors: list[str] = []
 contract = load_json(contract_path, errors)
 validate_contract(contract, errors)
+completion_debt_evidence = validate_completion_debt_evidence(contract, errors)
 
 input_paths = split_inputs(input_spec)
 if not input_paths:
@@ -401,6 +523,8 @@ for item in reproducers:
         "artifact_refs": item["artifact_refs"],
         "source_commit": item["source_commit"],
         "next_safe_action": item["next_safe_action"],
+        "completion_debt_bead": completion_debt_evidence.get("bead", ""),
+        "completion_debt_original_bead": completion_debt_evidence.get("original_bead", ""),
     }
     if isinstance(required_log_fields, list):
         for field in required_log_fields:
@@ -424,6 +548,7 @@ manifest = {
     "required_reproducer_fields": required_fields,
     "required_failure_signatures": contract.get("required_failure_signatures", []),
     "failure_signature_schema": contract.get("failure_signature_schema", {}),
+    "completion_debt_evidence": completion_debt_evidence,
     "reproducers": reproducers,
     "artifact_refs": [
         rel(contract_path),
@@ -439,6 +564,7 @@ report = {
     "generated_at_utc": manifest["generated_at_utc"],
     "source_commit": SOURCE_COMMIT,
     "source_contract": rel(contract_path),
+    "completion_debt_evidence": completion_debt_evidence,
     "input_logs": [rel(path) for path in input_paths],
     "summary": {
         "input_row_count": len(all_rows),
@@ -446,6 +572,8 @@ report = {
         "reproducer_count": len(reproducers),
         "failure_signature_counts": dict(sorted(failure_signature_counts.items())),
         "required_failure_signatures": contract.get("required_failure_signatures", []),
+        "completion_debt_bead": completion_debt_evidence.get("bead", ""),
+        "completion_debt_original_bead": completion_debt_evidence.get("original_bead", ""),
     },
     "failure_signatures": sorted(
         {

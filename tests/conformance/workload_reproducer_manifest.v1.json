@@ -157,6 +157,100 @@
     "stdout_artifact_suffix": "stdout.txt",
     "stderr_artifact_suffix": "stderr.txt"
   },
+  "completion_debt_evidence": {
+    "bead": "bd-26xb.1.1",
+    "original_bead": "bd-26xb.1",
+    "audit_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-26xb.1/scorecard.md",
+    "original_audit_score": 470,
+    "next_audit_score_threshold": 800,
+    "test_source": "crates/frankenlibc-harness/tests/workload_reproducer_manifest_test.rs",
+    "implementation_refs": [
+      "scripts/check_workload_reproducer_manifest.sh:204",
+      "scripts/check_workload_reproducer_manifest.sh:396",
+      "scripts/check_workload_reproducer_manifest.sh:457",
+      "scripts/check_workload_reproducer_manifest.sh:512",
+      "scripts/check_workload_reproducer_manifest.sh:540",
+      "scripts/check_workload_reproducer_manifest.sh:560"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "next_audit_score_threshold": 800,
+      "description": "Unit-level schema, failure-class, replay-command, and fail-closed metadata assertions for the reproducer contract.",
+      "required_test_names": [
+        "contract_declares_reproducer_schema_and_failure_classes",
+        "completion_debt_evidence_binds_all_missing_items",
+        "failure_rows_missing_command_fail_closed",
+        "failure_rows_missing_env_fail_closed",
+        "failure_rows_missing_mode_fail_closed"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "next_audit_score_threshold": 800,
+      "description": "End-to-end checker execution over workload replay and LD_PRELOAD smoke failure rows, producing report, manifest, and JSONL telemetry artifacts.",
+      "checker_script": "scripts/check_workload_reproducer_manifest.sh",
+      "required_test_names": [
+        "gate_emits_compact_reproducer_manifest_and_jsonl_log",
+        "gate_rejects_stale_completion_debt_test_binding"
+      ]
+    },
+    "fuzz_primary": {
+      "missing_item_id": "tests.fuzz.primary",
+      "next_audit_score_threshold": 800,
+      "description": "Deterministic mutation fixture coverage for the autoreducer input contract: failure-signature aliases, source kind, runtime mode, and required-field omission are varied without changing replay determinism.",
+      "deterministic_mutation_axes": [
+        "failure_signature",
+        "source_kind",
+        "mode",
+        "required_field_omission"
+      ],
+      "required_test_names": [
+        "gate_emits_compact_reproducer_manifest_and_jsonl_log",
+        "failure_rows_missing_command_fail_closed",
+        "failure_rows_missing_env_fail_closed",
+        "failure_rows_missing_mode_fail_closed"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "next_audit_score_threshold": 800,
+      "description": "Conformance-level contract artifact that pins failure classes, producer inputs, reproducer output fields, and required telemetry fields.",
+      "artifact": "tests/conformance/workload_reproducer_manifest.v1.json",
+      "required_test_names": [
+        "contract_declares_reproducer_schema_and_failure_classes",
+        "completion_debt_evidence_binds_all_missing_items"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "next_audit_score_threshold": 800,
+      "description": "Structured JSON report, generated reproducer manifest, and JSONL rows emitted by the workload reproducer checker.",
+      "default_report_path": "target/conformance/workload_reproducer_manifest.report.json",
+      "default_manifest_path": "target/conformance/workload_reproducer_manifest.v1.json",
+      "default_log_path": "target/conformance/workload_reproducer_manifest.log.jsonl",
+      "required_events": [
+        "workload_reproducer_manifest_row"
+      ],
+      "required_log_fields": [
+        "trace_id",
+        "bead_id",
+        "event",
+        "status",
+        "reproducer_id",
+        "workload_id",
+        "mode",
+        "failure_signature",
+        "failure_class",
+        "triage_owner_family",
+        "artifact_refs",
+        "source_commit",
+        "next_safe_action"
+      ],
+      "required_test_names": [
+        "gate_emits_compact_reproducer_manifest_and_jsonl_log"
+      ]
+    }
+  },
   "artifact_refs": [
     "scripts/check_workload_reproducer_manifest.sh",
     "scripts/run_user_workload_replay_traces.sh",

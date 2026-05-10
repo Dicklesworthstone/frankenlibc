@@ -44,6 +44,30 @@ const REQUIRED_REPRODUCER_FIELDS: &[&str] = &[
     "source_commit",
 ];
 
+const REQUIRED_LOG_FIELDS: &[&str] = &[
+    "trace_id",
+    "bead_id",
+    "event",
+    "status",
+    "reproducer_id",
+    "workload_id",
+    "mode",
+    "failure_signature",
+    "failure_class",
+    "triage_owner_family",
+    "artifact_refs",
+    "source_commit",
+    "next_safe_action",
+];
+
+const COMPLETION_DEBT_SECTIONS: &[(&str, &str)] = &[
+    ("unit_primary", "tests.unit.primary"),
+    ("e2e_primary", "tests.e2e.primary"),
+    ("fuzz_primary", "tests.fuzz.primary"),
+    ("conformance_primary", "tests.conformance.primary"),
+    ("telemetry_primary", "telemetry.primary"),
+];
+
 fn test_error(message: impl Into<String>) -> Box<dyn std::error::Error> {
     Box::new(std::io::Error::other(message.into()))
 }
@@ -59,6 +83,12 @@ fn workspace_root() -> TestResult<PathBuf> {
 
 fn load_json(path: &Path) -> TestResult<Value> {
     Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
+}
+
+fn write_json(path: &Path, value: &Value) -> TestResult {
+    let content = serde_json::to_string_pretty(value)?;
+    std::fs::write(path, format!("{content}\n"))?;
+    Ok(())
 }
 
 fn json_field<'a>(value: &'a Value, key: &str) -> TestResult<&'a Value> {
@@ -166,8 +196,18 @@ fn write_jsonl(dir: &Path, rows: &[Value]) -> TestResult<PathBuf> {
 }
 
 fn run_gate(root: &Path, dir: &Path, rows: &[Value]) -> TestResult<std::process::Output> {
+    run_gate_with_contract(root, dir, rows, None)
+}
+
+fn run_gate_with_contract(
+    root: &Path,
+    dir: &Path,
+    rows: &[Value],
+    contract: Option<&Path>,
+) -> TestResult<std::process::Output> {
     let input = write_jsonl(dir, rows)?;
-    let output = Command::new("bash")
+    let mut command = Command::new("bash");
+    command
         .arg(root.join("scripts/check_workload_reproducer_manifest.sh"))
         .current_dir(root)
         .env("FRANKENLIBC_WORKLOAD_REPRODUCER_INPUTS", &input)
@@ -183,9 +223,52 @@ fn run_gate(root: &Path, dir: &Path, rows: &[Value]) -> TestResult<std::process:
         .env(
             "FRANKENLIBC_WORKLOAD_REPRODUCER_LOG",
             dir.join("reproducer.log.jsonl"),
-        )
-        .output()?;
+        );
+    if let Some(contract) = contract {
+        command.env("FRANKENLIBC_WORKLOAD_REPRODUCER_CONTRACT", contract);
+    }
+    let output = command.output()?;
     Ok(output)
+}
+
+fn assert_file_line_ref(root: &Path, value: &Value) -> TestResult {
+    let reference = value
+        .as_str()
+        .ok_or_else(|| test_error("file line ref should be string"))?;
+    let (path, line) = reference
+        .rsplit_once(':')
+        .ok_or_else(|| test_error(format!("{reference} should be file:line")))?;
+    let line: usize = line.parse()?;
+    let content = std::fs::read_to_string(root.join(path))?;
+    let source_line = content
+        .lines()
+        .nth(line.saturating_sub(1))
+        .ok_or_else(|| test_error(format!("{reference} points past EOF")))?;
+    assert!(
+        !source_line.trim().is_empty(),
+        "{reference} should not point at a blank line"
+    );
+    Ok(())
+}
+
+fn assert_required_tests_are_declared(evidence: &Value, section: &str, source: &str) -> TestResult {
+    let tests = evidence[section]["required_test_names"]
+        .as_array()
+        .ok_or_else(|| test_error(format!("{section}.required_test_names should be array")))?;
+    assert!(
+        !tests.is_empty(),
+        "{section}.required_test_names should be non-empty"
+    );
+    for test_name in tests {
+        let test_name = test_name
+            .as_str()
+            .ok_or_else(|| test_error("required test name should be string"))?;
+        assert!(
+            source.contains(&format!("fn {test_name}(")),
+            "{section} references missing test {test_name}"
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -225,6 +308,82 @@ fn contract_declares_reproducer_schema_and_failure_classes() -> TestResult {
 }
 
 #[test]
+fn completion_debt_evidence_binds_all_missing_items() -> TestResult {
+    let root = workspace_root()?;
+    let contract = load_json(&root.join("tests/conformance/workload_reproducer_manifest.v1.json"))?;
+    let evidence = json_field(&contract, "completion_debt_evidence")?;
+
+    assert_eq!(evidence["bead"].as_str(), Some("bd-26xb.1.1"));
+    assert_eq!(evidence["original_bead"].as_str(), Some("bd-26xb.1"));
+    assert_eq!(evidence["original_audit_score"].as_u64(), Some(470));
+    assert!(
+        evidence["next_audit_score_threshold"]
+            .as_u64()
+            .is_some_and(|score| score >= 800)
+    );
+
+    let test_source = evidence["test_source"]
+        .as_str()
+        .ok_or_else(|| test_error("completion debt test_source should be string"))?;
+    let test_source_text = std::fs::read_to_string(root.join(test_source))?;
+
+    let implementation_refs = evidence["implementation_refs"]
+        .as_array()
+        .ok_or_else(|| test_error("implementation_refs should be array"))?;
+    assert!(
+        implementation_refs.len() >= 4,
+        "completion debt evidence should cite concrete implementation refs"
+    );
+    for reference in implementation_refs {
+        assert_file_line_ref(&root, reference)?;
+    }
+
+    for (section, missing_item) in COMPLETION_DEBT_SECTIONS {
+        assert_eq!(
+            evidence[*section]["missing_item_id"].as_str(),
+            Some(*missing_item),
+            "{section}.missing_item_id"
+        );
+        assert!(
+            evidence[*section]["next_audit_score_threshold"]
+                .as_u64()
+                .is_some_and(|score| score >= 800),
+            "{section}.next_audit_score_threshold"
+        );
+        assert_required_tests_are_declared(evidence, section, &test_source_text)?;
+    }
+
+    let axes: BTreeSet<_> = evidence["fuzz_primary"]["deterministic_mutation_axes"]
+        .as_array()
+        .ok_or_else(|| test_error("fuzz mutation axes should be array"))?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    for axis in [
+        "failure_signature",
+        "source_kind",
+        "mode",
+        "required_field_omission",
+    ] {
+        assert!(axes.contains(axis), "missing fuzz mutation axis {axis}");
+    }
+
+    let telemetry_fields: BTreeSet<_> = evidence["telemetry_primary"]["required_log_fields"]
+        .as_array()
+        .ok_or_else(|| test_error("telemetry required_log_fields should be array"))?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    for field in REQUIRED_LOG_FIELDS {
+        assert!(
+            telemetry_fields.contains(field),
+            "telemetry evidence missing log field {field}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn gate_script_is_executable() -> TestResult {
     let root = workspace_root()?;
     let script = root.join("scripts/check_workload_reproducer_manifest.sh");
@@ -258,9 +417,21 @@ fn gate_emits_compact_reproducer_manifest_and_jsonl_log() -> TestResult {
     assert_eq!(report["summary"]["input_row_count"].as_u64(), Some(8));
     assert_eq!(report["summary"]["failure_row_count"].as_u64(), Some(7));
     assert_eq!(report["summary"]["reproducer_count"].as_u64(), Some(7));
+    assert_eq!(
+        report["completion_debt_evidence"]["bead"].as_str(),
+        Some("bd-26xb.1.1")
+    );
+    assert_eq!(
+        report["summary"]["completion_debt_bead"].as_str(),
+        Some("bd-26xb.1.1")
+    );
 
     let manifest = load_json(&dir.join("reproducer.manifest.json"))?;
     assert_eq!(manifest["status"].as_str(), Some("pass"));
+    assert_eq!(
+        manifest["completion_debt_evidence"]["original_bead"].as_str(),
+        Some("bd-26xb.1")
+    );
     let reproducers = json_field(&manifest, "reproducers")?
         .as_array()
         .ok_or_else(|| test_error("reproducers should be array"))?;
@@ -308,7 +479,42 @@ fn gate_emits_compact_reproducer_manifest_and_jsonl_log() -> TestResult {
             Some("workload_reproducer_manifest_row")
         );
         assert_eq!(row["status"].as_str(), Some("pass"));
+        assert_eq!(row["completion_debt_bead"].as_str(), Some("bd-26xb.1.1"));
+        assert_eq!(
+            row["completion_debt_original_bead"].as_str(),
+            Some("bd-26xb.1")
+        );
     }
+    Ok(())
+}
+
+#[test]
+fn gate_rejects_stale_completion_debt_test_binding() -> TestResult {
+    let root = workspace_root()?;
+    let dir = unique_output_dir(&root, "workload-reproducer-stale-completion")?;
+    let mut contract =
+        load_json(&root.join("tests/conformance/workload_reproducer_manifest.v1.json"))?;
+    contract["completion_debt_evidence"]["unit_primary"]["required_test_names"] =
+        json!(["missing_completion_debt_test_binding"]);
+    let contract_path = dir.join("broken-contract.json");
+    write_json(&contract_path, &contract)?;
+
+    let output = run_gate_with_contract(&root, &dir, &fixture_rows(), Some(&contract_path))?;
+    assert!(
+        !output.status.success(),
+        "stale completion debt binding should fail"
+    );
+    let report = load_json(&dir.join("reproducer.report.json"))?;
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    let errors = report["errors"]
+        .as_array()
+        .ok_or_else(|| test_error("report.errors should be array"))?;
+    assert!(
+        errors.iter().any(|error| error
+            .as_str()
+            .is_some_and(|text| text.contains("missing_completion_debt_test_binding"))),
+        "report should include stale completion debt test binding error"
+    );
     Ok(())
 }
 
