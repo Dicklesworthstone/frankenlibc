@@ -1,33 +1,18 @@
 {
   "census_version": 1,
-  "generated_utc": "2026-04-27T03:59:17Z",
+  "generated_utc": "2026-05-10T02:53:17Z",
   "workspace_root": "/data/projects/frankenlibc",
   "total_todo_occurrences": 31,
   "total_unique_stub_symbols": 0,
   "total_abi_exports": 4322,
   "total_matrix_symbols": 4119,
   "stubs": [],
-  "inconsistencies": [
-    {
-      "symbol": "tcgetattr",
-      "matrix_status": "RawSyscall",
-      "actual_status": "GlibcCallThrough",
-      "evidence": "termios_abi.rs calls libc::tcgetattr()",
-      "severity": "medium"
-    },
-    {
-      "symbol": "tcsetattr",
-      "matrix_status": "RawSyscall",
-      "actual_status": "GlibcCallThrough",
-      "evidence": "termios_abi.rs calls libc::tcsetattr()",
-      "severity": "medium"
-    }
-  ],
+  "inconsistencies": [],
   "missing_from_abi_and_matrix": [],
   "summary": {
     "reachable_stubs": 0,
     "unreachable_stubs": 0,
-    "matrix_inconsistencies": 2,
+    "matrix_inconsistencies": 0,
     "missing_symbols": 0,
     "by_risk_category": {},
     "by_call_family": {}

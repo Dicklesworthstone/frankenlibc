@@ -139,6 +139,44 @@ fn census_is_deterministic() {
 }
 
 #[test]
+fn termios_raw_syscall_exports_are_not_reported_as_callthrough() {
+    let root = workspace_root();
+    let census_path = root.join("tests/conformance/stub_census.json");
+
+    let output = Command::new("bash")
+        .arg(root.join("scripts/stub_census.sh"))
+        .output()
+        .expect("stub_census.sh should execute");
+    assert!(
+        output.status.success(),
+        "stub_census.sh should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content =
+        std::fs::read_to_string(&census_path).expect("stub_census.json should be readable");
+    let census: serde_json::Value =
+        serde_json::from_str(&content).expect("stub_census.json should be valid JSON");
+    let empty = Vec::new();
+    let inconsistencies = census["inconsistencies"].as_array().unwrap_or(&empty);
+    let stale_termios: Vec<&serde_json::Value> = inconsistencies
+        .iter()
+        .filter(|row| {
+            matches!(
+                row["symbol"].as_str(),
+                Some("tcgetattr") | Some("tcsetattr")
+            ) && row["actual_status"].as_str() == Some("GlibcCallThrough")
+        })
+        .collect();
+
+    assert!(
+        stale_termios.is_empty(),
+        "tcgetattr/tcsetattr use raw ioctl syscalls and must not be reported as call-through: {stale_termios:#?}"
+    );
+}
+
+#[test]
 fn support_matrix_exists_and_valid() {
     let root = workspace_root();
     let matrix_path = root.join("support_matrix.json");

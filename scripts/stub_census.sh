@@ -174,6 +174,44 @@ for s in stubs:
 # Detect support matrix inconsistencies
 inconsistencies = []
 
+def extract_extern_c_body(content, symbol):
+    fn_match = re.search(
+        rf'pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+{re.escape(symbol)}\b',
+        content,
+    )
+    if not fn_match:
+        return None
+    body_start = content.find('{', fn_match.end())
+    if body_start == -1:
+        return None
+    depth = 1
+    pos = body_start + 1
+    while pos < len(content) and depth > 0:
+        if content[pos] == '{':
+            depth += 1
+        elif content[pos] == '}':
+            depth -= 1
+        pos += 1
+    if depth != 0:
+        return None
+    return content[body_start:pos]
+
+def abi_function_body(symbol):
+    abi_module = abi_exports.get(symbol)
+    if not abi_module:
+        return None
+    abi_path = os.path.join(root, abi_module)
+    if not os.path.exists(abi_path):
+        return None
+    with open(abi_path) as f:
+        return extract_extern_c_body(f.read(), symbol)
+
+def abi_function_calls_libc_symbol(symbol):
+    body = abi_function_body(symbol)
+    if body is None:
+        return False
+    return re.search(rf'\blibc::{re.escape(symbol)}\s*\(', body) is not None
+
 # Check resolver symbols marked Stub that are actually Implemented
 resolver_impls = ["getaddrinfo", "freeaddrinfo", "getnameinfo", "gai_strerror"]
 for sym in resolver_impls:
@@ -212,11 +250,12 @@ for sym in pthread_std_thread:
             "severity": "medium",
         })
 
-# Check termios symbols marked RawSyscall that are GlibcCallThrough
-termios_callthrough = ["tcgetattr", "tcsetattr"]
-for sym in termios_callthrough:
+# Check termios symbols marked RawSyscall that are actually GlibcCallThrough.
+# Keep this body-scoped so libc constants/types in termios_abi.rs do not create
+# stale false positives after the implementation moves to raw ioctl syscalls.
+for sym in ["tcgetattr", "tcsetattr"]:
     entry = matrix_symbols.get(sym)
-    if entry and entry["status"] == "RawSyscall":
+    if entry and entry["status"] == "RawSyscall" and abi_function_calls_libc_symbol(sym):
         inconsistencies.append({
             "symbol": sym,
             "matrix_status": "RawSyscall",
