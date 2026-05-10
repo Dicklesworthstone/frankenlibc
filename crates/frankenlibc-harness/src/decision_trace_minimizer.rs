@@ -267,6 +267,143 @@ pub fn minimize(rows: &[TraceRow]) -> Result<MinimizedTrace, MinimizerError> {
     })
 }
 
+/// Required-field list for the persisted JSONL form of
+/// [`MinimizedTrace`] (bd-yhvim). Pinned by the manifest
+/// `serialization_contract` block.
+pub const MINIMIZED_TRACE_REQUIRED_FIELDS: &[&str] = &[
+    "expected_failure_signature",
+    "replay_command",
+    "source_commit",
+    "dropped_row_count",
+    "dropped_row_rationale",
+    "original_artifact_refs",
+    "has_divergence",
+    "minimized_rows_len",
+];
+
+/// Compact summary of a [`MinimizedTrace`] suitable for round-trip
+/// through JSONL. Carries every field except the full
+/// `minimized_rows` (which is captured as `minimized_rows_len` for
+/// compactness; full rows are persisted separately when needed).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MinimizedTraceSummary {
+    pub expected_failure_signature: String,
+    pub replay_command: String,
+    pub source_commit: String,
+    pub dropped_row_count: usize,
+    pub dropped_row_rationale: Vec<String>,
+    pub original_artifact_refs: Vec<String>,
+    pub has_divergence: bool,
+    pub minimized_rows_len: usize,
+}
+
+impl MinimizedTraceSummary {
+    /// Construct a summary from a [`MinimizedTrace`].
+    pub fn from_trace(t: &MinimizedTrace) -> Self {
+        Self {
+            expected_failure_signature: t.expected_failure_signature.clone(),
+            replay_command: t.replay_command.clone(),
+            source_commit: t.source_commit.clone(),
+            dropped_row_count: t.dropped_row_count,
+            dropped_row_rationale: t.dropped_row_rationale.clone(),
+            original_artifact_refs: t.original_artifact_refs.clone(),
+            has_divergence: t.has_divergence,
+            minimized_rows_len: t.minimized_rows.len(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MinimizerSerError {
+    InvalidJson(String),
+    MissingField(&'static str),
+    WrongFieldType(&'static str),
+}
+
+impl core::fmt::Display for MinimizerSerError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            MinimizerSerError::InvalidJson(e) => write!(f, "invalid JSON: {e}"),
+            MinimizerSerError::MissingField(name) => write!(f, "missing field {name}"),
+            MinimizerSerError::WrongFieldType(name) => write!(f, "wrong field type for {name}"),
+        }
+    }
+}
+
+impl std::error::Error for MinimizerSerError {}
+
+/// Serialize a [`MinimizedTrace`] (or its [`MinimizedTraceSummary`])
+/// as a single JSONL line using the lib's `serde_json` dependency.
+pub fn serialize_minimized_trace_jsonl(trace: &MinimizedTrace) -> String {
+    let summary = MinimizedTraceSummary::from_trace(trace);
+    serialize_summary_jsonl(&summary)
+}
+
+pub fn serialize_summary_jsonl(s: &MinimizedTraceSummary) -> String {
+    let v = serde_json::json!({
+        "expected_failure_signature": s.expected_failure_signature,
+        "replay_command": s.replay_command,
+        "source_commit": s.source_commit,
+        "dropped_row_count": s.dropped_row_count,
+        "dropped_row_rationale": s.dropped_row_rationale,
+        "original_artifact_refs": s.original_artifact_refs,
+        "has_divergence": s.has_divergence,
+        "minimized_rows_len": s.minimized_rows_len,
+    });
+    let mut line = v.to_string();
+    line.push('\n');
+    line
+}
+
+/// Parse a JSONL line back into a [`MinimizedTraceSummary`]. Fails
+/// closed when any required field is missing or has the wrong type.
+pub fn parse_minimized_trace_jsonl(line: &str) -> Result<MinimizedTraceSummary, MinimizerSerError> {
+    let v: serde_json::Value = serde_json::from_str(line.trim_end())
+        .map_err(|e| MinimizerSerError::InvalidJson(e.to_string()))?;
+    fn s(v: &serde_json::Value, name: &'static str) -> Result<String, MinimizerSerError> {
+        v.get(name)
+            .ok_or(MinimizerSerError::MissingField(name))?
+            .as_str()
+            .map(str::to_owned)
+            .ok_or(MinimizerSerError::WrongFieldType(name))
+    }
+    fn n(v: &serde_json::Value, name: &'static str) -> Result<u64, MinimizerSerError> {
+        v.get(name)
+            .ok_or(MinimizerSerError::MissingField(name))?
+            .as_u64()
+            .ok_or(MinimizerSerError::WrongFieldType(name))
+    }
+    fn b(v: &serde_json::Value, name: &'static str) -> Result<bool, MinimizerSerError> {
+        v.get(name)
+            .ok_or(MinimizerSerError::MissingField(name))?
+            .as_bool()
+            .ok_or(MinimizerSerError::WrongFieldType(name))
+    }
+    fn vs(v: &serde_json::Value, name: &'static str) -> Result<Vec<String>, MinimizerSerError> {
+        v.get(name)
+            .ok_or(MinimizerSerError::MissingField(name))?
+            .as_array()
+            .ok_or(MinimizerSerError::WrongFieldType(name))?
+            .iter()
+            .map(|e| {
+                e.as_str()
+                    .map(str::to_owned)
+                    .ok_or(MinimizerSerError::WrongFieldType(name))
+            })
+            .collect()
+    }
+    Ok(MinimizedTraceSummary {
+        expected_failure_signature: s(&v, "expected_failure_signature")?,
+        replay_command: s(&v, "replay_command")?,
+        source_commit: s(&v, "source_commit")?,
+        dropped_row_count: n(&v, "dropped_row_count")? as usize,
+        dropped_row_rationale: vs(&v, "dropped_row_rationale")?,
+        original_artifact_refs: vs(&v, "original_artifact_refs")?,
+        has_divergence: b(&v, "has_divergence")?,
+        minimized_rows_len: n(&v, "minimized_rows_len")? as usize,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,5 +608,97 @@ mod tests {
             m.original_artifact_refs,
             vec!["a.jsonl", "b.jsonl", "c.jsonl"]
         );
+    }
+
+    // ── JSONL round-trip tests (bd-yhvim) ────────────────────────────
+
+    #[test]
+    fn jsonl_serialization_emits_one_line_with_every_required_field() {
+        let rows = vec![row(
+            "s",
+            "stdio",
+            "fread",
+            "slow",
+            "adversarial",
+            "Allow",
+            "Repair",
+        )];
+        let m = minimize(&rows).unwrap();
+        let line = serialize_minimized_trace_jsonl(&m);
+        assert!(line.ends_with('\n'));
+        assert_eq!(line.matches('\n').count(), 1);
+        let v: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        for f in MINIMIZED_TRACE_REQUIRED_FIELDS {
+            assert!(v.get(*f).is_some(), "missing field {f}");
+        }
+    }
+
+    #[test]
+    fn jsonl_round_trip_preserves_summary_fields() {
+        let rows = vec![
+            row("s", "stdio", "fread", "fast", "typical", "Allow", "Allow"),
+            row(
+                "s",
+                "stdio",
+                "fread",
+                "slow",
+                "adversarial",
+                "Allow",
+                "Repair",
+            ),
+        ];
+        let m = minimize(&rows).unwrap();
+        let line = serialize_minimized_trace_jsonl(&m);
+        let summary = parse_minimized_trace_jsonl(&line).unwrap();
+        assert_eq!(
+            summary.expected_failure_signature,
+            m.expected_failure_signature
+        );
+        assert_eq!(summary.replay_command, m.replay_command);
+        assert_eq!(summary.source_commit, m.source_commit);
+        assert_eq!(summary.dropped_row_count, m.dropped_row_count);
+        assert_eq!(summary.dropped_row_rationale, m.dropped_row_rationale);
+        assert_eq!(summary.original_artifact_refs, m.original_artifact_refs);
+        assert_eq!(summary.has_divergence, m.has_divergence);
+        assert_eq!(summary.minimized_rows_len, m.minimized_rows.len());
+    }
+
+    #[test]
+    fn jsonl_parser_rejects_missing_required_field() {
+        let bad = r#"{"replay_command":"x","source_commit":"y"}"#;
+        match parse_minimized_trace_jsonl(bad) {
+            Err(MinimizerSerError::MissingField("expected_failure_signature")) => {}
+            other => panic!("expected MissingField; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn jsonl_parser_rejects_wrong_field_type() {
+        let bad = r#"{"expected_failure_signature":"sig","replay_command":"x","source_commit":"y","dropped_row_count":"NOT_A_NUMBER","dropped_row_rationale":[],"original_artifact_refs":[],"has_divergence":false,"minimized_rows_len":0}"#;
+        match parse_minimized_trace_jsonl(bad) {
+            Err(MinimizerSerError::WrongFieldType("dropped_row_count")) => {}
+            other => panic!("expected WrongFieldType; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn jsonl_parser_rejects_invalid_json() {
+        let bad = "{not valid json}";
+        match parse_minimized_trace_jsonl(bad) {
+            Err(MinimizerSerError::InvalidJson(_)) => {}
+            other => panic!("expected InvalidJson; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_divergence_control_serializes_with_empty_signature() {
+        let rows = vec![row(
+            "s", "stdio", "fread", "fast", "typical", "Allow", "Allow",
+        )];
+        let m = minimize(&rows).unwrap();
+        let line = serialize_minimized_trace_jsonl(&m);
+        let summary = parse_minimized_trace_jsonl(&line).unwrap();
+        assert_eq!(summary.expected_failure_signature, "");
+        assert!(!summary.has_divergence);
     }
 }

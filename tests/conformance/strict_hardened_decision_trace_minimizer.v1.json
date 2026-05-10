@@ -244,5 +244,30 @@
     "strict/hardened mode pair incomplete",
     "expected failure signature mismatches computed divergence"
   ],
-  "regeneration_note": "Add new trace cases when another log producer changes row shape. Keep the synthetic divergence first-divergence property stable so agents can compare minimizer output byte-for-byte across runs."
+  "regeneration_note": "Add new trace cases when another log producer changes row shape. Keep the synthetic divergence first-divergence property stable so agents can compare minimizer output byte-for-byte across runs.",
+  "serialization_contract": {
+    "rationale": "Resolves the gap left by the original bd-juvqm.6 module: MinimizedTrace was in-memory only. `frankenlibc_harness::decision_trace_minimizer::serialize_minimized_trace_jsonl(&MinimizedTrace) -> String` emits one JSONL line per trace, and `parse_minimized_trace_jsonl(&str) -> Result<MinimizedTraceSummary, MinimizerSerError>` round-trips it back. Used by replay tooling to persist minimizer outputs.",
+    "serializer_function": "frankenlibc_harness::decision_trace_minimizer::serialize_minimized_trace_jsonl",
+    "parser_function": "frankenlibc_harness::decision_trace_minimizer::parse_minimized_trace_jsonl",
+    "summary_struct": "frankenlibc_harness::decision_trace_minimizer::MinimizedTraceSummary",
+    "report_path_template": "target/conformance/decision_trace_minimizer.<bead>.jsonl",
+    "required_fields": [
+      "expected_failure_signature",
+      "replay_command",
+      "source_commit",
+      "dropped_row_count",
+      "dropped_row_rationale",
+      "original_artifact_refs",
+      "has_divergence",
+      "minimized_rows_len"
+    ],
+    "fail_closed_when_required_field_missing": true,
+    "fail_closed_when_field_type_wrong": true,
+    "fail_closed_when_json_invalid": true,
+    "rejected_serialization_kinds": [
+      "missing_required_field",
+      "wrong_field_type",
+      "invalid_json"
+    ]
+  }
 }
