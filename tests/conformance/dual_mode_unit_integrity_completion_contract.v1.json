@@ -1,0 +1,266 @@
+{
+  "schema_version": "dual_mode_unit_integrity_completion_contract.v1",
+  "original_bead": "bd-oai.4",
+  "completion_debt_bead": "bd-oai.4.1",
+  "generated_at_utc": "2026-05-10T19:05:00Z",
+  "purpose": "Close the bd-oai.4 completion-debt audit items by binding mode immutability, runtime-kernel snapshot completeness, evidence integrity, deterministic replay, and RaptorQ redundancy verification to explicit unit and e2e proof surfaces.",
+  "audit_source": {
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-oai.4/scorecard.md",
+    "audit_score": 570,
+    "threshold": 900,
+    "missing_items": [
+      {
+        "id": "tests.unit.primary",
+        "kind": "unit",
+        "description": "unit test required by bead body"
+      },
+      {
+        "id": "tests.e2e.primary",
+        "kind": "e2e",
+        "description": "e2e test required by bead body"
+      }
+    ]
+  },
+  "source_artifacts": {
+    "runtime_policy": "crates/frankenlibc-abi/src/runtime_policy.rs",
+    "runtime_math": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+    "runtime_math_evidence": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+    "determinism_harness": "crates/frankenlibc-harness/tests/runtime_math_determinism_proofs_test.rs",
+    "determinism_gate": "scripts/check_runtime_math_determinism_proofs.sh",
+    "snapshot_golden": "tests/runtime_math/golden/kernel_snapshot_smoke.v1.json",
+    "completion_contract": "tests/conformance/dual_mode_unit_integrity_completion_contract.v1.json",
+    "completion_checker": "scripts/check_dual_mode_unit_integrity_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/dual_mode_unit_integrity_completion_contract_test.rs"
+  },
+  "source_anchors": {
+    "runtime_policy": [
+      "fn parse_mode_from_environ() -> Result<Option<SafetyLevel>, ()>",
+      "static MODE_STATE: AtomicU8 = AtomicU8::new(MODE_UNRESOLVED);",
+      "static MODE_THREAD_LOCAL_CACHE: Cell<u8> = const { Cell::new(MODE_UNRESOLVED) };",
+      "runtime_mode_switch_attempt",
+      "mode->cache->immutable",
+      "fn mode_resolution_is_sticky_until_cache_reset()",
+      "fn cache_reset_reparses_mode_from_environment()",
+      "fn parse_mode_from_environ_accepts_case_insensitive_aliases()"
+    ],
+    "runtime_math": [
+      "pub struct RuntimeKernelSnapshot",
+      "pub fn snapshot(&self, mode: SafetyLevel) -> RuntimeKernelSnapshot",
+      "fn snapshot_range_violations(",
+      "runtime_snapshot_field_out_of_range",
+      "redundancy_overhead_ppm",
+      "redundancy_loss_rate_ppm",
+      "fn runtime_kernel_snapshot_schema_and_literal_cover_all_fields()",
+      "fn snapshot_contract_ranges_are_sane_for_fresh_kernel()",
+      "fn snapshot_decision_and_evidence_counters_are_monotone()",
+      "fn decision_card_export_json_roundtrip_preserves_payload()",
+      "fn deterministic_replay_produces_identical_decisions_and_evidence()",
+      "fn raptorq_redundancy_budget_survives_target_loss_fraction()"
+    ],
+    "runtime_math_evidence": [
+      "pub struct DecisionCardV1",
+      "pub fn export_decision_cards_json(&self) -> String",
+      "pub fn loss_fraction_max_ppm_v1(k_source: u16, r_repair: u16) -> u32",
+      "fn decision_card_export_is_valid_json()",
+      "fn decision_card_journal_replays_after_restart()"
+    ],
+    "determinism_harness": [
+      "fn runtime_math_kernel_snapshot_golden_checksum_matches_manifest()",
+      "fn gate_script_exists_and_executable()",
+      "fn gate_script_emits_logs_and_report()",
+      "runtime_math.determinism.proof_step",
+      "runtime_math.determinism.mode_finish"
+    ],
+    "determinism_gate": [
+      "runtime-math-determinism-proofs",
+      "--workspace-root",
+      "--log",
+      "--report"
+    ],
+    "completion_checker": [
+      "dual_mode_unit_integrity_contract_validated",
+      "dual_mode_unit_integrity_unit_bindings",
+      "dual_mode_unit_integrity_e2e_bindings",
+      "dual_mode_unit_integrity_summary"
+    ],
+    "completion_harness": [
+      "manifest_binds_unit_and_e2e_items",
+      "runtime_math_sources_cover_snapshot_evidence_and_replay_tests",
+      "checker_emits_structured_completion_evidence",
+      "checker_rejects_missing_runtime_math_anchor"
+    ]
+  },
+  "dual_mode_unit_contract": {
+    "env_key": "FRANKENLIBC_MODE",
+    "allowed_modes": [
+      "strict",
+      "hardened"
+    ],
+    "mode_immutable_after_first_resolution": true,
+    "snapshot_schema_min_field_count": 154,
+    "snapshot_range_validation_required": true,
+    "monotone_decision_and_evidence_counters_required": true,
+    "decision_card_json_roundtrip_required": true,
+    "deterministic_replay_required": true,
+    "raptorq_redundancy_verification_required": true,
+    "snapshot_golden_modes": [
+      "strict",
+      "hardened"
+    ],
+    "snapshot_golden_redundancy_fields": [
+      "redundancy_overhead_ppm",
+      "redundancy_loss_rate_ppm"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "evidence_sources": [
+        "runtime_policy_inline",
+        "runtime_math_inline",
+        "runtime_math_evidence_inline",
+        "completion_harness"
+      ],
+      "required_test_refs": [
+        "runtime_mode_value_parser_is_strict_or_hardened_only",
+        "mode_resolution_is_sticky_until_cache_reset",
+        "cache_reset_reparses_mode_from_environment",
+        "mode_populates_thread_local_cache_after_resolution",
+        "mode_switch_sampler_stays_thread_local_between_rescans",
+        "mode_logging_captures_startup_selection_and_switch_attempt",
+        "parse_mode_from_environ_accepts_case_insensitive_aliases",
+        "runtime_kernel_snapshot_schema_and_literal_cover_all_fields",
+        "snapshot_contract_ranges_are_sane_for_fresh_kernel",
+        "snapshot_decision_and_evidence_counters_are_monotone",
+        "decision_card_export_json_roundtrip_preserves_payload",
+        "deterministic_replay_produces_identical_decisions_and_evidence",
+        "raptorq_redundancy_budget_survives_target_loss_fraction",
+        "decision_card_export_is_valid_json",
+        "decision_card_journal_replays_after_restart",
+        "manifest_binds_unit_and_e2e_items",
+        "runtime_math_sources_cover_snapshot_evidence_and_replay_tests"
+      ],
+      "required_commands": [
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-oai41 rch exec -- cargo test -p frankenlibc-abi mode_ -- --nocapture",
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-oai41 rch exec -- cargo test -p frankenlibc-membrane runtime_math::tests::runtime_kernel_snapshot_schema_and_literal_cover_all_fields -- --nocapture",
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-oai41 rch exec -- cargo test -p frankenlibc-membrane runtime_math::tests::deterministic_replay_produces_identical_decisions_and_evidence -- --nocapture",
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-oai41 rch exec -- cargo test -p frankenlibc-harness --test dual_mode_unit_integrity_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "evidence_sources": [
+        "determinism_harness",
+        "determinism_gate",
+        "completion_checker",
+        "completion_harness"
+      ],
+      "required_test_refs": [
+        "runtime_math_kernel_snapshot_golden_checksum_matches_manifest",
+        "gate_script_exists_and_executable",
+        "gate_script_emits_logs_and_report",
+        "checker_emits_structured_completion_evidence",
+        "checker_rejects_missing_runtime_math_anchor"
+      ],
+      "required_commands": [
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-oai41 rch exec -- bash scripts/check_runtime_math_determinism_proofs.sh",
+        "bash scripts/check_dual_mode_unit_integrity_completion_contract.sh",
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-oai41 rch exec -- cargo check -p frankenlibc-harness --test dual_mode_unit_integrity_completion_contract_test",
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-oai41 rch exec -- cargo clippy -p frankenlibc-harness --test dual_mode_unit_integrity_completion_contract_test -- -D warnings"
+      ]
+    }
+  ],
+  "implementation_refs": [
+    {
+      "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+      "line": 140,
+      "claim": "parse_mode_from_environ resolves FRANKENLIBC_MODE aliases and defaults for strict/hardened mode selection."
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+      "line": 1882,
+      "claim": "mode_resolution_is_sticky_until_cache_reset proves runtime mode immutability after first resolution."
+    },
+    {
+      "path": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "line": 434,
+      "claim": "RuntimeKernelSnapshot declares the dual-mode snapshot schema consumed by the integrity tests."
+    },
+    {
+      "path": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "line": 7123,
+      "claim": "runtime_kernel_snapshot_schema_and_literal_cover_all_fields proves snapshot completeness across the 154-field baseline."
+    },
+    {
+      "path": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "line": 7278,
+      "claim": "deterministic_replay_produces_identical_decisions_and_evidence proves replay determinism for decisions and evidence."
+    },
+    {
+      "path": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+      "line": 3446,
+      "claim": "decision_card_export_is_valid_json proves evidence-card serialization emits valid JSON."
+    },
+    {
+      "path": "crates/frankenlibc-harness/tests/runtime_math_determinism_proofs_test.rs",
+      "line": 36,
+      "claim": "runtime_math_kernel_snapshot_golden_checksum_matches_manifest binds the checked-in strict/hardened golden snapshot to the manifest checksum."
+    }
+  ],
+  "completion_coverage": {
+    "unit": {
+      "runtime_policy_inline_tests": [
+        "runtime_mode_value_parser_is_strict_or_hardened_only",
+        "mode_resolution_is_sticky_until_cache_reset",
+        "cache_reset_reparses_mode_from_environment",
+        "mode_populates_thread_local_cache_after_resolution",
+        "mode_switch_sampler_stays_thread_local_between_rescans",
+        "mode_logging_captures_startup_selection_and_switch_attempt",
+        "parse_mode_from_environ_accepts_case_insensitive_aliases"
+      ],
+      "runtime_math_inline_tests": [
+        "runtime_kernel_snapshot_schema_and_literal_cover_all_fields",
+        "snapshot_contract_ranges_are_sane_for_fresh_kernel",
+        "snapshot_decision_and_evidence_counters_are_monotone",
+        "decision_card_export_json_roundtrip_preserves_payload",
+        "deterministic_replay_produces_identical_decisions_and_evidence",
+        "raptorq_redundancy_budget_survives_target_loss_fraction"
+      ],
+      "runtime_math_evidence_inline_tests": [
+        "decision_card_export_is_valid_json",
+        "decision_card_journal_replays_after_restart"
+      ],
+      "completion_harness_tests": [
+        "manifest_binds_unit_and_e2e_items",
+        "runtime_math_sources_cover_snapshot_evidence_and_replay_tests"
+      ]
+    },
+    "e2e": {
+      "determinism_harness_tests": [
+        "runtime_math_kernel_snapshot_golden_checksum_matches_manifest",
+        "gate_script_exists_and_executable",
+        "gate_script_emits_logs_and_report"
+      ],
+      "completion_checker_tests": [
+        "checker_emits_structured_completion_evidence",
+        "checker_rejects_missing_runtime_math_anchor"
+      ]
+    }
+  },
+  "required_gate_events": [
+    "dual_mode_unit_integrity_contract_validated",
+    "dual_mode_unit_integrity_unit_bindings",
+    "dual_mode_unit_integrity_e2e_bindings",
+    "dual_mode_unit_integrity_summary"
+  ],
+  "expected_report": {
+    "schema_version": "dual_mode_unit_integrity_completion_contract.report.v1",
+    "status": "pass",
+    "missing_item_count": 2,
+    "unit_test_ref_count": 17,
+    "e2e_test_ref_count": 5,
+    "source_anchor_group_count": 7
+  }
+}
