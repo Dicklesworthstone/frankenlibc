@@ -1,0 +1,281 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "gentoo-regression-detector-completion-contract",
+  "bead": "bd-2icq.12",
+  "completion_debt_bead": "bd-2icq.12.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "purpose": "Completion-debt contract for the Gentoo nightly regression detector originally closed under bd-2icq.12. The audit pass required concrete unit, e2e, and telemetry evidence; this manifest binds the regression detector, baseline manager, CI gate, baseline data, and release-gate thresholds to a fail-closed checker with machine-readable output.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-2icq.12/scorecard.md",
+    "spec_path": "passes/2026-05-10T03-16-16Z/beads/bd-2icq.12/spec.json",
+    "score_before": 551,
+    "score_threshold": 800
+  },
+  "runtime_target": {
+    "max_seconds": 90,
+    "external_services_allowed": false,
+    "coverage_artifacts": [
+      "target/conformance/gentoo_regression_detector_completion_contract.report.json",
+      "target/conformance/gentoo_regression_detector_completion_contract.log.jsonl"
+    ],
+    "allowed_command_prefixes": [
+      "bash scripts/check_regression_detector.sh",
+      "python3 -m pytest tests/gentoo/test_regression_detector.py -q",
+      "python3 scripts/gentoo/check_regressions.py",
+      "python3 scripts/gentoo/update_baseline.py"
+    ],
+    "forbidden_command_substrings": [
+      "cargo ",
+      "cargo\t",
+      "git reset --hard",
+      "git clean -fd",
+      "rm -rf"
+    ]
+  },
+  "required_components": [
+    {
+      "component_id": "regression_detector",
+      "implementation": "scripts/gentoo/check_regressions.py",
+      "test_file": "tests/gentoo/test_regression_detector.py",
+      "min_test_count": 20,
+      "coverage_categories": [
+        "new_build_failure",
+        "new_test_failure",
+        "performance_regression_warning",
+        "performance_regression_blocker",
+        "new_healing_pattern",
+        "new_package_exemption",
+        "multiple_regressions",
+        "cli_dry_run_report"
+      ],
+      "required_functions": [
+        {
+          "name": "check_regressions",
+          "line_ref": "scripts/gentoo/check_regressions.py:121"
+        },
+        {
+          "name": "generate_dry_run_data",
+          "line_ref": "scripts/gentoo/check_regressions.py:241"
+        },
+        {
+          "name": "RegressionReport",
+          "line_ref": "scripts/gentoo/check_regressions.py:199"
+        }
+      ],
+      "required_tests": [
+        {
+          "class": "TestRegressionDetection",
+          "test": "test_no_regressions",
+          "line_ref": "tests/gentoo/test_regression_detector.py:48"
+        },
+        {
+          "class": "TestRegressionDetection",
+          "test": "test_build_failure",
+          "line_ref": "tests/gentoo/test_regression_detector.py:59"
+        },
+        {
+          "class": "TestRegressionDetection",
+          "test": "test_test_failure",
+          "line_ref": "tests/gentoo/test_regression_detector.py:70"
+        },
+        {
+          "class": "TestRegressionDetection",
+          "test": "test_performance_regression_block",
+          "line_ref": "tests/gentoo/test_regression_detector.py:99"
+        },
+        {
+          "class": "TestRegressionDetection",
+          "test": "test_multiple_regressions",
+          "line_ref": "tests/gentoo/test_regression_detector.py:136"
+        },
+        {
+          "class": "TestCLI",
+          "test": "test_regression_dry_run",
+          "line_ref": "tests/gentoo/test_regression_detector.py:251"
+        }
+      ]
+    },
+    {
+      "component_id": "baseline_manager",
+      "implementation": "scripts/gentoo/update_baseline.py",
+      "test_file": "tests/gentoo/test_regression_detector.py",
+      "min_test_count": 4,
+      "coverage_categories": [
+        "baseline_from_results",
+        "deterministic_dry_run_baseline",
+        "baseline_show_cli",
+        "baseline_schema"
+      ],
+      "required_functions": [
+        {
+          "name": "create_baseline_from_results",
+          "line_ref": "scripts/gentoo/update_baseline.py:34"
+        },
+        {
+          "name": "generate_dry_run_baseline",
+          "line_ref": "scripts/gentoo/update_baseline.py:67"
+        }
+      ],
+      "required_tests": [
+        {
+          "class": "TestDryRunData",
+          "test": "test_deterministic",
+          "line_ref": "tests/gentoo/test_regression_detector.py:220"
+        },
+        {
+          "class": "TestBaselineGeneration",
+          "test": "test_from_results",
+          "line_ref": "tests/gentoo/test_regression_detector.py:235"
+        },
+        {
+          "class": "TestCLI",
+          "test": "test_baseline_dry_run",
+          "line_ref": "tests/gentoo/test_regression_detector.py:268"
+        },
+        {
+          "class": "TestCLI",
+          "test": "test_baseline_show",
+          "line_ref": "tests/gentoo/test_regression_detector.py:282"
+        }
+      ]
+    }
+  ],
+  "ci_gate_contract": {
+    "script": "scripts/check_regression_detector.sh",
+    "required_script_needles": [
+      "py_compile.compile",
+      "baseline.json schema valid",
+      "--dry-run",
+      "regression_report.json",
+      "baseline dry-run failed",
+      "python3 -m pytest"
+    ],
+    "required_outputs": [
+      "PASS: scripts syntax valid",
+      "PASS: baseline.json schema valid",
+      "PASS: dry-run regression detection produces valid output",
+      "PASS: dry-run baseline creation works",
+      "PASS: Regression Detection gate (bd-2icq.12) all checks passed"
+    ]
+  },
+  "baseline_contract": {
+    "baseline_file": "data/gentoo/baseline.json",
+    "baseline_readme": "data/gentoo/test-baselines/README.md",
+    "min_package_count": 5,
+    "required_package_fields": [
+      "package",
+      "build_status",
+      "test_status",
+      "overhead_percent",
+      "healing_actions",
+      "healing_types",
+      "tests"
+    ],
+    "required_readme_needles": [
+      "python3 scripts/gentoo/test-runner.py --write-baseline --dry-run",
+      "<category>__<package>.json"
+    ]
+  },
+  "release_gate_contract": {
+    "config": "configs/gentoo/release-gates.json",
+    "required_tiers": [
+      "tier1",
+      "top20",
+      "top100"
+    ],
+    "required_thresholds": [
+      "build_success_rate_pct",
+      "test_pass_rate_pct",
+      "max_new_regressions",
+      "max_overhead_pct"
+    ]
+  },
+  "e2e_primary": {
+    "missing_item_id": "tests.e2e.primary",
+    "scenario_count": 3,
+    "scenarios": [
+      {
+        "scenario_id": "clean_current_matches_baseline",
+        "command": "python3 scripts/gentoo/check_regressions.py --baseline data/gentoo/baseline.json --current <generated-clean-current> --output <report>",
+        "expected_exit": 0,
+        "expected_report": {
+          "total_regressions": 0,
+          "has_blockers": false
+        }
+      },
+      {
+        "scenario_id": "blocking_current_fails_gate",
+        "command": "python3 scripts/gentoo/check_regressions.py --baseline data/gentoo/baseline.json --current <generated-blocking-current> --output <report>",
+        "expected_exit": 1,
+        "expected_report": {
+          "has_blockers": true,
+          "required_regression_types": [
+            "NEW_BUILD_FAILURE",
+            "NEW_TEST_FAILURE",
+            "PERFORMANCE_REGRESSION"
+          ]
+        }
+      },
+      {
+        "scenario_id": "ci_gate_runs_all_detector_checks",
+        "command": "bash scripts/check_regression_detector.sh",
+        "expected_exit": 0,
+        "expected_output_needles": [
+          "PASS: scripts syntax valid",
+          "PASS: Regression Detection gate (bd-2icq.12) all checks passed"
+        ]
+      }
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-2icq.12.1",
+    "original_bead": "bd-2icq.12",
+    "next_audit_score_threshold": 800,
+    "test_source": "crates/frankenlibc-harness/tests/gentoo_regression_detector_completion_contract_test.rs",
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_names": [
+        "manifest_anchors_completion_debt",
+        "required_python_tests_exist_in_source",
+        "checker_rejects_stale_required_test_binding"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_test_names": [
+        "checker_accepts_manifest_and_runs_detector_gate",
+        "checker_rejects_missing_e2e_scenario_binding"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "required_test_names": [
+        "checker_accepts_manifest_and_runs_detector_gate",
+        "checker_rejects_missing_telemetry_event_binding"
+      ],
+      "required_events": [
+        "gentoo_regression_detector_component",
+        "gentoo_regression_detector_e2e",
+        "gentoo_regression_detector_summary"
+      ]
+    }
+  },
+  "telemetry_contract": {
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature"
+    ],
+    "required_log_events": [
+      "gentoo_regression_detector_component",
+      "gentoo_regression_detector_e2e",
+      "gentoo_regression_detector_summary"
+    ]
+  }
+}
