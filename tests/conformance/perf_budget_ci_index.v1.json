@@ -1,0 +1,74 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "perf-budget-ci-index",
+  "bead": "bd-2r0",
+  "completion_debt_bead": "bd-2r0.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "a35389c106ac6de397e153229873da4cb7fb8961",
+  "purpose": "Conformance and telemetry index for the perf-budget CI gate originally landed under bd-2r0 (closed 2026-02-11). The audit pass 2026-05-10T03-16-16Z scored bd-2r0 at 470/1000 because the deterministic spec-extractor and evidence-gatherer couldn't link tests.unit.primary, tests.e2e.primary, or telemetry.primary. This sibling manifest names the existing artifacts at file path so the next audit pass can attach evidence.",
+  "primary_unit_test_file": "crates/frankenlibc-harness/tests/perf_budget_test.rs",
+  "primary_unit_test_functions": [
+    "policy_exists_and_valid",
+    "all_budget_tiers_defined",
+    "hotpath_symbols_match_matrix",
+    "assessment_matches_matrix",
+    "budgets_consistent_with_replacement_levels",
+    "waivers_have_required_fields",
+    "variance_guardrails_reasonable",
+    "workload_budget_extension_preserves_parity_first_rules",
+    "workload_budget_rows_cover_user_workload_and_membrane_hotpath",
+    "performance_claim_blockers_fail_closed"
+  ],
+  "primary_e2e_test_file": "crates/frankenlibc-harness/tests/perf_budget_test.rs",
+  "primary_e2e_test_functions": [
+    "gate_script_exists_and_executable",
+    "gate_script_emits_workload_budget_report_and_log"
+  ],
+  "primary_e2e_script": "scripts/check_perf_budget.sh",
+  "policy_artifact": "tests/conformance/perf_budget_policy.json",
+  "telemetry_emission_contract": {
+    "report_artifact_path": "target/conformance/perf_budget_policy.report.json",
+    "log_artifact_path": "target/conformance/perf_budget_policy.log.jsonl",
+    "report_artifact_kind": "json",
+    "log_artifact_kind": "jsonl",
+    "report_emission_command": "scripts/check_perf_budget.sh",
+    "rationale": "scripts/check_perf_budget.sh emits both a JSON report (canonical pass-fail summary plus waiver and tier accounting) and a JSONL event log under target/conformance/. Downstream gates consume both as the canonical telemetry signal that perf budgets hold across hot APIs."
+  },
+  "policy": {
+    "fail_closed_when_primary_unit_test_file_missing": true,
+    "fail_closed_when_primary_e2e_test_file_missing": true,
+    "fail_closed_when_e2e_script_missing": true,
+    "fail_closed_when_e2e_script_not_executable": true,
+    "fail_closed_when_telemetry_paths_drift": true,
+    "fail_closed_when_policy_artifact_missing": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_primary_unit_test_file",
+    "missing_primary_e2e_test_file",
+    "missing_e2e_script",
+    "e2e_script_not_executable",
+    "telemetry_path_drift",
+    "missing_policy_artifact"
+  ],
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-2r0/scorecard.md",
+    "spec_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-2r0/spec.json",
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "score_before": 470,
+    "score_threshold": 700
+  },
+  "summary": {
+    "bead": "bd-2r0",
+    "completion_debt_bead": "bd-2r0.1",
+    "primary_unit_tests_pinned": 10,
+    "primary_e2e_tests_pinned": 2,
+    "telemetry_paths_pinned": 2,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
