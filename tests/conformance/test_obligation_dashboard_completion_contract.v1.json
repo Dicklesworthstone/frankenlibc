@@ -1,0 +1,234 @@
+{
+  "schema": "test_obligation_dashboard_completion_contract.v1",
+  "bead": "bd-3cco",
+  "completion_debt_bead": "bd-3cco.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-3cco/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "artifacts": {
+      "dashboard_generator": "scripts/generate_test_obligation_dashboard.py",
+      "dashboard_checker": "scripts/check_test_obligation_dashboard.sh",
+      "dashboard_artifact": "tests/conformance/test_obligation_dashboard.v1.json",
+      "dashboard_harness_test": "crates/frankenlibc-harness/tests/test_obligation_dashboard_test.rs",
+      "ci_gate": "scripts/ci.sh",
+      "verification_matrix": "tests/conformance/verification_matrix.json",
+      "completion_contract": "tests/conformance/test_obligation_dashboard_completion_contract.v1.json",
+      "completion_checker": "scripts/check_test_obligation_dashboard_completion_contract.sh",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/test_obligation_dashboard_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "scripts/generate_test_obligation_dashboard.py:14",
+      "scripts/generate_test_obligation_dashboard.py:72",
+      "scripts/generate_test_obligation_dashboard.py:100",
+      "scripts/generate_test_obligation_dashboard.py:142",
+      "scripts/generate_test_obligation_dashboard.py:176",
+      "scripts/generate_test_obligation_dashboard.py:199",
+      "scripts/generate_test_obligation_dashboard.py:219",
+      "scripts/generate_test_obligation_dashboard.py:246",
+      "scripts/generate_test_obligation_dashboard.py:252",
+      "scripts/check_test_obligation_dashboard.sh:22",
+      "scripts/check_test_obligation_dashboard.sh:23",
+      "scripts/check_test_obligation_dashboard.sh:39",
+      "scripts/check_test_obligation_dashboard.sh:56",
+      "scripts/check_test_obligation_dashboard.sh:61",
+      "scripts/check_test_obligation_dashboard.sh:70",
+      "scripts/check_test_obligation_dashboard.sh:76",
+      "scripts/check_test_obligation_dashboard.sh:88",
+      "scripts/check_test_obligation_dashboard.sh:95",
+      "crates/frankenlibc-harness/tests/test_obligation_dashboard_test.rs:21",
+      "crates/frankenlibc-harness/tests/test_obligation_dashboard_test.rs:35",
+      "crates/frankenlibc-harness/tests/test_obligation_dashboard_test.rs:65",
+      "crates/frankenlibc-harness/tests/test_obligation_dashboard_test.rs:81",
+      "scripts/ci.sh:240",
+      "scripts/ci.sh:241"
+    ],
+    "dashboard_policy": {
+      "required_schema_version": "v1",
+      "required_bead": "bd-3cco",
+      "required_source": "tests/conformance/verification_matrix.json",
+      "tracked_statuses": [
+        "open",
+        "in_progress",
+        "blocked",
+        "deferred"
+      ],
+      "minimum_dashboard_entries": 1,
+      "minimum_subsystems": 1,
+      "required_categories": [
+        "unit_tests",
+        "e2e_scripts",
+        "structured_logs",
+        "perf_evidence",
+        "conformance_fixtures",
+        "golden_artifacts"
+      ],
+      "required_top_level_fields": [
+        "schema_version",
+        "bead",
+        "generated_at",
+        "source",
+        "summary",
+        "coverage_by_subsystem",
+        "blockers",
+        "by_bead"
+      ],
+      "required_summary_fields": [
+        "entry_count",
+        "subsystem_count",
+        "blocker_count",
+        "blocked_bead_count",
+        "by_blocker",
+        "by_category_missing"
+      ],
+      "required_blocker_fields": [
+        "bead_id",
+        "title",
+        "bead_status",
+        "priority",
+        "subsystem",
+        "stream",
+        "blocker",
+        "category",
+        "coverage_status",
+        "present_in_row_close_blockers",
+        "unit_cmds",
+        "e2e_cmds",
+        "artifact_paths",
+        "log_schema_refs"
+      ],
+      "required_by_bead_fields": [
+        "bead_id",
+        "title",
+        "status",
+        "priority",
+        "assignee",
+        "subsystem",
+        "stream",
+        "required_categories",
+        "blocker_count"
+      ],
+      "required_generator_functions": [
+        "infer_subsystem",
+        "normalize_status",
+        "blocker_name_for_category",
+        "derive_blockers",
+        "build_payload",
+        "run_self_tests",
+        "run_check"
+      ],
+      "required_checker_fragments": [
+        "--self-test",
+        "--check",
+        "closed bead(s) still have unresolved test obligations",
+        "summary.entry_count mismatch",
+        "summary.blocker_count mismatch",
+        "coverage_dashboard",
+        "artifact_refs"
+      ],
+      "required_ci_fragment": "scripts/check_test_obligation_dashboard.sh"
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "dashboard_generator",
+          "name": "test_infer_subsystem_prefers_specific_label"
+        },
+        {
+          "source": "dashboard_generator",
+          "name": "test_blockers_derive_from_missing_required_categories"
+        },
+        {
+          "source": "dashboard_harness_test",
+          "name": "artifact_exists_and_has_expected_schema"
+        },
+        {
+          "source": "dashboard_harness_test",
+          "name": "blockers_have_required_fields_and_no_closed_bead_blockers"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "contract_binds_dashboard_generator_checker_ci_and_tests"
+        }
+      ],
+      "required_commands": [
+        "python3 scripts/generate_test_obligation_dashboard.py --self-test",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test test_obligation_dashboard_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test test_obligation_dashboard_completion_contract_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_scripts": [
+        "scripts/check_test_obligation_dashboard.sh",
+        "scripts/check_test_obligation_dashboard_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {
+          "source": "dashboard_harness_test",
+          "name": "gate_script_exists_and_succeeds"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_emits_report_log_and_runs_existing_dashboard_gate"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_required_source_ref"
+        }
+      ],
+      "required_commands": [
+        "scripts/check_test_obligation_dashboard.sh",
+        "scripts/check_test_obligation_dashboard_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test test_obligation_dashboard_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test test_obligation_dashboard_completion_contract_test -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "required_log_artifacts": [
+        "target/conformance/test_obligation_dashboard_completion_contract.report.json",
+        "target/conformance/test_obligation_dashboard_completion_contract.log.jsonl"
+      ],
+      "required_events": [
+        "test_obligation_dashboard_units_validated",
+        "test_obligation_dashboard_e2e_validated",
+        "test_obligation_dashboard_telemetry_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "event",
+        "status",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "dashboard_entry_count",
+        "dashboard_blocker_count",
+        "dashboard_subsystem_count",
+        "closed_blocker_count",
+        "required_category_count",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    },
+    "test_sources": {
+      "dashboard_generator": "scripts/generate_test_obligation_dashboard.py",
+      "dashboard_harness_test": "crates/frankenlibc-harness/tests/test_obligation_dashboard_test.rs",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/test_obligation_dashboard_completion_contract_test.rs"
+    }
+  }
+}
