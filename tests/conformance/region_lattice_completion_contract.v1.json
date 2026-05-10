@@ -1,0 +1,122 @@
+{
+  "schema_version": "region_lattice_completion_contract.v1",
+  "bead": "bd-32e.3",
+  "completion_debt_bead": "bd-32e.3.1",
+  "description": "Completion-debt evidence binding for the SafetyState region-state lattice implementation.",
+  "source_contract": {
+    "implementation": "crates/frankenlibc-membrane/src/lattice.rs",
+    "lattice_states": [
+      "Valid",
+      "Readable",
+      "Writable",
+      "Quarantined",
+      "Freed",
+      "Invalid",
+      "Unknown"
+    ],
+    "required_laws": [
+      "join_commutative",
+      "join_associative",
+      "join_idempotent",
+      "meet_commutative",
+      "meet_associative",
+      "meet_idempotent",
+      "absorption",
+      "bounds",
+      "join_never_increases_permissiveness",
+      "permission_consistency"
+    ],
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/lattice.rs:30",
+      "crates/frankenlibc-membrane/src/lattice.rs:55",
+      "crates/frankenlibc-membrane/src/lattice.rs:81",
+      "crates/frankenlibc-membrane/src/lattice.rs:101",
+      "crates/frankenlibc-membrane/src/lattice.rs:107",
+      "crates/frankenlibc-membrane/src/lattice.rs:113",
+      "crates/frankenlibc-membrane/src/lattice.rs:119"
+    ],
+    "proof_refs": [
+      "crates/frankenlibc-membrane/src/lattice.rs:129",
+      "crates/frankenlibc-membrane/src/lattice.rs:151",
+      "crates/frankenlibc-membrane/src/lattice.rs:175",
+      "crates/frankenlibc-membrane/src/lattice.rs:191",
+      "crates/frankenlibc-membrane/src/lattice.rs:213",
+      "crates/frankenlibc-membrane/src/lattice.rs:237",
+      "crates/frankenlibc-membrane/src/lattice.rs:271",
+      "crates/frankenlibc-membrane/src/lattice.rs:372",
+      "crates/frankenlibc-membrane/src/lattice.rs:428",
+      "crates/frankenlibc-membrane/src/lattice.rs:493",
+      "crates/frankenlibc-membrane/src/lattice.rs:596",
+      "crates/frankenlibc-membrane/src/lattice.rs:629",
+      "crates/frankenlibc-membrane/src/lattice.rs:667",
+      "crates/frankenlibc-membrane/src/lattice.rs:689"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-32e.3.1",
+    "original_bead": "bd-32e.3",
+    "next_audit_score_threshold": 800,
+    "test_sources": {
+      "lattice": "crates/frankenlibc-membrane/src/lattice.rs",
+      "harness": "crates/frankenlibc-harness/tests/region_lattice_completion_contract_test.rs"
+    },
+    "gate": "scripts/check_region_lattice_completion_contract.sh",
+    "report_path": "target/conformance/region_lattice_completion_contract.report.json",
+    "log_path": "target/conformance/region_lattice_completion_contract.log.jsonl",
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Native SafetyState unit and property tests cover lattice algebra, absorption laws, bounds, monotonic safety, and permission consistency.",
+      "required_test_refs": [
+        {"source": "lattice", "name": "join_is_commutative"},
+        {"source": "lattice", "name": "join_is_associative"},
+        {"source": "lattice", "name": "join_is_idempotent"},
+        {"source": "lattice", "name": "meet_is_commutative"},
+        {"source": "lattice", "name": "meet_is_associative"},
+        {"source": "lattice", "name": "meet_is_idempotent"},
+        {"source": "lattice", "name": "absorption_laws_hold"},
+        {"source": "lattice", "name": "proof_lattice_bounds"},
+        {"source": "lattice", "name": "proof_join_never_increases_permissiveness"},
+        {"source": "lattice", "name": "proof_permission_consistency_with_lattice"},
+        {"source": "lattice", "name": "prop_join_commutative"},
+        {"source": "lattice", "name": "prop_absorption_join"},
+        {"source": "lattice", "name": "prop_join_never_grants_new_read_permission"},
+        {"source": "lattice", "name": "prop_join_never_grants_new_write_permission"}
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "The region lattice checker validates the full contract and emits deterministic report/log artifacts.",
+      "required_test_refs": [
+        {"source": "harness", "name": "checker_emits_report_and_jsonl"},
+        {"source": "harness", "name": "checker_rejects_stale_lattice_test_binding"}
+      ],
+      "required_commands": [
+        "bash scripts/check_region_lattice_completion_contract.sh",
+        "FRANKENLIBC_PROPTEST_CASES=10000 rch exec -- env CARGO_TARGET_DIR=<target> cargo test --locked -p frankenlibc-membrane lattice --lib -- --nocapture --test-threads=1"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "The checker writes structured telemetry that names the completion-debt bead, original bead, tested laws, artifacts, and failure signature.",
+      "required_events": [
+        "region_lattice_completion_contract_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "law_count",
+        "test_refs",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "required_test_refs": [
+        {"source": "harness", "name": "checker_emits_report_and_jsonl"}
+      ]
+    }
+  }
+}
