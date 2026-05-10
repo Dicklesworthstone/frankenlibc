@@ -490,10 +490,19 @@ pub fn load_dossier_inputs_from_disk(
     let semantic_entry = evidence_path(EvidenceKind::SemanticOverlay);
 
     let workload_value = read_evidence_value(root, workload_entry)?;
+    let workload_replay =
+        evidence_ref_from_value(workload_entry, &workload_value, expected_commit)?;
     let runtime_value = read_evidence_value(root, runtime_entry)?;
+    let runtime_decision_log =
+        evidence_ref_from_value(runtime_entry, &runtime_value, expected_commit)?;
     let standalone_value = read_evidence_value(root, standalone_entry)?;
+    let standalone_blocker_snapshot =
+        evidence_ref_from_value(standalone_entry, &standalone_value, expected_commit)?;
     let l1_value = read_evidence_value(root, l1_entry)?;
+    let l1_dashboard_row = evidence_ref_from_value(l1_entry, &l1_value, expected_commit)?;
     let semantic_value = read_evidence_value(root, semantic_entry)?;
+    let semantic_overlay =
+        evidence_ref_from_value(semantic_entry, &semantic_value, expected_commit)?;
 
     let replacement_level = extract_replacement_level(&l1_value)?;
     let first_failing_blocker = extract_first_failing_blocker(&standalone_value);
@@ -509,31 +518,11 @@ pub fn load_dossier_inputs_from_disk(
         .to_string();
 
     Ok(DossierInputs {
-        workload_replay: Some(evidence_ref_from_value(
-            workload_entry,
-            &workload_value,
-            expected_commit,
-        )?),
-        runtime_decision_log: Some(evidence_ref_from_value(
-            runtime_entry,
-            &runtime_value,
-            expected_commit,
-        )?),
-        standalone_blocker_snapshot: Some(evidence_ref_from_value(
-            standalone_entry,
-            &standalone_value,
-            expected_commit,
-        )?),
-        l1_dashboard_row: Some(evidence_ref_from_value(
-            l1_entry,
-            &l1_value,
-            expected_commit,
-        )?),
-        semantic_overlay: Some(evidence_ref_from_value(
-            semantic_entry,
-            &semantic_value,
-            expected_commit,
-        )?),
+        workload_replay: Some(workload_replay),
+        runtime_decision_log: Some(runtime_decision_log),
+        standalone_blocker_snapshot: Some(standalone_blocker_snapshot),
+        l1_dashboard_row: Some(l1_dashboard_row),
+        semantic_overlay: Some(semantic_overlay),
         replacement_level,
         first_failing_blocker,
         top_decision_terms,

@@ -1,6 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.1.1",
+  "source_commit": "current",
   "generated_at_utc": "2026-05-01T17:18:00Z",
   "purpose": "Executable inventory of exported or subsystem-visible contracts whose current implementation is link-compatible but not full POSIX, GNU, or glibc semantics. This extends support_semantic_overlay.v1.json from representative drift into a countable backlog input.",
   "source_artifacts": {

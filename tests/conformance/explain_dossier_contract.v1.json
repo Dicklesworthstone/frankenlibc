@@ -12,6 +12,36 @@
     "l1_dashboard_row",
     "semantic_overlay"
   ],
+  "canonical_evidence_loader": {
+    "missing_result": "DossierLoadError::MissingEvidenceFile",
+    "stale_result": "DossierLoadError::StaleSourceCommit",
+    "source_commit_current_marker": "current",
+    "workload_replay": {
+      "path": "target/conformance/workload_replay.log.jsonl",
+      "summary_pointer": "/summary",
+      "source_commit_pointer": "/source_commit"
+    },
+    "runtime_decision_log": {
+      "path": "target/conformance/runtime_decision.log.jsonl",
+      "summary_pointer": "/summary",
+      "source_commit_pointer": "/source_commit"
+    },
+    "standalone_blocker_snapshot": {
+      "path": "tests/conformance/standalone_replacement_artifact.v1.json",
+      "summary_pointer": "/description",
+      "source_commit_pointer": "/source_commit"
+    },
+    "l1_dashboard_row": {
+      "path": "tests/conformance/replacement_level_dashboard.v1.json",
+      "summary_pointer": "/summary/status",
+      "source_commit_pointer": "/source_commit"
+    },
+    "semantic_overlay": {
+      "path": "tests/conformance/semantic_contract_inventory.v1.json",
+      "summary_pointer": "/summary/blocked_claim",
+      "source_commit_pointer": "/source_commit"
+    }
+  },
   "required_dossier_sections": [
     "practical_recommendation",
     "replacement_level",

@@ -1,0 +1,29 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "replacement-level-dashboard",
+  "bead": "bd-bjozl",
+  "generated_utc": "2026-05-10T03:05:00Z",
+  "source_commit": "current",
+  "purpose": "Canonical L1 dashboard row consumed by the explain dossier loader. The row is intentionally claim-blocked until standalone replacement evidence is current and host-runtime-free.",
+  "summary": {
+    "replacement_level": "L0",
+    "claim_status": "claim_blocked",
+    "status": "L0 remains the current replacement level; L1 promotion is blocked on standalone artifact evidence.",
+    "first_failing_blocker": "standalone_artifact_missing",
+    "next_diagnostic_command": "rch cargo test -p frankenlibc-harness --test explain_dossier_contract_test loader_builds_real_dossier_from_canonical_paths -- --nocapture"
+  },
+  "rows": [
+    {
+      "row_id": "l1-standalone-replacement",
+      "replacement_level": "L0",
+      "target_level": "L1",
+      "claim_status": "claim_blocked",
+      "blocker": "standalone_artifact_missing",
+      "artifact_refs": [
+        "tests/conformance/replacement_level_dashboard.v1.json",
+        "tests/conformance/standalone_replacement_artifact.v1.json"
+      ],
+      "source_commit": "current"
+    }
+  ]
+}

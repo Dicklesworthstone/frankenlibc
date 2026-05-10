@@ -14,11 +14,14 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use frankenlibc_harness::explain_dossier::{
-    Dossier, DossierError, DossierInputs, EvidenceKind, EvidenceRef, build_dossier, render_markdown,
+    DOSSIER_EVIDENCE_PATHS, Dossier, DossierError, DossierInputs, DossierLoadError, EvidenceKind,
+    EvidenceRef, build_dossier, extract_first_failing_blocker, extract_replacement_level,
+    load_dossier_inputs_from_disk, render_markdown,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 type TestResult<T = ()> = Result<T, String>;
 
@@ -42,6 +45,55 @@ fn load_manifest() -> TestResult<Value> {
     let path = manifest_path(&root);
     let content = std::fs::read_to_string(&path).map_err(|err| format!("read {path:?}: {err}"))?;
     serde_json::from_str(&content).map_err(|err| format!("parse {path:?}: {err}"))
+}
+
+fn current_head() -> TestResult<String> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(workspace_root()?)
+        .output()
+        .map_err(|err| format!("git rev-parse HEAD failed to start: {err}"))?;
+    require(output.status.success(), "git rev-parse HEAD must succeed")?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn write_target_log_fixtures(root: &Path, commit: &str) -> TestResult {
+    let target = root.join("target").join("conformance");
+    std::fs::create_dir_all(&target).map_err(|err| format!("create {target:?}: {err}"))?;
+    let workload = json!({
+        "summary": "3 workload replay rows loaded from the current run",
+        "source_commit": commit,
+        "artifact_refs": ["target/conformance/workload_replay.log.jsonl"]
+    });
+    let runtime = json!({
+        "summary": "Allow=124, Repair=3, Deny=0",
+        "source_commit": commit,
+        "top_decision_terms": ["pointer.validate_region", "runtime.mode.strict"],
+        "strict_hardened_divergence_signature": ""
+    });
+    std::fs::write(
+        target.join("workload_replay.log.jsonl"),
+        format!("{workload}\n"),
+    )
+    .map_err(|err| format!("write workload replay log: {err}"))?;
+    std::fs::write(
+        target.join("runtime_decision.log.jsonl"),
+        format!("{runtime}\n"),
+    )
+    .map_err(|err| format!("write runtime decision log: {err}"))?;
+    Ok(())
+}
+
+fn unique_temp_workspace(label: &str) -> TestResult<PathBuf> {
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| format!("system clock before unix epoch: {err}"))?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("frankenlibc-{label}-{pid}-{nanos}"));
+    std::fs::create_dir_all(&path).map_err(|err| format!("create {path:?}: {err}"))?;
+    Ok(path)
 }
 
 fn require(condition: bool, message: impl Into<String>) -> TestResult {
@@ -154,6 +206,32 @@ fn manifest_required_input_kinds_match_dossier_input_set() -> TestResult {
     .into_iter()
     .collect();
     require(kinds == expected, format!("kinds: got {kinds:?}"))
+}
+
+#[test]
+fn manifest_pins_canonical_evidence_loader_paths() -> TestResult {
+    let m = load_manifest()?;
+    let contract = json_field(&m, "canonical_evidence_loader")?;
+    require(
+        json_string(contract, "missing_result")? == "DossierLoadError::MissingEvidenceFile",
+        "missing_result",
+    )?;
+    for entry in DOSSIER_EVIDENCE_PATHS {
+        let row = json_field(contract, entry.kind.label())?;
+        require(
+            json_string(row, "path")? == entry.path,
+            format!("{} path", entry.kind.label()),
+        )?;
+        require(
+            json_string(row, "summary_pointer")? == entry.summary_pointer,
+            format!("{} summary pointer", entry.kind.label()),
+        )?;
+        require(
+            json_string(row, "source_commit_pointer")? == entry.source_commit_pointer,
+            format!("{} source pointer", entry.kind.label()),
+        )?;
+    }
+    Ok(())
 }
 
 #[test]
@@ -329,4 +407,88 @@ fn dossier_is_serializable_to_deterministic_json_and_optional_markdown() -> Test
         )?;
     }
     Ok(())
+}
+
+#[test]
+fn loader_fails_closed_with_precise_missing_kind() -> TestResult {
+    let root = unique_temp_workspace("missing-dossier-evidence")?;
+    match load_dossier_inputs_from_disk(&root, &"1".repeat(40)) {
+        Err(DossierLoadError::MissingEvidenceFile {
+            kind: "workload_replay",
+            ..
+        }) => Ok(()),
+        other => Err(format!("expected missing workload_replay; got {other:?}")),
+    }
+}
+
+#[test]
+fn loader_fails_closed_with_precise_stale_kind() -> TestResult {
+    let root = unique_temp_workspace("stale-dossier-evidence")?;
+    let target = root.join("target").join("conformance");
+    std::fs::create_dir_all(&target).map_err(|err| format!("create {target:?}: {err}"))?;
+    std::fs::write(
+        target.join("workload_replay.log.jsonl"),
+        "{\"summary\":\"stale workload\",\"source_commit\":\"stale\"}\n",
+    )
+    .map_err(|err| format!("write stale workload log: {err}"))?;
+    match load_dossier_inputs_from_disk(&root, &"1".repeat(40)) {
+        Err(DossierLoadError::StaleSourceCommit {
+            kind: "workload_replay",
+            observed,
+            ..
+        }) if observed == "stale" => Ok(()),
+        other => Err(format!("expected stale workload_replay; got {other:?}")),
+    }
+}
+
+#[test]
+fn helpers_extract_dashboard_level_and_first_claim_blocker() -> TestResult {
+    let dashboard = json!({
+        "summary": {
+            "replacement_level": "L0"
+        }
+    });
+    require(
+        extract_replacement_level(&dashboard).map_err(|err| err.to_string())? == "L0",
+        "replacement level",
+    )?;
+    let standalone = json!({
+        "rows": [
+            {
+                "claim_status": "claim_unblocked",
+                "failure_signature": "not-this-one"
+            },
+            {
+                "claim_status": "claim_blocked",
+                "failure_signature": "host_libc_dependency"
+            }
+        ]
+    });
+    require(
+        extract_first_failing_blocker(&standalone) == "host_libc_dependency",
+        "first claim_blocked row",
+    )
+}
+
+#[test]
+fn loader_builds_real_dossier_from_canonical_paths() -> TestResult {
+    let root = workspace_root()?;
+    let commit = current_head()?;
+    write_target_log_fixtures(&root, &commit)?;
+    let inputs = load_dossier_inputs_from_disk(&root, &commit)
+        .map_err(|err| format!("canonical loader should succeed: {err}"))?;
+    let dossier = build_dossier(&inputs, &commit)
+        .map_err(|err| format!("loaded inputs should build a dossier: {err}"))?;
+    require(dossier.source_commit == commit, "source_commit")?;
+    require(dossier.evidence_rows.len() == 5, "5 loaded rows")?;
+    require(
+        dossier.replacement_level == "L0",
+        format!("replacement level: {}", dossier.replacement_level),
+    )?;
+    require(
+        dossier
+            .all_artifact_refs
+            .contains(&"target/conformance/workload_replay.log.jsonl".to_string()),
+        "workload log artifact ref",
+    )
 }
