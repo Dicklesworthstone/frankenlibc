@@ -1,0 +1,115 @@
+{
+  "schema_version": "runtime_math_divergence_bounds_integration_contract.v1",
+  "bead_id": "bd-2625.1",
+  "original_bead": "bd-2625",
+  "trace_id": "bd-2625.1::runtime-math-divergence-bounds::integration::v1",
+  "description": "Completion contract for the strict-vs-hardened runtime_math divergence-bounds integration test obligation. The contract binds the checked divergence matrix, the harness gate, and a Rust integration test that executes the paired strict/hardened gate and validates structured report output.",
+  "source_artifacts": [
+    {
+      "id": "divergence_matrix",
+      "kind": "input_matrix",
+      "path": "tests/runtime_math/runtime_math_divergence_bounds.v1.json",
+      "evidence": "Declares representative evaluation cases, required paired-mode decisions, and forbidden divergence classes."
+    },
+    {
+      "id": "divergence_gate_script",
+      "kind": "gate",
+      "path": "scripts/check_runtime_math_divergence_bounds.sh",
+      "evidence": "Runs the runtime-math-divergence-bounds harness command and emits JSONL/report artifacts."
+    },
+    {
+      "id": "divergence_harness",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-harness/src/runtime_math_divergence_bounds.rs",
+      "evidence": "Evaluates every matrix case against strict and hardened RuntimeMathKernel decisions, rejects forbidden divergence, and writes structured evidence."
+    },
+    {
+      "id": "existing_integration_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/runtime_math_divergence_bounds_test.rs",
+      "evidence": "Runs the gate script and checks structured logs and report summary for the original bead."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/runtime_math/runtime_math_divergence_bounds_integration_contract.v1.json",
+      "evidence": "Machine-readable binding for the completion-debt integration obligation."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_runtime_math_divergence_bounds_integration_contract.sh",
+      "evidence": "Fail-closed validator for the integration contract and its source/test bindings."
+    },
+    {
+      "id": "completion_integration_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/runtime_math_divergence_bounds_integration_contract_test.rs",
+      "evidence": "Rust integration test that runs the completion checker and directly executes the runtime_math divergence harness into isolated artifacts."
+    }
+  ],
+  "integration_contract": {
+    "missing_item_id": "tests.integration.primary",
+    "test_kind": "rust_integration_test",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_matrix_counts": {
+      "evaluation_cases_min": 4,
+      "required_cases_min": 3,
+      "forbidden_divergences_min": 3
+    },
+    "required_report_summary": {
+      "failed": 0,
+      "violations": 0
+    },
+    "required_log_events": [
+      "runtime_math.divergence_bounds.start",
+      "runtime_math.divergence_bounds.case"
+    ],
+    "required_output_artifacts": [
+      "runtime_math_divergence_bounds.integration.log.jsonl",
+      "runtime_math_divergence_bounds.integration.report.json"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.integration.primary",
+      "implementation_refs": [
+        "tests/runtime_math/runtime_math_divergence_bounds.v1.json",
+        "crates/frankenlibc-harness/src/runtime_math_divergence_bounds.rs",
+        "scripts/check_runtime_math_divergence_bounds.sh",
+        "tests/runtime_math/runtime_math_divergence_bounds_integration_contract.v1.json",
+        "scripts/check_runtime_math_divergence_bounds_integration_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/runtime_math_divergence_bounds_test.rs",
+        "crates/frankenlibc-harness/tests/runtime_math_divergence_bounds_integration_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "frankenlibc_harness::runtime_math_divergence_bounds::run_and_write",
+        "scripts/check_runtime_math_divergence_bounds_integration_contract.sh"
+      ]
+    }
+  ],
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_runtime_math_divergence_integration_sources",
+      "checker_accepts_runtime_math_divergence_integration_contract",
+      "integration_gate_generates_structured_runtime_report"
+    ],
+    "negative": [
+      "checker_rejects_missing_integration_binding",
+      "checker_rejects_missing_strict_hardened_mode_pair"
+    ]
+  },
+  "closeout_expectation": {
+    "audit_item": "tests.integration.primary",
+    "close_reason_must_cite": [
+      "tests/runtime_math/runtime_math_divergence_bounds_integration_contract.v1.json",
+      "scripts/check_runtime_math_divergence_bounds_integration_contract.sh",
+      "crates/frankenlibc-harness/tests/runtime_math_divergence_bounds_integration_contract_test.rs"
+    ]
+  }
+}
