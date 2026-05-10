@@ -184,6 +184,20 @@ def run_package(
     baseline = run_mode(image, package, "baseline", package_dir, timeout_seconds, franken_mode, dry_run)
     instrumented = run_mode(image, package, "instrumented", package_dir, timeout_seconds, franken_mode, dry_run)
     comparison = compare_mode_results(baseline, instrumented)
+    telemetry = {
+        "schema_version": "gentoo_test_execution_telemetry.v1",
+        "package": package,
+        "frankenlibc_mode": franken_mode,
+        "baseline_log": baseline.log_file,
+        "instrumented_log": instrumented.log_file,
+        "frankenlibc_log": instrumented.frankenlibc_log,
+        "healing_actions": instrumented.healing_actions,
+        "healing_breakdown": instrumented.healing_breakdown or {},
+        "new_failures": comparison["new_failures"],
+        "new_passes": comparison["new_passes"],
+        "overhead_percent": comparison["overhead_percent"],
+        "verdict": comparison["verdict"],
+    }
 
     result = {
         "package": package,
@@ -191,6 +205,7 @@ def run_package(
         "baseline": asdict(baseline),
         "instrumented": asdict(instrumented),
         "comparison": comparison,
+        "telemetry": telemetry,
         "timestamp": utc_now(),
     }
     (package_dir / "result.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -246,6 +261,22 @@ def main() -> int:
         "regressions": sum(1 for item in all_results if item["comparison"]["verdict"] == "REGRESSION"),
         "improvements": sum(1 for item in all_results if item["comparison"]["verdict"] == "IMPROVEMENT"),
         "neutral_or_pass": sum(1 for item in all_results if item["comparison"]["verdict"] in {"PASS", "NEUTRAL"}),
+        "telemetry": {
+            "schema_version": "gentoo_test_execution_summary_telemetry.v1",
+            "packages": [
+                {
+                    "package": item["package"],
+                    "frankenlibc_mode": item["telemetry"]["frankenlibc_mode"],
+                    "verdict": item["telemetry"]["verdict"],
+                    "baseline_total_tests": item["baseline"]["total_tests"],
+                    "instrumented_total_tests": item["instrumented"]["total_tests"],
+                    "new_failures": item["telemetry"]["new_failures"],
+                    "healing_actions": item["telemetry"]["healing_actions"],
+                    "frankenlibc_log": item["telemetry"]["frankenlibc_log"],
+                }
+                for item in all_results
+            ],
+        },
     }
     (output_root / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))

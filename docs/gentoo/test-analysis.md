@@ -47,3 +47,17 @@ python3 scripts/gentoo/analyze-healing.py \
   /path/to/frankenlibc.jsonl \
   --output healing-summary.json
 ```
+
+## Telemetry Contract
+
+`test-runner.py` writes two telemetry schemas:
+
+- `gentoo_test_execution_telemetry.v1` in each per-package `result.json`
+- `gentoo_test_execution_summary_telemetry.v1` in aggregate `summary.json`
+
+Per-package telemetry binds the baseline log, instrumented log,
+`frankenlibc_log`, `healing_actions`, `healing_breakdown`, comparison
+verdict, and new failure/pass lists. Summary telemetry repeats the
+package-level verdict, total test counts, healing count, and FrankenLibC
+log path for every package so audit tooling can cite telemetry without
+replaying the full Docker run.

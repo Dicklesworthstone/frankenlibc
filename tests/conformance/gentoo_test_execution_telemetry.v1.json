@@ -1,0 +1,118 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "gentoo-test-execution-telemetry",
+  "bead": "bd-2icq.8",
+  "completion_debt_bead": "bd-2icq.8.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "675b6a53d726ace3db46d951da6f4238a26cd358",
+  "purpose": "Telemetry contract for the Gentoo package test execution framework originally closed under bd-2icq.8. The audit pass 2026-05-10T03-16-16Z scored bd-2icq.8 at 440/1000 with missing telemetry.primary evidence. This manifest and harness gate make the per-package and aggregate telemetry fields explicit so the next audit pass can cite concrete file-backed evidence.",
+  "runner_file": "scripts/gentoo/test-runner.py",
+  "docs_file": "docs/gentoo/test-analysis.md",
+  "baseline_directory": "data/gentoo/test-baselines",
+  "telemetry_contract": {
+    "per_package_result_path": "artifacts/gentoo-tests/<sanitized-package>/result.json",
+    "summary_path": "artifacts/gentoo-tests/summary.json",
+    "required_result_fields": [
+      "package",
+      "timestamp",
+      "baseline",
+      "instrumented",
+      "comparison",
+      "telemetry"
+    ],
+    "required_instrumented_fields": [
+      "total_tests",
+      "passed",
+      "failed",
+      "skipped",
+      "duration_seconds",
+      "failed_tests",
+      "log_file",
+      "frankenlibc_log",
+      "healing_actions",
+      "healing_breakdown"
+    ],
+    "required_comparison_fields": [
+      "new_failures",
+      "new_passes",
+      "overhead_percent",
+      "verdict"
+    ],
+    "required_telemetry_fields": [
+      "schema_version",
+      "package",
+      "frankenlibc_mode",
+      "baseline_log",
+      "instrumented_log",
+      "frankenlibc_log",
+      "healing_actions",
+      "healing_breakdown",
+      "new_failures",
+      "new_passes",
+      "overhead_percent",
+      "verdict"
+    ],
+    "required_summary_fields": [
+      "timestamp",
+      "package_count",
+      "regressions",
+      "improvements",
+      "neutral_or_pass",
+      "telemetry"
+    ],
+    "required_summary_telemetry_fields": [
+      "schema_version",
+      "packages"
+    ],
+    "required_summary_package_fields": [
+      "package",
+      "frankenlibc_mode",
+      "verdict",
+      "baseline_total_tests",
+      "instrumented_total_tests",
+      "new_failures",
+      "healing_actions",
+      "frankenlibc_log"
+    ]
+  },
+  "dry_run_probe": {
+    "command": "python3 scripts/gentoo/test-runner.py --dry-run --package sys-apps/coreutils --output target/conformance/gentoo-test-execution-telemetry",
+    "package": "sys-apps/coreutils",
+    "sanitized_package": "sys-apps__coreutils",
+    "expected_frankenlibc_mode": "hardened",
+    "expected_verdict": "NEUTRAL",
+    "expected_baseline_total_tests": 10,
+    "expected_instrumented_total_tests": 10,
+    "expected_healing_actions": 0
+  },
+  "policy": {
+    "fail_closed_when_result_telemetry_missing": true,
+    "fail_closed_when_summary_telemetry_missing": true,
+    "fail_closed_when_instrumented_frankenlibc_log_missing": true,
+    "fail_closed_when_dry_run_probe_missing": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_result_telemetry",
+    "missing_summary_telemetry",
+    "missing_frankenlibc_log_binding",
+    "missing_healing_breakdown",
+    "missing_dry_run_probe"
+  ],
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-2icq.8/scorecard.md",
+    "spec_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-2icq.8/spec.json",
+    "missing_item_id": "telemetry.primary",
+    "score_before": 440,
+    "score_threshold": 700
+  },
+  "summary": {
+    "bead": "bd-2icq.8",
+    "completion_debt_bead": "bd-2icq.8.1",
+    "result_telemetry_pinned": true,
+    "summary_telemetry_pinned": true,
+    "dry_run_probe_pinned": true,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
