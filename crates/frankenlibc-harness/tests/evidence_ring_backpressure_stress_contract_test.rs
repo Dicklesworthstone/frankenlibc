@@ -18,7 +18,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use frankenlibc_harness::evidence_ring_backpressure::{
-    ModelRing, StressDriver, validate_stress_report,
+    ModelRing, REAL_RING_REPORT_REQUIRED_FIELDS, StressDriver, run_real_ring_stress,
+    serialize_real_ring_report_jsonl, validate_real_ring_report, validate_stress_report,
 };
 use serde_json::Value;
 
@@ -383,5 +384,130 @@ fn real_runtime_evidence_ring_overwrites_and_seqno_is_monotone() -> TestResult {
             "real ring derived loss {derived_loss} must >= {} (drive past capacity)",
             total - CAP as u64
         ),
+    )
+}
+
+// ── Real-ring runner tests (bd-9nyo2) ────────────────────────────────
+
+#[test]
+fn manifest_real_ring_report_block_pins_required_fields() -> TestResult {
+    let m = load_manifest()?;
+    let block = json_field(&m, "real_ring_report")?;
+    require(
+        json_string(block, "report_path_template")?
+            == "target/conformance/evidence_ring_backpressure.real.jsonl",
+        "report_path_template",
+    )?;
+    let required: BTreeSet<&str> = json_array(block, "required_fields")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let lib_required: BTreeSet<&str> = REAL_RING_REPORT_REQUIRED_FIELDS.iter().copied().collect();
+    require(
+        required == lib_required,
+        format!(
+            "lib REAL_RING_REPORT_REQUIRED_FIELDS must match manifest required_fields; lib={lib_required:?}, manifest={required:?}"
+        ),
+    )?;
+    for f in [
+        "fail_closed_when_required_field_missing",
+        "fail_closed_when_derived_loss_inconsistent",
+        "fail_closed_when_seqno_non_monotone",
+        "fail_closed_when_source_commit_invalid",
+    ] {
+        require(json_bool(block, f)?, format!("{f} must be true"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn run_real_ring_stress_emits_validatable_report() -> TestResult {
+    let commit = "1".repeat(40);
+    let report = run_real_ring_stress::<32>(0xc0ffee_u64, 4, &commit);
+    require(report.ring_capacity == 32, "ring_capacity")?;
+    require(report.total_pushed == 32 * 4, "total_pushed")?;
+    require(report.snapshot_size <= 32, "snapshot_size <= cap")?;
+    require(report.monotone_seqno, "seqno must be monotone")?;
+    require(
+        report.derived_loss == report.total_pushed - report.snapshot_size as u64,
+        format!(
+            "derived_loss {} must equal total_pushed {} - snapshot_size {}",
+            report.derived_loss, report.total_pushed, report.snapshot_size
+        ),
+    )?;
+    require(report.max_epoch >= 3, "max_epoch >= 3 under drive=4")?;
+    let rej = validate_real_ring_report(&report);
+    require(
+        rej.is_empty(),
+        format!("clean real ring report must validate; got {rej:?}"),
+    )
+}
+
+#[test]
+fn run_real_ring_stress_is_deterministic_under_same_seed() -> TestResult {
+    let commit = "1".repeat(40);
+    let a = run_real_ring_stress::<32>(0xdeadbeef_u64, 4, &commit);
+    let b = run_real_ring_stress::<32>(0xdeadbeef_u64, 4, &commit);
+    // Production EvidenceRingBuffer is deterministic in seqno
+    // allocation order; payload byte derivation from seed is the
+    // same. The whole report must match.
+    require(a == b, format!("nondeterministic: {a:?} vs {b:?}"))
+}
+
+#[test]
+fn validate_real_ring_report_rejects_inconsistent_derived_loss() -> TestResult {
+    let commit = "1".repeat(40);
+    let mut r = run_real_ring_stress::<32>(0x7777_u64, 4, &commit);
+    r.derived_loss = r.derived_loss.wrapping_sub(1);
+    let rej = validate_real_ring_report(&r);
+    require(
+        rej.contains(&"loss_count_underreports_gap".to_string()),
+        format!("must reject inconsistent derived_loss; got {rej:?}"),
+    )
+}
+
+#[test]
+fn validate_real_ring_report_rejects_non_monotone_seqno() -> TestResult {
+    let commit = "1".repeat(40);
+    let mut r = run_real_ring_stress::<32>(0x8888_u64, 4, &commit);
+    r.monotone_seqno = false;
+    let rej = validate_real_ring_report(&r);
+    require(
+        rej.contains(&"non_monotone_seqno".to_string()),
+        format!("must reject non-monotone seqno; got {rej:?}"),
+    )
+}
+
+#[test]
+fn validate_real_ring_report_rejects_invalid_source_commit() -> TestResult {
+    let mut r = run_real_ring_stress::<32>(0x9999_u64, 4, "stale-commit");
+    r.source_commit = "not-a-sha".to_string();
+    let rej = validate_real_ring_report(&r);
+    require(
+        rej.contains(&"stale_source_commit".to_string()),
+        format!("must reject invalid source_commit; got {rej:?}"),
+    )
+}
+
+#[test]
+fn serialize_real_ring_report_jsonl_emits_one_line_with_every_required_field() -> TestResult {
+    let commit = "a".repeat(40);
+    let r = run_real_ring_stress::<32>(0x1111_u64, 4, &commit);
+    let line = serialize_real_ring_report_jsonl(&r);
+    require(line.ends_with('\n'), "must end with newline")?;
+    require(line.matches('\n').count() == 1, "must be exactly one line")?;
+    // Parse the JSON and assert every required field is present.
+    let trimmed = line.trim_end();
+    let parsed: Value =
+        serde_json::from_str(trimmed).map_err(|e| format!("parse: {e}; line={trimmed}"))?;
+    for f in REAL_RING_REPORT_REQUIRED_FIELDS {
+        require(
+            parsed.get(*f).is_some(),
+            format!("serialized JSONL must contain field `{f}`"),
+        )?;
+    }
+    require(
+        parsed["source_commit"].as_str() == Some(commit.as_str()),
+        "source_commit must round-trip",
     )
 }

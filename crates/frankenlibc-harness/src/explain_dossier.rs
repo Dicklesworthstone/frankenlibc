@@ -20,6 +20,9 @@
 //!     `SupportTaxonomyPromotedWithoutSemanticParity`
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidenceRef {
@@ -40,7 +43,7 @@ pub enum EvidenceKind {
 }
 
 impl EvidenceKind {
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             EvidenceKind::WorkloadReplay => "workload_replay",
             EvidenceKind::RuntimeDecisionLog => "runtime_decision_log",
@@ -50,6 +53,56 @@ impl EvidenceKind {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DossierEvidencePath {
+    pub kind: EvidenceKind,
+    pub kind_label: &'static str,
+    pub path: &'static str,
+    pub summary_pointer: &'static str,
+    pub source_commit_pointer: &'static str,
+}
+
+/// Canonical on-disk evidence paths for [`load_dossier_inputs_from_disk`].
+/// The JSON pointer fields document exactly where each evidence row's
+/// `summary` and `source_commit` are read from.
+pub const DOSSIER_EVIDENCE_PATHS: [DossierEvidencePath; 5] = [
+    DossierEvidencePath {
+        kind: EvidenceKind::WorkloadReplay,
+        kind_label: "workload_replay",
+        path: "target/conformance/workload_replay.log.jsonl",
+        summary_pointer: "/summary",
+        source_commit_pointer: "/source_commit",
+    },
+    DossierEvidencePath {
+        kind: EvidenceKind::RuntimeDecisionLog,
+        kind_label: "runtime_decision_log",
+        path: "target/conformance/runtime_decision.log.jsonl",
+        summary_pointer: "/summary",
+        source_commit_pointer: "/source_commit",
+    },
+    DossierEvidencePath {
+        kind: EvidenceKind::StandaloneBlockerSnapshot,
+        kind_label: "standalone_blocker_snapshot",
+        path: "tests/conformance/standalone_replacement_artifact.v1.json",
+        summary_pointer: "/description",
+        source_commit_pointer: "/source_commit",
+    },
+    DossierEvidencePath {
+        kind: EvidenceKind::L1DashboardRow,
+        kind_label: "l1_dashboard_row",
+        path: "tests/conformance/replacement_level_dashboard.v1.json",
+        summary_pointer: "/summary/status",
+        source_commit_pointer: "/source_commit",
+    },
+    DossierEvidencePath {
+        kind: EvidenceKind::SemanticOverlay,
+        kind_label: "semantic_overlay",
+        path: "tests/conformance/semantic_contract_inventory.v1.json",
+        summary_pointer: "/summary/blocked_claim",
+        source_commit_pointer: "/source_commit",
+    },
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DossierInputs {
@@ -138,6 +191,357 @@ impl core::fmt::Display for DossierError {
 }
 
 impl std::error::Error for DossierError {}
+
+#[derive(Debug)]
+pub enum DossierLoadError {
+    MissingEvidenceFile {
+        kind: &'static str,
+        path: PathBuf,
+    },
+    EvidenceReadFailed {
+        kind: &'static str,
+        path: PathBuf,
+        message: String,
+    },
+    InvalidJson {
+        kind: &'static str,
+        path: PathBuf,
+        message: String,
+    },
+    MissingJsonPointer {
+        kind: &'static str,
+        pointer: &'static str,
+    },
+    InvalidJsonPointerType {
+        kind: &'static str,
+        pointer: &'static str,
+    },
+    StaleSourceCommit {
+        kind: &'static str,
+        expected: String,
+        observed: String,
+    },
+    EmptyReplacementLevel,
+}
+
+impl core::fmt::Display for DossierLoadError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            DossierLoadError::MissingEvidenceFile { kind, path } => {
+                write!(f, "{kind} evidence file is missing: {}", path.display())
+            }
+            DossierLoadError::EvidenceReadFailed {
+                kind,
+                path,
+                message,
+            } => write!(
+                f,
+                "{kind} evidence file could not be read at {}: {message}",
+                path.display()
+            ),
+            DossierLoadError::InvalidJson {
+                kind,
+                path,
+                message,
+            } => write!(
+                f,
+                "{kind} evidence file is not valid JSON at {}: {message}",
+                path.display()
+            ),
+            DossierLoadError::MissingJsonPointer { kind, pointer } => {
+                write!(f, "{kind} evidence is missing JSON pointer {pointer}")
+            }
+            DossierLoadError::InvalidJsonPointerType { kind, pointer } => {
+                write!(f, "{kind} JSON pointer {pointer} must resolve to a string")
+            }
+            DossierLoadError::StaleSourceCommit {
+                kind,
+                expected,
+                observed,
+            } => write!(
+                f,
+                "{kind} source_commit is stale: observed {observed:?}, expected {expected:?}"
+            ),
+            DossierLoadError::EmptyReplacementLevel => {
+                f.write_str("l1_dashboard_row replacement level is empty")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DossierLoadError {}
+
+fn evidence_path(kind: EvidenceKind) -> &'static DossierEvidencePath {
+    DOSSIER_EVIDENCE_PATHS
+        .iter()
+        .find(|entry| entry.kind == kind)
+        .expect("every EvidenceKind must have a DOSSIER_EVIDENCE_PATHS entry")
+}
+
+fn read_evidence_value(
+    workspace_root: &Path,
+    entry: &DossierEvidencePath,
+) -> Result<Value, DossierLoadError> {
+    let full_path = workspace_root.join(entry.path);
+    let content = match std::fs::read_to_string(&full_path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(DossierLoadError::MissingEvidenceFile {
+                kind: entry.kind_label,
+                path: full_path,
+            });
+        }
+        Err(err) => {
+            return Err(DossierLoadError::EvidenceReadFailed {
+                kind: entry.kind_label,
+                path: full_path,
+                message: err.to_string(),
+            });
+        }
+    };
+    if entry.path.ends_with(".jsonl") {
+        read_jsonl_evidence(entry, &full_path, &content)
+    } else {
+        serde_json::from_str(&content).map_err(|err| DossierLoadError::InvalidJson {
+            kind: entry.kind_label,
+            path: full_path,
+            message: err.to_string(),
+        })
+    }
+}
+
+fn read_jsonl_evidence(
+    entry: &DossierEvidencePath,
+    full_path: &Path,
+    content: &str,
+) -> Result<Value, DossierLoadError> {
+    let mut rows = Vec::new();
+    for (line_idx, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let row: Value =
+            serde_json::from_str(trimmed).map_err(|err| DossierLoadError::InvalidJson {
+                kind: entry.kind_label,
+                path: full_path.to_path_buf(),
+                message: format!("line {}: {err}", line_idx + 1),
+            })?;
+        rows.push(row);
+    }
+    if rows.is_empty() {
+        return Err(DossierLoadError::InvalidJson {
+            kind: entry.kind_label,
+            path: full_path.to_path_buf(),
+            message: "jsonl file has no non-empty rows".to_string(),
+        });
+    }
+    if rows.len() == 1 {
+        return Ok(rows.remove(0));
+    }
+
+    let source_commit = rows
+        .iter()
+        .find_map(|row| row.pointer("/source_commit").and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_string();
+    let summary = rows
+        .iter()
+        .find_map(|row| row.pointer("/summary").and_then(Value::as_str))
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{} evidence rows", rows.len()));
+    let mut object = serde_json::Map::new();
+    object.insert("summary".to_string(), Value::String(summary));
+    object.insert("source_commit".to_string(), Value::String(source_commit));
+    object.insert("rows".to_string(), Value::Array(rows));
+    Ok(Value::Object(object))
+}
+
+fn json_string_at(
+    kind: &'static str,
+    value: &Value,
+    pointer: &'static str,
+) -> Result<String, DossierLoadError> {
+    let Some(raw) = value.pointer(pointer) else {
+        return Err(DossierLoadError::MissingJsonPointer { kind, pointer });
+    };
+    raw.as_str()
+        .map(str::to_string)
+        .ok_or(DossierLoadError::InvalidJsonPointerType { kind, pointer })
+}
+
+fn normalized_source_commit(
+    kind: &'static str,
+    observed: String,
+    expected_commit: &str,
+) -> Result<String, DossierLoadError> {
+    if observed == expected_commit || observed == "current" {
+        Ok(expected_commit.to_string())
+    } else {
+        Err(DossierLoadError::StaleSourceCommit {
+            kind,
+            expected: expected_commit.to_string(),
+            observed,
+        })
+    }
+}
+
+fn evidence_ref_from_value(
+    entry: &DossierEvidencePath,
+    value: &Value,
+    expected_commit: &str,
+) -> Result<EvidenceRef, DossierLoadError> {
+    let summary = json_string_at(entry.kind_label, value, entry.summary_pointer)?;
+    let observed = json_string_at(entry.kind_label, value, entry.source_commit_pointer)?;
+    let source_commit = normalized_source_commit(entry.kind_label, observed, expected_commit)?;
+    Ok(EvidenceRef {
+        kind: entry.kind,
+        artifact_refs: vec![entry.path.to_string()],
+        source_commit,
+        summary,
+    })
+}
+
+pub fn extract_replacement_level(l1_dashboard: &Value) -> Result<String, DossierLoadError> {
+    let kind = EvidenceKind::L1DashboardRow.label();
+    let level = json_string_at(kind, l1_dashboard, "/summary/replacement_level")?;
+    if level.is_empty() {
+        return Err(DossierLoadError::EmptyReplacementLevel);
+    }
+    Ok(level)
+}
+
+pub fn extract_first_failing_blocker(standalone_snapshot: &Value) -> String {
+    fn scan(value: &Value) -> Option<String> {
+        match value {
+            Value::Array(rows) => rows.iter().find_map(scan),
+            Value::Object(object) => {
+                if object
+                    .get("claim_status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status == "claim_blocked")
+                {
+                    for key in [
+                        "failure_signature",
+                        "blocker",
+                        "blocker_id",
+                        "id",
+                        "description",
+                    ] {
+                        if let Some(text) = object.get(key).and_then(Value::as_str)
+                            && !text.is_empty()
+                        {
+                            return Some(text.to_string());
+                        }
+                    }
+                    return Some("claim_blocked".to_string());
+                }
+                object.values().find_map(scan)
+            }
+            _ => None,
+        }
+    }
+
+    scan(standalone_snapshot).unwrap_or_default()
+}
+
+fn extract_top_decision_terms(runtime_decision_log: &Value) -> Vec<String> {
+    runtime_decision_log
+        .pointer("/top_decision_terms")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|term| !term.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .filter(|terms: &Vec<String>| !terms.is_empty())
+        .unwrap_or_else(|| {
+            runtime_decision_log
+                .pointer("/summary")
+                .and_then(Value::as_str)
+                .map(|summary| vec![summary.to_string()])
+                .unwrap_or_default()
+        })
+}
+
+fn extract_optional_string(value: &Value, pointer: &str) -> String {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// Load canonical on-disk evidence rows and build the input bundle for
+/// [`build_dossier`]. Checked-in files may use `source_commit: "current"`;
+/// the loader normalizes that marker to `expected_commit` before returning.
+pub fn load_dossier_inputs_from_disk(
+    workspace_root: impl AsRef<Path>,
+    expected_commit: &str,
+) -> Result<DossierInputs, DossierLoadError> {
+    let root = workspace_root.as_ref();
+    let workload_entry = evidence_path(EvidenceKind::WorkloadReplay);
+    let runtime_entry = evidence_path(EvidenceKind::RuntimeDecisionLog);
+    let standalone_entry = evidence_path(EvidenceKind::StandaloneBlockerSnapshot);
+    let l1_entry = evidence_path(EvidenceKind::L1DashboardRow);
+    let semantic_entry = evidence_path(EvidenceKind::SemanticOverlay);
+
+    let workload_value = read_evidence_value(root, workload_entry)?;
+    let runtime_value = read_evidence_value(root, runtime_entry)?;
+    let standalone_value = read_evidence_value(root, standalone_entry)?;
+    let l1_value = read_evidence_value(root, l1_entry)?;
+    let semantic_value = read_evidence_value(root, semantic_entry)?;
+
+    let replacement_level = extract_replacement_level(&l1_value)?;
+    let first_failing_blocker = extract_first_failing_blocker(&standalone_value);
+    let top_decision_terms = extract_top_decision_terms(&runtime_value);
+    let strict_hardened_divergence_signature =
+        extract_optional_string(&runtime_value, "/strict_hardened_divergence_signature");
+    let next_diagnostic_command =
+        extract_optional_string(&l1_value, "/summary/next_diagnostic_command");
+    let support_taxonomy_claim = semantic_value
+        .pointer("/summary/blocked_claim")
+        .and_then(Value::as_str)
+        .unwrap_or("Semantic overlay loaded; support taxonomy remains reachability-only.")
+        .to_string();
+
+    Ok(DossierInputs {
+        workload_replay: Some(evidence_ref_from_value(
+            workload_entry,
+            &workload_value,
+            expected_commit,
+        )?),
+        runtime_decision_log: Some(evidence_ref_from_value(
+            runtime_entry,
+            &runtime_value,
+            expected_commit,
+        )?),
+        standalone_blocker_snapshot: Some(evidence_ref_from_value(
+            standalone_entry,
+            &standalone_value,
+            expected_commit,
+        )?),
+        l1_dashboard_row: Some(evidence_ref_from_value(
+            l1_entry,
+            &l1_value,
+            expected_commit,
+        )?),
+        semantic_overlay: Some(evidence_ref_from_value(
+            semantic_entry,
+            &semantic_value,
+            expected_commit,
+        )?),
+        replacement_level,
+        first_failing_blocker,
+        top_decision_terms,
+        strict_hardened_divergence_signature,
+        next_diagnostic_command,
+        support_taxonomy_claim,
+    })
+}
 
 fn validate_evidence(
     kind_label: &'static str,

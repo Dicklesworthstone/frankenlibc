@@ -113,6 +113,36 @@
     "deterministic_seed_required": true,
     "deterministic_seed_field": "stress_seed"
   },
+  "real_ring_report": {
+    "rationale": "When the synthetic ModelRing contract is exercised against the production `frankenlibc_membrane::runtime_math::evidence::EvidenceRingBuffer<CAP>`, the runner emits a structured `RealRingReport` JSONL row. The production ring overwrites without explicitly counting losses — the contract reconstructs `derived_loss = total_pushed - snapshot_size` and validates monotone seqno against the snapshot.",
+    "report_path_template": "target/conformance/evidence_ring_backpressure.real.jsonl",
+    "required_fields": [
+      "schema_version",
+      "ring_capacity",
+      "stress_seed",
+      "drive_to_capacity_multiple",
+      "total_pushed",
+      "snapshot_size",
+      "snapshot_first_seqno",
+      "snapshot_last_seqno",
+      "derived_loss",
+      "monotone_seqno",
+      "max_epoch",
+      "source_commit"
+    ],
+    "fail_closed_when_required_field_missing": true,
+    "fail_closed_when_derived_loss_inconsistent": true,
+    "fail_closed_when_seqno_non_monotone": true,
+    "fail_closed_when_source_commit_invalid": true,
+    "rejected_evidence_kinds_added": [
+      "snapshot_exceeds_capacity",
+      "non_monotone_seqno",
+      "loss_count_underreports_gap",
+      "missing_loss_count_field",
+      "missing_max_epoch_field",
+      "stale_source_commit"
+    ]
+  },
   "loss_evidence_kinds": [
     {
       "kind": "expected_overwrite_loss",

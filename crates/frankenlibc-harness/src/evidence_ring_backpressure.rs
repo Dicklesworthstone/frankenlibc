@@ -222,6 +222,191 @@ fn serialize_snapshot(records: &[RingRecord]) -> String {
     out
 }
 
+/// Stress report produced by [`run_real_ring_stress`] against the
+/// production `EvidenceRingBuffer<CAP>` (bd-9nyo2).
+///
+/// Mirrors [`StressReport`] field-for-field where the production
+/// ring exposes the same observation; otherwise fields are
+/// derived from the snapshot. Notably:
+///   * `derived_loss = total_pushed - snapshot_size` (the production
+///     ring overwrites without explicitly counting losses; the
+///     contract's `evidence_loss_count` is reconstructed by
+///     subtraction).
+///   * `monotone_seqno` is a boolean checked against the snapshot's
+///     sorted seqnos.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealRingReport {
+    pub schema_version: String,
+    pub ring_capacity: usize,
+    pub stress_seed: u64,
+    pub drive_to_capacity_multiple: u64,
+    pub total_pushed: u64,
+    pub snapshot_size: usize,
+    pub snapshot_first_seqno: u64,
+    pub snapshot_last_seqno: u64,
+    pub derived_loss: u64,
+    pub monotone_seqno: bool,
+    pub max_epoch: u64,
+    pub source_commit: String,
+}
+
+/// Required-field list for the persisted JSONL form of
+/// [`RealRingReport`]. Pinned by
+/// `tests/conformance/evidence_ring_backpressure_stress_contract.v1.json`.
+pub const REAL_RING_REPORT_REQUIRED_FIELDS: &[&str] = &[
+    "schema_version",
+    "ring_capacity",
+    "stress_seed",
+    "drive_to_capacity_multiple",
+    "total_pushed",
+    "snapshot_size",
+    "snapshot_first_seqno",
+    "snapshot_last_seqno",
+    "derived_loss",
+    "monotone_seqno",
+    "max_epoch",
+    "source_commit",
+];
+
+/// Drive the production `EvidenceRingBuffer<CAP>` past capacity and
+/// emit a [`RealRingReport`].
+///
+/// `seed` selects the deterministic payload byte the stress writes
+/// (`(seed ^ i) as u8`); the production ring's `allocate_seqno` is
+/// monotonic and unaffected by payload. `drive_to_capacity_multiple`
+/// is the number of CAPs to push (must be ≥ 2).
+pub fn run_real_ring_stress<const CAP: usize>(
+    seed: u64,
+    drive_to_capacity_multiple: u64,
+    source_commit: &str,
+) -> RealRingReport {
+    use frankenlibc_membrane::SafetyLevel;
+    use frankenlibc_membrane::runtime_math::evidence::{
+        EVIDENCE_SYMBOL_SIZE_T, EvidenceRingBuffer, EvidenceSymbolRecord, FLAG_SYSTEMATIC,
+    };
+    use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
+
+    assert!(
+        drive_to_capacity_multiple >= 2,
+        "drive_to_capacity_multiple must be >= 2"
+    );
+
+    let ring: EvidenceRingBuffer<CAP> = EvidenceRingBuffer::new();
+    let total = (CAP as u64).saturating_mul(drive_to_capacity_multiple);
+    for i in 0..total {
+        let seq = ring.allocate_seqno();
+        let payload_byte = (seed ^ i) as u8;
+        let payload = [payload_byte; EVIDENCE_SYMBOL_SIZE_T];
+        let rec = EvidenceSymbolRecord::build_v1(
+            1,
+            seq,
+            2,
+            ApiFamily::Allocator,
+            SafetyLevel::Strict,
+            MembraneAction::Allow,
+            ValidationProfile::Fast,
+            FLAG_SYSTEMATIC,
+            0,
+            256,
+            0,
+            0,
+            &payload,
+            None,
+        );
+        ring.publish(seq, rec);
+    }
+    let snap = ring.snapshot_sorted();
+    let snapshot_size = snap.len();
+    let snapshot_first_seqno = snap.first().map(|r| r.seqno()).unwrap_or(0);
+    let snapshot_last_seqno = snap.last().map(|r| r.seqno()).unwrap_or(0);
+    let mut monotone = true;
+    let mut last = 0u64;
+    for r in &snap {
+        if r.seqno() <= last {
+            monotone = false;
+            break;
+        }
+        last = r.seqno();
+    }
+    let derived_loss = total.saturating_sub(snapshot_size as u64);
+    let max_epoch = if CAP == 0 { 0 } else { total / CAP as u64 };
+
+    RealRingReport {
+        schema_version: "v1".to_string(),
+        ring_capacity: CAP,
+        stress_seed: seed,
+        drive_to_capacity_multiple,
+        total_pushed: total,
+        snapshot_size,
+        snapshot_first_seqno,
+        snapshot_last_seqno,
+        derived_loss,
+        monotone_seqno: monotone,
+        max_epoch,
+        source_commit: source_commit.to_string(),
+    }
+}
+
+/// Serialize a single [`RealRingReport`] as one JSONL line.
+pub fn serialize_real_ring_report_jsonl(report: &RealRingReport) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+    let _ = write!(
+        &mut s,
+        r#"{{"schema_version":"{}","ring_capacity":{},"stress_seed":{},"drive_to_capacity_multiple":{},"total_pushed":{},"snapshot_size":{},"snapshot_first_seqno":{},"snapshot_last_seqno":{},"derived_loss":{},"monotone_seqno":{},"max_epoch":{},"source_commit":"{}"}}"#,
+        report.schema_version,
+        report.ring_capacity,
+        report.stress_seed,
+        report.drive_to_capacity_multiple,
+        report.total_pushed,
+        report.snapshot_size,
+        report.snapshot_first_seqno,
+        report.snapshot_last_seqno,
+        report.derived_loss,
+        report.monotone_seqno,
+        report.max_epoch,
+        report.source_commit,
+    );
+    s.push('\n');
+    s
+}
+
+/// Validate a [`RealRingReport`] against the contract. Returns the
+/// list of rejection codes that fire.
+pub fn validate_real_ring_report(report: &RealRingReport) -> Vec<String> {
+    let mut rej: Vec<String> = Vec::new();
+    if report.schema_version != "v1" {
+        rej.push("missing_or_invalid_schema_version".to_string());
+    }
+    if report.ring_capacity == 0 {
+        rej.push("missing_ring_path_row".to_string());
+    }
+    if report.snapshot_size > report.ring_capacity {
+        rej.push("snapshot_exceeds_capacity".to_string());
+    }
+    if !report.monotone_seqno {
+        rej.push("non_monotone_seqno".to_string());
+    }
+    let expected_loss = report
+        .total_pushed
+        .saturating_sub(report.snapshot_size as u64);
+    if report.derived_loss != expected_loss {
+        rej.push("loss_count_underreports_gap".to_string());
+    }
+    if report.derived_loss == 0 && report.drive_to_capacity_multiple > 1 {
+        rej.push("missing_loss_count_field".to_string());
+    }
+    if report.max_epoch < 1 && report.drive_to_capacity_multiple >= 2 {
+        rej.push("missing_max_epoch_field".to_string());
+    }
+    let sc = &report.source_commit;
+    let is_sha = sc.len() == 40 && sc.chars().all(|c| c.is_ascii_hexdigit());
+    if !is_sha {
+        rej.push("stale_source_commit".to_string());
+    }
+    rej
+}
+
 /// Validate a stress report against the manifest contract.
 /// Returns the rejection codes (subset of `rejected_evidence_kinds`)
 /// that fire on this report.
