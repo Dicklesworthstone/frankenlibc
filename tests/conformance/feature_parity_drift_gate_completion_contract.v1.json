@@ -1,0 +1,178 @@
+{
+  "schema_version": "feature_parity_drift_gate_completion_contract.v1",
+  "manifest_id": "bd-w2c3.1.2.1-feature-parity-drift-gate-completion-contract",
+  "completion_debt_bead": "bd-w2c3.1.2.1",
+  "original_bead": "bd-w2c3.1.2",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.1.2/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "source_gates": {
+      "feature_parity_drift": {
+        "script": "scripts/check_feature_parity_drift.sh",
+        "artifact": "tests/conformance/feature_parity_drift_diagnostics.v1.json",
+        "harness_test": "crates/frankenlibc-harness/tests/feature_parity_drift_gate_test.rs",
+        "expected_outcome": "pass",
+        "required_summary": {
+          "diagnostic_count_min": 1,
+          "fail_count": 0
+        }
+      },
+      "support_matrix_maintenance": {
+        "script": "scripts/check_support_matrix_maintenance.sh",
+        "artifact": "tests/conformance/support_matrix_maintenance_report.v1.json",
+        "harness_test": "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs",
+        "expected_outcome": "pass_or_fail_closed",
+        "allowed_failure_signature": "canonical maintenance report drift detected",
+        "required_log_events": [
+          "canonical_stable_sections",
+          "coverage_summary",
+          "status_counts"
+        ]
+      },
+      "feature_parity_gap_bead_coverage": {
+        "script": "scripts/check_feature_parity_gap_bead_coverage.sh",
+        "artifact": "tests/conformance/feature_parity_gap_bead_coverage.v1.json",
+        "harness_test": "crates/frankenlibc-harness/tests/feature_parity_gap_bead_coverage_test.rs",
+        "expected_outcome": "pass",
+        "required_summary": {
+          "uncovered_gaps": 0
+        }
+      },
+      "feature_parity_gap_ledger": {
+        "script": "scripts/check_feature_parity_gap_ledger.sh",
+        "artifact": "tests/conformance/feature_parity_gap_ledger.v1.json",
+        "harness_test": "crates/frankenlibc-harness/tests/feature_parity_gap_ledger_test.rs",
+        "expected_outcome": "pass",
+        "required_summary": {
+          "parse_errors": 0,
+          "done_evidence_audit_min": 1
+        }
+      }
+    },
+    "test_sources": {
+      "feature_parity_drift": "crates/frankenlibc-harness/tests/feature_parity_drift_gate_test.rs",
+      "support_matrix_maintenance": "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs",
+      "gap_bead_coverage": "crates/frankenlibc-harness/tests/feature_parity_gap_bead_coverage_test.rs",
+      "gap_ledger": "crates/frankenlibc-harness/tests/feature_parity_gap_ledger_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/feature_parity_drift_gate_completion_contract_test.rs",
+      "completion_checker": "scripts/check_feature_parity_drift_gate_completion_contract.sh"
+    },
+    "tests_unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "feature_parity_drift",
+          "name": "gate_fails_when_unresolved_drift_loses_owner"
+        },
+        {
+          "source": "support_matrix_maintenance",
+          "name": "maintenance_gate_fails_on_canonical_stable_section_drift"
+        },
+        {
+          "source": "gap_ledger",
+          "name": "row_ids_are_unique_and_parser_errors_empty"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_bare_cargo_command"
+        }
+      ]
+    },
+    "tests_e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_commands": [
+        "bash -n scripts/check_feature_parity_drift_gate_completion_contract.sh",
+        "scripts/check_feature_parity_drift_gate_completion_contract.sh",
+        "CARGO_TARGET_DIR=/tmp/.cargo-target-frankenlibc-GreenFern-bd-w2c3-1-2-1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test feature_parity_drift_gate_completion_contract_test -- --nocapture",
+        "CARGO_TARGET_DIR=/tmp/.cargo-target-frankenlibc-GreenFern-bd-w2c3-1-2-1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo check -p frankenlibc-harness --test feature_parity_drift_gate_completion_contract_test",
+        "CARGO_TARGET_DIR=/tmp/.cargo-target-frankenlibc-GreenFern-bd-w2c3-1-2-1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo clippy -p frankenlibc-harness --test feature_parity_drift_gate_completion_contract_test -- -D warnings"
+      ],
+      "required_test_refs": [
+        {
+          "source": "feature_parity_drift",
+          "name": "gate_passes_and_emits_required_diagnostic_schema"
+        },
+        {
+          "source": "gap_bead_coverage",
+          "name": "gate_script_exists_and_succeeds"
+        },
+        {
+          "source": "gap_ledger",
+          "name": "gate_script_emits_done_evidence_log_and_report"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_source_gates_and_emits_report_log"
+        }
+      ]
+    },
+    "tests_conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "required_artifacts": [
+        "tests/conformance/feature_parity_drift_diagnostics.v1.json",
+        "tests/conformance/support_matrix_maintenance_report.v1.json",
+        "tests/conformance/feature_parity_gap_bead_coverage.v1.json",
+        "tests/conformance/feature_parity_gap_ledger.v1.json",
+        "tests/conformance/feature_parity_drift_gate_completion_contract.v1.json"
+      ],
+      "required_invariants": [
+        "feature parity drift diagnostics have zero ownership failures",
+        "support matrix maintenance either passes or fails closed with canonical drift diagnostics",
+        "gap bead coverage has zero uncovered active gaps",
+        "gap ledger has no parser errors and emits DONE evidence telemetry"
+      ],
+      "required_test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "contract_binds_all_source_gates_and_missing_items"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_source_test_ref"
+        }
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "default_report_path": "target/conformance/feature_parity_drift_gate_completion_contract.report.json",
+      "default_log_path": "target/conformance/feature_parity_drift_gate_completion_contract.log.jsonl",
+      "required_events": [
+        "feature_parity_drift_gate_completion_source_gates_replayed",
+        "feature_parity_drift_gate_completion_validated",
+        "feature_parity_drift_gate_completion_failed"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "level",
+        "bead_id",
+        "completion_debt_bead",
+        "original_bead",
+        "status",
+        "source_gate",
+        "source_gate_results",
+        "missing_items_bound",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "source_event_fields": [
+        "trace_id",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "artifact_refs"
+      ]
+    }
+  }
+}
