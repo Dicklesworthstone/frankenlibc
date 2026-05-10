@@ -15,8 +15,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GOVERNANCE="${ROOT}/tests/conformance/math_governance.json"
-MANIFEST="${ROOT}/tests/runtime_math/production_kernel_manifest.v1.json"
+GOVERNANCE="${FRANKENLIBC_MATH_GOVERNANCE:-${ROOT}/tests/conformance/math_governance.json}"
+MANIFEST="${FRANKENLIBC_MATH_GOVERNANCE_MANIFEST:-${ROOT}/tests/runtime_math/production_kernel_manifest.v1.json}"
+REPORT="${FRANKENLIBC_MATH_GOVERNANCE_REPORT:-${ROOT}/target/conformance/math_governance.report.json}"
+LOG="${FRANKENLIBC_MATH_GOVERNANCE_LOG:-${ROOT}/target/conformance/math_governance.log.jsonl}"
 
 failures=0
 
@@ -246,6 +248,202 @@ else
     echo "PASS: Summary statistics consistent"
 fi
 echo "${summary_check}" | grep -E '^(production_|research:)'
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 6: Completion-debt evidence and telemetry
+# ---------------------------------------------------------------------------
+echo "--- Check 6: Completion-debt evidence and telemetry ---"
+
+mkdir -p "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
+
+completion_check=$(python3 - "${ROOT}" "${GOVERNANCE}" "${MANIFEST}" "${REPORT}" "${LOG}" <<'PY'
+import json
+import sys
+import time
+from pathlib import Path
+
+root = Path(sys.argv[1])
+governance_path = Path(sys.argv[2])
+manifest_path = Path(sys.argv[3])
+report_path = Path(sys.argv[4])
+log_path = Path(sys.argv[5])
+
+BEAD_ID = "bd-2yx"
+COMPLETION_DEBT_BEAD_ID = "bd-2yx.1"
+SECTIONS = {
+    "unit_primary": "tests.unit.primary",
+    "e2e_primary": "tests.e2e.primary",
+    "migrations_primary": "migrations.primary",
+    "telemetry_primary": "telemetry.primary",
+}
+REQUIRED_EVENTS = {"math_governance_tier", "math_governance_summary"}
+
+
+def rel(path):
+    try:
+        return Path(path).resolve().relative_to(root.resolve()).as_posix()
+    except Exception:
+        return str(path)
+
+
+def load(path, label, errors):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception as exc:
+        errors.append(f"{label} unreadable: {rel(path)}: {exc}")
+        return {}
+
+
+def ensure_file(path_text, errors, context):
+    path = root / path_text
+    if not path.is_file():
+        errors.append(f"{context} missing file: {path_text}")
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception as exc:
+        errors.append(f"{context} unreadable: {path_text}: {exc}")
+        return ""
+
+
+errors = []
+governance = load(governance_path, "governance", errors)
+manifest = load(manifest_path, "manifest", errors)
+
+evidence = governance.get("completion_debt_evidence")
+if not isinstance(evidence, dict):
+    errors.append("completion_debt_evidence must be an object")
+    evidence = {}
+if evidence.get("bead") != COMPLETION_DEBT_BEAD_ID:
+    errors.append(f"completion_debt_evidence.bead must be {COMPLETION_DEBT_BEAD_ID}")
+if evidence.get("original_bead") != BEAD_ID:
+    errors.append(f"completion_debt_evidence.original_bead must be {BEAD_ID}")
+if evidence.get("next_audit_score_threshold", 0) < 800:
+    errors.append("completion_debt_evidence.next_audit_score_threshold must be >= 800")
+
+test_source_path = evidence.get("test_source")
+test_source = ensure_file(test_source_path, errors, "completion_debt_evidence.test_source") if isinstance(test_source_path, str) else ""
+if not isinstance(test_source_path, str):
+    errors.append("completion_debt_evidence.test_source missing")
+
+for section, missing_item in SECTIONS.items():
+    block = evidence.get(section)
+    if not isinstance(block, dict):
+        errors.append(f"completion_debt_evidence.{section} missing")
+        continue
+    if block.get("missing_item_id") != missing_item:
+        errors.append(f"completion_debt_evidence.{section}.missing_item_id must be {missing_item}")
+    names = block.get("required_test_names")
+    if not isinstance(names, list) or not names:
+        errors.append(f"completion_debt_evidence.{section}.required_test_names missing")
+        continue
+    for name in names:
+        if not isinstance(name, str) or f"fn {name}(" not in test_source:
+            errors.append(f"completion_debt_evidence.{section} references missing Rust test {name}")
+
+telemetry = governance.get("telemetry_contract")
+if not isinstance(telemetry, dict):
+    errors.append("telemetry_contract must be an object")
+    telemetry = {}
+events = telemetry.get("required_log_events")
+if set(events or []) != REQUIRED_EVENTS:
+    errors.append("telemetry_contract.required_log_events drifted")
+fields = telemetry.get("required_log_fields")
+if not isinstance(fields, list) or not {"trace_id", "event", "bead_id", "completion_debt_bead", "artifact_refs"} <= set(fields):
+    errors.append("telemetry_contract.required_log_fields missing required keys")
+
+classifications = governance.get("classifications", {})
+production_modules = set(manifest.get("production_modules", []))
+research_only_modules = set(manifest.get("research_only_modules", []))
+research_classified = {
+    entry.get("module")
+    for entry in classifications.get("research", [])
+    if isinstance(entry, dict) and entry.get("module")
+}
+research_in_production = sorted(research_classified & production_modules)
+research_missing_from_research_manifest = sorted(research_classified - research_only_modules)
+if research_in_production:
+    errors.append(f"research modules leaked into production manifest: {research_in_production}")
+if research_missing_from_research_manifest:
+    errors.append(f"research modules missing from research_only_modules: {research_missing_from_research_manifest}")
+
+cargo_toml = ensure_file("crates/frankenlibc-membrane/Cargo.toml", errors, "completion_debt_evidence.migrations_primary")
+if "runtime-math-research" not in cargo_toml:
+    errors.append("crates/frankenlibc-membrane/Cargo.toml must expose runtime-math-research feature")
+
+summary = governance.get("summary", {})
+timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+tier_rows = []
+for tier in ["production_core", "production_monitor", "research"]:
+    tier_rows.append({
+        "timestamp": timestamp,
+        "trace_id": f"{COMPLETION_DEBT_BEAD_ID}:{tier}",
+        "event": "math_governance_tier",
+        "bead_id": BEAD_ID,
+        "completion_debt_bead": COMPLETION_DEBT_BEAD_ID,
+        "tier": tier,
+        "module_count": len(classifications.get(tier, [])),
+        "status": "pass" if not errors else "fail",
+        "artifact_refs": [rel(governance_path), rel(manifest_path)],
+        "failure_signature": "none" if not errors else "completion_debt_validation_error",
+    })
+
+log_rows = tier_rows + [{
+    "timestamp": timestamp,
+    "trace_id": f"{COMPLETION_DEBT_BEAD_ID}:summary",
+    "event": "math_governance_summary",
+    "bead_id": BEAD_ID,
+    "completion_debt_bead": COMPLETION_DEBT_BEAD_ID,
+    "tier": None,
+    "module_count": summary.get("total_modules", 0),
+    "status": "pass" if not errors else "fail",
+    "artifact_refs": [rel(governance_path), rel(manifest_path), rel(report_path), rel(log_path)],
+    "failure_signature": "none" if not errors else "completion_debt_validation_error",
+}]
+
+report = {
+    "schema_version": "math_governance.report.v1",
+    "bead": BEAD_ID,
+    "completion_debt_bead": COMPLETION_DEBT_BEAD_ID,
+    "governance": rel(governance_path),
+    "manifest": rel(manifest_path),
+    "tier_counts": {
+        "production_core": len(classifications.get("production_core", [])),
+        "production_monitor": len(classifications.get("production_monitor", [])),
+        "research": len(classifications.get("research", [])),
+    },
+    "total_modules": summary.get("total_modules", 0),
+    "research_in_production_manifest": research_in_production,
+    "research_missing_from_research_manifest": research_missing_from_research_manifest,
+    "errors": errors,
+    "status": "pass" if not errors else "fail",
+    "report_path": rel(report_path),
+    "log_path": rel(log_path),
+}
+
+report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+log_path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in log_rows), encoding="utf-8")
+
+print(f"COMPLETION_ERRORS={len(errors)}")
+print(f"REPORT={rel(report_path)}")
+print(f"LOG={rel(log_path)}")
+print(f"LOG_ROWS={len(log_rows)}")
+for error in errors:
+    print(f"ERROR: {error}")
+PY
+)
+
+completion_errs=$(echo "${completion_check}" | grep '^COMPLETION_ERRORS=' | cut -d= -f2)
+
+if [[ "${completion_errs}" -gt 0 ]]; then
+    echo "FAIL: ${completion_errs} completion-debt evidence issue(s):"
+    echo "${completion_check}" | grep '^ERROR:'
+    failures=$((failures + 1))
+else
+    echo "PASS: Completion-debt evidence and telemetry contract valid"
+fi
+echo "${completion_check}" | grep -E '^(REPORT|LOG|LOG_ROWS)='
 echo ""
 
 # ---------------------------------------------------------------------------

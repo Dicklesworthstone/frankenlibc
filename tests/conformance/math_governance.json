@@ -120,5 +120,75 @@
       {"bead": "bd-2yx", "title": "Math governance classification", "note": "This bead — produces the classification artifact"},
       {"bead": "bd-24x", "title": "Math relevance ledger", "note": "Closed — mapped modules to runtime surfaces"}
     ]
+  },
+  "telemetry_contract": {
+    "report_path": "target/conformance/math_governance.report.json",
+    "log_path": "target/conformance/math_governance.log.jsonl",
+    "required_log_events": [
+      "math_governance_tier",
+      "math_governance_summary"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "completion_debt_bead",
+      "tier",
+      "module_count",
+      "status",
+      "artifact_refs",
+      "failure_signature"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-2yx.1",
+    "original_bead": "bd-2yx",
+    "test_source": "crates/frankenlibc-harness/tests/math_governance_test.rs",
+    "gate": "scripts/check_math_governance.sh",
+    "next_audit_score_threshold": 800,
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Harness unit tests validate schema, tier metadata, manifest coverage, duplicate prevention, summary counts, rationale coverage, and completion-debt evidence bindings.",
+      "required_test_names": [
+        "governance_exists_and_valid",
+        "all_tiers_defined",
+        "classified_modules_exist_in_manifest",
+        "all_manifest_modules_classified",
+        "no_duplicate_classifications",
+        "summary_consistent",
+        "every_entry_has_rationale",
+        "completion_debt_evidence_binds_missing_items"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "The shell gate runs the full governance contract end to end and emits report plus JSONL telemetry.",
+      "required_test_names": [
+        "gate_script_exists_and_executable",
+        "gate_emits_completion_debt_telemetry",
+        "gate_rejects_stale_completion_debt_test_binding"
+      ]
+    },
+    "migrations_primary": {
+      "missing_item_id": "migrations.primary",
+      "description": "Research-tier modules are migrated out of the production manifest and require the runtime-math-research feature path.",
+      "required_test_names": [
+        "migration_contract_routes_research_modules_out_of_production"
+      ],
+      "manifest_refs": [
+        "tests/runtime_math/production_kernel_manifest.v1.json#/production_modules",
+        "tests/runtime_math/production_kernel_manifest.v1.json#/research_only_modules",
+        "crates/frankenlibc-membrane/Cargo.toml#/features/runtime-math-research"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "The gate writes one tier row per governance tier and one summary row, all carrying stable bead and artifact references.",
+      "required_test_names": [
+        "gate_emits_completion_debt_telemetry",
+        "gate_rejects_stale_completion_debt_test_binding"
+      ]
+    }
   }
 }
