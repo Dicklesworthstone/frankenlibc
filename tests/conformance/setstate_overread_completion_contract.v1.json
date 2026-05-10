@@ -1,0 +1,104 @@
+{
+  "schema": "setstate_overread_completion_contract.v1",
+  "manifest_id": "bd-nrh5v.1-setstate-overread-conformance-contract",
+  "bead": "bd-nrh5v.1",
+  "original_bead": "bd-nrh5v",
+  "title": "P0 setstate overread conformance completion contract",
+  "completion_debt_evidence": {
+    "bead": "bd-nrh5v.1",
+    "original_bead": "bd-nrh5v",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "audit_score": 470,
+    "next_audit_score_threshold": 800,
+    "missing_items": [
+      "tests.conformance.primary"
+    ],
+    "missing_item_contracts": {
+      "tests.conformance.primary": {
+        "type": "conformance",
+        "description": "setstate overread fix must be bound to a passing conformance/regression proof"
+      }
+    },
+    "test_sources": {
+      "abi_regression": "crates/frankenlibc-abi/tests/stdlib_abi_test.rs",
+      "conformance_diff": "crates/frankenlibc-abi/tests/conformance_diff_stdlib_random.rs"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-abi/src/stdlib_abi.rs:2706",
+      "crates/frankenlibc-abi/src/stdlib_abi.rs:2717",
+      "crates/frankenlibc-abi/src/stdlib_abi.rs:2723",
+      "crates/frankenlibc-abi/src/stdlib_abi.rs:2933",
+      "crates/frankenlibc-abi/src/stdlib_abi.rs:2959",
+      "crates/frankenlibc-abi/src/stdlib_abi.rs:2966",
+      "crates/frankenlibc-abi/src/stdlib_abi.rs:2980",
+      "crates/frankenlibc-abi/src/stdlib_abi.rs:2985",
+      "crates/frankenlibc-core/src/stdlib/random_sv.rs:153",
+      "crates/frankenlibc-core/src/stdlib/random_sv.rs:154",
+      "crates/frankenlibc-core/src/stdlib/random_sv.rs:160",
+      "crates/frankenlibc-abi/tests/stdlib_abi_test.rs:3996",
+      "crates/frankenlibc-abi/tests/stdlib_abi_test.rs:4009",
+      "crates/frankenlibc-abi/tests/conformance_diff_stdlib_random.rs:591"
+    ],
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "next_audit_score_threshold": 800,
+      "required_symbols": [
+        "initstate",
+        "setstate",
+        "random",
+        "srandom"
+      ],
+      "required_scenarios": [
+        "tracked initstate/setstate roundtrip",
+        "tracked too-short setstate buffer rejected",
+        "untracked 8-byte stack setstate buffer accepted without overread",
+        "stdlib random differential coverage report emits zero divergences"
+      ],
+      "required_test_refs": [
+        {
+          "source": "abi_regression",
+          "name": "initstate_setstate_roundtrip"
+        },
+        {
+          "source": "abi_regression",
+          "name": "setstate_rejects_tracked_too_short_state"
+        },
+        {
+          "source": "abi_regression",
+          "name": "setstate_accepts_untracked_minimum_state_without_overread"
+        },
+        {
+          "source": "conformance_diff",
+          "name": "stdlib_random_diff_coverage_report"
+        }
+      ],
+      "required_commands": [
+        "cargo test -p frankenlibc-abi --test stdlib_abi_test setstate -- --nocapture --test-threads=1",
+        "cargo test -p frankenlibc-abi --test conformance_diff_stdlib_random -- --nocapture --test-threads=1"
+      ],
+      "required_report_fields": [
+        "schema",
+        "bead",
+        "original_bead",
+        "status",
+        "source_commit",
+        "missing_items_bound",
+        "required_symbols",
+        "required_scenarios",
+        "required_test_refs",
+        "implementation_refs",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "required_events": [
+        "setstate_overread_completion_contract_validated",
+        "setstate_overread_completion_contract_failed"
+      ]
+    },
+    "artifact_refs": [
+      "target/conformance/setstate_overread_completion_contract.report.json",
+      "target/conformance/setstate_overread_completion_contract.log.jsonl"
+    ],
+    "failure_signature": "setstate_untracked_minimum_overread_or_missing_conformance_evidence"
+  }
+}
