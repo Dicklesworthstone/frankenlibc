@@ -1,0 +1,225 @@
+{
+  "schema": "workstream_done_templates_completion_contract.v1",
+  "bead": "bd-bp8fl.11",
+  "completion_debt_bead": "bd-bp8fl.11.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.11/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "artifacts": {
+      "base_artifact": "tests/conformance/workstream_done_templates.v1.json",
+      "base_checker": "scripts/check_workstream_done_templates.sh",
+      "base_harness_test": "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs",
+      "completion_contract": "tests/conformance/workstream_done_templates_completion_contract.v1.json",
+      "completion_checker": "scripts/check_workstream_done_templates_completion_contract.sh",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/workstream_done_templates_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "tests/conformance/workstream_done_templates.v1.json:14",
+      "tests/conformance/workstream_done_templates.v1.json:20",
+      "tests/conformance/workstream_done_templates.v1.json:33",
+      "tests/conformance/workstream_done_templates.v1.json:46",
+      "tests/conformance/workstream_done_templates.v1.json:754",
+      "tests/conformance/workstream_done_templates.v1.json:825",
+      "tests/conformance/workstream_done_templates.v1.json:1158",
+      "scripts/check_workstream_done_templates.sh:34",
+      "scripts/check_workstream_done_templates.sh:47",
+      "scripts/check_workstream_done_templates.sh:61",
+      "scripts/check_workstream_done_templates.sh:174",
+      "scripts/check_workstream_done_templates.sh:237",
+      "scripts/check_workstream_done_templates.sh:259",
+      "scripts/check_workstream_done_templates.sh:297",
+      "scripts/check_workstream_done_templates.sh:410",
+      "scripts/check_workstream_done_templates.sh:441",
+      "scripts/check_workstream_done_templates.sh:455",
+      "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs:217",
+      "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs:540",
+      "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs:678",
+      "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs:727",
+      "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs:769"
+    ],
+    "template_policy": {
+      "required_workstream_count": 10,
+      "minimum_dry_run_examples": 3,
+      "minimum_checklist_replay_scenarios": 3,
+      "minimum_handoff_branches": 7,
+      "minimum_handoff_transcripts": 2,
+      "required_template_sections": [
+        "start_conditions",
+        "blocked_by_checks",
+        "expected_touched_files",
+        "required_unit_test_classes",
+        "required_e2e_fixture_harness_scripts",
+        "structured_log_fields",
+        "artifact_freshness_rules",
+        "user_facing_claim_gates",
+        "closure_commands",
+        "known_limitations_policy",
+        "non_goals"
+      ],
+      "required_structured_log_fields": [
+        "trace_id",
+        "bead_id",
+        "workstream",
+        "scenario_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "required_handoff_sections": [
+        "onboarding_docs",
+        "br_ready_list_show_state",
+        "bv_robot_triage_insights",
+        "dependency_and_parent_checks",
+        "stale_db_jsonl_symptoms",
+        "file_reservations",
+        "exact_work_surface",
+        "expected_artifacts",
+        "unit_tests",
+        "e2e_or_harness_scripts",
+        "structured_logs",
+        "rch_target_dir_policy",
+        "commit_push_expectations",
+        "closure_notes"
+      ],
+      "required_handoff_log_fields": [
+        "trace_id",
+        "bead_id",
+        "dependency_state",
+        "tracker_state",
+        "workstream",
+        "required_tests",
+        "required_e2e",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature",
+        "next_safe_action"
+      ],
+      "required_base_report_checks": [
+        "template_sections_complete",
+        "closure_commands_complete",
+        "checklist_replay_is_fail_closed",
+        "implementation_handoff_checklist_complete",
+        "handoff_transcripts_choose_next_safe_action"
+      ],
+      "required_base_log_events": [
+        "workstream_done_template",
+        "workstream_done_checklist_replay",
+        "implementation_handoff_branch",
+        "implementation_handoff_transcript"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "base_harness_test",
+          "name": "artifact_covers_every_workstream_with_required_sections"
+        },
+        {
+          "source": "base_harness_test",
+          "name": "gate_script_rejects_missing_template_sections"
+        },
+        {
+          "source": "base_harness_test",
+          "name": "gate_script_rejects_toothless_blocked_replay"
+        },
+        {
+          "source": "base_harness_test",
+          "name": "gate_script_rejects_handoff_without_next_safe_action"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "contract_binds_done_template_gate_handoff_and_existing_tests"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_required_source_ref"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_local_cargo_command"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_completion_contract_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_scripts": [
+        "scripts/check_workstream_done_templates.sh",
+        "scripts/check_workstream_done_templates_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {
+          "source": "base_harness_test",
+          "name": "gate_script_passes_and_emits_structured_report_and_log"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_emits_report_log_and_replays_existing_gate"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_telemetry_event"
+        }
+      ],
+      "required_commands": [
+        "scripts/check_workstream_done_templates_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_completion_contract_test -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "required_log_artifacts": [
+        "target/conformance/workstream_done_templates_completion_contract.report.json",
+        "target/conformance/workstream_done_templates_completion_contract.log.jsonl"
+      ],
+      "required_events": [
+        "workstream_done_templates_units_validated",
+        "workstream_done_templates_e2e_validated",
+        "workstream_done_templates_telemetry_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "completion_debt_bead",
+        "original_bead",
+        "event",
+        "status",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "template_count",
+        "dry_run_example_count",
+        "checklist_replay_scenario_count",
+        "handoff_branch_count",
+        "handoff_transcript_count",
+        "base_log_row_count",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    },
+    "test_sources": {
+      "base_harness_test": "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/workstream_done_templates_completion_contract_test.rs"
+    }
+  }
+}
