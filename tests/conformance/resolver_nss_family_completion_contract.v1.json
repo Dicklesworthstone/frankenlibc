@@ -1,0 +1,374 @@
+{
+  "schema_version": "resolver_nss_family_completion_contract.v1",
+  "bead": "bd-ldj.3",
+  "completion_debt_bead": "bd-ldj.3.1",
+  "description": "Completion-debt evidence binding for resolver/NSS family symbols: getaddrinfo, gethostbyname, getpwnam, and getgrnam.",
+  "completion_debt_evidence": {
+    "bead": "bd-ldj.3.1",
+    "original_bead": "bd-ldj.3",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-ldj.3/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "artifacts": {
+      "core_resolver": "crates/frankenlibc-core/src/resolv/mod.rs",
+      "core_passwd": "crates/frankenlibc-core/src/pwd/mod.rs",
+      "core_group": "crates/frankenlibc-core/src/grp/mod.rs",
+      "abi_resolver": "crates/frankenlibc-abi/src/resolv_abi.rs",
+      "abi_passwd": "crates/frankenlibc-abi/src/pwd_abi.rs",
+      "abi_group": "crates/frankenlibc-abi/src/grp_abi.rs",
+      "resolver_fixture": "tests/conformance/fixtures/resolver.json",
+      "passwd_fixture": "tests/conformance/fixtures/pwd_ops.json",
+      "group_fixture": "tests/conformance/fixtures/grp_ops.json",
+      "resolver_hard_parts_manifest": "tests/conformance/resolver_nss_hard_parts.v1.json",
+      "semantic_kernels_manifest": "tests/conformance/hermetic_resolver_nss_semantic_kernels.v1.json",
+      "integration_fixture": "tests/integration/fixture_nss.c",
+      "completion_contract": "tests/conformance/resolver_nss_family_completion_contract.v1.json",
+      "completion_gate": "scripts/check_resolver_nss_family_completion_contract.sh",
+      "completion_harness": "crates/frankenlibc-harness/tests/resolver_nss_family_completion_contract_test.rs"
+    },
+    "gates": {
+      "resolver_hard_parts": "scripts/check_resolver_nss_hard_parts.sh",
+      "semantic_kernels": "scripts/check_hermetic_resolver_nss_semantic_kernels.sh",
+      "completion_contract": "scripts/check_resolver_nss_family_completion_contract.sh"
+    },
+    "test_sources": {
+      "core_resolver": "crates/frankenlibc-core/src/resolv/mod.rs",
+      "core_passwd": "crates/frankenlibc-core/src/pwd/mod.rs",
+      "core_group": "crates/frankenlibc-core/src/grp/mod.rs",
+      "resolver_conformance": "crates/frankenlibc-harness/tests/resolver_conformance_test.rs",
+      "passwd_conformance": "crates/frankenlibc-harness/tests/pwd_ops_conformance_test.rs",
+      "group_conformance": "crates/frankenlibc-harness/tests/grp_ops_conformance_test.rs",
+      "resolver_hard_parts": "crates/frankenlibc-harness/tests/resolver_nss_hard_parts_test.rs",
+      "semantic_kernels": "crates/frankenlibc-harness/tests/hermetic_resolver_nss_semantic_kernels_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/resolver_nss_family_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-core/src/resolv/mod.rs:538",
+      "crates/frankenlibc-core/src/resolv/mod.rs:645",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1091",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1629",
+      "crates/frankenlibc-core/src/pwd/mod.rs:93",
+      "crates/frankenlibc-abi/src/pwd_abi.rs:343",
+      "crates/frankenlibc-core/src/grp/mod.rs:76",
+      "crates/frankenlibc-abi/src/grp_abi.rs:353",
+      "tests/conformance/fixtures/resolver.json:139",
+      "tests/conformance/fixtures/resolver.json:240",
+      "tests/conformance/fixtures/pwd_ops.json:9",
+      "tests/conformance/fixtures/grp_ops.json:8",
+      "crates/frankenlibc-harness/tests/resolver_conformance_test.rs:200",
+      "crates/frankenlibc-harness/tests/resolver_conformance_test.rs:214",
+      "crates/frankenlibc-harness/tests/pwd_ops_conformance_test.rs:170",
+      "crates/frankenlibc-harness/tests/grp_ops_conformance_test.rs:162",
+      "crates/frankenlibc-harness/tests/resolver_nss_hard_parts_test.rs:192",
+      "crates/frankenlibc-harness/tests/hermetic_resolver_nss_semantic_kernels_test.rs:176",
+      "scripts/check_resolver_nss_family_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/resolver_nss_family_completion_contract_test.rs:1"
+    ],
+    "missing_item_bindings": [
+      {
+        "missing_item_id": "tests.unit.primary",
+        "evidence_section": "unit_primary"
+      },
+      {
+        "missing_item_id": "tests.e2e.primary",
+        "evidence_section": "e2e_primary"
+      },
+      {
+        "missing_item_id": "tests.conformance.primary",
+        "evidence_section": "conformance_primary"
+      }
+    ],
+    "required_symbols": [
+      {
+        "symbol": "getaddrinfo",
+        "family": "resolver",
+        "abi_ref": "crates/frankenlibc-abi/src/resolv_abi.rs:1091",
+        "core_refs": [
+          "crates/frankenlibc-core/src/resolv/mod.rs:538",
+          "crates/frankenlibc-core/src/resolv/mod.rs:645"
+        ],
+        "fixture": "resolver_fixture",
+        "fixture_function": "getaddrinfo",
+        "fixture_case_min": 4,
+        "required_modes": [
+          "strict",
+          "hardened"
+        ],
+        "unit_test_refs": [
+          {
+            "source": "core_resolver",
+            "name": "getaddrinfo_numeric_ipv4"
+          },
+          {
+            "source": "core_resolver",
+            "name": "getaddrinfo_with_hosts_ipv4_lookup"
+          }
+        ],
+        "conformance_test_refs": [
+          {
+            "source": "resolver_conformance",
+            "name": "resolver_covers_getaddrinfo"
+          },
+          {
+            "source": "resolver_conformance",
+            "name": "resolver_fixture_executes_via_harness"
+          }
+        ]
+      },
+      {
+        "symbol": "gethostbyname",
+        "family": "resolver",
+        "abi_ref": "crates/frankenlibc-abi/src/resolv_abi.rs:1629",
+        "core_refs": [
+          "crates/frankenlibc-core/src/resolv/mod.rs:538"
+        ],
+        "fixture": "resolver_fixture",
+        "fixture_function": "gethostbyname",
+        "fixture_case_min": 2,
+        "required_modes": [
+          "strict",
+          "hardened"
+        ],
+        "unit_test_refs": [
+          {
+            "source": "core_resolver",
+            "name": "lookup_hosts_found"
+          },
+          {
+            "source": "core_resolver",
+            "name": "lookup_hosts_case_insensitive"
+          }
+        ],
+        "conformance_test_refs": [
+          {
+            "source": "resolver_conformance",
+            "name": "resolver_covers_gethostbyname"
+          },
+          {
+            "source": "resolver_conformance",
+            "name": "resolver_fixture_executes_via_harness"
+          }
+        ]
+      },
+      {
+        "symbol": "getpwnam",
+        "family": "nss",
+        "abi_ref": "crates/frankenlibc-abi/src/pwd_abi.rs:343",
+        "core_refs": [
+          "crates/frankenlibc-core/src/pwd/mod.rs:93"
+        ],
+        "fixture": "passwd_fixture",
+        "fixture_function": "getpwnam",
+        "fixture_case_min": 4,
+        "required_modes": [
+          "strict",
+          "hardened"
+        ],
+        "unit_test_refs": [
+          {
+            "source": "core_passwd",
+            "name": "lookup_by_name_found"
+          },
+          {
+            "source": "core_passwd",
+            "name": "lookup_by_name_not_found"
+          }
+        ],
+        "conformance_test_refs": [
+          {
+            "source": "passwd_conformance",
+            "name": "pwd_ops_covers_getpwnam"
+          },
+          {
+            "source": "semantic_kernels",
+            "name": "manifest_declares_semantic_kernel_contract"
+          }
+        ]
+      },
+      {
+        "symbol": "getgrnam",
+        "family": "nss",
+        "abi_ref": "crates/frankenlibc-abi/src/grp_abi.rs:353",
+        "core_refs": [
+          "crates/frankenlibc-core/src/grp/mod.rs:76"
+        ],
+        "fixture": "group_fixture",
+        "fixture_function": "getgrnam",
+        "fixture_case_min": 4,
+        "required_modes": [
+          "strict",
+          "hardened"
+        ],
+        "unit_test_refs": [
+          {
+            "source": "core_group",
+            "name": "lookup_by_name_found"
+          },
+          {
+            "source": "core_group",
+            "name": "lookup_by_name_not_found"
+          }
+        ],
+        "conformance_test_refs": [
+          {
+            "source": "group_conformance",
+            "name": "grp_ops_covers_getgrnam"
+          },
+          {
+            "source": "semantic_kernels",
+            "name": "manifest_declares_semantic_kernel_contract"
+          }
+        ]
+      }
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Unit-level evidence binds safe core parser and lookup behavior for resolver hosts, passwd files, and group files.",
+      "required_test_refs": [
+        {
+          "source": "core_resolver",
+          "name": "getaddrinfo_numeric_ipv4"
+        },
+        {
+          "source": "core_resolver",
+          "name": "getaddrinfo_with_hosts_ipv4_lookup"
+        },
+        {
+          "source": "core_resolver",
+          "name": "lookup_hosts_case_insensitive"
+        },
+        {
+          "source": "core_passwd",
+          "name": "lookup_by_name_found"
+        },
+        {
+          "source": "core_passwd",
+          "name": "lookup_by_name_not_found"
+        },
+        {
+          "source": "core_group",
+          "name": "lookup_by_name_found"
+        },
+        {
+          "source": "core_group",
+          "name": "lookup_by_name_not_found"
+        },
+        {
+          "source": "completion_harness",
+          "name": "contract_binds_resolver_nss_unit_e2e_and_conformance_evidence"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR cargo test -p frankenlibc-core resolv::tests::getaddrinfo_numeric_ipv4 -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR cargo test -p frankenlibc-core pwd::tests::lookup_by_name_found -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR cargo test -p frankenlibc-core grp::tests::lookup_by_name_found -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "E2E evidence binds the integration fixture, hermetic resolver/NSS lab, semantic kernels, and completion gate output.",
+      "required_gates": [
+        "scripts/run_hermetic_nss_resolver_lab.sh",
+        "scripts/check_hermetic_resolver_nss_semantic_kernels.sh",
+        "scripts/check_resolver_nss_family_completion_contract.sh"
+      ],
+      "required_artifacts": [
+        "tests/integration/fixture_nss.c",
+        "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+        "tests/conformance/hermetic_resolver_nss_semantic_kernels.v1.json",
+        "target/conformance/resolver_nss_family_completion_contract.report.json",
+        "target/conformance/resolver_nss_family_completion_contract.log.jsonl"
+      ],
+      "required_test_refs": [
+        {
+          "source": "semantic_kernels",
+          "name": "gate_runs_lab_and_emits_semantic_logs"
+        },
+        {
+          "source": "resolver_hard_parts",
+          "name": "manifest_defines_resolver_nss_schema_and_required_coverage"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_passes_and_emits_report_and_jsonl"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_hermetic_resolver_nss_semantic_kernels.sh",
+        "bash scripts/check_resolver_nss_family_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR cargo test -p frankenlibc-harness --test hermetic_resolver_nss_semantic_kernels_test gate_runs_lab_and_emits_semantic_logs -- --nocapture"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "description": "Conformance evidence binds host-parity fixture execution for resolver, passwd, and group functions plus hard-parts resolver/NSS fixture coverage.",
+      "required_gates": [
+        "scripts/check_resolver_nss_hard_parts.sh",
+        "scripts/check_resolver_nss_family_completion_contract.sh"
+      ],
+      "required_artifacts": [
+        "tests/conformance/fixtures/resolver.json",
+        "tests/conformance/fixtures/pwd_ops.json",
+        "tests/conformance/fixtures/grp_ops.json",
+        "tests/conformance/resolver_nss_hard_parts.v1.json"
+      ],
+      "required_test_refs": [
+        {
+          "source": "resolver_conformance",
+          "name": "resolver_covers_getaddrinfo"
+        },
+        {
+          "source": "resolver_conformance",
+          "name": "resolver_covers_gethostbyname"
+        },
+        {
+          "source": "resolver_conformance",
+          "name": "resolver_fixture_executes_via_harness"
+        },
+        {
+          "source": "passwd_conformance",
+          "name": "pwd_ops_covers_getpwnam"
+        },
+        {
+          "source": "group_conformance",
+          "name": "grp_ops_covers_getgrnam"
+        },
+        {
+          "source": "resolver_hard_parts",
+          "name": "manifest_defines_resolver_nss_schema_and_required_coverage"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_resolver_nss_hard_parts.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR cargo test -p frankenlibc-harness --test resolver_conformance_test resolver_fixture_executes_via_harness -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR cargo test -p frankenlibc-harness --test pwd_ops_conformance_test pwd_ops_covers_getpwnam -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR cargo test -p frankenlibc-harness --test grp_ops_conformance_test grp_ops_covers_getgrnam -- --nocapture"
+      ]
+    },
+    "structured_log_contract": {
+      "required_events": [
+        "resolver_nss_family_completion_contract_validated",
+        "resolver_nss_family_symbol_bound",
+        "resolver_nss_family_completion_summary"
+      ],
+      "forbidden_events": [
+        "resolver_nss_family_completion_contract_failed"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "api_family",
+        "symbol",
+        "fixture_case_count",
+        "artifact_refs",
+        "test_refs",
+        "failure_signature"
+      ]
+    }
+  }
+}
