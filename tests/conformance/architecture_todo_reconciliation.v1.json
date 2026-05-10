@@ -473,6 +473,49 @@
       "reason": "Mock-code-finder pass found executor comments for placeholder outputs in time_ops and flexible termios placeholders. This is not a TODO/NEXT row, but it is tied to the fixture-schema rows and should be triaged before new fixture gates overclaim coverage."
     }
   ],
+  "completion_debt_evidence": {
+    "bead": "bd-0agsk.2.1",
+    "original_bead": "bd-0agsk.2",
+    "test_source": "crates/frankenlibc-harness/tests/architecture_todo_reconciliation_test.rs",
+    "conformance_primary": {
+      "description": "Conformance-level artifact and checker coverage for architecture ledger reconciliation.",
+      "required_test_names": [
+        "artifact_has_required_report_only_shape",
+        "checker_passes_and_emits_report_and_log",
+        "checker_fails_on_row_count_drift",
+        "checker_fails_on_stale_pending_row_claiming_closed",
+        "checker_fails_on_unsupported_done_row_without_evidence",
+        "checker_fails_when_ledger_mapping_is_missing",
+        "checker_fails_when_target_bead_is_unknown"
+      ]
+    },
+    "telemetry_primary": {
+      "description": "Structured report and JSONL rows emitted by scripts/check_architecture_todo_reconciliation.sh.",
+      "default_report_path": "target/conformance/architecture_todo_reconciliation.report.json",
+      "default_log_path": "target/conformance/architecture_todo_reconciliation.log.jsonl",
+      "required_events": [
+        "architecture_todo_reconciliation_validated",
+        "architecture_todo_reconciliation_row_validated",
+        "architecture_todo_reconciliation_failed"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "level",
+        "event",
+        "bead_id",
+        "artifact_refs",
+        "outcome",
+        "duration_ms",
+        "details",
+        "failure_signature",
+        "todo_id",
+        "evidence_ref",
+        "br_issue_ref",
+        "classification"
+      ]
+    }
+  },
   "validation_requirements": [
     "jq empty tests/conformance/architecture_todo_reconciliation.v1.json",
     "jq validates row_count == completed + pending + in_progress",

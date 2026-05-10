@@ -41,6 +41,14 @@ trace_id = sys.argv[5]
 start_ns = int(sys.argv[6])
 
 
+def find_workspace_root(path: pathlib.Path) -> pathlib.Path:
+    resolved = path.resolve()
+    for candidate in (resolved.parent, *resolved.parents):
+        if (candidate / "Cargo.toml").is_file() and (candidate / "crates").is_dir():
+            return candidate
+    return resolved.parents[2]
+
+
 def first_or_none(values):
     if not isinstance(values, list):
         return None
@@ -119,6 +127,7 @@ def fail(
 
 artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
 ledger_text = ledger_path.read_text(encoding="utf-8").splitlines()
+root_path = find_workspace_root(artifact_path)
 
 if artifact.get("schema_version") != "architecture_todo_reconciliation.v1":
     fail("schema_version", "schema_version must be architecture_todo_reconciliation.v1")
@@ -284,6 +293,83 @@ for key in ["stale_doc_only", "blocked_by_missing_artifact"]:
     if int(declared_classifications.get(key, -1)) != 0:
         fail("unexpected_unresolved_classification", f"classification_counts.{key} must be zero")
 
+completion = artifact.get("completion_debt_evidence")
+if not isinstance(completion, dict):
+    fail("completion_debt_evidence", "completion_debt_evidence must be an object")
+if completion.get("bead") != "bd-0agsk.2.1":
+    fail("completion_debt_bead", "completion_debt_evidence.bead must be bd-0agsk.2.1")
+if completion.get("original_bead") != "bd-0agsk.2":
+    fail("completion_debt_original_bead", "completion_debt_evidence.original_bead must be bd-0agsk.2")
+
+test_source = completion.get("test_source")
+if not isinstance(test_source, str) or not test_source:
+    fail("completion_debt_test_source", "completion_debt_evidence.test_source must be non-empty")
+test_source_path = pathlib.Path(test_source)
+if not test_source_path.is_absolute():
+    test_source_path = root_path / test_source_path
+if not test_source_path.is_file():
+    fail("completion_debt_test_source_missing", f"test source missing: {test_source}")
+test_source_text = test_source_path.read_text(encoding="utf-8")
+
+conformance = completion.get("conformance_primary")
+if not isinstance(conformance, dict):
+    fail("completion_debt_conformance", "completion_debt_evidence.conformance_primary must be an object")
+required_tests = conformance.get("required_test_names")
+if not isinstance(required_tests, list) or not required_tests:
+    fail(
+        "completion_debt_conformance_tests",
+        "completion_debt_evidence.conformance_primary.required_test_names must be non-empty",
+    )
+for test_name in required_tests:
+    if not isinstance(test_name, str) or not test_name:
+        fail("completion_debt_conformance_test_name", "invalid conformance test name")
+    if f"fn {test_name}(" not in test_source_text:
+        fail(
+            "completion_debt_conformance_test_missing",
+            f"conformance evidence references missing test {test_name}",
+        )
+
+telemetry = completion.get("telemetry_primary")
+if not isinstance(telemetry, dict):
+    fail("completion_debt_telemetry", "completion_debt_evidence.telemetry_primary must be an object")
+if telemetry.get("default_report_path") != "target/conformance/architecture_todo_reconciliation.report.json":
+    fail("completion_debt_telemetry_report_path", "telemetry default_report_path drifted")
+if telemetry.get("default_log_path") != "target/conformance/architecture_todo_reconciliation.log.jsonl":
+    fail("completion_debt_telemetry_log_path", "telemetry default_log_path drifted")
+required_events = telemetry.get("required_events")
+expected_events = {
+    "architecture_todo_reconciliation_validated",
+    "architecture_todo_reconciliation_row_validated",
+    "architecture_todo_reconciliation_failed",
+}
+if not isinstance(required_events, list) or set(required_events) != expected_events:
+    fail("completion_debt_telemetry_events", "telemetry required_events drifted")
+required_fields = telemetry.get("required_fields")
+expected_fields = {
+    "timestamp",
+    "trace_id",
+    "level",
+    "event",
+    "bead_id",
+    "artifact_refs",
+    "outcome",
+    "duration_ms",
+    "details",
+    "failure_signature",
+    "todo_id",
+    "evidence_ref",
+    "br_issue_ref",
+    "classification",
+}
+if not isinstance(required_fields, list) or not required_fields:
+    fail("completion_debt_telemetry_fields", "telemetry required_fields must be non-empty")
+missing_fields = sorted(expected_fields - set(str(field) for field in required_fields))
+if missing_fields:
+    fail(
+        "completion_debt_telemetry_missing_field",
+        f"telemetry required_fields missing {missing_fields}",
+    )
+
 checks = {
     "schema_valid": "pass",
     "ledger_rows_exhaustive": "pass",
@@ -291,6 +377,7 @@ checks = {
     "classification_counts_consistent": "pass",
     "target_beads_known": "pass",
     "promotion_policy_report_only": "pass",
+    "completion_debt_evidence_bound": "pass",
 }
 duration_ms = (time.time_ns() - start_ns) // 1_000_000
 row_events = []

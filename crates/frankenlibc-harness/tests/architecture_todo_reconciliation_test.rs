@@ -6,6 +6,7 @@
 //! 3) the checker fails deterministically on count drift, missing row mappings,
 //!    and unknown target bead references.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -159,6 +160,87 @@ fn artifact_has_required_report_only_shape() {
 }
 
 #[test]
+fn completion_debt_evidence_binds_conformance_and_telemetry_items() {
+    let artifact_path =
+        workspace_root().join("tests/conformance/architecture_todo_reconciliation.v1.json");
+    let artifact = load_json(&artifact_path);
+    let evidence = &artifact["completion_debt_evidence"];
+
+    assert_eq!(evidence["bead"].as_str(), Some("bd-0agsk.2.1"));
+    assert_eq!(evidence["original_bead"].as_str(), Some("bd-0agsk.2"));
+    assert_eq!(
+        evidence["test_source"].as_str(),
+        Some("crates/frankenlibc-harness/tests/architecture_todo_reconciliation_test.rs")
+    );
+
+    let conformance_tests: HashSet<_> = evidence["conformance_primary"]["required_test_names"]
+        .as_array()
+        .expect("conformance test names should be an array")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("conformance test name should be string")
+        })
+        .collect();
+    assert_eq!(
+        conformance_tests,
+        HashSet::from([
+            "artifact_has_required_report_only_shape",
+            "checker_passes_and_emits_report_and_log",
+            "checker_fails_on_row_count_drift",
+            "checker_fails_on_stale_pending_row_claiming_closed",
+            "checker_fails_on_unsupported_done_row_without_evidence",
+            "checker_fails_when_ledger_mapping_is_missing",
+            "checker_fails_when_target_bead_is_unknown",
+        ])
+    );
+
+    let telemetry_events: HashSet<_> = evidence["telemetry_primary"]["required_events"]
+        .as_array()
+        .expect("telemetry events should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("telemetry event should be string"))
+        .collect();
+    assert_eq!(
+        telemetry_events,
+        HashSet::from([
+            "architecture_todo_reconciliation_validated",
+            "architecture_todo_reconciliation_row_validated",
+            "architecture_todo_reconciliation_failed",
+        ])
+    );
+
+    let telemetry_fields: HashSet<_> = evidence["telemetry_primary"]["required_fields"]
+        .as_array()
+        .expect("telemetry fields should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("telemetry field should be string"))
+        .collect();
+    for field in [
+        "timestamp",
+        "trace_id",
+        "level",
+        "event",
+        "bead_id",
+        "artifact_refs",
+        "outcome",
+        "duration_ms",
+        "details",
+        "failure_signature",
+        "todo_id",
+        "evidence_ref",
+        "br_issue_ref",
+        "classification",
+    ] {
+        assert!(
+            telemetry_fields.contains(field),
+            "telemetry evidence missing required field {field}"
+        );
+    }
+}
+
+#[test]
 fn checker_passes_and_emits_report_and_log() {
     let _guard = lock_script();
     let root = workspace_root();
@@ -201,6 +283,7 @@ fn checker_passes_and_emits_report_and_log() {
         "classification_counts_consistent",
         "target_beads_known",
         "promotion_policy_report_only",
+        "completion_debt_evidence_bound",
     ] {
         assert_eq!(
             report["checks"][check].as_str(),
@@ -228,35 +311,27 @@ fn checker_passes_and_emits_report_and_log() {
     }
 
     let log_rows = load_jsonl(&log_path);
+    let artifact_path = root.join("tests/conformance/architecture_todo_reconciliation.v1.json");
+    let artifact = load_json(&artifact_path);
+    let required_fields: Vec<_> =
+        artifact["completion_debt_evidence"]["telemetry_primary"]["required_fields"]
+            .as_array()
+            .expect("required telemetry fields")
+            .iter()
+            .map(|value| value.as_str().expect("required telemetry field"))
+            .collect();
     let event = log_rows
         .iter()
         .find(|row| row["event"].as_str() == Some("architecture_todo_reconciliation_validated"))
         .expect("summary log row should be present");
-    for key in [
-        "timestamp",
-        "trace_id",
-        "level",
-        "event",
-        "bead_id",
-        "artifact_refs",
-        "outcome",
-        "duration_ms",
-        "details",
-    ] {
+    for key in &required_fields {
         assert!(event.get(key).is_some(), "log row missing {key}");
     }
     let row_log = log_rows
         .iter()
         .find(|row| row["event"].as_str() == Some("architecture_todo_reconciliation_row_validated"))
         .expect("row log should be present");
-    for key in [
-        "trace_id",
-        "todo_id",
-        "evidence_ref",
-        "br_issue_ref",
-        "classification",
-        "failure_signature",
-    ] {
+    for key in &required_fields {
         assert!(row_log.get(key).is_some(), "row log missing {key}");
     }
 }
@@ -401,4 +476,29 @@ fn checker_fails_when_target_bead_is_unknown() {
         stderr.contains("routed_mapping_unknown_target"),
         "unexpected stderr: {stderr}"
     );
+}
+
+#[test]
+fn checker_fails_when_completion_debt_telemetry_binding_drifts() {
+    let _guard = lock_script();
+    let root = workspace_root();
+    let artifact_path = root.join("tests/conformance/architecture_todo_reconciliation.v1.json");
+    let mut artifact = load_json(&artifact_path);
+    let fields = artifact["completion_debt_evidence"]["telemetry_primary"]["required_fields"]
+        .as_array_mut()
+        .expect("telemetry required_fields should exist");
+    fields.retain(|field| field.as_str() != Some("br_issue_ref"));
+    let mutation_path = write_mutation(&root, "completion_debt_telemetry_drift", &artifact);
+
+    let output = run_checker(&root, Some(&mutation_path));
+    assert!(
+        !output.status.success(),
+        "checker should fail when completion-debt telemetry binding drifts"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("completion_debt_telemetry_missing_field"),
+        "unexpected stderr: {stderr}"
+    );
+    assert_failure_outputs(&root, "completion_debt_telemetry_missing_field");
 }
