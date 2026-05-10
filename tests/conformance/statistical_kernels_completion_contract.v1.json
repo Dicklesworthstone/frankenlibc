@@ -1,0 +1,228 @@
+{
+  "schema_version": "statistical_kernels_completion_contract.v1",
+  "bead": "bd-5vr.3",
+  "completion_debt_bead": "bd-5vr.3.1",
+  "description": "Completion-debt evidence binding for statistical runtime-math kernels: conformal risk, split conformal prediction, anytime-valid e-processes, distributionally-robust CVaR, Bayesian online change-point detection, and alpha-investing FDR control.",
+  "completion_debt_evidence": {
+    "bead": "bd-5vr.3.1",
+    "original_bead": "bd-5vr.3",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-5vr.3/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "artifacts": {
+      "runtime_risk_monitor_calibration": "tests/conformance/runtime_risk_monitor_calibration.v1.json",
+      "anytime_valid_monitor_spec": "tests/conformance/anytime_valid_monitor_spec.json",
+      "changepoint_drift_policy": "tests/conformance/changepoint_drift_policy.json",
+      "controller_manifest": "tests/runtime_math/controller_manifest.v1.json",
+      "production_kernel_manifest": "tests/runtime_math/production_kernel_manifest.v1.json",
+      "runtime_math_linkage": "tests/runtime_math/runtime_math_linkage.v1.json",
+      "math_value_proof": "tests/conformance/math_value_proof.json",
+      "kernel_snapshot_smoke": "tests/runtime_math/golden/kernel_snapshot_smoke.v1.json"
+    },
+    "gates": {
+      "runtime_risk_monitor_calibration": "scripts/check_runtime_risk_monitor_calibration.sh",
+      "anytime_valid_monitor": "scripts/check_anytime_valid_monitor.sh",
+      "changepoint_drift": "scripts/check_changepoint_drift.sh",
+      "completion_contract": "scripts/check_statistical_kernels_completion_contract.sh"
+    },
+    "test_sources": {
+      "runtime_risk_monitor_calibration": "crates/frankenlibc-harness/tests/runtime_risk_monitor_calibration_test.rs",
+      "anytime_valid_monitor": "crates/frankenlibc-harness/tests/anytime_valid_monitor_test.rs",
+      "changepoint_drift": "crates/frankenlibc-harness/tests/changepoint_drift_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/statistical_kernels_completion_contract_test.rs"
+    },
+    "gate": "scripts/check_statistical_kernels_completion_contract.sh",
+    "report_path": "target/conformance/statistical_kernels_completion_contract.report.json",
+    "log_path": "target/conformance/statistical_kernels_completion_contract.log.jsonl",
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/runtime_math/risk.rs:20",
+      "crates/frankenlibc-membrane/src/runtime_math/conformal.rs:77",
+      "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs:38",
+      "crates/frankenlibc-membrane/src/runtime_math/cvar.rs:43",
+      "crates/frankenlibc-membrane/src/runtime_math/changepoint.rs:104",
+      "crates/frankenlibc-membrane/src/runtime_math/alpha_investing.rs:116",
+      "tests/conformance/runtime_risk_monitor_calibration.v1.json:1",
+      "tests/conformance/anytime_valid_monitor_spec.json:1",
+      "tests/conformance/changepoint_drift_policy.json:1",
+      "crates/frankenlibc-harness/tests/runtime_risk_monitor_calibration_test.rs:209",
+      "crates/frankenlibc-harness/tests/anytime_valid_monitor_test.rs:66",
+      "crates/frankenlibc-harness/tests/anytime_valid_monitor_test.rs:96",
+      "crates/frankenlibc-harness/tests/changepoint_drift_test.rs:55",
+      "scripts/check_runtime_risk_monitor_calibration.sh:1",
+      "scripts/check_anytime_valid_monitor.sh:1",
+      "scripts/check_changepoint_drift.sh:1",
+      "scripts/check_statistical_kernels_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/statistical_kernels_completion_contract_test.rs:1"
+    ],
+    "statistical_kernel_contract": {
+      "required_modules": [
+        "risk",
+        "conformal",
+        "eprocess",
+        "cvar",
+        "changepoint",
+        "alpha_investing"
+      ],
+      "modules": {
+        "risk": {
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/risk.rs",
+          "primary_controller": "ConformalRiskEngine",
+          "unit_test_min": 11,
+          "entrypoint_tokens": [
+            "pub struct ConformalRiskEngine",
+            "pub fn observe",
+            "pub fn upper_bound_ppm"
+          ]
+        },
+        "conformal": {
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/conformal.rs",
+          "primary_controller": "ConformalRiskController",
+          "unit_test_min": 11,
+          "entrypoint_tokens": [
+            "pub struct ConformalRiskController",
+            "pub fn observe",
+            "pub fn state",
+            "pub fn summary"
+          ]
+        },
+        "eprocess": {
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs",
+          "primary_controller": "AnytimeEProcessMonitor",
+          "unit_test_min": 8,
+          "entrypoint_tokens": [
+            "pub struct AnytimeEProcessMonitor",
+            "pub fn observe",
+            "pub fn state",
+            "pub fn summary",
+            "pub fn max_e_value"
+          ]
+        },
+        "cvar": {
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/cvar.rs",
+          "primary_controller": "DroCvarController",
+          "unit_test_min": 5,
+          "entrypoint_tokens": [
+            "pub struct DroCvarController",
+            "pub fn observe",
+            "pub fn family_state",
+            "pub fn family_robust_cvar_ns"
+          ]
+        },
+        "changepoint": {
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/changepoint.rs",
+          "primary_controller": "ChangepointController",
+          "unit_test_min": 10,
+          "entrypoint_tokens": [
+            "pub struct ChangepointController",
+            "pub fn observe",
+            "pub fn state",
+            "pub fn summary"
+          ]
+        },
+        "alpha_investing": {
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/alpha_investing.rs",
+          "primary_controller": "AlphaInvestingController",
+          "unit_test_min": 21,
+          "entrypoint_tokens": [
+            "pub struct AlphaInvestingController",
+            "pub fn observe_and_update",
+            "pub fn state",
+            "pub fn summary"
+          ]
+        }
+      }
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Inline unit tests in each statistical runtime-math kernel validate the controller state machine, threshold boundaries, monotone escalation behavior, and summary counters. Harness tests bind those unit surfaces to stable completion evidence.",
+      "required_modules": [
+        "risk",
+        "conformal",
+        "eprocess",
+        "cvar",
+        "changepoint",
+        "alpha_investing"
+      ],
+      "required_inline_unit_test_min": {
+        "risk": 11,
+        "conformal": 11,
+        "eprocess": 8,
+        "cvar": 5,
+        "changepoint": 10,
+        "alpha_investing": 21
+      },
+      "required_test_refs": [
+        {"source": "runtime_risk_monitor_calibration", "name": "gate_artifact_covers_runtime_risk_monitor_calibration_contract"},
+        {"source": "runtime_risk_monitor_calibration", "name": "gate_fails_closed_for_threshold_edge_case_mismatch"},
+        {"source": "anytime_valid_monitor", "name": "eprocess_parameters_consistent"},
+        {"source": "anytime_valid_monitor", "name": "alpha_investing_fdr_bound_correct"},
+        {"source": "changepoint_drift", "name": "bocpd_parameters_consistent"},
+        {"source": "completion_harness", "name": "contract_binds_statistical_kernel_unit_and_e2e_evidence"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_math:: -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "Existing e2e gates exercise runtime risk calibration, anytime-valid monitor policy, BOCPD changepoint routing, controller admission/linkage artifacts, and structured completion telemetry.",
+      "required_gates": [
+        "scripts/check_runtime_risk_monitor_calibration.sh",
+        "scripts/check_anytime_valid_monitor.sh",
+        "scripts/check_changepoint_drift.sh",
+        "scripts/check_statistical_kernels_completion_contract.sh"
+      ],
+      "required_artifacts": [
+        "tests/conformance/runtime_risk_monitor_calibration.v1.json",
+        "tests/conformance/anytime_valid_monitor_spec.json",
+        "tests/conformance/changepoint_drift_policy.json",
+        "tests/runtime_math/controller_manifest.v1.json",
+        "tests/runtime_math/production_kernel_manifest.v1.json",
+        "tests/runtime_math/runtime_math_linkage.v1.json",
+        "tests/conformance/math_value_proof.json",
+        "tests/runtime_math/golden/kernel_snapshot_smoke.v1.json"
+      ],
+      "required_test_refs": [
+        {"source": "runtime_risk_monitor_calibration", "name": "gate_script_passes_and_emits_report_and_jsonl_log"},
+        {"source": "anytime_valid_monitor", "name": "gate_script_exists_and_executable"},
+        {"source": "changepoint_drift", "name": "gate_script_exists_and_executable"},
+        {"source": "completion_harness", "name": "checker_passes_and_emits_report_and_jsonl"}
+      ],
+      "required_commands": [
+        "bash scripts/check_runtime_risk_monitor_calibration.sh",
+        "bash scripts/check_anytime_valid_monitor.sh",
+        "bash scripts/check_changepoint_drift.sh",
+        "bash scripts/check_statistical_kernels_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test statistical_kernels_completion_contract_test -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "description": "The completion checker emits pass/fail JSONL rows that bind module coverage, inline unit-test counts, existing gate refs, source commit, and fail-closed signatures.",
+      "required_events": [
+        "statistical_kernels_completion_contract_validated",
+        "statistical_kernels_completion_contract_failed",
+        "statistical_kernel_module_bound"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "module",
+        "module_path",
+        "inline_unit_tests",
+        "artifact_refs",
+        "test_refs",
+        "failure_signature"
+      ],
+      "required_test_refs": [
+        {"source": "completion_harness", "name": "checker_passes_and_emits_report_and_jsonl"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_alpha_investing_binding"},
+        {"source": "completion_harness", "name": "checker_rejects_inline_unit_threshold_drift"}
+      ]
+    }
+  }
+}
