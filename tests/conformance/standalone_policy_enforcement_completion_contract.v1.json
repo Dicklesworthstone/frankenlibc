@@ -1,0 +1,369 @@
+{
+  "schema_version": "standalone_policy_enforcement_completion_contract.v1",
+  "bead": "bd-w2c3.2.2",
+  "completion_debt_bead": "bd-w2c3.2.2.1",
+  "description": "Completion-debt evidence binding for standalone policy enforcement: compile-time standalone build rejection on policy drift plus replacement-mode source guard replay.",
+  "next_audit_score_threshold": 800,
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.2.2/scorecard.md",
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "source_paths": {
+    "abi_build_script": "crates/frankenlibc-abi/build.rs",
+    "replacement_guard": "scripts/check_replacement_guard.sh",
+    "replacement_profile": "tests/conformance/replacement_profile.json",
+    "packaging_spec": "tests/conformance/packaging_spec.json",
+    "support_matrix": "support_matrix.json",
+    "zero_fixture_pack": "tests/conformance/replacement_zero_unapproved_fixtures.v1.json",
+    "replacement_guard_harness": "crates/frankenlibc-harness/tests/replacement_guard_test.rs",
+    "completion_contract": "tests/conformance/standalone_policy_enforcement_completion_contract.v1.json",
+    "completion_checker": "scripts/check_standalone_policy_enforcement_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/standalone_policy_enforcement_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    {
+      "kind": "standalone_policy_diagnostics",
+      "path": "crates/frankenlibc-abi/build.rs",
+      "line": 640,
+      "anchor": "fn standalone_policy_diagnostics"
+    },
+    {
+      "kind": "replacement_profile_callthrough_false",
+      "path": "crates/frankenlibc-abi/build.rs",
+      "line": 647,
+      "anchor": "profiles.replacement.call_through_allowed=false"
+    },
+    {
+      "kind": "standalone_feature_required",
+      "path": "crates/frankenlibc-abi/build.rs",
+      "line": 658,
+      "anchor": "feature_gates.standalone.features"
+    },
+    {
+      "kind": "replace_status_set",
+      "path": "crates/frankenlibc-abi/build.rs",
+      "line": 674,
+      "anchor": "allowed_statuses"
+    },
+    {
+      "kind": "support_matrix_forbidden_status_scan",
+      "path": "crates/frankenlibc-abi/build.rs",
+      "line": 695,
+      "anchor": "forbidden_status_symbols"
+    },
+    {
+      "kind": "abi_source_callthrough_scan",
+      "path": "crates/frankenlibc-abi/build.rs",
+      "line": 727,
+      "anchor": "scan_call_throughs"
+    },
+    {
+      "kind": "standalone_build_failure_message",
+      "path": "crates/frankenlibc-abi/build.rs",
+      "line": 763,
+      "anchor": "standalone feature requires a replacement-clean ABI"
+    },
+    {
+      "kind": "standalone_feature_gate_entry",
+      "path": "crates/frankenlibc-abi/build.rs",
+      "line": 827,
+      "anchor": "if standalone_enabled"
+    },
+    {
+      "kind": "replacement_guard_mode",
+      "path": "scripts/check_replacement_guard.sh",
+      "line": 8,
+      "anchor": "replacement"
+    },
+    {
+      "kind": "replacement_guard_scan",
+      "path": "scripts/check_replacement_guard.sh",
+      "line": 69,
+      "anchor": "scan_result"
+    },
+    {
+      "kind": "replacement_guard_family_alignment",
+      "path": "scripts/check_replacement_guard.sh",
+      "line": 427,
+      "anchor": "Callthrough family coverage"
+    },
+    {
+      "kind": "replacement_guard_summary",
+      "path": "scripts/check_replacement_guard.sh",
+      "line": 654,
+      "anchor": "=== Summary ==="
+    },
+    {
+      "kind": "replacement_profile_mode_contract",
+      "path": "tests/conformance/replacement_profile.json",
+      "line": 10,
+      "anchor": "\"replacement\""
+    },
+    {
+      "kind": "replacement_profile_empty_families",
+      "path": "tests/conformance/replacement_profile.json",
+      "line": 122,
+      "anchor": "\"callthrough_families\""
+    },
+    {
+      "kind": "replacement_profile_forbidden_mutex",
+      "path": "tests/conformance/replacement_profile.json",
+      "line": 145,
+      "anchor": "\"replacement_forbidden\""
+    },
+    {
+      "kind": "replacement_profile_zero_fixture_pack",
+      "path": "tests/conformance/replacement_profile.json",
+      "line": 156,
+      "anchor": "\"zero_unapproved_fixture_pack\""
+    },
+    {
+      "kind": "replacement_profile_zero_census",
+      "path": "tests/conformance/replacement_profile.json",
+      "line": 160,
+      "anchor": "\"call_through_census\""
+    },
+    {
+      "kind": "packaging_replace_build_command",
+      "path": "tests/conformance/packaging_spec.json",
+      "line": 35,
+      "anchor": "\"replace\""
+    },
+    {
+      "kind": "packaging_replace_host_dependency",
+      "path": "tests/conformance/packaging_spec.json",
+      "line": 46,
+      "anchor": "\"host_glibc_required\": false"
+    },
+    {
+      "kind": "packaging_replace_allowed_statuses",
+      "path": "tests/conformance/packaging_spec.json",
+      "line": 47,
+      "anchor": "\"allowed_statuses\""
+    },
+    {
+      "kind": "packaging_replace_cargo_feature",
+      "path": "tests/conformance/packaging_spec.json",
+      "line": 55,
+      "anchor": "\"cargo_features\""
+    },
+    {
+      "kind": "packaging_standalone_feature_gate",
+      "path": "tests/conformance/packaging_spec.json",
+      "line": 140,
+      "anchor": "\"standalone\""
+    },
+    {
+      "kind": "support_matrix_replace_applicability",
+      "path": "support_matrix.json",
+      "line": 30,
+      "anchor": "\"Replace\""
+    },
+    {
+      "kind": "support_matrix_symbols_inventory",
+      "path": "support_matrix.json",
+      "line": 37,
+      "anchor": "\"symbols\""
+    },
+    {
+      "kind": "replacement_harness_unit_mode_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_guard_test.rs",
+      "line": 477,
+      "anchor": "fn replacement_profile_has_both_modes"
+    },
+    {
+      "kind": "replacement_harness_family_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_guard_test.rs",
+      "line": 577,
+      "anchor": "fn callthrough_families_match_support_matrix"
+    },
+    {
+      "kind": "replacement_harness_guard_report_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_guard_test.rs",
+      "line": 709,
+      "anchor": "fn guard_emits_symbol_module_path_diagnostics"
+    },
+    {
+      "kind": "replacement_harness_standalone_e2e_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_guard_test.rs",
+      "line": 848,
+      "anchor": "fn standalone_build_matches_replacement_guard_outcome"
+    },
+    {
+      "kind": "completion_checker",
+      "path": "scripts/check_standalone_policy_enforcement_completion_contract.sh",
+      "line": 1,
+      "anchor": "bd-w2c3.2.2.1"
+    },
+    {
+      "kind": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/standalone_policy_enforcement_completion_contract_test.rs",
+      "line": 1,
+      "anchor": "bd-w2c3.2.2.1"
+    }
+  ],
+  "source_anchors": {
+    "abi_build_script": [
+      "fn standalone_policy_diagnostics",
+      "profiles.replacement.call_through_allowed=false",
+      "feature_gates.standalone.features",
+      "Replace allowed_statuses",
+      "forbidden_status_symbols",
+      "standalone feature requires a replacement-clean ABI",
+      "if standalone_enabled"
+    ],
+    "replacement_guard": [
+      "bash scripts/check_replacement_guard.sh [interpose|replacement]",
+      "Call-through scan",
+      "replacement_zero_callthrough",
+      "Callthrough family coverage",
+      "check_replacement_guard: PASS"
+    ],
+    "replacement_guard_harness": [
+      "fn replacement_profile_has_both_modes",
+      "fn callthrough_families_match_support_matrix",
+      "fn guard_emits_symbol_module_path_diagnostics",
+      "fn standalone_build_matches_replacement_guard_outcome",
+      "cargo check"
+    ]
+  },
+  "policy_requirements": {
+    "replacement_profile": {
+      "call_through_allowed": false,
+      "callthrough_modules": [],
+      "zero_unapproved_fixture_pack": "tests/conformance/replacement_zero_unapproved_fixtures.v1.json",
+      "call_through_census_total": 0
+    },
+    "packaging_spec": {
+      "replace_host_glibc_required": false,
+      "replace_allowed_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "replace_cargo_features": [
+        "standalone"
+      ],
+      "standalone_feature_gate": [
+        "standalone"
+      ]
+    },
+    "support_matrix": {
+      "replace_applicable_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "forbidden_statuses": [
+        "GlibcCallThrough",
+        "Stub",
+        "WrapsHostLibc"
+      ],
+      "expected_forbidden_symbol_count": 0
+    },
+    "replacement_guard": {
+      "mode": "replacement",
+      "expected_total_call_throughs": 0,
+      "expected_modules_with_call_throughs": 0,
+      "expected_violations": 0,
+      "expected_mutex_forbidden": 0,
+      "expected_fixture_cases": 0
+    },
+    "standalone_build": {
+      "existing_harness_test": "standalone_build_matches_replacement_guard_outcome",
+      "expected_cargo_args": [
+        "check",
+        "-p",
+        "frankenlibc-abi",
+        "--features",
+        "standalone"
+      ],
+      "expected_failure_message": "standalone feature requires a replacement-clean ABI",
+      "expected_guard_hint": "scripts/check_replacement_guard.sh replacement"
+    }
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "description": "Unit-level policy assertions pin the replacement profile, support-matrix family alignment, zero fixture pack, source anchors, and manifest contract.",
+      "implementation_refs": [
+        "replacement_profile_callthrough_false",
+        "standalone_feature_required",
+        "replace_status_set",
+        "support_matrix_forbidden_status_scan",
+        "replacement_profile_mode_contract",
+        "packaging_replace_allowed_statuses",
+        "support_matrix_replace_applicability"
+      ],
+      "test_refs": [
+        {
+          "source": "replacement_guard_harness",
+          "name": "replacement_profile_has_both_modes"
+        },
+        {
+          "source": "replacement_guard_harness",
+          "name": "callthrough_families_match_support_matrix"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_standalone_unit_and_e2e_items"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_matches_standalone_policy_sources"
+        }
+      ],
+      "validation_commands": [
+        "jq empty tests/conformance/standalone_policy_enforcement_completion_contract.v1.json",
+        "bash -n scripts/check_standalone_policy_enforcement_completion_contract.sh",
+        "bash scripts/check_standalone_policy_enforcement_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-standalone-policy-completion-test cargo test -p frankenlibc-harness --test standalone_policy_enforcement_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "description": "E2E guard replay runs the replacement source-scan gate in replacement mode and binds it to the standalone cargo feature check.",
+      "implementation_refs": [
+        "abi_source_callthrough_scan",
+        "standalone_build_failure_message",
+        "standalone_feature_gate_entry",
+        "replacement_guard_scan",
+        "replacement_guard_family_alignment",
+        "replacement_guard_summary"
+      ],
+      "test_refs": [
+        {
+          "source": "replacement_guard_harness",
+          "name": "guard_emits_symbol_module_path_diagnostics"
+        },
+        {
+          "source": "replacement_guard_harness",
+          "name": "standalone_build_matches_replacement_guard_outcome"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_replacement_guard_and_emits_report"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_policy_drift"
+        }
+      ],
+      "validation_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-standalone-policy-abi-check cargo check -p frankenlibc-abi --features standalone",
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-standalone-policy-replacement-e2e cargo test -p frankenlibc-harness --test replacement_guard_test standalone_build_matches_replacement_guard_outcome -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-standalone-policy-completion-clippy cargo clippy -p frankenlibc-harness --test standalone_policy_enforcement_completion_contract_test -- -D warnings"
+      ]
+    }
+  ],
+  "expected_events": [
+    "standalone_policy_contract_validated",
+    "standalone_policy_sources_validated",
+    "replacement_guard_replayed",
+    "standalone_policy_completion_summary"
+  ]
+}
