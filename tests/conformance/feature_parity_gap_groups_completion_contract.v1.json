@@ -1,0 +1,286 @@
+{
+  "schema_version": "feature_parity_gap_groups_completion_contract.v1",
+  "manifest_id": "bd-bp8fl.3.1-feature-parity-gap-groups-completion-contract",
+  "original_bead": "bd-bp8fl.3.1",
+  "completion_debt_bead": "bd-bp8fl.3.1.1",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.3.1/scorecard.md",
+  "source_artifacts": {
+    "gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+    "owner_family_markdown": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "gap_coverage": "tests/conformance/feature_parity_gap_bead_coverage.v1.json",
+    "source_checker": "scripts/check_feature_parity_gap_groups.sh",
+    "source_harness_test": "crates/frankenlibc-harness/tests/feature_parity_gap_groups_test.rs",
+    "targeted_closure_test": "crates/frankenlibc-harness/tests/feature_parity_targeted_closure_beads_test.rs",
+    "completion_checker": "scripts/check_feature_parity_gap_groups_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/feature_parity_gap_groups_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "implementation_refs": [
+      {
+        "id": "gap-groups-manifest-defines-owner-family-exact-cover",
+        "path": "tests/conformance/feature_parity_gap_groups.v1.json",
+        "required_text": [
+          "\"bead\": \"bd-bp8fl.3.1\"",
+          "\"must_cover_every_gap_once\": true",
+          "\"required_grouping_axes\"",
+          "\"required_log_fields\"",
+          "\"ledger_gap_count\": 111",
+          "\"batch_count\": 10",
+          "\"batched_gap_count\": 111",
+          "\"highest_priority_batches\""
+        ]
+      },
+      {
+        "id": "owner-family-markdown-documents-all-groups-and-followups",
+        "path": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+        "required_text": [
+          "Source ledger gaps: **111**",
+          "Grouped gaps: **111**",
+          "Owner-family groups: **10**",
+          "Unassigned gaps: **0**",
+          "`bd-bp8fl.3.5`",
+          "`bd-bp8fl.3.14`"
+        ]
+      },
+      {
+        "id": "source-checker-emits-report-regenerated-artifact-and-row-logs",
+        "path": "scripts/check_feature_parity_gap_groups.sh",
+        "required_text": [
+          "exact_gap_coverage",
+          "owner_bead_coverage",
+          "semantic_status_coverage",
+          "feature_parity_gap_groups.regenerated.v1.json",
+          "feature-parity-gap-row",
+          "feature-parity-gap-batch"
+        ]
+      },
+      {
+        "id": "source-harness-binds-unit-e2e-conformance-behavior",
+        "path": "crates/frankenlibc-harness/tests/feature_parity_gap_groups_test.rs",
+        "required_text": [
+          "artifact_exists_and_has_required_shape",
+          "batches_preserve_owner_bead_and_semantic_status_scope",
+          "batches_cover_every_ledger_gap_exactly_once",
+          "summary_counts_match_ledger_and_batches",
+          "gate_script_passes_and_emits_structured_report_and_log",
+          "gate_rejects_duplicate_missing_owner_unknown_section_stale_and_count_drift"
+        ]
+      }
+    ],
+    "test_sources": {
+      "source_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/feature_parity_gap_groups_test.rs",
+        "required_test_refs": [
+          "artifact_exists_and_has_required_shape",
+          "batches_preserve_owner_bead_and_semantic_status_scope",
+          "batches_cover_every_ledger_gap_exactly_once",
+          "summary_counts_match_ledger_and_batches",
+          "gate_script_passes_and_emits_structured_report_and_log",
+          "gate_rejects_duplicate_missing_owner_unknown_section_stale_and_count_drift"
+        ]
+      },
+      "targeted_closure_test": {
+        "path": "crates/frankenlibc-harness/tests/feature_parity_targeted_closure_beads_test.rs",
+        "required_test_refs": [
+          "feature_parity_gap_groups",
+          "feature_parity_gap_owner_family_groups"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/feature_parity_gap_groups_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_e2e_conformance_and_telemetry_evidence",
+          "checker_validates_existing_feature_parity_gap_group_gate",
+          "checker_emits_report_and_jsonl",
+          "checker_rejects_missing_required_batch",
+          "checker_rejects_missing_telemetry_event"
+        ]
+      }
+    }
+  },
+  "required_source_contract": {
+    "summary_exact": {
+      "ledger_gap_count": 111,
+      "batch_count": 10,
+      "batched_gap_count": 111,
+      "duplicate_gap_count": 0,
+      "unbatched_gap_count": 0
+    },
+    "required_sections": [
+      "gap_summary",
+      "macro_targets",
+      "machine_delta",
+      "proof_math",
+      "reverse_core"
+    ],
+    "required_batches": [
+      "fpg-claim-control",
+      "fpg-reverse-runtime-core",
+      "fpg-reverse-loader-process-abi",
+      "fpg-proof-core-safety",
+      "fpg-proof-online-control",
+      "fpg-proof-coverage-interaction",
+      "fpg-proof-algebraic-topological",
+      "fpg-gap-summary-evidence-foundation",
+      "fpg-gap-summary-ported-surface-evidence",
+      "fpg-gap-summary-runtime-monitor-evidence"
+    ],
+    "required_source_checks": [
+      "json_parse",
+      "top_level_shape",
+      "batch_schema",
+      "artifact_contract",
+      "artifact_freshness",
+      "evidence_artifacts_exist",
+      "abi_modules_exist",
+      "unique_batch_ids",
+      "unique_ledger_gap_ids",
+      "exact_gap_coverage",
+      "known_ledger_sections",
+      "owner_bead_coverage",
+      "semantic_status_coverage",
+      "summary_counts"
+    ],
+    "required_grouping_axes": [
+      "feature_parity_sections",
+      "symbol_family",
+      "abi_modules",
+      "support_statuses",
+      "semantic_statuses",
+      "owner_beads",
+      "oracle_kind",
+      "replacement_levels",
+      "evidence_artifacts",
+      "closure_blockers",
+      "source_owner",
+      "priority"
+    ],
+    "required_log_fields": [
+      "trace_id",
+      "bead_id",
+      "ledger_row_id",
+      "section",
+      "symbol_family",
+      "owner_bead",
+      "expected",
+      "actual",
+      "artifact_refs",
+      "failure_signature",
+      "scenario_id",
+      "runtime_mode",
+      "replacement_level",
+      "api_family",
+      "oracle_kind",
+      "source_commit",
+      "target_dir"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "bead",
+      "status",
+      "checks",
+      "ledger_gap_count",
+      "batch_count",
+      "batched_gap_count",
+      "duplicate_gap_count",
+      "unbatched_gap_count",
+      "section_counts",
+      "owner_counts",
+      "evidence_artifact_counts",
+      "batch_summaries",
+      "errors",
+      "artifact_refs",
+      "regenerated_group_artifact",
+      "source_commit"
+    ],
+    "required_generated_outputs": [
+      "report",
+      "log_jsonl",
+      "regenerated_groups"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_test_refs": [
+        "artifact_exists_and_has_required_shape",
+        "batches_preserve_owner_bead_and_semantic_status_scope",
+        "summary_counts_match_ledger_and_batches",
+        "manifest_binds_unit_e2e_conformance_and_telemetry_evidence"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test feature_parity_gap_groups_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test feature_parity_gap_groups_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "required_test_refs": [
+        "gate_script_passes_and_emits_structured_report_and_log",
+        "checker_validates_existing_feature_parity_gap_group_gate",
+        "checker_rejects_missing_required_batch"
+      ],
+      "required_commands": [
+        "bash scripts/check_feature_parity_gap_groups.sh",
+        "bash scripts/check_feature_parity_gap_groups_completion_contract.sh"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "required_test_refs": [
+        "batches_cover_every_ledger_gap_exactly_once",
+        "gate_rejects_duplicate_missing_owner_unknown_section_stale_and_count_drift",
+        "checker_rejects_missing_required_batch"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test feature_parity_gap_groups_test -- --nocapture",
+        "bash scripts/check_feature_parity_gap_groups_completion_contract.sh"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "required_test_refs": [
+        "gate_script_passes_and_emits_structured_report_and_log",
+        "checker_emits_report_and_jsonl",
+        "checker_rejects_missing_telemetry_event"
+      ],
+      "required_commands": [
+        "jq -s empty target/conformance/feature_parity_gap_groups.log.jsonl",
+        "jq -s empty target/conformance/feature_parity_gap_groups_completion_contract.log.jsonl"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "summary",
+      "source_gate_report",
+      "checks",
+      "source_log_row_count",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome"
+    ],
+    "required_events": [
+      "feature_parity_gap_groups_completion_summary",
+      "feature_parity_gap_groups_source_gate_bindings",
+      "feature_parity_gap_groups_completion_contract_pass"
+    ]
+  }
+}
