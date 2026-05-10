@@ -1,0 +1,260 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "cve-integer-overflow-validation-completion-contract",
+  "bead": "bd-1m5.4",
+  "completion_debt_bead": "bd-1m5.4.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "purpose": "Completion-debt contract for the CVE integer-overflow validation suite originally closed under bd-1m5.4. The audit pass required explicit unit and e2e evidence; this manifest binds the generator, shell gate, persisted validation report, CVE manifests, triggers, and harness tests to a fail-closed checker.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-1m5.4/scorecard.md",
+    "spec_path": "passes/2026-05-10T03-16-16Z/beads/bd-1m5.4/spec.json",
+    "score_before": 570,
+    "score_threshold": 800
+  },
+  "runtime_target": {
+    "max_seconds": 45,
+    "external_services_allowed": false,
+    "coverage_artifacts": [
+      "target/conformance/cve_integer_overflow_validation_completion_contract.report.json",
+      "target/conformance/cve_integer_overflow_validation_completion_contract.log.jsonl",
+      "target/conformance/generated_integer_overflow_validation.v1.json"
+    ],
+    "allowed_command_prefixes": [
+      "python3 scripts/generate_cve_integer_overflow_validation.py -o",
+      "cc -c -fsyntax-only tests/cve_arena/glibc/cve_2023_6246_syslog_suite/trigger.c",
+      "bash scripts/check_cve_integer_overflow_validation_completion_contract.sh"
+    ],
+    "forbidden_command_substrings": [
+      "cargo ",
+      "cargo\t",
+      "git reset --hard",
+      "git clean -fd",
+      "rm -rf"
+    ]
+  },
+  "source_artifacts": [
+    {
+      "artifact_id": "integer_overflow_generator",
+      "kind": "implementation",
+      "path": "scripts/generate_cve_integer_overflow_validation.py",
+      "required_line_refs": [
+        "scripts/generate_cve_integer_overflow_validation.py:39",
+        "scripts/generate_cve_integer_overflow_validation.py:68",
+        "scripts/generate_cve_integer_overflow_validation.py:106",
+        "scripts/generate_cve_integer_overflow_validation.py:120",
+        "scripts/generate_cve_integer_overflow_validation.py:145"
+      ],
+      "required_needles": [
+        "INTEGER_OVERFLOW_CWES",
+        "find_integer_overflow_tests",
+        "validate_manifest",
+        "check_c_trigger_compiles",
+        "classify_overflow_pattern",
+        "coverage_matrix_check"
+      ]
+    },
+    {
+      "artifact_id": "integer_overflow_shell_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_cve_integer_overflow_validation.sh",
+      "required_line_refs": [
+        "scripts/check_cve_integer_overflow_validation.sh:13",
+        "scripts/check_cve_integer_overflow_validation.sh:86",
+        "scripts/check_cve_integer_overflow_validation.sh:93",
+        "scripts/check_cve_integer_overflow_validation.sh:100"
+      ],
+      "required_needles": [
+        "generate_cve_integer_overflow_validation.py",
+        "ClampSize healing action exercised",
+        "integer_overflow pattern covered",
+        "Coverage matrix includes all integer overflow CVEs",
+        "check_cve_integer_overflow_validation: PASS"
+      ]
+    },
+    {
+      "artifact_id": "persisted_validation_report",
+      "kind": "report",
+      "path": "tests/cve_arena/results/integer_overflow_validation.v1.json",
+      "required_needles": [
+        "\"bead\": \"bd-1m5.4\"",
+        "\"CVE-2023-6246\"",
+        "\"CVE-2024-46461\"",
+        "\"ClampSize\"",
+        "\"integer_overflow\""
+      ]
+    },
+    {
+      "artifact_id": "source_harness_tests",
+      "kind": "unit_test",
+      "path": "crates/frankenlibc-harness/tests/cve_integer_overflow_validation_test.rs",
+      "required_line_refs": [
+        "crates/frankenlibc-harness/tests/cve_integer_overflow_validation_test.rs:23",
+        "crates/frankenlibc-harness/tests/cve_integer_overflow_validation_test.rs:46",
+        "crates/frankenlibc-harness/tests/cve_integer_overflow_validation_test.rs:67",
+        "crates/frankenlibc-harness/tests/cve_integer_overflow_validation_test.rs:86",
+        "crates/frankenlibc-harness/tests/cve_integer_overflow_validation_test.rs:105"
+      ],
+      "required_needles": [
+        "intovf_report_generates_successfully",
+        "intovf_report_schema_complete",
+        "intovf_all_manifests_valid",
+        "intovf_clamp_size_healing_exercised",
+        "intovf_overflow_pattern_covered"
+      ]
+    }
+  ],
+  "report_contract": {
+    "report_path": "tests/cve_arena/results/integer_overflow_validation.v1.json",
+    "generator": "scripts/generate_cve_integer_overflow_validation.py",
+    "expected_summary": {
+      "total_intovf_tests": 2,
+      "manifests_valid": 2,
+      "with_trigger_files": 2,
+      "c_triggers_compile": 1,
+      "c_triggers_total": 1,
+      "total_issues": 0
+    },
+    "required_healing_actions": [
+      "ClampSize",
+      "ReallocAsMalloc",
+      "TruncateWithNull"
+    ],
+    "required_overflow_patterns": [
+      "integer_overflow",
+      "size_miscalculation"
+    ],
+    "coverage_matrix": {
+      "path": "tests/cve_arena/coverage_matrix.json",
+      "required_present": true,
+      "min_total_cves": 2,
+      "missing_integer_overflow_cves": []
+    }
+  },
+  "cve_cases": [
+    {
+      "scenario_id": "glibc_syslog_integer_overflow_suite",
+      "cve_id": "CVE-2023-6246",
+      "manifest_path": "tests/cve_arena/glibc/cve_2023_6246_syslog_suite/manifest.json",
+      "trigger_path": "tests/cve_arena/glibc/cve_2023_6246_syslog_suite/trigger.c",
+      "required_cwe_ids": [
+        "CWE-787",
+        "CWE-131",
+        "CWE-190"
+      ],
+      "required_healing_actions": [
+        "ClampSize",
+        "TruncateWithNull"
+      ],
+      "required_tsm_features": [
+        "canary",
+        "bounds_checking",
+        "clamp_size",
+        "truncate_with_null"
+      ],
+      "required_overflow_patterns": [
+        "integer_overflow",
+        "size_miscalculation"
+      ],
+      "expected_strict_stock": "crashes",
+      "expected_tsm_outcome": "prevent_with_healing"
+    },
+    {
+      "scenario_id": "vlc_mms_integer_overflow_heap_overflow",
+      "cve_id": "CVE-2024-46461",
+      "manifest_path": "tests/cve_arena/targets/vlc/manifest.json",
+      "trigger_path": "tests/cve_arena/targets/vlc/trigger.sh",
+      "required_cwe_ids": [
+        "CWE-190",
+        "CWE-122"
+      ],
+      "required_healing_actions": [
+        "ClampSize",
+        "ReallocAsMalloc"
+      ],
+      "required_tsm_features": [
+        "allocation_fingerprint",
+        "canary_verification",
+        "heap_overflow_detection",
+        "clamp_size_healing",
+        "integer_overflow_resilience"
+      ],
+      "required_overflow_patterns": [
+        "integer_overflow"
+      ],
+      "expected_strict_stock": "crashes",
+      "expected_tsm_outcome": "prevent_with_healing"
+    }
+  ],
+  "unit_primary": {
+    "missing_item_id": "tests.unit.primary",
+    "test_source": "crates/frankenlibc-harness/tests/cve_integer_overflow_validation_completion_contract_test.rs",
+    "required_test_names": [
+      "manifest_anchors_completion_debt",
+      "manifest_binds_unit_and_e2e_missing_items",
+      "source_artifacts_are_file_backed",
+      "cve_cases_bind_integer_overflow_manifests",
+      "checker_rejects_stale_unit_test_binding"
+    ],
+    "existing_unit_tests": [
+      {
+        "name": "intovf_report_schema_complete",
+        "line_ref": "crates/frankenlibc-harness/tests/cve_integer_overflow_validation_test.rs:46"
+      },
+      {
+        "name": "intovf_all_manifests_valid",
+        "line_ref": "crates/frankenlibc-harness/tests/cve_integer_overflow_validation_test.rs:67"
+      },
+      {
+        "name": "intovf_clamp_size_healing_exercised",
+        "line_ref": "crates/frankenlibc-harness/tests/cve_integer_overflow_validation_test.rs:86"
+      },
+      {
+        "name": "intovf_overflow_pattern_covered",
+        "line_ref": "crates/frankenlibc-harness/tests/cve_integer_overflow_validation_test.rs:105"
+      }
+    ]
+  },
+  "e2e_primary": {
+    "missing_item_id": "tests.e2e.primary",
+    "scenarios": [
+      {
+        "scenario_id": "generate_isolated_integer_overflow_report",
+        "command": "python3 scripts/generate_cve_integer_overflow_validation.py -o <out_dir>/generated_integer_overflow_validation.v1.json",
+        "expected_exit": 0,
+        "expected_report": {
+          "summary.total_intovf_tests": 2,
+          "summary.total_issues": 0,
+          "coverage_matrix_check.intovf_cves_missing": []
+        }
+      },
+      {
+        "scenario_id": "compile_glibc_syslog_trigger",
+        "command": "cc -c -fsyntax-only tests/cve_arena/glibc/cve_2023_6246_syslog_suite/trigger.c",
+        "expected_exit": 0,
+        "expected_report": {
+          "c_trigger": "compiles"
+        }
+      },
+      {
+        "scenario_id": "completion_checker_runs_fail_closed",
+        "command": "bash scripts/check_cve_integer_overflow_validation_completion_contract.sh",
+        "expected_exit": 0,
+        "expected_output_needles": [
+          "cve_integer_overflow_validation_completion_contract: PASS"
+        ]
+      }
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-1m5.4.1",
+    "original_bead": "bd-1m5.4",
+    "next_audit_score_threshold": 800,
+    "required_events": [
+      "cve_integer_overflow_component",
+      "cve_integer_overflow_case",
+      "cve_integer_overflow_e2e",
+      "cve_integer_overflow_summary"
+    ]
+  }
+}
