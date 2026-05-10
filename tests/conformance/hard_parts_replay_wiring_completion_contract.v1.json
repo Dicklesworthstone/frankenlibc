@@ -1,0 +1,200 @@
+{
+  "schema_version": "hard_parts_replay_wiring_completion_contract.v1",
+  "bead_id": "bd-bp8fl.2.8.1",
+  "original_bead": "bd-bp8fl.2.8",
+  "replay_gate_bead": "bd-bp8fl.5.9",
+  "trace_id": "bd-bp8fl.2.8.1::hard-parts-replay-wiring::v1",
+  "generated_at_utc": "2026-05-10T13:58:00Z",
+  "purpose": "Bind the bd-bp8fl.2.8 tracker-repair dependency wiring to machine-checkable hard-parts replay evidence, without redoing or narrowing the bd-bp8fl.5.9 replay-standard gate.",
+  "source_artifacts": [
+    {
+      "id": "replay_manifest",
+      "path": "tests/conformance/hard_parts_failure_replay_gate.v1.json",
+      "role": "source hard-parts replay manifest"
+    },
+    {
+      "id": "replay_checker",
+      "path": "scripts/check_hard_parts_failure_replay_gate.sh",
+      "role": "source replay checker"
+    },
+    {
+      "id": "replay_unit_test",
+      "path": "crates/frankenlibc-harness/tests/hard_parts_failure_replay_gate_test.rs",
+      "role": "source replay harness test"
+    },
+    {
+      "id": "dependency_matrix",
+      "path": "tests/conformance/hard_parts_dependency_matrix.v1.json",
+      "role": "hard-parts dependency topology source"
+    },
+    {
+      "id": "dependency_matrix_test",
+      "path": "crates/frankenlibc-harness/tests/hard_parts_dependency_matrix_test.rs",
+      "role": "dependency topology harness test"
+    },
+    {
+      "id": "e2e_checker",
+      "path": "scripts/check_hard_parts_e2e.sh",
+      "role": "direct and isolated hard-parts E2E classifier"
+    },
+    {
+      "id": "e2e_catalog",
+      "path": "tests/conformance/hard_parts_e2e_catalog.v1.json",
+      "role": "hard-parts E2E source catalog"
+    },
+    {
+      "id": "e2e_failure_matrix",
+      "path": "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
+      "role": "failure-classification matrix"
+    },
+    {
+      "id": "truth_table",
+      "path": "tests/conformance/hard_parts_truth_table.v1.json",
+      "role": "hard-parts support and reality truth table"
+    }
+  ],
+  "source_replay": {
+    "checker": "scripts/check_hard_parts_failure_replay_gate.sh",
+    "manifest": "tests/conformance/hard_parts_failure_replay_gate.v1.json",
+    "required_status": "pass",
+    "required_summary": {
+      "scenario_count": 7,
+      "covered_family_count": 7,
+      "direct_runner_count": 7,
+      "isolated_runner_count": 7
+    },
+    "required_report_fields": [
+      "schema_version",
+      "bead_id",
+      "gate_id",
+      "status",
+      "source_commit",
+      "target_dir",
+      "summary",
+      "covered_families",
+      "diagnostic_signatures",
+      "errors"
+    ],
+    "required_log_fields": [
+      "trace_id",
+      "bead_id",
+      "failure_family",
+      "scenario_id",
+      "runtime_mode",
+      "replacement_level",
+      "artifact_refs",
+      "source_commit",
+      "target_dir",
+      "failure_signature"
+    ]
+  },
+  "dependency_wiring": {
+    "tracker_mode": "no-db",
+    "gate_bead": "bd-bp8fl.5.9",
+    "required_gate_status": "closed",
+    "required_child_status": "closed",
+    "required_dependency_type": "blocks",
+    "required_closed_children": [
+      "bd-bp8fl.5.1",
+      "bd-bp8fl.5.2",
+      "bd-bp8fl.5.3",
+      "bd-bp8fl.5.4",
+      "bd-bp8fl.5.5",
+      "bd-bp8fl.5.6",
+      "bd-bp8fl.5.7",
+      "bd-bp8fl.5.8"
+    ],
+    "required_gate_dependents": [
+      "bd-bp8fl.2.8",
+      "bd-bp8fl.5.1",
+      "bd-bp8fl.5.2",
+      "bd-bp8fl.5.3",
+      "bd-bp8fl.5.4",
+      "bd-bp8fl.5.5",
+      "bd-bp8fl.5.6",
+      "bd-bp8fl.5.7",
+      "bd-bp8fl.5.8"
+    ],
+    "read_only_commands": [
+      "br show bd-bp8fl.5.1 --no-db --json",
+      "br show bd-bp8fl.5.2 --no-db --json",
+      "br show bd-bp8fl.5.3 --no-db --json",
+      "br show bd-bp8fl.5.4 --no-db --json",
+      "br show bd-bp8fl.5.5 --no-db --json",
+      "br show bd-bp8fl.5.6 --no-db --json",
+      "br show bd-bp8fl.5.7 --no-db --json",
+      "br show bd-bp8fl.5.8 --no-db --json",
+      "br show bd-bp8fl.5.9 --no-db --json",
+      "br dep cycles --no-db --json"
+    ],
+    "forbidden_command_fragments": [
+      "br sync --flush-only",
+      "br sync --import-only",
+      "br sync --rebuild",
+      "br dep add",
+      "br update",
+      "br close",
+      "br create",
+      "git clean",
+      "git reset --hard",
+      "rm -rf"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "spec_item": "tests.unit.primary",
+      "implementation_refs": [
+        "tests/conformance/hard_parts_replay_wiring_completion_contract.v1.json",
+        "scripts/check_hard_parts_replay_wiring_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/hard_parts_replay_wiring_completion_contract_test.rs"
+      ],
+      "required_positive_tests": [
+        "manifest_binds_replay_gate_and_dependency_wiring",
+        "checker_replays_source_gate_and_verifies_tracker_wiring"
+      ],
+      "required_negative_tests": [
+        "checker_rejects_destructive_tracker_command",
+        "checker_rejects_missing_dependency_wiring",
+        "checker_rejects_missing_unit_binding"
+      ]
+    }
+  ],
+  "completion_output_contract": {
+    "report_path": "target/conformance/hard_parts_replay_wiring_completion_contract.report.json",
+    "log_path": "target/conformance/hard_parts_replay_wiring_completion_contract.log.jsonl",
+    "required_report_fields": [
+      "schema_version",
+      "bead_id",
+      "original_bead",
+      "replay_gate_bead",
+      "trace_id",
+      "source_commit",
+      "status",
+      "summary",
+      "source_replay",
+      "dependency_wiring",
+      "missing_item_bindings",
+      "artifact_refs",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "bead_id",
+      "event",
+      "status",
+      "artifact_refs",
+      "source_commit",
+      "target_dir",
+      "failure_signature"
+    ],
+    "required_events": [
+      "source_artifacts_validated",
+      "source_replay_validated",
+      "dependency_wiring_verified",
+      "hard_parts_replay_wiring_completion_contract_validated"
+    ]
+  }
+}
