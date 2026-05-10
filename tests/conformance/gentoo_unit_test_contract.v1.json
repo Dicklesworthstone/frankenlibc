@@ -1,0 +1,502 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "gentoo-unit-test-contract",
+  "bead": "bd-2icq.13",
+  "completion_debt_bead": "bd-2icq.13.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "purpose": "Completion-debt contract for the Gentoo integration unit-test suite originally closed under bd-2icq.13. The audit pass 2026-05-10T03-16-16Z required concrete unit, integration, and telemetry evidence; this manifest binds the existing Gentoo test modules, fixture files, and integration telemetry probe to file-backed checker output.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-2icq.13/scorecard.md",
+    "spec_path": "passes/2026-05-10T03-16-16Z/beads/bd-2icq.13/spec.json",
+    "score_before": 470,
+    "score_threshold": 800
+  },
+  "runtime_target": {
+    "max_seconds": 60,
+    "external_services_allowed": false,
+    "coverage_line_threshold_percent": 90,
+    "coverage_branch_threshold_percent": 85,
+    "coverage_artifacts": [
+      "target/conformance/gentoo_unit_test_contract.report.json",
+      "target/conformance/gentoo_unit_test_contract.log.jsonl"
+    ]
+  },
+  "required_components": [
+    {
+      "component_id": "build_runner",
+      "implementation": "scripts/gentoo/build-runner.py",
+      "test_file": "tests/gentoo/test-build-runner.py",
+      "min_test_count": 6,
+      "coverage_categories": [
+        "dependency_resolution",
+        "failure_propagation",
+        "retry_logic",
+        "resume_from_checkpoint",
+        "timeout_and_telemetry_contract",
+        "portage_instrumentation_env"
+      ],
+      "required_tests": [
+        {
+          "class": "BuildRunnerTests",
+          "test": "test_dependency_skip_when_parent_fails",
+          "line_ref": "tests/gentoo/test-build-runner.py:81"
+        },
+        {
+          "class": "BuildRunnerTests",
+          "test": "test_retry_until_success",
+          "line_ref": "tests/gentoo/test-build-runner.py:99"
+        },
+        {
+          "class": "BuildRunnerTests",
+          "test": "test_resume_skips_existing_results",
+          "line_ref": "tests/gentoo/test-build-runner.py:117"
+        },
+        {
+          "class": "BuildRunnerTests",
+          "test": "test_dry_run_writes_telemetry_contract",
+          "line_ref": "tests/gentoo/test-build-runner.py:149"
+        },
+        {
+          "class": "BuildRunnerTests",
+          "test": "test_docker_command_enables_portage_instrumentation_env",
+          "line_ref": "tests/gentoo/test-build-runner.py:177"
+        },
+        {
+          "class": "BuildRunnerTests",
+          "test": "test_build_package_wrapper_emits_telemetry_contract",
+          "line_ref": "tests/gentoo/test-build-runner.py:195"
+        }
+      ]
+    },
+    {
+      "component_id": "test_runner",
+      "implementation": "scripts/gentoo/test-runner.py",
+      "test_file": "tests/gentoo/test_test_runner.py",
+      "min_test_count": 12,
+      "coverage_categories": [
+        "baseline_comparison",
+        "regression_detection",
+        "performance_overhead",
+        "healing_action_parsing",
+        "invalid_json_handling",
+        "timeout_and_oom_classification"
+      ],
+      "required_tests": [
+        {
+          "class": "TestModeResultComparison",
+          "test": "test_regression_detection",
+          "line_ref": "tests/gentoo/test_test_runner.py:33"
+        },
+        {
+          "class": "TestModeResultComparison",
+          "test": "test_improvement_detection",
+          "line_ref": "tests/gentoo/test_test_runner.py:60"
+        },
+        {
+          "class": "TestModeResultComparison",
+          "test": "test_performance_overhead_calculation",
+          "line_ref": "tests/gentoo/test_test_runner.py:140"
+        },
+        {
+          "class": "TestLogParsing",
+          "test": "test_parse_missing_log",
+          "line_ref": "tests/gentoo/test_test_runner.py:241"
+        },
+        {
+          "class": "TestHealingActionParsing",
+          "test": "test_invalid_json_handling",
+          "line_ref": "tests/gentoo/test_test_runner.py:287"
+        },
+        {
+          "class": "TestCrashHandling",
+          "test": "test_timeout_exit_code",
+          "line_ref": "tests/gentoo/test_test_runner.py:318"
+        },
+        {
+          "class": "TestCrashHandling",
+          "test": "test_oom_detection",
+          "line_ref": "tests/gentoo/test_test_runner.py:334"
+        }
+      ]
+    },
+    {
+      "component_id": "docker_integration",
+      "implementation": "docker/gentoo/Dockerfile.frankenlibc",
+      "test_file": "tests/gentoo/test_docker_integration.py",
+      "min_test_count": 15,
+      "coverage_categories": [
+        "container_creation",
+        "ld_preload_injection",
+        "log_volume_mounting",
+        "container_cleanup",
+        "memory_limit_enforcement",
+        "timeout_kills_container",
+        "telemetry_summary"
+      ],
+      "required_tests": [
+        {
+          "class": "TestDockerIntegration",
+          "test": "test_container_creation",
+          "line_ref": "tests/gentoo/test_docker_integration.py:59"
+        },
+        {
+          "class": "TestDockerIntegration",
+          "test": "test_container_cleanup",
+          "line_ref": "tests/gentoo/test_docker_integration.py:121"
+        },
+        {
+          "class": "TestDockerIntegration",
+          "test": "test_timeout_kills_container",
+          "line_ref": "tests/gentoo/test_docker_integration.py:150"
+        },
+        {
+          "class": "TestLDPreloadInjection",
+          "test": "test_ld_preload_format",
+          "line_ref": "tests/gentoo/test_docker_integration.py:174"
+        },
+        {
+          "class": "TestFrankenLibCIntegrationTelemetry",
+          "test": "test_log_analysis_telemetry_contract",
+          "line_ref": "tests/gentoo/test_docker_integration.py:290"
+        },
+        {
+          "class": "TestFrankenLibCIntegrationTelemetry",
+          "test": "test_docker_integration_script_checks_telemetry_summary",
+          "line_ref": "tests/gentoo/test_docker_integration.py:357"
+        },
+        {
+          "class": "TestMemoryLimits",
+          "test": "test_oom_exit_code",
+          "line_ref": "tests/gentoo/test_docker_integration.py:389"
+        }
+      ]
+    },
+    {
+      "component_id": "log_parser",
+      "implementation": "scripts/gentoo/log_parser.py",
+      "test_file": "tests/gentoo/test_log_parser.py",
+      "min_test_count": 5,
+      "coverage_categories": [
+        "valid_runtime_jsonl",
+        "valid_hook_jsonl",
+        "malformed_json",
+        "missing_fields",
+        "statistics_and_validation"
+      ],
+      "required_tests": [
+        {
+          "class": "LogParserTests",
+          "test": "test_parse_valid_runtime_log",
+          "line_ref": "tests/gentoo/test_log_parser.py:29"
+        },
+        {
+          "class": "LogParserTests",
+          "test": "test_parse_valid_hook_log",
+          "line_ref": "tests/gentoo/test_log_parser.py:37"
+        },
+        {
+          "class": "LogParserTests",
+          "test": "test_invalid_json_raises_in_strict_mode",
+          "line_ref": "tests/gentoo/test_log_parser.py:44"
+        },
+        {
+          "class": "LogParserTests",
+          "test": "test_invalid_line_collected_in_non_strict_mode",
+          "line_ref": "tests/gentoo/test_log_parser.py:49"
+        },
+        {
+          "class": "LogParserTests",
+          "test": "test_stats_and_validator",
+          "line_ref": "tests/gentoo/test_log_parser.py:56"
+        }
+      ]
+    },
+    {
+      "component_id": "cache_manager",
+      "implementation": "scripts/gentoo/cache_manager.py",
+      "test_file": "tests/gentoo/test_cache_manager.py",
+      "min_test_count": 6,
+      "coverage_categories": [
+        "cache_hit",
+        "checksum_corruption",
+        "age_based_expiry",
+        "specific_invalidation",
+        "integrity_check",
+        "concurrent_access"
+      ],
+      "required_tests": [
+        {
+          "class": "BinaryPackageCacheTests",
+          "test": "test_put_and_lookup_cache_hit",
+          "line_ref": "tests/gentoo/test_cache_manager.py:50"
+        },
+        {
+          "class": "BinaryPackageCacheTests",
+          "test": "test_lookup_miss_on_checksum_corruption",
+          "line_ref": "tests/gentoo/test_cache_manager.py:78"
+        },
+        {
+          "class": "BinaryPackageCacheTests",
+          "test": "test_lookup_miss_on_expired_entry",
+          "line_ref": "tests/gentoo/test_cache_manager.py:95"
+        },
+        {
+          "class": "BinaryPackageCacheTests",
+          "test": "test_invalidate_specific_package",
+          "line_ref": "tests/gentoo/test_cache_manager.py:112"
+        },
+        {
+          "class": "BinaryPackageCacheTests",
+          "test": "test_validate_all_reports_invalid_entries",
+          "line_ref": "tests/gentoo/test_cache_manager.py:139"
+        },
+        {
+          "class": "BinaryPackageCacheTests",
+          "test": "test_concurrent_lookup_access",
+          "line_ref": "tests/gentoo/test_cache_manager.py:168"
+        }
+      ]
+    },
+    {
+      "component_id": "regression_detector",
+      "implementation": "scripts/gentoo/check_regressions.py",
+      "test_file": "tests/gentoo/test_regression_detector.py",
+      "min_test_count": 20,
+      "coverage_categories": [
+        "new_build_failure",
+        "new_test_failure",
+        "performance_regression",
+        "no_regression",
+        "multiple_regressions",
+        "baseline_generation",
+        "cli_dry_run"
+      ],
+      "required_tests": [
+        {
+          "class": "TestRegressionDetection",
+          "test": "test_no_regressions",
+          "line_ref": "tests/gentoo/test_regression_detector.py:48"
+        },
+        {
+          "class": "TestRegressionDetection",
+          "test": "test_build_failure",
+          "line_ref": "tests/gentoo/test_regression_detector.py:59"
+        },
+        {
+          "class": "TestRegressionDetection",
+          "test": "test_test_failure",
+          "line_ref": "tests/gentoo/test_regression_detector.py:70"
+        },
+        {
+          "class": "TestRegressionDetection",
+          "test": "test_performance_regression_block",
+          "line_ref": "tests/gentoo/test_regression_detector.py:99"
+        },
+        {
+          "class": "TestRegressionDetection",
+          "test": "test_multiple_regressions",
+          "line_ref": "tests/gentoo/test_regression_detector.py:136"
+        },
+        {
+          "class": "TestCLI",
+          "test": "test_regression_dry_run",
+          "line_ref": "tests/gentoo/test_regression_detector.py:251"
+        }
+      ]
+    },
+    {
+      "component_id": "flaky_detector",
+      "implementation": "scripts/gentoo/flaky_detector.py",
+      "test_file": "tests/gentoo/test_flaky_detector.py",
+      "min_test_count": 38,
+      "coverage_categories": [
+        "flake_rate_calculation",
+        "stable_test",
+        "quarantine_management",
+        "promotion_to_stable",
+        "package_filtering",
+        "cli_dry_run"
+      ],
+      "required_tests": [
+        {
+          "class": "TestFlakeRateCalculation",
+          "test": "test_equal_split",
+          "line_ref": "tests/gentoo/test_flaky_detector.py:64"
+        },
+        {
+          "class": "TestFlakeDetection",
+          "test": "test_all_stable",
+          "line_ref": "tests/gentoo/test_flaky_detector.py:102"
+        },
+        {
+          "class": "TestFlakeDetection",
+          "test": "test_one_flaky",
+          "line_ref": "tests/gentoo/test_flaky_detector.py:113"
+        },
+        {
+          "class": "TestQuarantineDB",
+          "test": "test_add_duplicate_updates",
+          "line_ref": "tests/gentoo/test_flaky_detector.py:211"
+        },
+        {
+          "class": "TestFilterQuarantined",
+          "test": "test_one_quarantined",
+          "line_ref": "tests/gentoo/test_flaky_detector.py:287"
+        },
+        {
+          "class": "TestCLIDryRun",
+          "test": "test_detector_dry_run",
+          "line_ref": "tests/gentoo/test_flaky_detector.py:318"
+        }
+      ]
+    },
+    {
+      "component_id": "progress_reporter",
+      "implementation": "scripts/gentoo/progress_reporter.py",
+      "test_file": "tests/gentoo/test_progress_reporter.py",
+      "min_test_count": 25,
+      "coverage_categories": [
+        "terminal_output",
+        "json_output",
+        "eta_calculation",
+        "resource_snapshot",
+        "recent_failures",
+        "deterministic_dry_run"
+      ],
+      "required_tests": [
+        {
+          "class": "TestFormatTime",
+          "test": "test_hours",
+          "line_ref": "tests/gentoo/test_progress_reporter.py:48"
+        },
+        {
+          "class": "TestBuildProgress",
+          "test": "test_eta",
+          "line_ref": "tests/gentoo/test_progress_reporter.py:115"
+        },
+        {
+          "class": "TestProgressReport",
+          "test": "test_to_dict_schema",
+          "line_ref": "tests/gentoo/test_progress_reporter.py:132"
+        },
+        {
+          "class": "TestTerminalRendering",
+          "test": "test_includes_failures",
+          "line_ref": "tests/gentoo/test_progress_reporter.py:185"
+        },
+        {
+          "class": "TestDryRunReport",
+          "test": "test_deterministic",
+          "line_ref": "tests/gentoo/test_progress_reporter.py:201"
+        },
+        {
+          "class": "TestCLI",
+          "test": "test_json_output",
+          "line_ref": "tests/gentoo/test_progress_reporter.py:222"
+        }
+      ]
+    }
+  ],
+  "fixture_contract": {
+    "required_files": [
+      {
+        "path": "tests/gentoo/fixtures/sample_logs/valid_runtime.jsonl",
+        "purpose": "valid runtime log fixture"
+      },
+      {
+        "path": "tests/gentoo/fixtures/sample_logs/valid_hook.jsonl",
+        "purpose": "valid Portage hook log fixture"
+      },
+      {
+        "path": "tests/gentoo/fixtures/sample_logs/invalid_json.jsonl",
+        "purpose": "malformed JSONL fixture"
+      },
+      {
+        "path": "tests/gentoo/fixtures/sample_logs/invalid_missing_field.jsonl",
+        "purpose": "missing-field JSONL fixture"
+      }
+    ]
+  },
+  "integration_contract": {
+    "script": "tests/gentoo/test-integration.sh",
+    "telemetry_only_env": "FRANKENLIBC_INTEGRATION_TELEMETRY_ONLY",
+    "required_script_needles": [
+      "FRANKENLIBC_INTEGRATION_TELEMETRY_ONLY",
+      "collect-logs.sh",
+      "assert_summary_contract",
+      "PASS: gentoo frankenlibc telemetry integration validation completed"
+    ],
+    "required_tests": [
+      {
+        "class": "TestDockerIntegration",
+        "test": "test_container_creation",
+        "file": "tests/gentoo/test_docker_integration.py"
+      },
+      {
+        "class": "TestFrankenLibCIntegrationTelemetry",
+        "test": "test_log_analysis_telemetry_contract",
+        "file": "tests/gentoo/test_docker_integration.py"
+      },
+      {
+        "class": "TestFrankenLibCIntegrationTelemetry",
+        "test": "test_docker_integration_script_checks_telemetry_summary",
+        "file": "tests/gentoo/test_docker_integration.py"
+      }
+    ]
+  },
+  "telemetry_contract": {
+    "report_path": "target/conformance/gentoo_unit_test_contract.report.json",
+    "log_path": "target/conformance/gentoo_unit_test_contract.log.jsonl",
+    "required_log_events": [
+      "gentoo_unit_component",
+      "gentoo_unit_contract_summary"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "completion_debt_bead",
+      "component_id",
+      "test_file",
+      "implementation",
+      "unit_test_count",
+      "status",
+      "artifact_refs",
+      "failure_signature"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-2icq.13.1",
+    "original_bead": "bd-2icq.13",
+    "test_source": "crates/frankenlibc-harness/tests/gentoo_unit_test_contract_test.rs",
+    "next_audit_score_threshold": 800,
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Existing Python unit modules cover the Gentoo build runner, test runner, Docker integration helpers, log parser, cache manager, regression detector, flaky detector, and progress reporter.",
+      "required_test_names": [
+        "manifest_anchors_completion_debt",
+        "unit_components_cover_parent_required_modules",
+        "required_python_tests_exist_in_source",
+        "fixture_contract_pins_malformed_and_valid_inputs"
+      ]
+    },
+    "integration_primary": {
+      "missing_item_id": "tests.integration.primary",
+      "description": "Integration evidence binds the Docker integration test module and the telemetry-only shell integration path.",
+      "required_test_names": [
+        "integration_contract_pins_docker_and_telemetry_probe",
+        "checker_accepts_manifest_and_emits_telemetry"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "The checker emits deterministic report and JSONL telemetry rows for each required Gentoo unit-test component plus a summary row.",
+      "required_test_names": [
+        "checker_accepts_manifest_and_emits_telemetry",
+        "checker_rejects_stale_required_test_binding"
+      ]
+    }
+  }
+}
