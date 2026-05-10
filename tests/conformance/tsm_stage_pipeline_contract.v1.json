@@ -1,0 +1,213 @@
+{
+  "schema_version": "tsm_stage_pipeline_contract.v1",
+  "manifest_id": "bd-32e.1.1-tsm-stage-pipeline-contract",
+  "generated_utc": "2026-05-10T07:05:00Z",
+  "description": "Completion-debt evidence binding for the TSM null-check, TLS cache, and bloom-filter validation stages.",
+  "bead": "bd-32e.1",
+  "source_modules": [
+    "crates/frankenlibc-membrane/src/ptr_validator.rs",
+    "crates/frankenlibc-membrane/src/tls_cache.rs",
+    "crates/frankenlibc-membrane/src/bloom.rs",
+    "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs"
+  ],
+  "completion_debt_evidence": {
+    "bead": "bd-32e.1.1",
+    "original_bead": "bd-32e.1",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-32e.1/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "test_sources": {
+      "ptr_validator_unit": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "tls_cache_unit": "crates/frankenlibc-membrane/src/tls_cache.rs",
+      "bloom_unit": "crates/frankenlibc-membrane/src/bloom.rs",
+      "tsm_pipeline_e2e": "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
+      "contract_harness": "crates/frankenlibc-harness/tests/tsm_stage_pipeline_contract_test.rs"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:626",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:654",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:665",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:687",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:784",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:869",
+      "crates/frankenlibc-membrane/src/tls_cache.rs:104",
+      "crates/frankenlibc-membrane/src/tls_cache.rs:133",
+      "crates/frankenlibc-membrane/src/tls_cache.rs:155",
+      "crates/frankenlibc-membrane/src/tls_cache.rs:169",
+      "crates/frankenlibc-membrane/src/bloom.rs:37",
+      "crates/frankenlibc-membrane/src/bloom.rs:64",
+      "crates/frankenlibc-membrane/src/bloom.rs:78",
+      "scripts/check_tsm_stage_pipeline_contract.sh:1",
+      "tests/conformance/tsm_stage_pipeline_contract.v1.json:1",
+      "crates/frankenlibc-harness/tests/tsm_stage_pipeline_contract_test.rs:1"
+    ],
+    "stage_contract": {
+      "required_stage_labels": [
+        "null_check",
+        "tls_cache",
+        "bloom"
+      ],
+      "required_stage_paths": [
+        "pipeline::stage1::null_check",
+        "pipeline::stage2::tls_cache",
+        "pipeline::stage3::bloom"
+      ],
+      "required_fast_path_metrics": [
+        "validations",
+        "tls_cache_hits",
+        "bloom_misses"
+      ],
+      "evidence_summary": "The validator fast path and logged full path both preserve the required null-check, TLS cache, and bloom-filter stages with explicit stage labels, stage paths, and metrics accounting."
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "next_audit_score_threshold": 800,
+      "required_test_refs": [
+        {
+          "source": "ptr_validator_unit",
+          "name": "null_pointer_detected"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "default_cache_hit_fast_path_matches_logged_pipeline_hit"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "null_pointer_early_exit_does_not_reach_later_stages"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "bloom_false_positives_do_not_classify_foreign_as_validated"
+        },
+        {
+          "source": "tls_cache_unit",
+          "name": "cache_miss_on_empty"
+        },
+        {
+          "source": "tls_cache_unit",
+          "name": "cache_hit_after_insert"
+        },
+        {
+          "source": "tls_cache_unit",
+          "name": "hit_only_probe_does_not_count_miss_before_fallback"
+        },
+        {
+          "source": "tls_cache_unit",
+          "name": "invalidation_works"
+        },
+        {
+          "source": "bloom_unit",
+          "name": "no_false_negatives"
+        },
+        {
+          "source": "bloom_unit",
+          "name": "empty_filter_returns_false"
+        },
+        {
+          "source": "bloom_unit",
+          "name": "prop_zero_false_negatives"
+        }
+      ],
+      "required_commands": [
+        "cargo test -p frankenlibc-membrane null_pointer_detected -- --nocapture",
+        "cargo test -p frankenlibc-membrane default_cache_hit_fast_path_matches_logged_pipeline_hit -- --nocapture",
+        "cargo test -p frankenlibc-membrane cache_hit_after_insert -- --nocapture",
+        "cargo test -p frankenlibc-membrane no_false_negatives -- --nocapture"
+      ],
+      "evidence_summary": "Inline unit tests bind null detection, cache hit/miss behavior, cache invalidation, bloom zero-false-negative behavior, and foreign-address bloom safety."
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "next_audit_score_threshold": 800,
+      "required_test_refs": [
+        {
+          "source": "tsm_pipeline_e2e",
+          "name": "null_pointer_validates_as_null"
+        },
+        {
+          "source": "tsm_pipeline_e2e",
+          "name": "alloc_validate_free_lifecycle"
+        },
+        {
+          "source": "tsm_pipeline_e2e",
+          "name": "tls_cache_hits_on_repeated_validation"
+        },
+        {
+          "source": "tsm_pipeline_e2e",
+          "name": "pipeline_metrics_after_workload"
+        },
+        {
+          "source": "tsm_pipeline_e2e",
+          "name": "mixed_workload_deterministic"
+        }
+      ],
+      "required_commands": [
+        "cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test null_pointer_validates_as_null -- --nocapture",
+        "cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test tls_cache_hits_on_repeated_validation -- --nocapture",
+        "cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test mixed_workload_deterministic -- --nocapture"
+      ],
+      "evidence_summary": "The TSM e2e suite exercises null, allocation, repeated cache-hit, mixed-workload, and metrics-visible validation paths through the public pipeline."
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "next_audit_score_threshold": 800,
+      "default_report_path": "target/conformance/tsm_stage_pipeline_contract.report.json",
+      "default_log_path": "target/conformance/tsm_stage_pipeline_contract.log.jsonl",
+      "required_test_refs": [
+        {
+          "source": "ptr_validator_unit",
+          "name": "validation_log_export_includes_trace_and_decision_ids"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "validation_logging_cardinality_budget_is_bounded"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "null_pointer_early_exit_does_not_reach_later_stages"
+        },
+        {
+          "source": "contract_harness",
+          "name": "checker_emits_report_and_log"
+        },
+        {
+          "source": "contract_harness",
+          "name": "checker_rejects_missing_bloom_stage_binding"
+        }
+      ],
+      "required_events": [
+        "tsm_stage_pipeline_contract_validated",
+        "tsm_stage_pipeline_contract_failed",
+        "validation_stage",
+        "validation_terminal",
+        "validation_order_rewrite"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "level",
+        "schema_version",
+        "decision_id",
+        "decision_path",
+        "stage",
+        "stage_path",
+        "security_context",
+        "capability_scope",
+        "security_verdict",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "missing_items_bound",
+        "test_refs",
+        "required_stage_labels",
+        "required_stage_paths",
+        "required_events",
+        "required_fields",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "evidence_summary": "Pointer validation JSONL logs and this checker log bind stage telemetry, trace IDs, decision IDs, stage labels, stage paths, and fail-closed telemetry drift signatures."
+    }
+  }
+}
