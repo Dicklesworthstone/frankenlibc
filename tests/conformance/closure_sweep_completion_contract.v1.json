@@ -1,0 +1,521 @@
+{
+  "schema_version": "closure_sweep_completion_contract.v1",
+  "bead": "bd-w2c3.10.3",
+  "completion_debt_bead": "bd-w2c3.10.3.1",
+  "description": "Completion-debt evidence binding for the closure sweep unresolved-gap report, armed drift gates, documented non-closure reasons, and final docs source-of-truth pass.",
+  "next_audit_score_threshold": 800,
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.10.3/scorecard.md",
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "source_paths": {
+    "closure_engine": "scripts/closure_sweep.py",
+    "closure_source_gate": "scripts/check_closure_sweep.sh",
+    "closure_report": "tests/conformance/closure_sweep_report.v1.json",
+    "closure_harness": "crates/frankenlibc-harness/tests/closure_sweep_test.rs",
+    "docs_generator": "scripts/generate_docs_env_mismatch_report.py",
+    "docs_source_gate": "scripts/check_docs_env_mismatch.sh",
+    "docs_source_map": "tests/conformance/docs_source_of_truth_map.v1.json",
+    "docs_trace": "tests/conformance/docs_source_of_truth_trace.v1.jsonl",
+    "docs_harness": "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
+    "completion_contract": "tests/conformance/closure_sweep_completion_contract.v1.json",
+    "completion_checker": "scripts/check_closure_sweep_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/closure_sweep_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    {
+      "kind": "closure_engine_scope",
+      "path": "scripts/closure_sweep.py",
+      "line": 2,
+      "anchor": "closure_sweep.py"
+    },
+    {
+      "kind": "open_gap_bead_query",
+      "path": "scripts/closure_sweep.py",
+      "line": 34,
+      "anchor": "def count_open_gap_beads"
+    },
+    {
+      "kind": "support_reality_alignment",
+      "path": "scripts/closure_sweep.py",
+      "line": 53,
+      "anchor": "def check_support_reality_alignment"
+    },
+    {
+      "kind": "coverage_reconciliation",
+      "path": "scripts/closure_sweep.py",
+      "line": 102,
+      "anchor": "def check_coverage_reconciliation"
+    },
+    {
+      "kind": "coverage_gap_analysis",
+      "path": "scripts/closure_sweep.py",
+      "line": 139,
+      "anchor": "def analyze_coverage_gaps"
+    },
+    {
+      "kind": "callthrough_gap_analysis",
+      "path": "scripts/closure_sweep.py",
+      "line": 180,
+      "anchor": "def analyze_callthrough_gap"
+    },
+    {
+      "kind": "drift_gate_inventory",
+      "path": "scripts/closure_sweep.py",
+      "line": 199,
+      "anchor": "def check_drift_gates"
+    },
+    {
+      "kind": "closure_report_summary",
+      "path": "scripts/closure_sweep.py",
+      "line": 283,
+      "anchor": "\"summary\""
+    },
+    {
+      "kind": "fixture_non_closure_reason",
+      "path": "scripts/closure_sweep.py",
+      "line": 265,
+      "anchor": "if coverage_gaps.get(\"uncovered_modules\")"
+    },
+    {
+      "kind": "drift_gate_status",
+      "path": "scripts/closure_sweep.py",
+      "line": 296,
+      "anchor": "\"drift_gates_status\""
+    },
+    {
+      "kind": "closure_artifact_write",
+      "path": "scripts/closure_sweep.py",
+      "line": 308,
+      "anchor": "closure_sweep_report.v1.json"
+    },
+    {
+      "kind": "closure_source_gate_runs_engine",
+      "path": "scripts/check_closure_sweep.sh",
+      "line": 11,
+      "anchor": "python3 \"$SCRIPT_DIR/closure_sweep.py\""
+    },
+    {
+      "kind": "closure_source_gate_required_keys",
+      "path": "scripts/check_closure_sweep.sh",
+      "line": 25,
+      "anchor": "required = ["
+    },
+    {
+      "kind": "closure_unit_harness",
+      "path": "crates/frankenlibc-harness/tests/closure_sweep_test.rs",
+      "line": 8,
+      "anchor": "fn closure_sweep_passes"
+    },
+    {
+      "kind": "closure_artifact_harness",
+      "path": "crates/frankenlibc-harness/tests/closure_sweep_test.rs",
+      "line": 84,
+      "anchor": "fn closure_sweep_report_artifact_exists"
+    },
+    {
+      "kind": "closure_report_status",
+      "path": "tests/conformance/closure_sweep_report.v1.json",
+      "line": 5,
+      "anchor": "\"status\": \"pass\""
+    },
+    {
+      "kind": "closure_report_summary_zeroes",
+      "path": "tests/conformance/closure_sweep_report.v1.json",
+      "line": 7,
+      "anchor": "\"errors\": 0"
+    },
+    {
+      "kind": "closure_report_callthrough_zero",
+      "path": "tests/conformance/closure_sweep_report.v1.json",
+      "line": 271,
+      "anchor": "\"callthrough_gaps\""
+    },
+    {
+      "kind": "closure_report_non_closure_reason",
+      "path": "tests/conformance/closure_sweep_report.v1.json",
+      "line": 275,
+      "anchor": "\"non_closure_reasons\""
+    },
+    {
+      "kind": "closure_report_drift_armed",
+      "path": "tests/conformance/closure_sweep_report.v1.json",
+      "line": 293,
+      "anchor": "\"drift_gates_status\": \"armed\""
+    },
+    {
+      "kind": "docs_governance_surface_inventory",
+      "path": "scripts/generate_docs_env_mismatch_report.py",
+      "line": 25,
+      "anchor": "DOC_GOVERNANCE_SURFACES"
+    },
+    {
+      "kind": "docs_governance_builder",
+      "path": "scripts/generate_docs_env_mismatch_report.py",
+      "line": 393,
+      "anchor": "def build_docs_governance_artifacts"
+    },
+    {
+      "kind": "docs_trace_emission",
+      "path": "scripts/generate_docs_env_mismatch_report.py",
+      "line": 447,
+      "anchor": "trace_rows.append"
+    },
+    {
+      "kind": "docs_source_map_summary",
+      "path": "scripts/generate_docs_env_mismatch_report.py",
+      "line": 535,
+      "anchor": "\"summary\""
+    },
+    {
+      "kind": "docs_check_mode",
+      "path": "scripts/generate_docs_env_mismatch_report.py",
+      "line": 640,
+      "anchor": "def compare_or_write"
+    },
+    {
+      "kind": "docs_source_gate_surfaces",
+      "path": "scripts/check_docs_env_mismatch.sh",
+      "line": 83,
+      "anchor": "required_surfaces = {"
+    },
+    {
+      "kind": "docs_source_gate_trace_rows",
+      "path": "scripts/check_docs_env_mismatch.sh",
+      "line": 131,
+      "anchor": "trace_lines = ["
+    },
+    {
+      "kind": "docs_source_gate_dry_run",
+      "path": "scripts/check_docs_env_mismatch.sh",
+      "line": 157,
+      "anchor": "dry-run artifact missing"
+    },
+    {
+      "kind": "docs_source_map_summary_artifact",
+      "path": "tests/conformance/docs_source_of_truth_map.v1.json",
+      "line": 107,
+      "anchor": "\"summary\""
+    },
+    {
+      "kind": "docs_source_map_surfaces_artifact",
+      "path": "tests/conformance/docs_source_of_truth_map.v1.json",
+      "line": 114,
+      "anchor": "\"surfaces\""
+    },
+    {
+      "kind": "docs_trace_artifact",
+      "path": "tests/conformance/docs_source_of_truth_trace.v1.jsonl",
+      "line": 1,
+      "anchor": "\"trace_id\""
+    },
+    {
+      "kind": "docs_harness_surface_test",
+      "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
+      "line": 125,
+      "anchor": "fn source_of_truth_map_covers_major_surfaces"
+    },
+    {
+      "kind": "docs_harness_section_test",
+      "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
+      "line": 245,
+      "anchor": "fn governed_sections_have_sources_owners_and_triggers"
+    },
+    {
+      "kind": "docs_harness_trace_test",
+      "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
+      "line": 319,
+      "anchor": "fn governance_trace_rows_cover_every_section"
+    },
+    {
+      "kind": "docs_harness_gate_test",
+      "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
+      "line": 396,
+      "anchor": "fn gate_script_passes"
+    },
+    {
+      "kind": "completion_checker",
+      "path": "scripts/check_closure_sweep_completion_contract.sh",
+      "line": 1,
+      "anchor": "bd-w2c3.10.3.1"
+    },
+    {
+      "kind": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/closure_sweep_completion_contract_test.rs",
+      "line": 1,
+      "anchor": "bd-w2c3.10.3.1"
+    }
+  ],
+  "source_anchors": {
+    "closure_engine": [
+      "def count_open_gap_beads",
+      "def check_support_reality_alignment",
+      "def check_coverage_reconciliation",
+      "def analyze_coverage_gaps",
+      "def analyze_callthrough_gap",
+      "def check_drift_gates",
+      "\"closure_ready\"",
+      "\"drift_gates_status\"",
+      "closure_sweep_report.v1.json"
+    ],
+    "closure_source_gate": [
+      "python3 \"$SCRIPT_DIR/closure_sweep.py\"",
+      "required = [",
+      "coverage_gaps",
+      "check_closure_sweep: PASS"
+    ],
+    "closure_harness": [
+      "fn closure_sweep_passes",
+      "fn closure_sweep_report_artifact_exists",
+      "Drift gates must be armed"
+    ],
+    "docs_generator": [
+      "DOC_GOVERNANCE_SURFACES",
+      "def build_docs_governance_artifacts",
+      "\"surface_count\": len(surfaces)",
+      "compare_or_write(source_map_output",
+      "canonical_jsonl(trace_rows)"
+    ],
+    "docs_source_gate": [
+      "required_surfaces = {",
+      "freshness_status",
+      "trace row count mismatch",
+      "dry-run artifact missing",
+      "PASS: docs source-of-truth map validated"
+    ],
+    "docs_harness": [
+      "fn source_of_truth_map_covers_major_surfaces",
+      "fn governed_sections_have_sources_owners_and_triggers",
+      "fn governance_trace_rows_cover_every_section",
+      "fn gate_script_passes"
+    ],
+    "completion_checker": [
+      "EXPECTED_MISSING_ITEMS",
+      "validate_contract",
+      "validate_closure_report",
+      "validate_docs_source_of_truth",
+      "run_docs_source_gate",
+      "closure_sweep_completion_summary"
+    ],
+    "completion_harness": [
+      "manifest_binds_unit_and_e2e_completion_items",
+      "closure_report_contract_pins_unresolved_gap_summary",
+      "docs_truth_contract_covers_fresh_governance_trace",
+      "checker_emits_structured_completion_evidence",
+      "checker_rejects_missing_docs_surface"
+    ]
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "description": "Unit-level evidence pins the closure sweep report schema, zero-error summary, drift-gate state, unresolved-gap categories, docs governance map, and structured trace rows.",
+      "implementation_refs": [
+        "closure_engine_scope",
+        "open_gap_bead_query",
+        "support_reality_alignment",
+        "coverage_gap_analysis",
+        "callthrough_gap_analysis",
+        "drift_gate_inventory",
+        "closure_report_summary",
+        "fixture_non_closure_reason",
+        "docs_governance_surface_inventory",
+        "docs_governance_builder",
+        "docs_trace_emission",
+        "docs_source_map_summary"
+      ],
+      "test_refs": [
+        {
+          "source": "closure_harness",
+          "name": "closure_sweep_report_artifact_exists"
+        },
+        {
+          "source": "docs_harness",
+          "name": "source_of_truth_map_covers_major_surfaces"
+        },
+        {
+          "source": "docs_harness",
+          "name": "governed_sections_have_sources_owners_and_triggers"
+        },
+        {
+          "source": "docs_harness",
+          "name": "governance_trace_rows_cover_every_section"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_and_e2e_completion_items"
+        },
+        {
+          "source": "completion_harness",
+          "name": "closure_report_contract_pins_unresolved_gap_summary"
+        },
+        {
+          "source": "completion_harness",
+          "name": "docs_truth_contract_covers_fresh_governance_trace"
+        }
+      ],
+      "validation_commands": [
+        "jq empty tests/conformance/closure_sweep_completion_contract.v1.json",
+        "bash -n scripts/check_closure_sweep_completion_contract.sh",
+        "bash scripts/check_closure_sweep_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test closure_sweep_completion_contract_test manifest_binds_unit_and_e2e_completion_items closure_report_contract_pins_unresolved_gap_summary docs_truth_contract_covers_fresh_governance_trace -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "description": "E2E evidence replays the existing docs source-of-truth gate, binds the closure sweep source gate and harness, and emits completion-contract telemetry without rewriting tracked closure artifacts locally.",
+      "implementation_refs": [
+        "closure_source_gate_runs_engine",
+        "closure_source_gate_required_keys",
+        "closure_unit_harness",
+        "closure_artifact_harness",
+        "closure_report_status",
+        "closure_report_summary_zeroes",
+        "closure_report_callthrough_zero",
+        "closure_report_non_closure_reason",
+        "closure_report_drift_armed",
+        "docs_source_gate_surfaces",
+        "docs_source_gate_trace_rows",
+        "docs_source_gate_dry_run",
+        "docs_harness_gate_test"
+      ],
+      "test_refs": [
+        {
+          "source": "closure_harness",
+          "name": "closure_sweep_passes"
+        },
+        {
+          "source": "docs_harness",
+          "name": "gate_script_passes"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_structured_completion_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_docs_surface"
+        }
+      ],
+      "validation_commands": [
+        "bash scripts/check_closure_sweep_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test closure_sweep_completion_contract_test checker_emits_structured_completion_evidence checker_rejects_missing_docs_surface -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test closure_sweep_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test docs_env_mismatch_test -- --nocapture"
+      ]
+    }
+  ],
+  "closure_sweep_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "bead",
+      "status",
+      "summary",
+      "findings",
+      "coverage_gaps",
+      "callthrough_gaps",
+      "non_closure_reasons",
+      "drift_gates_status",
+      "open_gap_beads"
+    ],
+    "required_summary_fields": [
+      "errors",
+      "warnings",
+      "total_findings",
+      "coverage_pct",
+      "callthrough_remaining",
+      "open_gap_beads",
+      "closure_ready"
+    ],
+    "expected_status": "pass",
+    "expected_schema_version": "v1",
+    "expected_error_count": 0,
+    "expected_warning_count": 0,
+    "expected_total_findings": 0,
+    "expected_callthrough_remaining": 0,
+    "expected_open_gap_beads": 0,
+    "expected_drift_gates_status": "armed",
+    "expected_closure_ready": false,
+    "required_non_closure_categories": [
+      "fixture_coverage"
+    ],
+    "expected_uncovered_zero_modules": [
+      "c11threads_abi",
+      "err_abi",
+      "fenv_abi",
+      "fortify_abi",
+      "glibc_internal_abi",
+      "isoc_abi",
+      "rpc_abi",
+      "runtime_policy",
+      "search_abi",
+      "stdbit_abi"
+    ]
+  },
+  "docs_truth_contract": {
+    "expected_bead": "bd-3rw.3",
+    "expected_surface_count": 6,
+    "expected_section_count": 12,
+    "expected_owner_count": 11,
+    "expected_fresh_section_count": 12,
+    "expected_missing_section_count": 0,
+    "required_surfaces": [
+      "README",
+      "ARCHITECTURE",
+      "DEPLOYMENT",
+      "SECURITY",
+      "API",
+      "TROUBLESHOOTING"
+    ],
+    "required_trace_fields": [
+      "trace_id",
+      "bead_id",
+      "doc_surface",
+      "doc_section",
+      "source_artifact",
+      "freshness_status",
+      "owner",
+      "review_policy",
+      "update_trigger",
+      "artifact_refs"
+    ],
+    "expected_trace_rows": 12,
+    "expected_freshness_status": "fresh"
+  },
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "bead",
+      "completion_debt_bead",
+      "status",
+      "source_commit",
+      "completion_summary",
+      "source_gate_results",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "source_bead",
+      "completion_debt_bead",
+      "event",
+      "status",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ],
+    "required_events": [
+      "closure_sweep_completion_contract_validated",
+      "closure_sweep_report_validated",
+      "docs_source_of_truth_validated",
+      "docs_source_gate_replayed",
+      "closure_sweep_completion_summary"
+    ]
+  }
+}
