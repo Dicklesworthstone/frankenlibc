@@ -1,0 +1,104 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-24x.1",
+  "parent_bead": "bd-24x",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "ecc6c2805a42933297e37dbf4483eb35445454d4",
+  "purpose": "Completion-debt evidence for the runtime-math relevance ledger: prove every public runtime_math module is mapped to a concrete RuntimeMathKernel decision surface with unit, e2e, and telemetry coverage.",
+  "source_artifacts": {
+    "module_registry": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+    "classification_matrix": "tests/runtime_math/runtime_math_classification_matrix.v1.json",
+    "linkage_ledger": "tests/runtime_math/runtime_math_linkage.v1.json",
+    "production_manifest": "tests/runtime_math/production_kernel_manifest.v1.json"
+  },
+  "checker": "scripts/check_runtime_math_decision_relevance.sh",
+  "report_path": "target/conformance/runtime_math_decision_relevance.report.json",
+  "log_path": "target/conformance/runtime_math_decision_relevance.log.jsonl",
+  "completion_debt_items": [
+    "tests.unit.primary",
+    "tests.e2e.primary",
+    "telemetry.primary"
+  ],
+  "runtime_module_scope": {
+    "include_pattern": "pub mod <module>; declarations in crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+    "excluded_helpers": [
+      {
+        "module": "grobner",
+        "reason": "Top-level frankenlibc_membrane::grobner helper stored under runtime_math/ via #[path], not a public runtime_math::<module> declaration."
+      },
+      {
+        "module": "mod",
+        "reason": "Module registry file, not a runtime decision module."
+      }
+    ],
+    "expected_public_module_count": 69
+  },
+  "required_module_fields": [
+    "module",
+    "module_path",
+    "classification",
+    "linkage_status",
+    "decision_target",
+    "decision_surface",
+    "action_outputs",
+    "evidence_inputs",
+    "fallback_when_data_missing",
+    "invariant",
+    "source_refs"
+  ],
+  "required_report_fields": [
+    "schema_version",
+    "bead",
+    "generated_at_utc",
+    "source_commit",
+    "module_count",
+    "public_module_count",
+    "classification_counts",
+    "linkage_status_counts",
+    "decision_surface_counts",
+    "missing_from_classification",
+    "missing_from_linkage",
+    "extra_classification_modules",
+    "extra_linkage_modules",
+    "failed_modules",
+    "artifact_refs",
+    "status",
+    "log_path"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "module",
+    "module_path",
+    "classification",
+    "linkage_status",
+    "decision_target",
+    "decision_surface",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature",
+    "outcome"
+  ],
+  "decision_surface_patterns": {
+    "decide": "RuntimeMathKernel::decide",
+    "observe_validation_result": "RuntimeMathKernel::observe_validation_result",
+    "resample_high_order_kernels": "RuntimeMathKernel::resample_high_order_kernels",
+    "check_ordering": "RuntimeMathKernel::check_ordering",
+    "note_check_order_outcome": "RuntimeMathKernel::note_check_order_outcome",
+    "snapshot": "RuntimeMathKernel::snapshot"
+  },
+  "failure_signatures": [
+    "missing_runtime_math_module",
+    "unexpected_runtime_math_module",
+    "missing_classification_row",
+    "missing_linkage_row",
+    "missing_decision_target",
+    "missing_decision_surface",
+    "missing_action_outputs",
+    "missing_evidence_inputs",
+    "missing_fallback",
+    "missing_invariant"
+  ]
+}
