@@ -1,0 +1,160 @@
+{
+  "schema_version": "validation_pipeline_stage_coverage_contract.v1",
+  "bead": "bd-32e.5",
+  "completion_debt_bead": "bd-32e.5.1",
+  "description": "Completion-debt evidence binding for TSM validation-pipeline stage unit, e2e, property, and telemetry coverage.",
+  "completion_debt_evidence": {
+    "bead": "bd-32e.5.1",
+    "original_bead": "bd-32e.5",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-32e.5/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "test_sources": {
+      "ptr_validator_unit": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "tsm_pipeline_e2e": "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
+      "contract_harness": "crates/frankenlibc-harness/tests/validation_pipeline_stage_coverage_contract_test.rs"
+    },
+    "gate": "scripts/check_validation_pipeline_stage_coverage_contract.sh",
+    "report_path": "target/conformance/validation_pipeline_stage_coverage_contract.report.json",
+    "log_path": "target/conformance/validation_pipeline_stage_coverage_contract.log.jsonl",
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:588",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:601",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:626",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:710",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2308",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2328",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2369",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2484",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2525",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2561",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2583",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2604",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:53",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:120",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:420",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:593",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:649",
+      "scripts/check_validation_pipeline_stage_coverage_contract.sh:1",
+      "crates/frankenlibc-harness/tests/validation_pipeline_stage_coverage_contract_test.rs:1"
+    ],
+    "stage_coverage": {
+      "required_stage_labels": [
+        "null_check",
+        "tls_cache",
+        "bloom",
+        "arena_lookup",
+        "fingerprint",
+        "canary",
+        "bounds"
+      ],
+      "required_stage_paths": [
+        "pipeline::stage1::null_check",
+        "pipeline::stage2::tls_cache",
+        "pipeline::stage3::bloom",
+        "pipeline::stage4::arena",
+        "pipeline::stage5::fingerprint",
+        "pipeline::stage6::canary",
+        "pipeline::stage7::bounds"
+      ],
+      "required_outcomes": [
+        "Null",
+        "Foreign",
+        "Validated",
+        "CachedValid",
+        "TemporalViolation",
+        "Invalid",
+        "Denied"
+      ],
+      "evidence_summary": "The pointer validator binds all seven stage labels and paths, early exits, deep integrity checks, dependency-safe ordering, and structured stage telemetry."
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Inline unit tests cover null, foreign, live, free, double-free, canary, bounds, dependency ordering, and structured validation logs.",
+      "required_test_refs": [
+        {"source": "ptr_validator_unit", "name": "null_pointer_detected"},
+        {"source": "ptr_validator_unit", "name": "allocated_pointer_validates"},
+        {"source": "ptr_validator_unit", "name": "foreign_pointer_allowed"},
+        {"source": "ptr_validator_unit", "name": "foreign_free_reported"},
+        {"source": "ptr_validator_unit", "name": "double_free_reported"},
+        {"source": "ptr_validator_unit", "name": "canary_corruption_detected_via_pipeline_free"},
+        {"source": "ptr_validator_unit", "name": "one_past_end_pointer_is_denied_as_invalid"},
+        {"source": "ptr_validator_unit", "name": "header_pointer_is_denied_as_invalid"},
+        {"source": "ptr_validator_unit", "name": "null_pointer_early_exit_does_not_reach_later_stages"},
+        {"source": "ptr_validator_unit", "name": "foreign_pointer_early_exit_skips_deep_integrity_stages"},
+        {"source": "ptr_validator_unit", "name": "dependency_safe_order_delays_deep_checks_until_after_arena"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test --locked -p frankenlibc-membrane ptr_validator --lib -- --nocapture --test-threads=1"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "The TSM e2e suite exercises full pipeline integration across null, allocation lifecycle, concurrency, cache hits, metrics, and deterministic mixed workloads.",
+      "required_test_refs": [
+        {"source": "tsm_pipeline_e2e", "name": "null_pointer_validates_as_null"},
+        {"source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle"},
+        {"source": "tsm_pipeline_e2e", "name": "double_free_detected"},
+        {"source": "tsm_pipeline_e2e", "name": "foreign_pointer_free_detected"},
+        {"source": "tsm_pipeline_e2e", "name": "concurrent_validate_on_shared_pipeline"},
+        {"source": "tsm_pipeline_e2e", "name": "mixed_workload_deterministic"},
+        {"source": "tsm_pipeline_e2e", "name": "tls_cache_hits_on_repeated_validation"},
+        {"source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test --locked -p frankenlibc-membrane --test tsm_pipeline_e2e_test -- --nocapture --test-threads=1"
+      ]
+    },
+    "property_primary": {
+      "missing_item_id": "tests.property.primary",
+      "description": "Property tests cover live-allocation validation, freed-pointer temporal violations, and dependency-safe stage ordering over randomized stage permutations.",
+      "required_test_refs": [
+        {"source": "ptr_validator_unit", "name": "allocated_pointer_property_validates_as_live"},
+        {"source": "ptr_validator_unit", "name": "freed_pointer_property_becomes_temporal_violation"},
+        {"source": "ptr_validator_unit", "name": "dependency_safe_order_property_holds"}
+      ],
+      "required_commands": [
+        "FRANKENLIBC_PROPTEST_CASES=10000 rch exec -- env CARGO_TARGET_DIR=<target> cargo test --locked -p frankenlibc-membrane ptr_validator --lib -- --nocapture --test-threads=1"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "Validation JSONL and this checker bind trace IDs, decision IDs, stage labels, stage paths, security context fields, artifact refs, and fail-closed drift signatures.",
+      "required_events": [
+        "validation_pipeline_stage_coverage_contract_validated",
+        "validation_pipeline_stage_coverage_contract_failed",
+        "validation_stage",
+        "validation_terminal",
+        "validation_order_rewrite"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "test_refs",
+        "required_stage_labels",
+        "required_stage_paths",
+        "required_outcomes",
+        "artifact_refs",
+        "failure_signature",
+        "schema_version",
+        "decision_id",
+        "decision_path",
+        "stage",
+        "stage_path",
+        "security_context",
+        "capability_scope",
+        "security_verdict"
+      ],
+      "required_test_refs": [
+        {"source": "ptr_validator_unit", "name": "validation_log_export_includes_trace_and_decision_ids"},
+        {"source": "ptr_validator_unit", "name": "validation_logging_cardinality_budget_is_bounded"},
+        {"source": "contract_harness", "name": "checker_emits_report_and_jsonl"}
+      ]
+    }
+  }
+}
