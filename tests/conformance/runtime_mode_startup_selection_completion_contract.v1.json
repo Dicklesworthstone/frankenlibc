@@ -1,0 +1,226 @@
+{
+  "schema_version": "runtime_mode_startup_selection_completion_contract.v1",
+  "original_bead": "bd-oai.1",
+  "completion_debt_bead": "bd-oai.1.1",
+  "generated_at_utc": "2026-05-10T18:35:00Z",
+  "purpose": "Close the bd-oai.1 completion-debt audit items by binding runtime-mode startup selection, process immutability, thread-local caching, and subprocess startup evidence to explicit unit and e2e proof surfaces.",
+  "audit_source": {
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-oai.1/scorecard.md",
+    "audit_score": 570,
+    "threshold": 900,
+    "missing_items": [
+      {
+        "id": "tests.unit.primary",
+        "kind": "unit",
+        "description": "unit test required by bead body"
+      },
+      {
+        "id": "tests.e2e.primary",
+        "kind": "e2e",
+        "description": "e2e test required by bead body"
+      }
+    ]
+  },
+  "source_artifacts": {
+    "runtime_policy": "crates/frankenlibc-abi/src/runtime_policy.rs",
+    "harness_bin": "crates/frankenlibc-harness/src/bin/harness.rs",
+    "runtime_mode_evidence_contract": "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+    "runtime_mode_evidence_checker": "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+    "runtime_mode_evidence_source_test": "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs",
+    "mode_contract_lock_contract": "tests/conformance/mode_contract_lock_completion_contract.v1.json",
+    "mode_contract_lock_checker": "scripts/check_mode_contract_lock_completion_contract.sh",
+    "completion_contract": "tests/conformance/runtime_mode_startup_selection_completion_contract.v1.json",
+    "completion_checker": "scripts/check_runtime_mode_startup_selection_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/runtime_mode_startup_selection_completion_contract_test.rs"
+  },
+  "source_anchors": {
+    "runtime_policy": [
+      "static MODE_STATE: AtomicU8 = AtomicU8::new(MODE_UNRESOLVED);",
+      "const KEY_EQ: &[u8] = b\"FRANKENLIBC_MODE=\";",
+      "\"hardened\" | \"repair\" | \"tsm\" | \"full\" => SafetyLevel::Hardened",
+      "\"strict\" | \"default\" | \"abi\" => SafetyLevel::Strict",
+      "fn load_thread_local_mode_cache() -> Option<SafetyLevel>",
+      "fn store_thread_local_mode_cache(level: SafetyLevel)",
+      "fn clear_thread_local_mode_cache()",
+      "static MODE_THREAD_LOCAL_CACHE: Cell<u8> = const { Cell::new(MODE_UNRESOLVED) };",
+      "runtime_mode_switch_attempt",
+      "mode->cache->immutable"
+    ],
+    "harness_bin": [
+      "let startup_frankenlibc_mode = std::env::var(\"FRANKENLIBC_MODE\").ok();",
+      ".env(\"FRANKENLIBC_MODE\", mode)",
+      "runtime_mode_startup_mismatch: expected FRANKENLIBC_MODE={mode}, child observed {observed_mode}",
+      "\"conformance.runtime_mode_startup\"",
+      "\"mode_source\": if isolate { \"child_process_env\" } else { \"in_process_mode_argument\" }",
+      "\"ambient_tz_dependency\": false"
+    ],
+    "runtime_mode_evidence_checker": [
+      "coverage policy must target FRANKENLIBC_MODE",
+      "process immutability must be explicit",
+      "FRANKENLIBC_MODE must be set before subprocess launch",
+      "inherited FRANKENLIBC_MODE must be overridden"
+    ],
+    "completion_checker": [
+      "runtime_mode_startup_selection_contract_validated",
+      "runtime_mode_startup_selection_unit_bindings",
+      "runtime_mode_startup_selection_e2e_bindings",
+      "runtime_mode_startup_selection_summary"
+    ],
+    "completion_harness": [
+      "manifest_binds_unit_and_e2e_items",
+      "checker_emits_structured_completion_evidence",
+      "checker_rejects_missing_runtime_policy_anchor"
+    ]
+  },
+  "startup_mode_contract": {
+    "env_key": "FRANKENLIBC_MODE",
+    "allowed_modes": [
+      "strict",
+      "hardened"
+    ],
+    "strict_aliases": [
+      "strict",
+      "default",
+      "abi"
+    ],
+    "hardened_aliases": [
+      "hardened",
+      "repair",
+      "tsm",
+      "full"
+    ],
+    "unknown_value_behavior": "strict",
+    "unset_behavior": "strict",
+    "resolution_scope": "process",
+    "immutable_after_first_resolution": true,
+    "global_cache_state": "MODE_STATE",
+    "thread_local_cache_state": "MODE_THREAD_LOCAL_CACHE",
+    "thread_local_cache_fast_path_required": true,
+    "reentrant_resolution_behavior": "strict",
+    "race_resolution_behavior": "strict-until-resolved",
+    "switch_attempt_event": "runtime_mode_switch_attempt",
+    "decision_path": "mode->cache->immutable",
+    "subprocess_evidence_event": "conformance.runtime_mode_startup",
+    "subprocess_env_override_required": true,
+    "ambient_tz_dependency_allowed": false
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "evidence_sources": [
+        "runtime_policy_inline",
+        "completion_harness"
+      ],
+      "required_test_refs": [
+        "runtime_mode_value_parser_is_strict_or_hardened_only",
+        "mode_resolution_is_sticky_until_cache_reset",
+        "cache_reset_reparses_mode_from_environment",
+        "mode_populates_thread_local_cache_after_resolution",
+        "mode_switch_sampler_stays_thread_local_between_rescans",
+        "mode_logging_captures_startup_selection_and_switch_attempt",
+        "parse_mode_from_environ_accepts_case_insensitive_aliases",
+        "manifest_binds_unit_and_e2e_items",
+        "startup_contract_names_runtime_policy_sources"
+      ],
+      "required_commands": [
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-oai11 rch exec -- cargo test -p frankenlibc-abi mode_ -- --nocapture",
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-oai11 rch exec -- cargo test -p frankenlibc-harness --test runtime_mode_startup_selection_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "evidence_sources": [
+        "runtime_mode_evidence_harness",
+        "completion_checker",
+        "completion_harness"
+      ],
+      "required_test_refs": [
+        "runtime_mode_coverage_gate_passes_current_contract",
+        "isolated_conformance_child_overrides_ambient_mode_and_logs_startup",
+        "checker_emits_structured_completion_evidence",
+        "checker_rejects_missing_runtime_policy_anchor"
+      ],
+      "required_commands": [
+        "bash scripts/check_runtime_mode_evidence_logging_coverage.sh --validate-only",
+        "bash scripts/check_runtime_mode_startup_selection_completion_contract.sh",
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-oai11 rch exec -- cargo check -p frankenlibc-harness --test runtime_mode_startup_selection_completion_contract_test",
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-oai11 rch exec -- cargo clippy -p frankenlibc-harness --test runtime_mode_startup_selection_completion_contract_test -- -D warnings"
+      ]
+    }
+  ],
+  "implementation_refs": [
+    {
+      "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+      "line": 78,
+      "claim": "MODE_STATE is the process-global immutable runtime-mode cache."
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+      "line": 140,
+      "claim": "parse_mode_from_environ resolves FRANKENLIBC_MODE at startup using strict/hardened semantics."
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+      "line": 638,
+      "claim": "load_thread_local_mode_cache provides the fast path after startup selection."
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+      "line": 662,
+      "claim": "mode() resolves once, stores the selected mode globally and in TLS, and preserves process immutability."
+    },
+    {
+      "path": "crates/frankenlibc-harness/src/bin/harness.rs",
+      "line": 1881,
+      "claim": "Isolated subprocess conformance rows set FRANKENLIBC_MODE before launch."
+    },
+    {
+      "path": "crates/frankenlibc-harness/src/bin/harness.rs",
+      "line": 2246,
+      "claim": "Harness logs conformance.runtime_mode_startup evidence with mismatch and ambient-environment metadata."
+    }
+  ],
+  "completion_coverage": {
+    "unit": {
+      "runtime_policy_inline_tests": [
+        "runtime_mode_value_parser_is_strict_or_hardened_only",
+        "mode_resolution_is_sticky_until_cache_reset",
+        "cache_reset_reparses_mode_from_environment",
+        "mode_populates_thread_local_cache_after_resolution",
+        "mode_switch_sampler_stays_thread_local_between_rescans",
+        "mode_logging_captures_startup_selection_and_switch_attempt",
+        "parse_mode_from_environ_accepts_case_insensitive_aliases"
+      ],
+      "completion_harness_tests": [
+        "manifest_binds_unit_and_e2e_items",
+        "startup_contract_names_runtime_policy_sources"
+      ]
+    },
+    "e2e": {
+      "runtime_mode_evidence_harness_tests": [
+        "runtime_mode_coverage_gate_passes_current_contract",
+        "isolated_conformance_child_overrides_ambient_mode_and_logs_startup"
+      ],
+      "completion_checker_tests": [
+        "checker_emits_structured_completion_evidence",
+        "checker_rejects_missing_runtime_policy_anchor"
+      ]
+    }
+  },
+  "required_gate_events": [
+    "runtime_mode_startup_selection_contract_validated",
+    "runtime_mode_startup_selection_unit_bindings",
+    "runtime_mode_startup_selection_e2e_bindings",
+    "runtime_mode_startup_selection_summary"
+  ],
+  "expected_report": {
+    "schema_version": "runtime_mode_startup_selection_completion_contract.report.v1",
+    "status": "pass",
+    "missing_item_count": 2,
+    "unit_test_ref_count": 9,
+    "e2e_test_ref_count": 4,
+    "source_anchor_group_count": 5
+  }
+}
