@@ -486,7 +486,9 @@
         "checker_fails_on_stale_pending_row_claiming_closed",
         "checker_fails_on_unsupported_done_row_without_evidence",
         "checker_fails_when_ledger_mapping_is_missing",
-        "checker_fails_when_target_bead_is_unknown"
+        "checker_fails_when_target_bead_is_unknown",
+        "completion_debt_evidence_resolves_original_close_reason_wording",
+        "checker_fails_when_close_reason_wording_resolution_drifts"
       ]
     },
     "telemetry_primary": {
@@ -512,7 +514,35 @@
         "todo_id",
         "evidence_ref",
         "br_issue_ref",
-        "classification"
+        "classification",
+        "completion_debt_bead",
+        "original_bead"
+      ]
+    },
+    "close_reason_wording_resolution": {
+      "status": "resolved_by_structured_evidence",
+      "blocked_bead": "bd-0agsk.2",
+      "completion_bead": "bd-0agsk.2.1",
+      "audit_finding": "original close reason used TODO as an architecture-ledger noun, not as an unfinished-work claim",
+      "flagged_terms": [
+        "TODO"
+      ],
+      "allowed_contexts": [
+        "source ledger row identifiers",
+        "artifact and script names for the architecture ledger reconciliation gate",
+        "original bead title naming the architecture ledger"
+      ],
+      "required_proof_fields": [
+        "claim_status",
+        "promotion_policy.replacement_level_change",
+        "completion_debt_evidence.conformance_primary.required_test_names",
+        "completion_debt_evidence.telemetry_primary.required_events",
+        "completion_debt_evidence.close_reason_wording_resolution.status"
+      ],
+      "required_report_fields": [
+        "completion_debt_bead",
+        "original_bead",
+        "close_reason_wording_resolution"
       ]
     }
   },

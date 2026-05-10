@@ -9,7 +9,7 @@ OUT_DIR="${ROOT}/target/conformance"
 REPORT="${OUT_DIR}/architecture_todo_reconciliation.report.json"
 LOG="${OUT_DIR}/architecture_todo_reconciliation.log.jsonl"
 
-TRACE_ID="bd-0agsk.2::run-$(date -u +%Y%m%dT%H%M%SZ)-$$::001"
+TRACE_ID="bd-0agsk.2.1::run-$(date -u +%Y%m%dT%H%M%SZ)-$$::001"
 START_NS="$(python3 - <<'PY'
 import time
 print(time.time_ns())
@@ -39,6 +39,8 @@ report_path = pathlib.Path(sys.argv[3])
 log_path = pathlib.Path(sys.argv[4])
 trace_id = sys.argv[5]
 start_ns = int(sys.argv[6])
+CHECK_BEAD = "bd-0agsk.2.1"
+ORIGINAL_BEAD = "bd-0agsk.2"
 
 
 def find_workspace_root(path: pathlib.Path) -> pathlib.Path:
@@ -79,7 +81,9 @@ def emit_failure(
     duration_ms = (time.time_ns() - start_ns) // 1_000_000
     report = {
         "schema_version": "architecture_todo_reconciliation.report.v1",
-        "bead": "bd-0agsk.2",
+        "bead": CHECK_BEAD,
+        "completion_debt_bead": CHECK_BEAD,
+        "original_bead": ORIGINAL_BEAD,
         "trace_id": trace_id,
         "outcome": "fail",
         "failure_signature": signature,
@@ -98,7 +102,9 @@ def emit_failure(
         "trace_id": trace_id,
         "level": "error",
         "event": "architecture_todo_reconciliation_failed",
-        "bead_id": "bd-0agsk.2",
+        "bead_id": CHECK_BEAD,
+        "completion_debt_bead": CHECK_BEAD,
+        "original_bead": ORIGINAL_BEAD,
         "artifact_refs": [str(artifact_path), str(ledger_path), str(report_path)],
         "outcome": "fail",
         "duration_ms": duration_ms,
@@ -360,6 +366,8 @@ expected_fields = {
     "evidence_ref",
     "br_issue_ref",
     "classification",
+    "completion_debt_bead",
+    "original_bead",
 }
 if not isinstance(required_fields, list) or not required_fields:
     fail("completion_debt_telemetry_fields", "telemetry required_fields must be non-empty")
@@ -370,6 +378,64 @@ if missing_fields:
         f"telemetry required_fields missing {missing_fields}",
     )
 
+wording = completion.get("close_reason_wording_resolution")
+if not isinstance(wording, dict):
+    fail(
+        "completion_debt_close_reason_wording",
+        "completion_debt_evidence.close_reason_wording_resolution must be an object",
+    )
+if wording.get("status") != "resolved_by_structured_evidence":
+    fail(
+        "completion_debt_close_reason_wording_status",
+        "close_reason_wording_resolution.status must be resolved_by_structured_evidence",
+    )
+if wording.get("blocked_bead") != ORIGINAL_BEAD:
+    fail(
+        "completion_debt_close_reason_wording_blocked_bead",
+        f"close_reason_wording_resolution.blocked_bead must be {ORIGINAL_BEAD}",
+    )
+if wording.get("completion_bead") != CHECK_BEAD:
+    fail(
+        "completion_debt_close_reason_wording_completion_bead",
+        f"close_reason_wording_resolution.completion_bead must be {CHECK_BEAD}",
+    )
+flagged_terms = {str(term) for term in wording.get("flagged_terms", [])}
+if flagged_terms != {"TODO"}:
+    fail(
+        "completion_debt_close_reason_wording_terms",
+        "close_reason_wording_resolution.flagged_terms must be exactly ['TODO']",
+    )
+allowed_contexts = wording.get("allowed_contexts")
+if not isinstance(allowed_contexts, list) or len(allowed_contexts) < 3:
+    fail(
+        "completion_debt_close_reason_wording_contexts",
+        "close_reason_wording_resolution.allowed_contexts must list the accepted contexts",
+    )
+required_proof_fields = {
+    "claim_status",
+    "promotion_policy.replacement_level_change",
+    "completion_debt_evidence.conformance_primary.required_test_names",
+    "completion_debt_evidence.telemetry_primary.required_events",
+    "completion_debt_evidence.close_reason_wording_resolution.status",
+}
+declared_proof_fields = {str(field) for field in wording.get("required_proof_fields", [])}
+if not required_proof_fields.issubset(declared_proof_fields):
+    fail(
+        "completion_debt_close_reason_wording_proof_fields",
+        "close_reason_wording_resolution.required_proof_fields drifted",
+    )
+required_report_fields = {
+    "completion_debt_bead",
+    "original_bead",
+    "close_reason_wording_resolution",
+}
+declared_report_fields = {str(field) for field in wording.get("required_report_fields", [])}
+if not required_report_fields.issubset(declared_report_fields):
+    fail(
+        "completion_debt_close_reason_wording_report_fields",
+        "close_reason_wording_resolution.required_report_fields drifted",
+    )
+
 checks = {
     "schema_valid": "pass",
     "ledger_rows_exhaustive": "pass",
@@ -378,6 +444,7 @@ checks = {
     "target_beads_known": "pass",
     "promotion_policy_report_only": "pass",
     "completion_debt_evidence_bound": "pass",
+    "close_reason_wording_resolution_bound": "pass",
 }
 duration_ms = (time.time_ns() - start_ns) // 1_000_000
 row_events = []
@@ -407,7 +474,9 @@ for mapping in row_mappings:
 
 report = {
     "schema_version": "architecture_todo_reconciliation.report.v1",
-    "bead": "bd-0agsk.2",
+    "bead": CHECK_BEAD,
+    "completion_debt_bead": CHECK_BEAD,
+    "original_bead": ORIGINAL_BEAD,
     "source_bead": artifact.get("generated_by_bead"),
     "trace_id": trace_id,
     "artifact": str(artifact_path),
@@ -422,6 +491,13 @@ report = {
         "new_bead_count": len(new_bead_ids),
         "scan_finding_count": len(artifact.get("scan_findings", [])),
     },
+    "close_reason_wording_resolution": {
+        "status": wording.get("status"),
+        "blocked_bead": wording.get("blocked_bead"),
+        "completion_bead": wording.get("completion_bead"),
+        "flagged_terms": sorted(flagged_terms),
+        "allowed_context_count": len(allowed_contexts),
+    },
     "row_events": row_events,
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -431,7 +507,9 @@ event = {
     "trace_id": trace_id,
     "level": "info",
     "event": "architecture_todo_reconciliation_validated",
-    "bead_id": "bd-0agsk.2",
+    "bead_id": CHECK_BEAD,
+    "completion_debt_bead": CHECK_BEAD,
+    "original_bead": ORIGINAL_BEAD,
     "artifact_refs": [str(artifact_path), str(ledger_path), str(report_path)],
     "outcome": "pass",
     "duration_ms": duration_ms,
@@ -449,7 +527,9 @@ for row_event in row_events:
         "trace_id": trace_id,
         "level": "info",
         "event": "architecture_todo_reconciliation_row_validated",
-        "bead_id": "bd-0agsk.2",
+        "bead_id": CHECK_BEAD,
+        "completion_debt_bead": CHECK_BEAD,
+        "original_bead": ORIGINAL_BEAD,
         "artifact_refs": [str(artifact_path), str(ledger_path), str(report_path)],
         "outcome": "pass",
         "duration_ms": duration_ms,

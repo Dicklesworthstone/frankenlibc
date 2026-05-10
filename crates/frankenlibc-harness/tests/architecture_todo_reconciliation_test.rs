@@ -193,6 +193,8 @@ fn completion_debt_evidence_binds_conformance_and_telemetry_items() {
             "checker_fails_on_unsupported_done_row_without_evidence",
             "checker_fails_when_ledger_mapping_is_missing",
             "checker_fails_when_target_bead_is_unknown",
+            "completion_debt_evidence_resolves_original_close_reason_wording",
+            "checker_fails_when_close_reason_wording_resolution_drifts",
         ])
     );
 
@@ -232,12 +234,64 @@ fn completion_debt_evidence_binds_conformance_and_telemetry_items() {
         "evidence_ref",
         "br_issue_ref",
         "classification",
+        "completion_debt_bead",
+        "original_bead",
     ] {
         assert!(
             telemetry_fields.contains(field),
             "telemetry evidence missing required field {field}"
         );
     }
+}
+
+#[test]
+fn completion_debt_evidence_resolves_original_close_reason_wording() {
+    let artifact_path =
+        workspace_root().join("tests/conformance/architecture_todo_reconciliation.v1.json");
+    let artifact = load_json(&artifact_path);
+    let wording = &artifact["completion_debt_evidence"]["close_reason_wording_resolution"];
+
+    assert_eq!(
+        wording["status"].as_str(),
+        Some("resolved_by_structured_evidence")
+    );
+    assert_eq!(wording["blocked_bead"].as_str(), Some("bd-0agsk.2"));
+    assert_eq!(wording["completion_bead"].as_str(), Some("bd-0agsk.2.1"));
+
+    let flagged_terms: HashSet<_> = wording["flagged_terms"]
+        .as_array()
+        .expect("flagged_terms should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("flagged term should be string"))
+        .collect();
+    assert_eq!(flagged_terms, HashSet::from(["TODO"]));
+
+    let allowed_contexts = wording["allowed_contexts"]
+        .as_array()
+        .expect("allowed_contexts should be an array");
+    assert!(
+        allowed_contexts.len() >= 3,
+        "wording resolution should list the accepted contexts"
+    );
+
+    let required_report_fields: HashSet<_> = wording["required_report_fields"]
+        .as_array()
+        .expect("required_report_fields should be an array")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("required report field should be string")
+        })
+        .collect();
+    assert_eq!(
+        required_report_fields,
+        HashSet::from([
+            "completion_debt_bead",
+            "original_bead",
+            "close_reason_wording_resolution",
+        ])
+    );
 }
 
 #[test]
@@ -275,7 +329,16 @@ fn checker_passes_and_emits_report_and_log() {
         report["schema_version"].as_str(),
         Some("architecture_todo_reconciliation.report.v1")
     );
-    assert_eq!(report["bead"].as_str(), Some("bd-0agsk.2"));
+    assert_eq!(report["bead"].as_str(), Some("bd-0agsk.2.1"));
+    assert_eq!(
+        report["completion_debt_bead"].as_str(),
+        Some("bd-0agsk.2.1")
+    );
+    assert_eq!(report["original_bead"].as_str(), Some("bd-0agsk.2"));
+    assert_eq!(
+        report["close_reason_wording_resolution"]["status"].as_str(),
+        Some("resolved_by_structured_evidence")
+    );
     for check in [
         "schema_valid",
         "ledger_rows_exhaustive",
@@ -284,6 +347,7 @@ fn checker_passes_and_emits_report_and_log() {
         "target_beads_known",
         "promotion_policy_report_only",
         "completion_debt_evidence_bound",
+        "close_reason_wording_resolution_bound",
     ] {
         assert_eq!(
             report["checks"][check].as_str(),
@@ -501,4 +565,27 @@ fn checker_fails_when_completion_debt_telemetry_binding_drifts() {
         "unexpected stderr: {stderr}"
     );
     assert_failure_outputs(&root, "completion_debt_telemetry_missing_field");
+}
+
+#[test]
+fn checker_fails_when_close_reason_wording_resolution_drifts() {
+    let _guard = lock_script();
+    let root = workspace_root();
+    let artifact_path = root.join("tests/conformance/architecture_todo_reconciliation.v1.json");
+    let mut artifact = load_json(&artifact_path);
+    artifact["completion_debt_evidence"]["close_reason_wording_resolution"]["status"] =
+        serde_json::Value::from("unresolved");
+    let mutation_path = write_mutation(&root, "close_reason_wording_resolution_drift", &artifact);
+
+    let output = run_checker(&root, Some(&mutation_path));
+    assert!(
+        !output.status.success(),
+        "checker should fail when close-reason wording resolution drifts"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("completion_debt_close_reason_wording_status"),
+        "unexpected stderr: {stderr}"
+    );
+    assert_failure_outputs(&root, "completion_debt_close_reason_wording_status");
 }
