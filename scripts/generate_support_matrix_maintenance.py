@@ -990,9 +990,17 @@ def run_self_test():
             module_cache[module] = read_module_source(module)
         source = module_cache[module]
         if source:
-            is_valid, findings = validate_status(sym, entry["status"], module, source)
-            mark = "✓" if is_valid else "✗"
-            print(f"  {mark} {sym} ({entry['status']}): {findings or 'ok'}")
+            module_analysis = analyze_module_source(source)
+            is_valid, findings, warnings = validate_status(
+                sym,
+                entry["status"],
+                module,
+                source,
+                module_analysis,
+            )
+            details = [*findings, *warnings] or ["ok"]
+            mark = "pass" if is_valid else "fail"
+            print(f"  {mark} {sym} ({entry['status']}): {details}")
         else:
             print(f"  ? {sym}: source not found")
 

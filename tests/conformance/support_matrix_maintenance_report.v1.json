@@ -1,17 +1,17 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-05-01T03:38:13Z",
+  "generated_at": "2026-05-10T16:28:00Z",
   "summary": {
     "total_symbols": 4119,
-    "status_validated": 4118,
-    "status_invalid": 1,
+    "status_validated": 4119,
+    "status_invalid": 0,
     "status_skipped": 0,
     "status_valid_pct": 100.0,
-    "fixture_linked": 389,
-    "fixture_unlinked": 3730,
-    "fixture_coverage_pct": 9.4,
-    "total_warnings": 163
+    "fixture_linked": 403,
+    "fixture_unlinked": 3716,
+    "fixture_coverage_pct": 9.8,
+    "total_warnings": 117
   },
   "coverage_dashboard": {
     "total_symbols": 4119,
@@ -66,7 +66,7 @@
   "status_distribution": {
     "Implemented": {
       "count": 3705,
-      "fixture_linked": 332
+      "fixture_linked": 346
     },
     "RawSyscall": {
       "count": 414,
@@ -251,8 +251,8 @@
     },
     "string_abi": {
       "total": 146,
-      "linked": 25,
-      "coverage_pct": 17.1
+      "linked": 37,
+      "coverage_pct": 25.3
     },
     "termios_abi": {
       "total": 10,
@@ -266,8 +266,8 @@
     },
     "unistd_abi": {
       "total": 742,
-      "linked": 31,
-      "coverage_pct": 4.2
+      "linked": 33,
+      "coverage_pct": 4.4
     },
     "wchar_abi": {
       "total": 146,
@@ -4549,77 +4549,7 @@
       "warnings": []
     },
     {
-      "symbol": "argz_add",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "argz_add_sep",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "argz_append",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "argz_create",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "argz_create_sep",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "argz_delete",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "argz_insert",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "argz_replace",
       "status": "Implemented",
       "module": "string_abi",
       "valid": true,
@@ -4762,46 +4692,6 @@
       "symbol": "dlsym",
       "status": "Implemented",
       "module": "dlfcn_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "envz_add",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "envz_merge",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "envz_remove",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "envz_strip",
-      "status": "Implemented",
-      "module": "string_abi",
       "valid": true,
       "findings": [],
       "warnings": [
@@ -5269,16 +5159,6 @@
       ]
     },
     {
-      "symbol": "get_current_dir_name",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "getc",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -5314,18 +5194,6 @@
       "module": "stdio_abi",
       "valid": true,
       "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "getcwd",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "valid": false,
-      "findings": [
-        "RawSyscall but calls glibc::{free, malloc}"
-      ],
       "warnings": [
         "WrapsHostLibc candidate (host delegation detected)"
       ]
@@ -5941,16 +5809,6 @@
       ]
     },
     {
-      "symbol": "pthread_sigqueue",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "pthread_testcancel",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -6091,39 +5949,9 @@
       ]
     },
     {
-      "symbol": "realpath",
-      "status": "Implemented",
-      "module": "stdlib_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "rewind",
       "status": "Implemented",
       "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "scandir",
-      "status": "Implemented",
-      "module": "dirent_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "scandir64",
-      "status": "Implemented",
-      "module": "dirent_abi",
       "valid": true,
       "findings": [],
       "warnings": [
@@ -6239,16 +6067,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "tempnam",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "tfind",
@@ -6409,16 +6227,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "wcsdup",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "wcsftime_l",
@@ -7831,16 +7639,6 @@
       "warnings": []
     },
     {
-      "symbol": "host2netname",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "in6addr_any",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -7999,26 +7797,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "scandirat",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "scandirat64",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "svc_exit",
@@ -8319,66 +8097,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "user2netname",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_accepted_reply",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_array",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_authdes_cred",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_authunix_parms",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_bytes",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "xdr_cback_data",
@@ -8691,16 +8409,6 @@
       "warnings": []
     },
     {
-      "symbol": "xdr_callmsg",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "xdr_char",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -8711,26 +8419,6 @@
       "warnings": []
     },
     {
-      "symbol": "xdr_cryptkeyarg",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_cryptkeyarg2",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "xdr_enum",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -8739,16 +8427,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "xdr_getcredres",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "xdr_hyper",
@@ -8811,16 +8489,6 @@
       "warnings": []
     },
     {
-      "symbol": "xdr_key_netstarg",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "xdr_longlong_t",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -8829,56 +8497,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "xdr_netnamestr",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_netobj",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_opaque_auth",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_pmaplist",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_pointer",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "xdr_quad_t",
@@ -8891,36 +8509,6 @@
       "warnings": []
     },
     {
-      "symbol": "xdr_reference",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_replymsg",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_rmtcallres",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "xdr_short",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -8929,16 +8517,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "xdr_string",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "xdr_u_char",
@@ -9039,26 +8617,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "xdr_unixcred",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "xdr_wrapstring",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "_null_auth",
@@ -9199,26 +8757,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "__idna_to_dns_encoding",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "__idna_from_dns_encoding",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "__abort_msg",
@@ -10692,7 +10230,6 @@
     "getline",
     "getloadavg",
     "getmntent",
-    "getmntent_r",
     "getnameinfo",
     "getnetbyaddr",
     "getnetbyaddr_r",
@@ -10783,7 +10320,6 @@
     "gnu_get_libc_release",
     "gnu_get_libc_version",
     "grantpt",
-    "hasmntopt",
     "hcreate",
     "hcreate_r",
     "hdestroy",
@@ -11903,8 +11439,6 @@
     "__mbrlen",
     "__mbrtowc",
     "__memalign_hook",
-    "__memcmpeq",
-    "__mempcpy",
     "__mempcpy_chk",
     "__mempcpy_small",
     "__monstartup",
@@ -11956,7 +11490,6 @@
     "__pthread_unregister_cancel_restore",
     "__pthread_unwind_next",
     "__pwrite64",
-    "__rawmemchr",
     "__rcmd_errstr",
     "__read",
     "__realloc_hook",
@@ -12005,14 +11538,6 @@
     "__sigsetjmp",
     "__sigsuspend",
     "__statfs",
-    "__stpcpy",
-    "__stpncpy",
-    "__strcasecmp",
-    "__strcasecmp_l",
-    "__strcasestr",
-    "__strcoll_l",
-    "__strcpy_small",
-    "__strcspn_c1",
     "__strcspn_c2",
     "__strcspn_c3",
     "__strdup",
@@ -12627,7 +12152,6 @@
     "xdrstdio_create",
     "xencrypt",
     "__pthread_get_minstack",
-    "__stpcpy_small",
     "_null_auth",
     "h_errlist",
     "nfsservctl",

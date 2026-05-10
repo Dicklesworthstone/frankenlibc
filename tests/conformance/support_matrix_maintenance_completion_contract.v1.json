@@ -1,0 +1,228 @@
+{
+  "schema": "support_matrix_maintenance_completion_contract.v1",
+  "bead": "bd-3g4p",
+  "completion_debt_bead": "bd-3g4p.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-3g4p/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary"
+    ],
+    "artifacts": {
+      "support_matrix": "support_matrix.json",
+      "maintenance_generator": "scripts/generate_support_matrix_maintenance.py",
+      "maintenance_gate": "scripts/check_support_matrix_maintenance.sh",
+      "canonical_report": "tests/conformance/support_matrix_maintenance_report.v1.json",
+      "conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+      "existing_harness_test": "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs",
+      "completion_contract": "tests/conformance/support_matrix_maintenance_completion_contract.v1.json",
+      "completion_checker": "scripts/check_support_matrix_maintenance_completion_contract.sh",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/support_matrix_maintenance_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "scripts/generate_support_matrix_maintenance.py:75",
+      "scripts/generate_support_matrix_maintenance.py:80",
+      "scripts/generate_support_matrix_maintenance.py:122",
+      "scripts/generate_support_matrix_maintenance.py:305",
+      "scripts/generate_support_matrix_maintenance.py:599",
+      "scripts/generate_support_matrix_maintenance.py:687",
+      "scripts/generate_support_matrix_maintenance.py:854",
+      "scripts/generate_support_matrix_maintenance.py:973",
+      "scripts/check_support_matrix_maintenance.sh:31",
+      "scripts/check_support_matrix_maintenance.sh:62",
+      "scripts/check_support_matrix_maintenance.sh:155",
+      "scripts/check_support_matrix_maintenance.sh:261",
+      "scripts/check_support_matrix_maintenance.sh:334",
+      "scripts/check_support_matrix_maintenance.sh:347",
+      "scripts/check_support_matrix_maintenance.sh:366",
+      "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs:160",
+      "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs:191",
+      "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs:248",
+      "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs:267",
+      "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs:293",
+      "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs:346",
+      "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs:433",
+      "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs:460",
+      "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs:481",
+      "tests/conformance/support_matrix_maintenance_report.v1.json:1"
+    ],
+    "test_sources": {
+      "existing_harness_test": "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/support_matrix_maintenance_completion_contract_test.rs"
+    },
+    "maintenance_policy": {
+      "required_schema": "v1",
+      "required_bead": "bd-3g4p",
+      "minimum_total_symbols": 4000,
+      "minimum_status_valid_pct": 99.0,
+      "maximum_status_invalid": 0,
+      "minimum_fixture_linked": 400,
+      "required_native_coverage_pct": 100.0,
+      "forbidden_status_counts": {
+        "Stub": 0,
+        "GlibcCallThrough": 0,
+        "WrapsHostLibc": 0
+      },
+      "required_stable_sections": [
+        "schema_version",
+        "bead",
+        "summary",
+        "coverage_dashboard",
+        "status_distribution",
+        "module_coverage",
+        "symbol_status_map",
+        "status_validation_issues",
+        "unlinked_symbols"
+      ],
+      "required_gate_events": [
+        "canonical_stable_sections",
+        "coverage_summary",
+        "status_counts",
+        "policy_no_new_stub_symbols",
+        "policy_reclassification_requires_conformance",
+        "symbol_status_snapshot",
+        "gate_result"
+      ],
+      "required_completion_events": [
+        "support_matrix_maintenance_units_validated",
+        "support_matrix_maintenance_e2e_validated",
+        "support_matrix_maintenance_conformance_validated"
+      ],
+      "required_log_fields": [
+        "timestamp",
+        "trace_id",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "event",
+        "status",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "total_symbols",
+        "status_invalid",
+        "fixture_linked",
+        "native_coverage_pct",
+        "artifact_refs",
+        "test_refs",
+        "failure_signature"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Unit-level maintenance evidence checks report schema, status thresholds, invalid-row regression, module totals, native IO status preservation, and generator self-test behavior.",
+      "required_test_refs": [
+        {
+          "source": "existing_harness_test",
+          "name": "maintenance_report_schema_complete"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "maintenance_status_validation_above_threshold"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "maintenance_report_has_no_invalid_status_rows"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "maintenance_module_coverage_consistent"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "maintenance_report_marks_io_internal_native_symbols_implemented"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "generator_self_test_succeeds"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "contract_binds_unit_e2e_and_conformance_evidence"
+        }
+      ],
+      "required_commands": [
+        "python3 scripts/generate_support_matrix_maintenance.py --self-test",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test support_matrix_maintenance_test maintenance_report_schema_complete maintenance_status_validation_above_threshold maintenance_report_has_no_invalid_status_rows maintenance_module_coverage_consistent maintenance_report_marks_io_internal_native_symbols_implemented -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test support_matrix_maintenance_completion_contract_test generator_self_test_succeeds contract_binds_unit_e2e_and_conformance_evidence -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "The maintenance gate regenerates the support-matrix report under target/conformance, checks canonical stable-section drift, emits structured JSONL, supports trace snapshots, and rejects stale canonical artifacts.",
+      "required_scripts": [
+        "scripts/check_support_matrix_maintenance.sh",
+        "scripts/check_support_matrix_maintenance_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {
+          "source": "existing_harness_test",
+          "name": "maintenance_gate_emits_structured_logs_with_required_fields"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "maintenance_gate_trace_flag_emits_symbol_status_snapshot_events"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "maintenance_gate_does_not_rewrite_canonical_report"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "maintenance_gate_fails_on_canonical_stable_section_drift"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_emits_report_log_and_runs_existing_gate"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_stale_conformance_threshold"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_support_matrix_maintenance.sh",
+        "bash scripts/check_support_matrix_maintenance_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test support_matrix_maintenance_completion_contract_test checker_emits_report_log_and_runs_existing_gate checker_rejects_stale_conformance_threshold -- --nocapture"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "description": "Conformance linkage evidence binds support_matrix.json to fixture inventory, conformance_matrix.v1.json, canonical/generated maintenance reports, and structured gate logs.",
+      "required_artifacts": [
+        "support_matrix.json",
+        "tests/conformance/conformance_matrix.v1.json",
+        "tests/conformance/support_matrix_maintenance_report.v1.json",
+        "target/conformance/support_matrix_maintenance.generated.json",
+        "target/conformance/support_matrix_maintenance.log.jsonl",
+        "target/conformance/support_matrix_maintenance_completion_contract.report.json",
+        "target/conformance/support_matrix_maintenance_completion_contract.log.jsonl"
+      ],
+      "required_test_refs": [
+        {
+          "source": "existing_harness_test",
+          "name": "maintenance_report_generates_successfully"
+        },
+        {
+          "source": "existing_harness_test",
+          "name": "maintenance_gate_emits_structured_logs_with_required_fields"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_emits_report_log_and_runs_existing_gate"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test support_matrix_maintenance_test maintenance_report_generates_successfully maintenance_gate_emits_structured_logs_with_required_fields -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test support_matrix_maintenance_completion_contract_test -- --nocapture"
+      ]
+    }
+  }
+}
