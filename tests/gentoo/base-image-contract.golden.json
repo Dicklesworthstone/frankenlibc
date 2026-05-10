@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-2icq.3.1",
+  "contract": "gentoo-stage3-base-image",
+  "stage3": {
+    "path": "docker/gentoo/Dockerfile.stage3",
+    "required_lines": [
+      "ARG GENTOO_STAGE3_IMAGE=gentoo/stage3:latest",
+      "FROM ${GENTOO_STAGE3_IMAGE}",
+      "SHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]",
+      "COPY configs/gentoo/make.conf /etc/portage/make.conf",
+      "mkdir -p /etc/portage/env /etc/portage/package.env /var/cache/distfiles /var/cache/binpkgs;",
+      "emerge-webrsync;",
+      "command -v gcc;",
+      "command -v ld;",
+      "command -v make;",
+      "command -v emerge;",
+      "FEATURES=\"-test -pid-sandbox -network-sandbox -ipc-sandbox -mount-sandbox -sandbox -usersandbox\" emerge --quiet-build --oneshot app-portage/gentoolkit",
+      "mkdir -p /opt/frankenlibc/lib /opt/frankenlibc/scripts/gentoo /var/log/frankenlibc/portage",
+      "VOLUME [\"/opt/frankenlibc\", \"/var/cache/binpkgs\", \"/var/cache/distfiles\", \"/var/log/frankenlibc\"]"
+    ]
+  },
+  "builder": {
+    "path": "docker/gentoo/Dockerfile.builder",
+    "required_lines": [
+      "ARG BASE_IMAGE=frankenlibc/gentoo-stage3:latest",
+      "FROM ${BASE_IMAGE}",
+      "COPY configs/gentoo/portage-bashrc /etc/portage/bashrc",
+      "COPY scripts/gentoo/frankenlibc-ebuild-hooks.sh /opt/frankenlibc/scripts/gentoo/frankenlibc-ebuild-hooks.sh",
+      "chmod +x /opt/frankenlibc/scripts/gentoo/frankenlibc-ebuild-hooks.sh;",
+      "mkdir -p /etc/portage/env /etc/portage/package.env /var/log/frankenlibc/portage;",
+      "command -v tar;",
+      "command -v gzip",
+      "ENV FRANKENLIBC_PORTAGE_ENABLE=1",
+      "ENV FRANKENLIBC_LIB=/opt/frankenlibc/lib/libfrankenlibc_abi.so",
+      "ENV FRANKENLIBC_MODE=hardened",
+      "ENV FRANKENLIBC_PHASE_ALLOWLIST=\"src_test pkg_test\"",
+      "VOLUME [\"/opt/frankenlibc\", \"/var/cache/binpkgs\", \"/var/cache/distfiles\", \"/var/log/frankenlibc\"]"
+    ]
+  },
+  "make_conf": {
+    "path": "configs/gentoo/make.conf",
+    "required_lines": [
+      "COMMON_FLAGS=\"-O2 -pipe -march=x86-64 -mtune=generic\"",
+      "MAKEOPTS=\"-j4\"",
+      "FEATURES=\"parallel-fetch test\"",
+      "ACCEPT_LICENSE=\"*\"",
+      "USE=\"-static -static-libs\""
+    ]
+  },
+  "build_script": {
+    "path": "scripts/gentoo/build-base-image.sh",
+    "required_lines": [
+      "STAGE3_IMAGE=\"${STAGE3_IMAGE:-frankenlibc/gentoo-stage3:latest}\"",
+      "BUILDER_IMAGE=\"${BUILDER_IMAGE:-frankenlibc/gentoo-builder:latest}\"",
+      "STAGE3_SOURCE_IMAGE=\"${STAGE3_SOURCE_IMAGE:-gentoo/stage3:latest}\"",
+      "--build-arg \"GENTOO_STAGE3_IMAGE=${STAGE3_SOURCE_IMAGE}\"",
+      "-f \"${ROOT}/docker/gentoo/Dockerfile.stage3\"",
+      "--build-arg \"BASE_IMAGE=${STAGE3_IMAGE}\"",
+      "-f \"${ROOT}/docker/gentoo/Dockerfile.builder\"",
+      "docker image inspect \"${STAGE3_IMAGE}\" \"${BUILDER_IMAGE}\""
+    ]
+  },
+  "runtime_test": {
+    "path": "tests/gentoo/test-base-image.sh",
+    "required_lines": [
+      "emerge --info >/tmp/emerge-info.txt && test -s /tmp/emerge-info.txt",
+      "test -f /etc/portage/make.conf && grep -q 'FEATURES=\\\"parallel-fetch test\\\"' /etc/portage/make.conf",
+      "command -v gcc && command -v ld && command -v make",
+      "test -f /etc/portage/bashrc && test -x /opt/frankenlibc/scripts/gentoo/frankenlibc-ebuild-hooks.sh",
+      "emerge -p sys-apps/coreutils >/tmp/coreutils-plan.txt && test -s /tmp/coreutils-plan.txt"
+    ]
+  }
+}

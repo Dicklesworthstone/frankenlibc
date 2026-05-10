@@ -5,6 +5,69 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STAGE3_IMAGE="${STAGE3_IMAGE:-frankenlibc/gentoo-stage3:latest}"
 BUILDER_IMAGE="${BUILDER_IMAGE:-frankenlibc/gentoo-builder:latest}"
 RUN_FULL_EMERGE="${FLC_GENTOO_TEST_FULL_EMERGE:-0}"
+GOLDEN_PATH="${FLC_GENTOO_BASE_IMAGE_GOLDEN:-${ROOT}/tests/gentoo/base-image-contract.golden.json}"
+GOLDEN_REPORT="${FLC_GENTOO_BASE_IMAGE_GOLDEN_REPORT:-${ROOT}/target/gentoo/base-image-contract.report.json}"
+GOLDEN_ONLY="${FLC_GENTOO_BASE_IMAGE_GOLDEN_ONLY:-0}"
+
+validate_golden_contract() {
+    python3 - "${ROOT}" "${GOLDEN_PATH}" "${GOLDEN_REPORT}" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+root = Path(sys.argv[1])
+golden_path = Path(sys.argv[2])
+report_path = Path(sys.argv[3])
+
+payload = json.loads(golden_path.read_text(encoding="utf-8"))
+checks = []
+
+
+def require(condition, check_id, detail):
+    checks.append({"id": check_id, "passed": bool(condition), "detail": detail})
+    if not condition:
+        raise SystemExit(f"FAIL: {check_id}: {detail}")
+
+
+def check_required_lines(section_name):
+    section = payload[section_name]
+    rel_path = section["path"]
+    body = (root / rel_path).read_text(encoding="utf-8")
+    for index, expected in enumerate(section["required_lines"], start=1):
+        require(
+            expected in body,
+            f"{section_name}.required_lines.{index}",
+            f"{rel_path} must contain {expected!r}",
+        )
+
+
+for section_name in ("stage3", "builder", "make_conf", "build_script", "runtime_test"):
+    check_required_lines(section_name)
+
+report = {
+    "schema_version": payload["schema_version"],
+    "bead_id": payload["bead_id"],
+    "contract": payload["contract"],
+    "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "golden_path": str(golden_path),
+    "checks_total": len(checks),
+    "checks_passed": sum(1 for check in checks if check["passed"]),
+    "checks": checks,
+}
+report_path.parent.mkdir(parents=True, exist_ok=True)
+report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(f"PASS: golden base image contract checks={report['checks_passed']}/{report['checks_total']}")
+PY
+}
+
+echo "--- check: base image golden contract ---"
+validate_golden_contract
+
+if [[ "${GOLDEN_ONLY}" == "1" ]]; then
+    echo "PASS: gentoo base image golden validation completed"
+    exit 0
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "SKIP: docker not installed"
