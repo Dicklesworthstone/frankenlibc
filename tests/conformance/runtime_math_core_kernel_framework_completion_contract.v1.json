@@ -1,0 +1,176 @@
+{
+  "schema_version": "runtime_math_core_kernel_framework_completion_contract.v1",
+  "bead": "bd-5vr.1",
+  "completion_debt_bead": "bd-5vr.1.1",
+  "description": "Completion-debt evidence binding for the runtime-math core kernel framework trait surface, snapshot integration, ABI export bridge, structured decision-card export, and deterministic JSONL evidence emission.",
+  "completion_debt_evidence": {
+    "bead": "bd-5vr.1.1",
+    "original_bead": "bd-5vr.1",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-5vr.1/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "artifacts": {
+      "runtime_math_framework": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "runtime_policy_bridge": "crates/frankenlibc-abi/src/runtime_policy.rs",
+      "snapshot_schema": "crates/frankenlibc-membrane/src/runtime_math/runtime_kernel_snapshot_schema.md",
+      "evidence_symbol_record_format": "crates/frankenlibc-membrane/src/runtime_math/evidence_symbol_record_format.md"
+    },
+    "test_sources": {
+      "runtime_math_mod": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "runtime_policy": "crates/frankenlibc-abi/src/runtime_policy.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/runtime_math_core_kernel_framework_completion_contract_test.rs"
+    },
+    "gate": "scripts/check_runtime_math_core_kernel_framework_completion_contract.sh",
+    "report_path": "target/conformance/runtime_math_core_kernel_framework_completion_contract.report.json",
+    "log_path": "target/conformance/runtime_math_core_kernel_framework_completion_contract.log.jsonl",
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:341",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:371",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:387",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:4538",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:4548",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:4555",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:4568",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:4852",
+      "crates/frankenlibc-abi/src/runtime_policy.rs:1222",
+      "crates/frankenlibc-abi/src/runtime_policy.rs:1236",
+      "crates/frankenlibc-abi/src/runtime_policy.rs:1250",
+      "crates/frankenlibc-abi/src/runtime_policy.rs:1264",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:5600",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:5632",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:5651",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:5758",
+      "crates/frankenlibc-abi/src/runtime_policy.rs:2584",
+      "crates/frankenlibc-abi/src/runtime_policy.rs:2619",
+      "crates/frankenlibc-abi/src/runtime_policy.rs:2633",
+      "scripts/check_runtime_math_core_kernel_framework_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/runtime_math_core_kernel_framework_completion_contract_test.rs:1"
+    ],
+    "framework_contract": {
+      "required_trait_methods": [
+        "evaluate",
+        "calibrate",
+        "snapshot",
+        "evidence_contract_snapshot",
+        "reverse_round_diversity_snapshot",
+        "export_decision_cards_json",
+        "export_runtime_math_log_jsonl"
+      ],
+      "required_runtime_policy_wrappers": [
+        "runtime_kernel_snapshot",
+        "runtime_evidence_contract_snapshot",
+        "export_runtime_decision_cards_json",
+        "export_runtime_math_log_jsonl"
+      ],
+      "required_evidence_snapshot_fields": [
+        "evidence_seqno",
+        "evidence_loss_count",
+        "evidence_max_epoch"
+      ],
+      "required_reverse_round_snapshot_fields": [
+        "total_decisions",
+        "active_family_count",
+        "dominant_family",
+        "dominant_family_share_ppm",
+        "warn_threshold_ppm",
+        "error_threshold_ppm",
+        "coverage_milestone_target",
+        "coverage_milestone_reached",
+        "state"
+      ],
+      "required_jsonl_events": [
+        "runtime_mode_dispatch",
+        "runtime_decision",
+        "runtime_evidence_emitted",
+        "runtime_pressure_sensor",
+        "runtime_reverse_round_math_selection",
+        "runtime_reverse_round_coverage_milestone",
+        "runtime_calibration",
+        "runtime_snapshot"
+      ],
+      "required_jsonl_fields": [
+        "timestamp",
+        "trace_id",
+        "bead_id",
+        "scenario_id",
+        "decision_id",
+        "schema_version",
+        "level",
+        "event",
+        "controller_id",
+        "decision_path",
+        "mode",
+        "api_family",
+        "symbol",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "evidence_seqno",
+        "artifact_refs"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Runtime-math unit tests exercise the common evaluate/calibrate/snapshot trait surface, evidence counters, reverse-round diversity snapshot, decision-card JSON export, and ABI runtime-policy export bridge wrappers.",
+      "required_test_refs": [
+        {"source": "runtime_math_mod", "name": "runtime_kernel_framework_roundtrip_exposes_snapshot_and_contract"},
+        {"source": "runtime_math_mod", "name": "runtime_kernel_framework_exposes_reverse_round_diversity_snapshot"},
+        {"source": "runtime_math_mod", "name": "runtime_kernel_framework_exports_structured_decision_card_json"},
+        {"source": "runtime_policy", "name": "runtime_kernel_snapshot_wrapper_exposes_live_decision_state"},
+        {"source": "runtime_policy", "name": "runtime_evidence_contract_wrapper_and_cards_export_are_available"},
+        {"source": "completion_harness", "name": "manifest_binds_unit_and_e2e_framework_evidence"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_kernel_framework -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi runtime_evidence_contract_wrapper_and_cards_export_are_available -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "The framework JSONL export is exercised through the runtime-policy bridge and this completion checker emits deterministic pass/fail report and JSONL artifacts for CI ingestion.",
+      "required_test_refs": [
+        {"source": "runtime_math_mod", "name": "runtime_kernel_framework_exports_runtime_math_jsonl_logs"},
+        {"source": "runtime_policy", "name": "runtime_math_log_wrapper_includes_required_traceability_fields"},
+        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_trait_method"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_runtime_policy_wrapper"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_jsonl_event"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_kernel_framework_exports_runtime_math_jsonl_logs -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi runtime_math_log_wrapper_includes_required_traceability_fields -- --nocapture",
+        "bash scripts/check_runtime_math_core_kernel_framework_completion_contract.sh"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "The completion checker emits structured JSONL pass/fail rows binding trait methods, runtime-policy wrappers, JSONL events, JSONL fields, test refs, artifact refs, source commit, and deterministic failure signatures.",
+      "required_events": [
+        "runtime_math_core_kernel_framework_completion_contract_validated",
+        "runtime_math_core_kernel_framework_completion_contract_failed",
+        "runtime_decision",
+        "runtime_snapshot"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "trait_method_count",
+        "runtime_policy_wrapper_count",
+        "jsonl_event_count",
+        "jsonl_field_count",
+        "test_refs",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "required_test_refs": [
+        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_jsonl_event"}
+      ]
+    }
+  }
+}
