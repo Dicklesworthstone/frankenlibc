@@ -1,0 +1,449 @@
+{
+  "schema_version": "franken_kernel_integration_completion_contract.v1",
+  "bead": "bd-epeg",
+  "completion_debt_bead": "bd-epeg.1",
+  "description": "Completion-debt evidence binding for the standalone franken_kernel adoption wedge: canonical local Cx-like capability context, TraceId, DecisionId, PolicyId, SchemaVersion, and structured evidence export fields.",
+  "next_audit_score_threshold": 800,
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-epeg/scorecard.md",
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "source_paths": {
+    "ids": "crates/frankenlibc-membrane/src/ids.rs",
+    "membrane_lib": "crates/frankenlibc-membrane/src/lib.rs",
+    "ptr_validator": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+    "evidence_ledger": "crates/frankenlibc-membrane/src/evidence_ledger.rs",
+    "runtime_math_evidence": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+    "runtime_math_mod": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+    "heal": "crates/frankenlibc-membrane/src/heal.rs",
+    "metrics": "crates/frankenlibc-membrane/src/metrics.rs",
+    "alien_cs_metrics": "crates/frankenlibc-membrane/src/alien_cs_metrics.rs",
+    "completion_contract": "tests/conformance/franken_kernel_integration_completion_contract.v1.json",
+    "completion_checker": "scripts/check_franken_kernel_integration_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/franken_kernel_integration_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    {
+      "kind": "schema_version_wrapper",
+      "path": "crates/frankenlibc-membrane/src/ids.rs",
+      "line": 7,
+      "anchor": "pub struct SchemaVersion"
+    },
+    {
+      "kind": "schema_version_constant",
+      "path": "crates/frankenlibc-membrane/src/ids.rs",
+      "line": 36,
+      "anchor": "pub const MEMBRANE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1, 0);"
+    },
+    {
+      "kind": "decision_id_wrapper",
+      "path": "crates/frankenlibc-membrane/src/ids.rs",
+      "line": 40,
+      "anchor": "pub struct DecisionId(u64);"
+    },
+    {
+      "kind": "policy_id_wrapper",
+      "path": "crates/frankenlibc-membrane/src/ids.rs",
+      "line": 76,
+      "anchor": "pub struct PolicyId(u32);"
+    },
+    {
+      "kind": "trace_id_wrapper",
+      "path": "crates/frankenlibc-membrane/src/ids.rs",
+      "line": 103,
+      "anchor": "pub struct TraceId(String);"
+    },
+    {
+      "kind": "canonical_scoped_trace",
+      "path": "crates/frankenlibc-membrane/src/ids.rs",
+      "line": 59,
+      "anchor": "pub fn scoped_trace_id(self, scope: &'static str) -> TraceId"
+    },
+    {
+      "kind": "public_fallback_exports",
+      "path": "crates/frankenlibc-membrane/src/lib.rs",
+      "line": 89,
+      "anchor": "pub use ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, SchemaVersion, TraceId};"
+    },
+    {
+      "kind": "cx_like_security_context",
+      "path": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "line": 198,
+      "anchor": "pub struct ValidationSecurityContext"
+    },
+    {
+      "kind": "tsm_trace_context",
+      "path": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "line": 80,
+      "anchor": "struct ValidationTraceContext"
+    },
+    {
+      "kind": "tsm_decision_id_assignment",
+      "path": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "line": 377,
+      "anchor": "let decision_id = DecisionId::from_raw("
+    },
+    {
+      "kind": "tsm_schema_export",
+      "path": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "line": 433,
+      "anchor": "schema_version: MEMBRANE_SCHEMA_VERSION.to_string(),"
+    },
+    {
+      "kind": "unified_evidence_ids",
+      "path": "crates/frankenlibc-membrane/src/evidence_ledger.rs",
+      "line": 117,
+      "anchor": "pub trace_id: TraceId"
+    },
+    {
+      "kind": "unified_evidence_schema",
+      "path": "crates/frankenlibc-membrane/src/evidence_ledger.rs",
+      "line": 489,
+      "anchor": "MEMBRANE_SCHEMA_VERSION"
+    },
+    {
+      "kind": "otlp_schema_attr",
+      "path": "crates/frankenlibc-membrane/src/evidence_ledger.rs",
+      "line": 541,
+      "anchor": "otlp_string_attr(\"frankenlibc.schema_version\", MEMBRANE_SCHEMA_VERSION.to_string())"
+    },
+    {
+      "kind": "decision_card_export",
+      "path": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+      "line": 1782,
+      "anchor": "pub fn export_decision_cards_json(&self) -> String"
+    },
+    {
+      "kind": "runtime_evidence_jsonl_export",
+      "path": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+      "line": 1869,
+      "anchor": "pub fn export_runtime_evidence_jsonl("
+    },
+    {
+      "kind": "runtime_math_jsonl_ids",
+      "path": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "line": 4601,
+      "anchor": "let decision_id = DecisionId::from_raw(card.decision_id);"
+    },
+    {
+      "kind": "healing_evidence_ids",
+      "path": "crates/frankenlibc-membrane/src/heal.rs",
+      "line": 204,
+      "anchor": "let decision_id = DecisionId::from_raw("
+    },
+    {
+      "kind": "metrics_evidence_ids",
+      "path": "crates/frankenlibc-membrane/src/metrics.rs",
+      "line": 168,
+      "anchor": "let decision_id = DecisionId::from_raw(1);"
+    },
+    {
+      "kind": "alien_cs_evidence_ids",
+      "path": "crates/frankenlibc-membrane/src/alien_cs_metrics.rs",
+      "line": 347,
+      "anchor": "let decision_id = DecisionId::from_raw((index + 1) as u64);"
+    },
+    {
+      "kind": "completion_checker",
+      "path": "scripts/check_franken_kernel_integration_completion_contract.sh",
+      "line": 1,
+      "anchor": "franken_kernel_integration_completion_contract"
+    },
+    {
+      "kind": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/franken_kernel_integration_completion_contract_test.rs",
+      "line": 1,
+      "anchor": "bd-epeg.1"
+    }
+  ],
+  "source_anchors": {
+    "ids": [
+      "pub struct SchemaVersion",
+      "pub const MEMBRANE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1, 0);",
+      "pub struct DecisionId(u64);",
+      "pub fn scoped_trace_id(self, scope: &'static str) -> TraceId",
+      "TraceId::new(format!(\"{scope}::{:016x}\", self.0))",
+      "pub struct PolicyId(u32);",
+      "pub struct TraceId(String);",
+      "scoped_trace_ids_use_canonical_separator_and_hex_width",
+      "zero_decision_id_does_not_emit_trace_id",
+      "policy_id_wrapper_preserves_assignment_status",
+      "membrane_schema_version_is_stable"
+    ],
+    "membrane_lib": [
+      "pub mod ids;",
+      "pub use ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, SchemaVersion, TraceId};",
+      "pub use ptr_validator::{ValidationOutcome, ValidationPipeline, ValidationSecurityContext};"
+    ],
+    "ptr_validator": [
+      "use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, TraceId};",
+      "struct ValidationTraceContext",
+      "pub struct ValidationSecurityContext",
+      "pub const fn allow_pointer_validation() -> Self",
+      "pub const fn deny_all() -> Self",
+      "decision_id: DecisionId",
+      "trace_id: TraceId",
+      "decision_id.scoped_trace_id(\"tsm::pointer_validation\")",
+      "capability_scope: \"pointer_validation\"",
+      "schema_version: MEMBRANE_SCHEMA_VERSION.to_string()",
+      "security_context",
+      "capability_scope",
+      "security_verdict",
+      "validation_log_export_includes_trace_and_decision_ids",
+      "security_context_default_deny_is_fail_closed"
+    ],
+    "evidence_ledger": [
+      "use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, TraceId};",
+      "pub trace_id: TraceId",
+      "pub decision_id: DecisionId",
+      "pub policy_id: PolicyId",
+      "record.decision_id.as_u64()",
+      "record.policy_id.as_u32()",
+      "MEMBRANE_SCHEMA_VERSION",
+      "frankenlibc.schema_version",
+      "correlation_index_groups_by_trace_id",
+      "jsonl_includes_all_required_schema_fields"
+    ],
+    "runtime_math_evidence": [
+      "use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId};",
+      "decision_cards.v1",
+      "schema_version",
+      "DecisionId::from_raw(card.decision_id)",
+      "PolicyId::from_raw(card.decision.policy_id)",
+      "decision_id.scoped_trace_id(\"runtime_math::decision_card\")",
+      "decision_id.scoped_trace_id(\"runtime_math::runtime_evidence\")",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "artifact_refs",
+      "decision_card_export_is_valid_json",
+      "runtime_evidence_jsonl_export_covers_required_schema_fields"
+    ],
+    "runtime_math_mod": [
+      "use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, TraceId};",
+      "decision_id.scoped_trace_id(\"runtime_math::dispatch\")",
+      "decision_id.scoped_trace_id(\"runtime_math::decision\")",
+      "decision_id.scoped_trace_id(\"runtime_math::evidence\")",
+      "runtime_scope_trace_id(\"runtime_math::pressure\", bead_id, run_id)",
+      "schema_version",
+      "runtime_kernel_framework_exports_structured_decision_card_json",
+      "runtime_kernel_framework_exports_runtime_math_jsonl_logs",
+      "runtime_math_log_jsonl_export_contains_required_runtime_decision_fields"
+    ],
+    "heal": [
+      "use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION};",
+      "decision_id.scoped_trace_id(\"membrane::heal\")",
+      "MEMBRANE_SCHEMA_VERSION",
+      "proof_healing_evidence_monotone_decision_ids"
+    ],
+    "metrics": [
+      "use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, TraceId};",
+      "let decision_id = DecisionId::from_raw(1);",
+      "membrane_scope_trace_id(\"membrane::metrics\", &bead, &run)",
+      "schema_version",
+      "snapshot_export_jsonl_includes_required_fields"
+    ],
+    "alien_cs_metrics": [
+      "use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, TraceId};",
+      "let decision_id = DecisionId::from_raw((index + 1) as u64);",
+      "decision_id.scoped_trace_id(\"alien_cs::metric\")",
+      "alien_cs_scope_trace_id(\"alien_cs::snapshot\"",
+      "schema_version",
+      "metric_ring_export_jsonl_contains_required_fields",
+      "snapshot_export_jsonl_contains_aggregate_diagnostics"
+    ]
+  },
+  "kernel_adoption_contract": {
+    "external_schema_forking_allowed": false,
+    "standalone_fallback_required": true,
+    "canonical_id_types": [
+      "TraceId",
+      "DecisionId",
+      "PolicyId",
+      "SchemaVersion"
+    ],
+    "cx_fallback_type": "ValidationSecurityContext",
+    "required_evidence_fields": [
+      "trace_id",
+      "decision_id",
+      "policy_id",
+      "schema_version",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs"
+    ],
+    "required_trace_scopes": [
+      "tsm::pointer_validation::",
+      "runtime_math::decision_card::",
+      "runtime_math::runtime_evidence::",
+      "runtime_math::decision::",
+      "membrane::heal::",
+      "membrane::metrics::",
+      "alien_cs::metric::",
+      "alien_cs::snapshot::"
+    ]
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "crates/frankenlibc-membrane/src/ids.rs:7",
+        "crates/frankenlibc-membrane/src/lib.rs:89",
+        "crates/frankenlibc-membrane/src/ptr_validator.rs:198",
+        "crates/frankenlibc-membrane/src/evidence_ledger.rs:117",
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs:1782"
+      ],
+      "test_refs": [
+        {
+          "source": "ids",
+          "name": "scoped_trace_ids_use_canonical_separator_and_hex_width"
+        },
+        {
+          "source": "ids",
+          "name": "zero_decision_id_does_not_emit_trace_id"
+        },
+        {
+          "source": "ids",
+          "name": "policy_id_wrapper_preserves_assignment_status"
+        },
+        {
+          "source": "ids",
+          "name": "membrane_schema_version_is_stable"
+        },
+        {
+          "source": "ptr_validator",
+          "name": "validation_log_export_includes_trace_and_decision_ids"
+        },
+        {
+          "source": "ptr_validator",
+          "name": "security_context_default_deny_is_fail_closed"
+        },
+        {
+          "source": "evidence_ledger",
+          "name": "correlation_index_groups_by_trace_id"
+        },
+        {
+          "source": "evidence_ledger",
+          "name": "jsonl_includes_all_required_schema_fields"
+        },
+        {
+          "source": "runtime_math_evidence",
+          "name": "decision_card_export_is_valid_json"
+        },
+        {
+          "source": "runtime_math_evidence",
+          "name": "runtime_evidence_jsonl_export_covers_required_schema_fields"
+        },
+        {
+          "source": "heal",
+          "name": "proof_healing_evidence_monotone_decision_ids"
+        },
+        {
+          "source": "metrics",
+          "name": "snapshot_export_jsonl_includes_required_fields"
+        },
+        {
+          "source": "alien_cs_metrics",
+          "name": "metric_ring_export_jsonl_contains_required_fields"
+        }
+      ],
+      "validation_commands": [
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-bd-epeg1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-membrane ids --lib -- --nocapture",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-bd-epeg1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-membrane validation_log_export_includes_trace_and_decision_ids --lib -- --nocapture",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-bd-epeg1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-membrane decision_card_export_is_valid_json --lib -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "crates/frankenlibc-membrane/src/ptr_validator.rs:427",
+        "crates/frankenlibc-membrane/src/evidence_ledger.rs:528",
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs:1869",
+        "crates/frankenlibc-membrane/src/runtime_math/mod.rs:4601",
+        "crates/frankenlibc-membrane/src/alien_cs_metrics.rs:341"
+      ],
+      "test_refs": [
+        {
+          "source": "ptr_validator",
+          "name": "validation_log_export_includes_trace_and_decision_ids"
+        },
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_kernel_framework_exports_structured_decision_card_json"
+        },
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_kernel_framework_exports_runtime_math_jsonl_logs"
+        },
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_math_log_jsonl_export_contains_required_runtime_decision_fields"
+        },
+        {
+          "source": "runtime_math_evidence",
+          "name": "runtime_evidence_jsonl_export_covers_required_schema_fields"
+        },
+        {
+          "source": "evidence_ledger",
+          "name": "jsonl_includes_all_required_schema_fields"
+        },
+        {
+          "source": "alien_cs_metrics",
+          "name": "snapshot_export_jsonl_contains_aggregate_diagnostics"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_structured_report_and_jsonl"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_canonical_id_source_anchor"
+        }
+      ],
+      "validation_commands": [
+        "bash scripts/check_franken_kernel_integration_completion_contract.sh",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-bd-epeg1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test franken_kernel_integration_completion_contract_test -- --nocapture",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-IndigoHeron-bd-epeg1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-membrane runtime_evidence_jsonl_export_covers_required_schema_fields --lib -- --nocapture"
+      ]
+    }
+  ],
+  "reporting": {
+    "report_path": "target/conformance/franken_kernel_integration_completion_contract.report.json",
+    "log_path": "target/conformance/franken_kernel_integration_completion_contract.log.jsonl",
+    "pass_event": "franken_kernel_integration_completion_contract_validated",
+    "fail_event": "franken_kernel_integration_completion_contract_failed",
+    "required_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "completion_debt_bead",
+      "mode",
+      "runtime_mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "decision_id",
+      "policy_id",
+      "schema_version",
+      "artifact_refs",
+      "source_commit",
+      "failure_signature"
+    ]
+  }
+}
