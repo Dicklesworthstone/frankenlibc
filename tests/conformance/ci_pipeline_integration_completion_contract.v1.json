@@ -1,0 +1,267 @@
+{
+  "schema_version": "ci_pipeline_integration_completion_contract.v1",
+  "original_bead": "bd-3f6f",
+  "completion_debt_bead": "bd-3f6f.1",
+  "trace_id": "ci_pipeline_integration_completion::bd-3f6f.1",
+  "source_artifacts": {
+    "workflow": ".github/workflows/ci.yml",
+    "ci_script": "scripts/ci.sh",
+    "conformance_golden_gate": "scripts/conformance_golden_gate.sh",
+    "snapshot_gate": "scripts/snapshot_gate.sh",
+    "ld_preload_smoke": "scripts/ld_preload_smoke.sh",
+    "benchmark_gate": "scripts/check_benchmark_gate.sh",
+    "fuzz_harness_gate": "scripts/check_fuzz_harness_architecture.sh",
+    "fuzz_phase1_gate": "scripts/check_fuzz_phase1_targets.sh",
+    "fuzz_phase2_gate": "scripts/check_fuzz_phase2_targets.sh",
+    "fuzz_membrane_gate": "scripts/check_fuzz_membrane_validation.sh",
+    "release_claim_gate": "scripts/release/check_replacement_claim_evidence.sh",
+    "release_guard_gate": "scripts/check_replacement_guard.sh",
+    "fuzz_phase1_report": "tests/conformance/fuzz_phase1_targets.v1.json",
+    "fuzz_phase2_report": "tests/conformance/fuzz_phase2_targets.v1.json",
+    "golden_fixture_report": "tests/conformance/golden/fixture_verify_strict_hardened.v1.json",
+    "conformance_matrix": "tests/conformance/conformance_matrix.v1.json"
+  },
+  "required_source_contract": {
+    "workflow_jobs": [
+      "core-gates",
+      "release-builds",
+      "extended-gates",
+      "fuzz-gates",
+      "multiarch-readiness",
+      "glibc-version-matrix"
+    ],
+    "workflow_markers": [
+      "scripts/ci.sh 2>&1 | tee artifacts/ci/core-gates.log",
+      "cargo test -p frankenlibc-core prop_ -- --nocapture",
+      "cargo build --workspace --all-targets --release",
+      "cargo build -p frankenlibc-abi --release",
+      "bash scripts/check_replacement_guard.sh interpose",
+      "bash scripts/release/check_replacement_claim_evidence.sh",
+      "FRANKENLIBC_EXTENDED_GATES=1 scripts/ci.sh",
+      "TIMEOUT_SECONDS=10 scripts/ld_preload_smoke.sh",
+      "cargo fuzz list --fuzz-dir crates/frankenlibc-fuzz",
+      "cargo fuzz run --fuzz-dir crates/frankenlibc-fuzz",
+      "schema_version\": \"fuzz.summary.v1\"",
+      "cargo check --workspace --all-targets --target aarch64-unknown-linux-gnu",
+      "cargo build -p frankenlibc-abi --target aarch64-unknown-linux-gnu --release",
+      "qemu-aarch64",
+      "scripts/glibc_offset_check/check_glibc_offsets.sh"
+    ],
+    "ci_script_markers": [
+      "cargo fmt --check",
+      "cargo check --workspace --all-targets",
+      "cargo clippy --workspace --all-targets -- -D warnings",
+      "cargo test --workspace --all-targets",
+      "cargo build -p frankenlibc-abi --release",
+      "scripts/conformance_golden_gate.sh",
+      "scripts/snapshot_gate.sh",
+      "scripts/check_benchmark_gate.sh",
+      "scripts/check_support_matrix_maintenance.sh",
+      "scripts/check_test_obligation_dashboard.sh",
+      "scripts/check_symbol_fixture_coverage.sh"
+    ],
+    "fuzz_targets": [
+      "fuzz_string",
+      "fuzz_malloc",
+      "fuzz_membrane",
+      "fuzz_printf",
+      "fuzz_resolver",
+      "fuzz_resolv",
+      "fuzz_iconv",
+      "fuzz_runtime_math"
+    ],
+    "artifact_upload_names": [
+      "core-ci-artifacts",
+      "release-build-artifacts",
+      "extended-ci-artifacts",
+      "fuzz-artifacts",
+      "multiarch-artifacts"
+    ],
+    "artifact_path_markers": [
+      "artifacts/ci/**",
+      "target/conformance_golden/**",
+      "target/runtime_math_golden/**",
+      "target/ld_preload_smoke/**",
+      "artifacts/ci/fuzz-summary.v1.json",
+      "crates/frankenlibc-fuzz/artifacts/**",
+      "crates/frankenlibc-fuzz/corpus/**",
+      "tests/conformance/fuzz_*.json",
+      "artifacts/ci/multiarch-*.log",
+      "artifacts/ci/glibc-matrix/**"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "description": "Harness tests assert CI script benchmark wiring, release DAG execution, and this completion contract.",
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test ci_pipeline_integration_completion_contract_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test ci_perf_gate_wiring_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test release_gate_dag_test -- --nocapture"
+      ],
+      "required_test_refs": [
+        "manifest_binds_all_completion_items",
+        "checker_validates_ci_pipeline_contract",
+        "benchmark_gate_prefers_rch_wrapper_when_available",
+        "dry_run_passes_and_emits_artifacts"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "description": "The workflow and CI script bind strict/hardened smoke, extended gate replay, release dry-run, and artifact upload lanes.",
+      "required_commands": [
+        "scripts/check_ci_pipeline_integration_completion_contract.sh",
+        "FRANKENLIBC_EXTENDED_GATES=1 scripts/ci.sh",
+        "TIMEOUT_SECONDS=10 scripts/ld_preload_smoke.sh"
+      ],
+      "required_test_refs": [
+        "checker_emits_report_and_jsonl",
+        "checker_rejects_missing_required_workflow_job",
+        "checker_rejects_missing_artifact_upload"
+      ]
+    },
+    {
+      "id": "tests.fuzz.primary",
+      "description": "Nightly/manual fuzz lane lists targets, runs cargo-fuzz with explicit budgets, emits a summary JSON, and uploads crash/corpus artifacts.",
+      "required_commands": [
+        "scripts/check_fuzz_harness_architecture.sh",
+        "scripts/check_fuzz_phase1_targets.sh",
+        "scripts/check_fuzz_phase2_targets.sh",
+        "scripts/check_fuzz_membrane_validation.sh",
+        "cargo fuzz run --fuzz-dir crates/frankenlibc-fuzz <target> -- -runs=1000000"
+      ],
+      "required_test_refs": [
+        "phase1_targets_smoke_viable",
+        "phase2_nightly_policy_matches_target_inventory"
+      ]
+    },
+    {
+      "id": "tests.golden.primary",
+      "description": "Extended CI invokes conformance and runtime_math golden gates and uploads deterministic golden artifact directories.",
+      "required_commands": [
+        "scripts/conformance_golden_gate.sh",
+        "scripts/snapshot_gate.sh",
+        "jq empty tests/conformance/golden/fixture_verify_strict_hardened.v1.json"
+      ],
+      "required_test_refs": [
+        "checker_validates_ci_pipeline_contract",
+        "checker_rejects_missing_required_source_marker"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "description": "The CI script and workflow bind conformance fixture replay, support-matrix maintenance, symbol fixture coverage, and glibc compatibility artifacts.",
+      "required_commands": [
+        "scripts/conformance_golden_gate.sh",
+        "scripts/check_support_matrix_maintenance.sh",
+        "scripts/check_symbol_fixture_coverage.sh",
+        "scripts/glibc_offset_check/check_glibc_offsets.sh"
+      ],
+      "required_test_refs": [
+        "checker_validates_ci_pipeline_contract",
+        "checker_rejects_missing_required_workflow_job"
+      ]
+    }
+  ],
+  "completion_debt_evidence": {
+    "test_sources": {
+      "completion_contract_test": {
+        "path": "crates/frankenlibc-harness/tests/ci_pipeline_integration_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_all_completion_items",
+          "checker_validates_ci_pipeline_contract",
+          "checker_emits_report_and_jsonl",
+          "checker_rejects_missing_required_workflow_job",
+          "checker_rejects_missing_artifact_upload",
+          "checker_rejects_missing_required_source_marker"
+        ]
+      },
+      "ci_perf_gate_wiring_test": {
+        "path": "crates/frankenlibc-harness/tests/ci_perf_gate_wiring_test.rs",
+        "required_test_refs": [
+          "benchmark_gate_prefers_rch_wrapper_when_available",
+          "benchmark_gate_fallback_validates_local_contracts",
+          "ci_script_runs_elimination_backoff_gate"
+        ]
+      },
+      "release_gate_dag_test": {
+        "path": "crates/frankenlibc-harness/tests/release_gate_dag_test.rs",
+        "required_test_refs": [
+          "dag_exists_and_valid",
+          "dry_run_passes_and_emits_artifacts",
+          "fail_fast_then_resume_is_deterministic"
+        ]
+      },
+      "fuzz_phase1_targets_test": {
+        "path": "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs",
+        "required_test_refs": [
+          "phase1_targets_smoke_viable",
+          "phase1_crash_triage_complete",
+          "phase1_symbol_coverage_adequate"
+        ]
+      },
+      "fuzz_phase2_targets_test": {
+        "path": "crates/frankenlibc-harness/tests/fuzz_phase2_targets_test.rs",
+        "required_test_refs": [
+          "phase2_targets_cover_required_transition_families",
+          "phase2_nightly_policy_matches_target_inventory",
+          "fuzz_nightly_build_check_fallback_writes_phase2_summary"
+        ]
+      }
+    },
+    "expected_source_summaries": {
+      "fuzz_phase1": {
+        "min_total_targets": 4,
+        "min_functional_targets": 4,
+        "min_smoke_viable_targets": 4,
+        "min_symbols_covered": 20
+      },
+      "fuzz_phase2": {
+        "min_total_targets": 4,
+        "min_functional_targets": 4,
+        "min_smoke_viable_targets": 4,
+        "min_symbols_covered": 10,
+        "required_transition_families": [
+          "resolver",
+          "locale",
+          "runtime-math"
+        ],
+        "min_runs_per_target": 1000000
+      },
+      "golden_fixture": {
+        "min_total": 1000,
+        "required_failed": 0
+      },
+      "conformance_matrix": {
+        "min_total_cases": 1000,
+        "required_failed": 0,
+        "required_errors": 0
+      }
+    }
+  },
+  "telemetry_contract": {
+    "report_schema": "ci_pipeline_integration_completion_contract.report.v1",
+    "required_events": [
+      "ci_pipeline_completion_summary",
+      "ci_pipeline_lane_bindings",
+      "ci_pipeline_completion_contract_pass"
+    ],
+    "required_fields": [
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome",
+      "artifact_refs"
+    ],
+    "representative_failure_signatures": [
+      "workflow job missing",
+      "workflow marker missing",
+      "ci script marker missing",
+      "artifact upload missing",
+      "fuzz target missing",
+      "source artifact missing"
+    ]
+  }
+}
