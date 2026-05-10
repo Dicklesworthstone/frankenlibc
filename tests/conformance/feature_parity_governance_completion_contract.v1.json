@@ -1,0 +1,186 @@
+{
+  "schema_version": "feature_parity_governance_completion_contract.v1",
+  "manifest_id": "bd-w2c3.1.4-feature-parity-governance-completion-contract",
+  "original_bead": "bd-w2c3.1",
+  "completion_debt_bead": "bd-w2c3.1.4",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.1/scorecard.md",
+  "source_artifacts": {
+    "gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "gap_ledger_generator": "scripts/generate_feature_parity_gap_ledger.py",
+    "gap_ledger_checker": "scripts/check_feature_parity_gap_ledger.sh",
+    "gap_ledger_test": "crates/frankenlibc-harness/tests/feature_parity_gap_ledger_test.rs",
+    "drift_checker": "scripts/check_feature_parity_drift.sh",
+    "drift_diagnostics": "tests/conformance/feature_parity_drift_diagnostics.v1.json",
+    "drift_test": "crates/frankenlibc-harness/tests/feature_parity_drift_gate_test.rs",
+    "gap_coverage": "tests/conformance/feature_parity_gap_bead_coverage.v1.json",
+    "gap_dashboard": "tests/conformance/feature_parity_gap_bead_dashboard.v1.md",
+    "gap_coverage_generator": "scripts/generate_feature_parity_gap_bead_coverage.py",
+    "gap_coverage_checker": "scripts/check_feature_parity_gap_bead_coverage.sh",
+    "gap_coverage_test": "crates/frankenlibc-harness/tests/feature_parity_gap_bead_coverage_test.rs",
+    "completion_checker": "scripts/check_feature_parity_governance_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/feature_parity_governance_completion_contract_test.rs"
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "description": "Unit evidence pins the gap-ledger extractor, stable row IDs, DONE evidence audit rows, parser self-tests, and gate-script success checks.",
+      "required_test_refs": [
+        {
+          "source": "gap_ledger_test",
+          "name": "artifact_exists_and_valid"
+        },
+        {
+          "source": "gap_ledger_test",
+          "name": "row_ids_are_unique_and_parser_errors_empty"
+        },
+        {
+          "source": "gap_ledger_test",
+          "name": "done_rows_have_evidence_audit_records"
+        },
+        {
+          "source": "gap_ledger_test",
+          "name": "generator_self_tests_pass"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "manifest_binds_track0_governance_completion_items"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test feature_parity_governance_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test feature_parity_gap_ledger_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "description": "E2E evidence binds the fail-fast drift gate, ownership-loss negative path, and gap-to-bead coverage dashboard gate.",
+      "required_test_refs": [
+        {
+          "source": "drift_test",
+          "name": "gate_passes_and_emits_required_diagnostic_schema"
+        },
+        {
+          "source": "drift_test",
+          "name": "gate_fails_when_unresolved_drift_loses_owner"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_validates_track0_governance_contract_and_emits_report_log"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test feature_parity_drift_gate_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test feature_parity_gap_bead_coverage_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "description": "Conformance evidence runs the three canonical Track 0 gates and rejects stale, missing, or uncovered machine-truth rows.",
+      "required_test_refs": [
+        {
+          "source": "gap_coverage_test",
+          "name": "artifacts_exist_with_expected_schema"
+        },
+        {
+          "source": "gap_coverage_test",
+          "name": "rows_have_required_mapping_fields_and_are_covered"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_required_conformance_command"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_dashboard_section"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_feature_parity_gap_ledger.sh",
+        "bash scripts/check_feature_parity_drift.sh",
+        "bash scripts/check_feature_parity_governance_completion_contract.sh"
+      ]
+    }
+  ],
+  "required_track0_contract": {
+    "child_beads": [
+      "bd-w2c3.1.1",
+      "bd-w2c3.1.2",
+      "bd-w2c3.1.3"
+    ],
+    "required_scripts": [
+      "gap_ledger_checker",
+      "drift_checker",
+      "gap_coverage_checker"
+    ],
+    "required_artifacts": [
+      "gap_ledger",
+      "drift_diagnostics",
+      "gap_coverage",
+      "gap_dashboard"
+    ],
+    "ledger_expectations": {
+      "schema_version": "v1",
+      "bead": "bd-w2c3.1.1",
+      "row_count": 170,
+      "gap_count": 111,
+      "delta_count": 5,
+      "parse_error_count": 0,
+      "done_evidence_audit_count": 60
+    },
+    "drift_expectations": {
+      "schema_version": "v1",
+      "bead": "bd-w2c3.1.2",
+      "diagnostic_count": 111,
+      "fail_count": 0,
+      "tracked_count": 111
+    },
+    "coverage_expectations": {
+      "schema_version": "v1",
+      "bead": "bd-w2c3.1.3",
+      "covered_gaps": 111,
+      "uncovered_gaps": 0,
+      "owner_count": 5,
+      "critical_blocker_count": 5
+    },
+    "required_dashboard_sections": [
+      "## Critical Blockers",
+      "## Dependency Bottlenecks",
+      "## Uncovered Gaps"
+    ]
+  },
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "track0_summary",
+      "source_gate_results",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ],
+    "required_events": [
+      "track0_governance_gap_ledger_verified",
+      "track0_governance_drift_gate_verified",
+      "track0_governance_coverage_gate_verified",
+      "track0_governance_completion_contract_pass"
+    ],
+    "forbidden_pass_events": [
+      "track0_governance_completion_contract_fail"
+    ]
+  }
+}
