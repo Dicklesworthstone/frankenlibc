@@ -1,0 +1,371 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "fuzz-phase1-targets-completion-contract",
+  "bead": "bd-1oz.6",
+  "completion_debt_bead": "bd-1oz.6.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "purpose": "Completion-debt contract for the fuzz phase-1 target readiness and crash triage flow originally closed under bd-1oz.6. The audit pass required explicit unit, e2e, and fuzz evidence; this manifest binds the generator, shell gate, persisted phase-1 report, fuzz target sources, crash triage policy, and harness tests to a fail-closed checker.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-1oz.6/scorecard.md",
+    "spec_path": "passes/2026-05-10T03-16-16Z/beads/bd-1oz.6/spec.json",
+    "score_before": 570,
+    "score_threshold": 800
+  },
+  "runtime_target": {
+    "max_seconds": 45,
+    "external_services_allowed": false,
+    "coverage_artifacts": [
+      "target/conformance/fuzz_phase1_targets_completion_contract.report.json",
+      "target/conformance/fuzz_phase1_targets_completion_contract.log.jsonl",
+      "target/conformance/generated_fuzz_phase1_targets.v1.json"
+    ],
+    "allowed_command_prefixes": [
+      "python3 scripts/generate_fuzz_phase1_targets.py -o",
+      "bash scripts/check_fuzz_phase1_targets_completion_contract.sh"
+    ],
+    "forbidden_command_substrings": [
+      "cargo ",
+      "cargo\t",
+      "git reset --hard",
+      "git clean -fd",
+      "rm -rf"
+    ]
+  },
+  "source_artifacts": [
+    {
+      "artifact_id": "phase1_generator",
+      "kind": "implementation",
+      "path": "scripts/generate_fuzz_phase1_targets.py",
+      "required_line_refs": [
+        "scripts/generate_fuzz_phase1_targets.py:35",
+        "scripts/generate_fuzz_phase1_targets.py:38",
+        "scripts/generate_fuzz_phase1_targets.py:74",
+        "scripts/generate_fuzz_phase1_targets.py:90",
+        "scripts/generate_fuzz_phase1_targets.py:132",
+        "scripts/generate_fuzz_phase1_targets.py:170",
+        "scripts/generate_fuzz_phase1_targets.py:242",
+        "scripts/generate_fuzz_phase1_targets.py:334"
+      ],
+      "required_needles": [
+        "PHASE1_TARGETS",
+        "TARGET_SYMBOL_MAP",
+        "CRASH_SEVERITY",
+        "analyze_target_source",
+        "compute_target_coverage",
+        "build_crash_triage_policy",
+        "build_smoke_test_config",
+        "target_assessments"
+      ]
+    },
+    {
+      "artifact_id": "phase1_shell_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_fuzz_phase1_targets.sh",
+      "required_line_refs": [
+        "scripts/check_fuzz_phase1_targets.sh:13",
+        "scripts/check_fuzz_phase1_targets.sh:50",
+        "scripts/check_fuzz_phase1_targets.sh:57",
+        "scripts/check_fuzz_phase1_targets.sh:64",
+        "scripts/check_fuzz_phase1_targets.sh:78",
+        "scripts/check_fuzz_phase1_targets.sh:85",
+        "scripts/check_fuzz_phase1_targets.sh:93",
+        "scripts/check_fuzz_phase1_targets.sh:105"
+      ],
+      "required_needles": [
+        "generate_fuzz_phase1_targets.py",
+        "PASS: {total} phase-1 targets found",
+        "PASS: All {total} targets are smoke-viable",
+        "Crash dedup policy",
+        "check_fuzz_phase1_targets: PASS"
+      ]
+    },
+    {
+      "artifact_id": "persisted_phase1_report",
+      "kind": "report",
+      "path": "tests/conformance/fuzz_phase1_targets.v1.json",
+      "required_needles": [
+        "\"bead\": \"bd-1oz.6\"",
+        "\"fuzz_string\"",
+        "\"fuzz_malloc\"",
+        "\"fuzz_membrane\"",
+        "\"fuzz_printf\"",
+        "\"stack-hash\""
+      ]
+    },
+    {
+      "artifact_id": "source_harness_tests",
+      "kind": "unit_test",
+      "path": "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs",
+      "required_line_refs": [
+        "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs:23",
+        "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs:46",
+        "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs:73",
+        "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs:92",
+        "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs:130",
+        "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs:151",
+        "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs:176"
+      ],
+      "required_needles": [
+        "phase1_report_generates_successfully",
+        "phase1_schema_complete",
+        "phase1_targets_smoke_viable",
+        "phase1_crash_triage_complete",
+        "phase1_symbol_coverage_adequate",
+        "phase1_smoke_configs_present",
+        "phase1_readiness_scores_reasonable"
+      ]
+    }
+  ],
+  "report_contract": {
+    "report_path": "tests/conformance/fuzz_phase1_targets.v1.json",
+    "generator": "scripts/generate_fuzz_phase1_targets.py",
+    "expected_summary": {
+      "phase": 1,
+      "total_targets": 4,
+      "functional_targets": 4,
+      "partial_targets": 0,
+      "stub_targets": 0,
+      "smoke_viable_targets": 4,
+      "average_readiness_score": 72.5,
+      "total_symbols_covered": 30,
+      "total_cwes_targeted": 11,
+      "crash_severity_classes": 12,
+      "triage_steps": 6
+    },
+    "required_targets": [
+      "fuzz_string",
+      "fuzz_malloc",
+      "fuzz_membrane",
+      "fuzz_printf"
+    ],
+    "required_families": [
+      "malloc",
+      "membrane",
+      "stdio",
+      "string"
+    ],
+    "required_cwe_targets": [
+      "CWE-120",
+      "CWE-122",
+      "CWE-125",
+      "CWE-131",
+      "CWE-134",
+      "CWE-415",
+      "CWE-416",
+      "CWE-476",
+      "CWE-787",
+      "CWE-824",
+      "CWE-825"
+    ]
+  },
+  "target_contracts": [
+    {
+      "target": "fuzz_string",
+      "family": "string",
+      "target_source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_string.rs",
+      "required_status": "functional",
+      "required_smoke_viable": true,
+      "min_readiness_score": 70,
+      "required_cwe_targets": [
+        "CWE-120",
+        "CWE-125",
+        "CWE-787"
+      ],
+      "required_symbols": [
+        "strlen",
+        "strcmp",
+        "strncmp",
+        "strcpy",
+        "strncpy",
+        "strcat",
+        "strncat",
+        "strchr",
+        "strrchr",
+        "strstr",
+        "memcpy",
+        "memmove",
+        "memset",
+        "memcmp",
+        "memchr",
+        "memrchr",
+        "strtok",
+        "strtok_r"
+      ]
+    },
+    {
+      "target": "fuzz_malloc",
+      "family": "malloc",
+      "target_source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_malloc.rs",
+      "required_status": "functional",
+      "required_smoke_viable": true,
+      "min_readiness_score": 80,
+      "required_cwe_targets": [
+        "CWE-415",
+        "CWE-416",
+        "CWE-122",
+        "CWE-131"
+      ],
+      "required_symbols": [
+        "malloc",
+        "free",
+        "realloc",
+        "calloc",
+        "aligned_alloc",
+        "memalign",
+        "posix_memalign"
+      ]
+    },
+    {
+      "target": "fuzz_membrane",
+      "family": "membrane",
+      "target_source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_membrane.rs",
+      "required_status": "functional",
+      "required_smoke_viable": true,
+      "min_readiness_score": 70,
+      "required_cwe_targets": [
+        "CWE-476",
+        "CWE-824",
+        "CWE-825"
+      ],
+      "required_symbols": [
+        "__membrane_validate"
+      ]
+    },
+    {
+      "target": "fuzz_printf",
+      "family": "stdio",
+      "target_source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs",
+      "required_status": "functional",
+      "required_smoke_viable": true,
+      "min_readiness_score": 70,
+      "required_cwe_targets": [
+        "CWE-134",
+        "CWE-787"
+      ],
+      "required_symbols": [
+        "printf",
+        "fprintf",
+        "sprintf",
+        "snprintf"
+      ]
+    }
+  ],
+  "crash_triage_contract": {
+    "min_severity_classes": 12,
+    "required_severity_keys": [
+      "heap-buffer-overflow",
+      "use-after-free",
+      "integer-overflow",
+      "format-string"
+    ],
+    "dedup_method": "stack-hash",
+    "frame_depth_min": 5,
+    "required_flow_actions": [
+      "capture",
+      "classify",
+      "minimize",
+      "dedup",
+      "file",
+      "assess"
+    ]
+  },
+  "unit_primary": {
+    "missing_item_id": "tests.unit.primary",
+    "test_source": "crates/frankenlibc-harness/tests/fuzz_phase1_targets_completion_contract_test.rs",
+    "required_test_names": [
+      "manifest_anchors_completion_debt",
+      "manifest_binds_unit_e2e_and_fuzz_missing_items",
+      "source_artifacts_are_file_backed",
+      "target_contracts_bind_phase1_report",
+      "checker_rejects_stale_unit_test_binding"
+    ],
+    "existing_unit_tests": [
+      {
+        "name": "phase1_schema_complete",
+        "line_ref": "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs:46"
+      },
+      {
+        "name": "phase1_targets_smoke_viable",
+        "line_ref": "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs:73"
+      },
+      {
+        "name": "phase1_crash_triage_complete",
+        "line_ref": "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs:92"
+      },
+      {
+        "name": "phase1_symbol_coverage_adequate",
+        "line_ref": "crates/frankenlibc-harness/tests/fuzz_phase1_targets_test.rs:130"
+      }
+    ]
+  },
+  "e2e_primary": {
+    "missing_item_id": "tests.e2e.primary",
+    "scenarios": [
+      {
+        "scenario_id": "generate_isolated_phase1_report",
+        "command": "python3 scripts/generate_fuzz_phase1_targets.py -o <out_dir>/generated_fuzz_phase1_targets.v1.json",
+        "expected_exit": 0,
+        "expected_report": {
+          "summary.total_targets": 4,
+          "summary.functional_targets": 4,
+          "summary.smoke_viable_targets": 4,
+          "summary.triage_steps": 6
+        }
+      },
+      {
+        "scenario_id": "validate_crash_triage_contract",
+        "command": "bash scripts/check_fuzz_phase1_targets_completion_contract.sh",
+        "expected_exit": 0,
+        "expected_output_needles": [
+          "crash_triage_contract"
+        ]
+      },
+      {
+        "scenario_id": "completion_checker_runs_fail_closed",
+        "command": "bash scripts/check_fuzz_phase1_targets_completion_contract.sh",
+        "expected_exit": 0,
+        "expected_output_needles": [
+          "fuzz_phase1_targets_completion_contract: PASS"
+        ]
+      }
+    ]
+  },
+  "fuzz_primary": {
+    "missing_item_id": "tests.fuzz.primary",
+    "required_targets": [
+      "fuzz_string",
+      "fuzz_malloc",
+      "fuzz_membrane",
+      "fuzz_printf"
+    ],
+    "required_target_sources": [
+      "crates/frankenlibc-fuzz/fuzz_targets/fuzz_string.rs",
+      "crates/frankenlibc-fuzz/fuzz_targets/fuzz_malloc.rs",
+      "crates/frankenlibc-fuzz/fuzz_targets/fuzz_membrane.rs",
+      "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs"
+    ],
+    "required_smoke_config_targets": [
+      "fuzz_string",
+      "fuzz_malloc",
+      "fuzz_membrane",
+      "fuzz_printf"
+    ],
+    "required_test_names": [
+      "target_contracts_bind_phase1_report",
+      "checker_rejects_missing_phase1_target_binding",
+      "checker_rejects_stale_fuzz_target_contract"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-1oz.6.1",
+    "original_bead": "bd-1oz.6",
+    "next_audit_score_threshold": 800,
+    "required_events": [
+      "fuzz_phase1_component",
+      "fuzz_phase1_target",
+      "fuzz_phase1_e2e",
+      "fuzz_phase1_summary"
+    ]
+  }
+}
