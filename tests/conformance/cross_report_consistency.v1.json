@@ -1,20 +1,19 @@
 {
   "schema_version": "v1",
   "bead": "bd-2vv.11",
-  "generated_at": "2026-05-07T22:47:17Z",
-  "consistency_hash": "d8d8c4e85beaaf03",
+  "generated_at": "2026-05-10T15:43:49Z",
+  "consistency_hash": "83be1ea069445394",
   "summary": {
     "overall_verdict": "pass",
-    "total_findings": 5,
+    "total_findings": 4,
     "by_severity": {
       "critical": 0,
       "error": 0,
-      "warning": 2,
-      "info": 3
+      "warning": 0,
+      "info": 4
     },
     "by_verdict": {
-      "inconsistent": 2,
-      "pass": 3
+      "pass": 4
     },
     "reports_loaded": 5,
     "reports_total": 5
@@ -50,23 +49,9 @@
     },
     {
       "rule": "claim_alignment",
-      "severity": "warning",
-      "report_pair": "support_matrix vs stub_census",
-      "affected_symbols": [
-        "tcgetattr"
-      ],
-      "verdict": "inconsistent",
-      "description": "Symbol tcgetattr: classification mismatch"
-    },
-    {
-      "rule": "claim_alignment",
-      "severity": "warning",
-      "report_pair": "support_matrix vs stub_census",
-      "affected_symbols": [
-        "tcsetattr"
-      ],
-      "verdict": "inconsistent",
-      "description": "Symbol tcsetattr: classification mismatch"
+      "severity": "info",
+      "verdict": "pass",
+      "description": "All claims align with reality"
     },
     {
       "rule": "no_unknown_status",

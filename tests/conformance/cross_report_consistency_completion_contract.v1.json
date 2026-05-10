@@ -1,0 +1,188 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "cross-report-consistency-completion-contract",
+  "bead": "bd-2vv.11",
+  "completion_debt_bead": "bd-2vv.11.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "purpose": "Completion-debt contract for the cross-report consistency gate that reconciles support_matrix, reality_report, replacement_levels, replacement_profile, and stub_census claims. The audit pass required concrete unit and E2E evidence; this manifest binds the checked-in report, generator, original gate, Rust unit tests, and fail-closed completion checker to machine-readable output.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-2vv.11/scorecard.md",
+    "spec_path": "passes/2026-05-10T03-16-16Z/beads/bd-2vv.11/spec.json",
+    "score_before": 570,
+    "score_threshold": 800
+  },
+  "runtime_target": {
+    "max_seconds": 90,
+    "external_services_allowed": false,
+    "coverage_artifacts": [
+      "target/conformance/cross_report_consistency_completion_contract.report.json",
+      "target/conformance/cross_report_consistency_completion_contract.log.jsonl",
+      "target/conformance/cross_report_consistency_completion_contract.generated.json"
+    ],
+    "allowed_command_prefixes": [
+      "bash scripts/check_cross_report_consistency_completion_contract.sh",
+      "python3 scripts/generate_cross_report_consistency.py -o",
+      "rch cargo test -p frankenlibc-harness --test cross_report_consistency_completion_contract_test",
+      "rch cargo check -p frankenlibc-harness --test cross_report_consistency_completion_contract_test",
+      "rch cargo clippy -p frankenlibc-harness --test cross_report_consistency_completion_contract_test"
+    ],
+    "forbidden_command_substrings": [
+      "cargo ",
+      "cargo\t",
+      "git reset --hard",
+      "git clean -fd",
+      "rm -rf"
+    ]
+  },
+  "source_artifacts": {
+    "checked_in_report": "tests/conformance/cross_report_consistency.v1.json",
+    "generator": "scripts/generate_cross_report_consistency.py",
+    "checker": "scripts/check_cross_report_consistency.sh",
+    "rust_unit_test": "crates/frankenlibc-harness/tests/cross_report_consistency_test.rs",
+    "support_matrix": "support_matrix.json",
+    "reality_report": "tests/conformance/reality_report.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "replacement_profile": "tests/conformance/replacement_profile.json",
+    "stub_census": "tests/conformance/stub_census.json"
+  },
+  "consistency_invariants": {
+    "schema_version": "v1",
+    "bead": "bd-2vv.11",
+    "consistency_hash": "83be1ea069445394",
+    "summary": {
+      "overall_verdict": "pass",
+      "total_findings": 4,
+      "critical": 0,
+      "error": 0,
+      "warning": 0,
+      "info": 4,
+      "inconsistent": 0,
+      "pass": 4,
+      "reports_loaded": 5,
+      "reports_total": 5
+    },
+    "reports_loaded": {
+      "support_matrix": true,
+      "reality_report": true,
+      "replacement_levels": true,
+      "replacement_profile": true,
+      "stub_census": true
+    },
+    "required_rules": [
+      "symbol_count",
+      "status_distribution",
+      "level_gates",
+      "claim_alignment",
+      "no_unknown_status"
+    ],
+    "required_findings": [
+      {
+        "rule": "symbol_count",
+        "verdict": "pass",
+        "severity": "info"
+      },
+      {
+        "rule": "status_distribution",
+        "verdict": "pass",
+        "severity": "info"
+      },
+      {
+        "rule": "claim_alignment",
+        "verdict": "pass",
+        "severity": "info"
+      },
+      {
+        "rule": "no_unknown_status",
+        "verdict": "pass",
+        "severity": "info"
+      }
+    ]
+  },
+  "checker_contract": {
+    "script": "scripts/check_cross_report_consistency.sh",
+    "required_script_needles": [
+      "Cross-Report Consistency Gate (bd-2vv.11)",
+      "generate_cross_report_consistency.py",
+      "check_cross_report_consistency: PASS",
+      "support_matrix.json not loaded",
+      "No critical findings",
+      "Symbol counts consistent",
+      "No unknown symbol statuses"
+    ],
+    "expected_success_line": "check_cross_report_consistency: PASS"
+  },
+  "unit_primary": {
+    "missing_item_id": "tests.unit.primary",
+    "test_file": "crates/frankenlibc-harness/tests/cross_report_consistency_test.rs",
+    "required_test_names": [
+      "consistency_report_generates_successfully",
+      "consistency_schema_complete",
+      "consistency_no_critical_findings",
+      "consistency_symbol_counts_match",
+      "consistency_no_unknown_status",
+      "consistency_multiple_reports_loaded",
+      "consistency_rules_documented"
+    ]
+  },
+  "e2e_primary": {
+    "missing_item_id": "tests.e2e.primary",
+    "gate_script": "scripts/check_cross_report_consistency_completion_contract.sh",
+    "generator": "scripts/generate_cross_report_consistency.py",
+    "scenarios": [
+      {
+        "scenario_id": "completion_checker_replays_current_generator",
+        "command": "bash scripts/check_cross_report_consistency_completion_contract.sh",
+        "expected_exit": 0,
+        "expected_report_schema": "cross_report_consistency_completion_contract.report.v1"
+      },
+      {
+        "scenario_id": "generator_emits_cross_report_snapshot",
+        "command": "python3 scripts/generate_cross_report_consistency.py -o <out-dir>/cross_report_consistency_completion_contract.generated.json",
+        "expected_exit": 0,
+        "expected_hash": "83be1ea069445394"
+      },
+      {
+        "scenario_id": "rust_completion_contract_exercises_positive_and_negative_paths",
+        "command": "rch cargo test -p frankenlibc-harness --test cross_report_consistency_completion_contract_test -- --nocapture",
+        "expected_exit": 0,
+        "expected_test_count": 9
+      }
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-2vv.11.1",
+    "original_bead": "bd-2vv.11",
+    "next_audit_score_threshold": 800,
+    "test_source": "crates/frankenlibc-harness/tests/cross_report_consistency_completion_contract_test.rs",
+    "required_test_names": [
+      "manifest_anchors_completion_debt",
+      "source_artifacts_are_file_backed",
+      "consistency_invariants_bind_checked_in_report",
+      "unit_primary_binds_original_rust_tests",
+      "e2e_primary_scenarios_are_explicit",
+      "checker_accepts_manifest_and_emits_report",
+      "checker_rejects_missing_unit_test_binding",
+      "checker_rejects_stale_consistency_hash",
+      "checker_rejects_missing_completion_test_binding"
+    ]
+  },
+  "telemetry_contract": {
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature"
+    ],
+    "required_log_events": [
+      "cross_report_completion_source",
+      "cross_report_completion_unit",
+      "cross_report_completion_e2e",
+      "cross_report_completion_summary"
+    ]
+  }
+}
