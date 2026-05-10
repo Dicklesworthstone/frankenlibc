@@ -15,6 +15,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 AGENTS_MD="${FRANKENLIBC_MODULE_INVENTORY_AGENTS:-$REPO_ROOT/AGENTS.md}"
 MOD_RS="${FRANKENLIBC_MODULE_INVENTORY_MOD:-$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math/mod.rs}"
 LIB_RS="${FRANKENLIBC_MODULE_INVENTORY_LIB:-$REPO_ROOT/crates/frankenlibc-membrane/src/lib.rs}"
+RUNTIME_MATH_DIR="${FRANKENLIBC_MODULE_INVENTORY_RUNTIME_MATH_DIR:-$(dirname "$MOD_RS")}"
 
 if [[ ! -f "$AGENTS_MD" ]]; then
     echo "ERROR: AGENTS.md not found at $AGENTS_MD" >&2
@@ -121,15 +122,31 @@ if [[ -n "$code_only" ]]; then
         echo "=== Suggested AGENTS.md additions ==="
         echo "(Add these to the '### frankenlibc-membrane (Safety Substrate)' section)"
         echo ""
+        missing_desc=0
         while IFS= read -r mod; do
-            # Try to extract the module doc comment
-            mod_file="$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math/${mod}.rs"
+            # Try to extract the leading module-level doc comment.
+            mod_file="$RUNTIME_MATH_DIR/${mod}.rs"
             desc=""
             if [[ -f "$mod_file" ]]; then
-                desc=$(head -5 "$mod_file" | grep -oP '//!?\s*\K.*' | head -1)
+                desc=$(
+                    head -8 "$mod_file" \
+                    | grep -m1 -E '^//[!/][[:space:]]*' \
+                    | sed -E 's#^//[!/][[:space:]]*##' \
+                    || true
+                )
             fi
-            echo "- \`runtime_math/${mod}.rs\` — ${desc:-TODO: add description}"
+            if [[ -z "$desc" ]]; then
+                echo "  MISSING DESCRIPTION: runtime_math/${mod}.rs has no leading //! or /// doc comment."
+                missing_desc=1
+            else
+                echo "- \`runtime_math/${mod}.rs\` — ${desc}"
+            fi
         done <<< "$code_only"
+        if [[ $missing_desc -ne 0 ]]; then
+            echo ""
+            echo "ERROR: --fix refuses to generate placeholder module descriptions."
+            echo "Add a leading //! or /// doc comment to each new runtime_math module first."
+        fi
         echo ""
     fi
     drift=1

@@ -34,14 +34,32 @@ fn unique_temp_dir(prefix: &str) -> TestResult<PathBuf> {
     Ok(dir)
 }
 
-fn run_checker(agents: &Path, mod_rs: &Path, lib_rs: &Path) -> TestResult<Output> {
+fn run_checker_with_args(
+    agents: &Path,
+    mod_rs: &Path,
+    lib_rs: &Path,
+    args: &[&str],
+) -> TestResult<Output> {
     let root = workspace_root()?;
-    Ok(Command::new(root.join("scripts/check_module_inventory.sh"))
+    let runtime_math_dir = mod_rs
+        .parent()
+        .ok_or_else(|| test_error("mod.rs fixture should have a parent directory"))?;
+    let mut command = Command::new(root.join("scripts/check_module_inventory.sh"));
+    command
         .current_dir(root)
         .env("FRANKENLIBC_MODULE_INVENTORY_AGENTS", agents)
         .env("FRANKENLIBC_MODULE_INVENTORY_MOD", mod_rs)
         .env("FRANKENLIBC_MODULE_INVENTORY_LIB", lib_rs)
-        .output()?)
+        .env(
+            "FRANKENLIBC_MODULE_INVENTORY_RUNTIME_MATH_DIR",
+            runtime_math_dir,
+        )
+        .args(args);
+    Ok(command.output()?)
+}
+
+fn run_checker(agents: &Path, mod_rs: &Path, lib_rs: &Path) -> TestResult<Output> {
+    run_checker_with_args(agents, mod_rs, lib_rs, &[])
 }
 
 fn write_fixture(
@@ -245,5 +263,45 @@ fn checker_reports_drift_with_diagnostics() -> TestResult {
     assert!(out.contains("DRIFT: In AGENTS.md but NOT in runtime_math/mod.rs"));
     assert!(out.contains("missing_module"));
     assert!(out.contains("DRIFT DETECTED"));
+    Ok(())
+}
+
+#[test]
+fn fix_mode_refuses_placeholder_descriptions() -> TestResult {
+    let temp = unique_temp_dir("frankenlibc-module-inventory-fix-no-placeholder")?;
+    let (agents, mod_rs, lib_rs) = write_fixture(
+        &temp,
+        r#"
+### frankenlibc-membrane - Safety Substrate
+
+**Runtime math control plane (`runtime_math/`):**
+- `risk.rs` - Risk envelope
+
+### frankenlibc-core - Safe Implementations
+"#,
+        "pub mod missing_doc;\npub mod risk;\n",
+        "",
+    )?;
+    std::fs::write(temp.join("missing_doc.rs"), "pub fn marker() {}\n")?;
+    let output = run_checker_with_args(&agents, &mod_rs, &lib_rs, &["--fix"])?;
+    assert!(
+        !output.status.success(),
+        "fix-mode drift fixture should fail\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    assert!(
+        out.contains("MISSING DESCRIPTION: runtime_math/missing_doc.rs"),
+        "fix mode should name modules without docs\nstdout:\n{out}"
+    );
+    assert!(
+        out.contains("refuses to generate placeholder module descriptions"),
+        "fix mode should explain why no placeholder is emitted\nstdout:\n{out}"
+    );
+    assert!(
+        !out.contains("TODO: add description"),
+        "fix mode must not emit placeholder descriptions\nstdout:\n{out}"
+    );
     Ok(())
 }
