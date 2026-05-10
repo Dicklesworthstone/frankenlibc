@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-66wz.2.1",
+  "original_bead_id": "bd-66wz.2",
+  "subject": "tls_cache_epoch_invalidation",
+  "cache_size_entries": 1024,
+  "epoch_source": "GLOBAL_TLS_CACHE_EPOCH",
+  "cases": [
+    {
+      "id": "lookup_epoch_mismatch_forces_miss",
+      "api": "lookup",
+      "inserted_epoch": "E",
+      "current_epoch": "E+1",
+      "lookup_addr_matches": true,
+      "expected_lookup": "miss",
+      "expected_hit_delta": 0,
+      "expected_miss_delta": 1,
+      "expected_entry_valid_after_lookup": false
+    },
+    {
+      "id": "lookup_hit_only_epoch_mismatch_self_cleans_without_miss_accounting",
+      "api": "lookup_hit_only",
+      "inserted_epoch": "E",
+      "current_epoch": "E+1",
+      "lookup_addr_matches": true,
+      "expected_lookup": "miss",
+      "expected_hit_delta": 0,
+      "expected_miss_delta": 0,
+      "expected_entry_valid_after_lookup": false
+    },
+    {
+      "id": "second_lookup_after_self_clean_still_misses",
+      "api": "lookup",
+      "inserted_epoch": "E",
+      "current_epoch": "E+1",
+      "lookup_addr_matches": true,
+      "expected_lookup": "miss",
+      "expected_hit_delta": 0,
+      "expected_miss_delta": 1,
+      "expected_entry_valid_after_lookup": false
+    }
+  ]
+}

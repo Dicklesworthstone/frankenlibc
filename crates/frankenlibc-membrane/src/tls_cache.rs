@@ -255,6 +255,243 @@ where
 mod tests {
     use super::*;
 
+    #[derive(Debug, serde::Deserialize)]
+    struct EpochGoldenContract {
+        schema_version: u32,
+        bead_id: String,
+        original_bead_id: String,
+        subject: String,
+        cache_size_entries: usize,
+        epoch_source: String,
+        cases: Vec<EpochGoldenCase>,
+    }
+
+    impl EpochGoldenContract {
+        fn case(&self, id: &str) -> &EpochGoldenCase {
+            self.cases
+                .iter()
+                .find(|case| case.id == id)
+                .expect("TLS cache epoch golden case must exist")
+        }
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct EpochGoldenCase {
+        id: String,
+        api: String,
+        inserted_epoch: String,
+        current_epoch: String,
+        lookup_addr_matches: bool,
+        expected_lookup: String,
+        expected_hit_delta: u64,
+        expected_miss_delta: u64,
+        expected_entry_valid_after_lookup: bool,
+    }
+
+    fn load_epoch_golden_contract() -> EpochGoldenContract {
+        serde_json::from_str(include_str!(
+            "../../../tests/conformance/tls_cache_epoch_invalidation.golden.json"
+        ))
+        .expect("TLS cache epoch golden contract must be valid JSON")
+    }
+
+    fn assert_epoch_case_metadata(case: &EpochGoldenCase, api: &str) {
+        assert_eq!(case.api, api, "case_id={} api drift", case.id);
+        assert_eq!(
+            case.inserted_epoch, "E",
+            "case_id={} inserted epoch label drift",
+            case.id
+        );
+        assert_eq!(
+            case.current_epoch, "E+1",
+            "case_id={} current epoch label drift",
+            case.id
+        );
+        assert!(
+            case.lookup_addr_matches,
+            "case_id={} must exercise matching-address epoch mismatch",
+            case.id
+        );
+    }
+
+    fn assert_epoch_mismatch_observation(
+        case: &EpochGoldenCase,
+        lookup_was_miss: bool,
+        hit_delta: u64,
+        miss_delta: u64,
+        entry_valid_after_lookup: bool,
+    ) {
+        assert_eq!(
+            case.expected_lookup,
+            if lookup_was_miss { "miss" } else { "hit" },
+            "case_id={} lookup result drift",
+            case.id
+        );
+        assert_eq!(
+            hit_delta, case.expected_hit_delta,
+            "case_id={} hit counter delta drift",
+            case.id
+        );
+        assert_eq!(
+            miss_delta, case.expected_miss_delta,
+            "case_id={} miss counter delta drift",
+            case.id
+        );
+        assert_eq!(
+            entry_valid_after_lookup, case.expected_entry_valid_after_lookup,
+            "case_id={} entry validity drift",
+            case.id
+        );
+    }
+
+    #[test]
+    fn tls_cache_epoch_invalidation_golden_contract_is_current() {
+        let contract = load_epoch_golden_contract();
+
+        assert_eq!(contract.schema_version, 1);
+        assert_eq!(contract.bead_id, "bd-66wz.2.1");
+        assert_eq!(contract.original_bead_id, "bd-66wz.2");
+        assert_eq!(contract.subject, "tls_cache_epoch_invalidation");
+        assert_eq!(contract.cache_size_entries, CACHE_SIZE);
+        assert_eq!(contract.epoch_source, "GLOBAL_TLS_CACHE_EPOCH");
+
+        let case_ids: Vec<&str> = contract.cases.iter().map(|case| case.id.as_str()).collect();
+        assert_eq!(
+            case_ids,
+            [
+                "lookup_epoch_mismatch_forces_miss",
+                "lookup_hit_only_epoch_mismatch_self_cleans_without_miss_accounting",
+                "second_lookup_after_self_clean_still_misses"
+            ]
+        );
+    }
+
+    #[test]
+    fn epoch_mismatch_counter_behavior_matches_golden_contract() {
+        let contract = load_epoch_golden_contract();
+        let case = contract.case("lookup_epoch_mismatch_forces_miss");
+        assert_epoch_case_metadata(case, "lookup");
+
+        let mut cache = TlsValidationCache::new();
+        let addr = 0x5000;
+        let val = CachedValidation {
+            user_base: addr,
+            user_size: 96,
+            generation: 4,
+            state: SafetyState::Valid,
+        };
+
+        {
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            cache.insert(addr, val, current_epoch());
+            assert!(
+                cache.lookup(addr).is_some(),
+                "case_id={} setup must hit before epoch bump",
+                case.id
+            );
+        }
+
+        let hits_before = cache.hits();
+        let misses_before = cache.misses();
+        bump_tls_cache_epoch();
+
+        let result = cache.lookup(addr);
+        let idx = TlsValidationCache::index(addr);
+        assert_epoch_mismatch_observation(
+            case,
+            result.is_none(),
+            cache.hits() - hits_before,
+            cache.misses() - misses_before,
+            cache.entries[idx].valid,
+        );
+    }
+
+    #[test]
+    fn hit_only_epoch_mismatch_matches_golden_contract() {
+        let contract = load_epoch_golden_contract();
+        let case =
+            contract.case("lookup_hit_only_epoch_mismatch_self_cleans_without_miss_accounting");
+        assert_epoch_case_metadata(case, "lookup_hit_only");
+
+        let mut cache = TlsValidationCache::new();
+        let addr = 0x6000;
+        let val = CachedValidation {
+            user_base: addr,
+            user_size: 128,
+            generation: 5,
+            state: SafetyState::Valid,
+        };
+
+        {
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            cache.insert(addr, val, current_epoch());
+            assert!(
+                cache.lookup_hit_only(addr).is_some(),
+                "case_id={} setup must hit before epoch bump",
+                case.id
+            );
+        }
+
+        let hits_before = cache.hits();
+        let misses_before = cache.misses();
+        bump_tls_cache_epoch();
+
+        let result = cache.lookup_hit_only(addr);
+        let idx = TlsValidationCache::index(addr);
+        assert_epoch_mismatch_observation(
+            case,
+            result.is_none(),
+            cache.hits() - hits_before,
+            cache.misses() - misses_before,
+            cache.entries[idx].valid,
+        );
+    }
+
+    #[test]
+    fn second_lookup_after_self_clean_matches_golden_contract() {
+        let contract = load_epoch_golden_contract();
+        let case = contract.case("second_lookup_after_self_clean_still_misses");
+        assert_epoch_case_metadata(case, "lookup");
+
+        let mut cache = TlsValidationCache::new();
+        let addr = 0x7000;
+        let val = CachedValidation {
+            user_base: addr,
+            user_size: 160,
+            generation: 6,
+            state: SafetyState::Valid,
+        };
+
+        {
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            cache.insert(addr, val, current_epoch());
+            assert!(
+                cache.lookup(addr).is_some(),
+                "case_id={} setup must hit before epoch bump",
+                case.id
+            );
+        }
+
+        bump_tls_cache_epoch();
+        assert!(
+            cache.lookup(addr).is_none(),
+            "case_id={} first stale lookup must self-clean",
+            case.id
+        );
+
+        let hits_before = cache.hits();
+        let misses_before = cache.misses();
+        let result = cache.lookup(addr);
+        let idx = TlsValidationCache::index(addr);
+        assert_epoch_mismatch_observation(
+            case,
+            result.is_none(),
+            cache.hits() - hits_before,
+            cache.misses() - misses_before,
+            cache.entries[idx].valid,
+        );
+    }
+
     #[test]
     fn cache_miss_on_empty() {
         let mut cache = TlsValidationCache::new();
