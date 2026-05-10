@@ -11,8 +11,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use frankenlibc_harness::read_mostly_fast_path_prototype::{
-    LaneId, LiveMeasurementError, LiveMeasurementRow, ProfileGatedReadMostly, isomorphism_witness,
-    validate_live_measurement,
+    LaneId, LiveMeasurementError, LiveMeasurementPair, LiveMeasurementRow, LivePairError,
+    ProfileGatedReadMostly, isomorphism_witness, run_live_measurement, run_live_measurement_pair,
+    validate_live_measurement, validate_live_measurement_pair,
 };
 use serde_json::Value;
 
@@ -292,6 +293,174 @@ fn live_validator_rejects_n_below_minimum_for_p999() -> TestResult {
             "expected InsufficientSamplesForP999; got {other:?}"
         )),
     }
+}
+
+// ── Live runner tests (bd-8b70o) ─────────────────────────────────────
+
+#[test]
+fn manifest_live_runner_pins_pair_anchoring_fields() -> TestResult {
+    let m = load_manifest()?;
+    let runner = json_field(&m, "live_measurement_runner")?;
+    require(
+        json_string(runner, "tail_statistics_contract_owner")? == "bd-juvqm.11",
+        "tail stats owner",
+    )?;
+    let labels = json_field(runner, "lane_id_label_contract")?;
+    require(
+        json_string(labels, "Conservative")? == "Conservative",
+        "Conservative label",
+    )?;
+    require(
+        json_string(labels, "Seqlock")? == "Seqlock",
+        "Seqlock label",
+    )?;
+    let anchor: BTreeSet<&str> = json_array(runner, "lane_pair_required_anchoring_fields")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let expected: BTreeSet<&str> = [
+        "profile_id",
+        "source_commit",
+        "environment_fingerprint",
+        "n",
+        "seed",
+    ]
+    .into_iter()
+    .collect();
+    require(anchor == expected, format!("anchor: {anchor:?}"))?;
+    require(
+        json_bool(runner, "fail_closed_when_lane_id_label_wrong")?,
+        "fail_closed_when_lane_id_label_wrong",
+    )?;
+    require(
+        json_bool(
+            runner,
+            "fail_closed_when_anchoring_field_differs_between_lanes",
+        )?,
+        "fail_closed_when_anchoring_field_differs_between_lanes",
+    )
+}
+
+#[test]
+fn live_runner_produces_validatable_row_for_conservative_lane() -> TestResult {
+    let commit = "1".repeat(40);
+    let row = run_live_measurement(
+        LaneId::Conservative,
+        "test-profile",
+        2_000,
+        0xc0ffee,
+        "linux-test",
+        &commit,
+    )
+    .map_err(|e| format!("runner failed: {e:?}"))?;
+    require(row.lane_id == "Conservative", "lane_id label")?;
+    require(row.n == 2_000, "n")?;
+    require(row.seed == 0xc0ffee, "seed")?;
+    require(validate_live_measurement(&row).is_ok(), "row must validate")
+}
+
+#[test]
+fn live_runner_pair_anchors_both_lanes_to_identical_inputs() -> TestResult {
+    let commit = "a".repeat(40);
+    let pair = run_live_measurement_pair("test-profile", 1_500, 0x1234_5678, "linux-test", &commit)
+        .map_err(|e| format!("runner failed: {e:?}"))?;
+    require(
+        pair.conservative.lane_id == "Conservative",
+        "conservative lane_id",
+    )?;
+    require(pair.seqlock.lane_id == "Seqlock", "seqlock lane_id")?;
+    require(
+        pair.conservative.source_commit == pair.seqlock.source_commit,
+        "source_commit",
+    )?;
+    require(pair.conservative.n == pair.seqlock.n, "n")?;
+    require(pair.conservative.seed == pair.seqlock.seed, "seed")?;
+    require(
+        pair.conservative.environment_fingerprint == pair.seqlock.environment_fingerprint,
+        "environment_fingerprint",
+    )?;
+    require(
+        validate_live_measurement_pair(&pair).is_ok(),
+        format!("pair must validate: {pair:?}"),
+    )
+}
+
+#[test]
+fn live_runner_rejects_n_below_minimum_for_p999() -> TestResult {
+    let commit = "b".repeat(40);
+    match run_live_measurement(LaneId::Conservative, "p", 100, 0, "x", &commit) {
+        Err(LiveMeasurementError::InsufficientSamplesForP999) => Ok(()),
+        other => Err(format!(
+            "expected InsufficientSamplesForP999; got {other:?}"
+        )),
+    }
+}
+
+#[test]
+fn live_pair_validator_rejects_lane_id_mismatch() -> TestResult {
+    let commit = "c".repeat(40);
+    let pair = run_live_measurement_pair("p", 1_500, 0xabcd, "linux-test", &commit)
+        .map_err(|e| format!("runner failed: {e:?}"))?;
+    let mut bad = pair.clone();
+    bad.conservative.lane_id = "WrongLabel".to_string();
+    match validate_live_measurement_pair(&bad) {
+        Err(LivePairError::ConservativeRowHasWrongLaneId) => Ok(()),
+        other => Err(format!(
+            "expected ConservativeRowHasWrongLaneId; got {other:?}"
+        )),
+    }
+}
+
+#[test]
+fn live_pair_validator_rejects_source_commit_drift() -> TestResult {
+    let commit = "d".repeat(40);
+    let pair = run_live_measurement_pair("p", 1_500, 0xfeed, "linux-test", &commit)
+        .map_err(|e| format!("runner failed: {e:?}"))?;
+    let mut bad = pair.clone();
+    bad.seqlock.source_commit = "f".repeat(40);
+    match validate_live_measurement_pair(&bad) {
+        Err(LivePairError::SourceCommitDiffers) => Ok(()),
+        other => Err(format!("expected SourceCommitDiffers; got {other:?}")),
+    }
+}
+
+#[test]
+fn live_pair_validator_rejects_seed_drift() -> TestResult {
+    let commit = "e".repeat(40);
+    let pair = run_live_measurement_pair("p", 1_500, 0xface, "linux-test", &commit)
+        .map_err(|e| format!("runner failed: {e:?}"))?;
+    let mut bad = pair.clone();
+    bad.seqlock.seed = bad.seqlock.seed.wrapping_add(1);
+    match validate_live_measurement_pair(&bad) {
+        Err(LivePairError::SeedDiffers) => Ok(()),
+        other => Err(format!("expected SeedDiffers; got {other:?}")),
+    }
+}
+
+#[test]
+fn live_pair_validator_rejects_environment_fingerprint_drift() -> TestResult {
+    let commit = "9".repeat(40);
+    let pair = run_live_measurement_pair("p", 1_500, 0x4242, "linux-test", &commit)
+        .map_err(|e| format!("runner failed: {e:?}"))?;
+    let mut bad = pair.clone();
+    bad.conservative.environment_fingerprint = "different".to_string();
+    match validate_live_measurement_pair(&bad) {
+        Err(LivePairError::EnvironmentFingerprintDiffers) => Ok(()),
+        other => Err(format!(
+            "expected EnvironmentFingerprintDiffers; got {other:?}"
+        )),
+    }
+}
+
+#[test]
+fn _unused_imports_quiet() -> TestResult {
+    // Touch every imported type to avoid unused-import warnings if a
+    // refactor moves things around.
+    let _: Option<LiveMeasurementRow> = None;
+    let _: Option<LiveMeasurementPair> = None;
+    let _: Option<ProfileGatedReadMostly> = None;
+    let _ = isomorphism_witness;
+    Ok(())
 }
 
 #[test]

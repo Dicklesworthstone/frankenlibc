@@ -42,6 +42,32 @@
     "minimum_samples_for_p999": 1000,
     "monotone_quantiles_required": true
   },
+  "live_measurement_runner": {
+    "rationale": "Resolves the gap left in the original bd-juvqm.3 contract: the schema was pinned but no runner produced rows. `frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair` drives both lanes under identical anchoring inputs and emits a `LiveMeasurementPair`.",
+    "tail_statistics_contract_owner": "bd-juvqm.11",
+    "p99_p999_computation": "frankenlibc_harness::tail_stats::compute(latencies, seed)",
+    "deterministic_write_pattern": {
+      "rationale": "Writers are rare relative to readers — read-mostly hotspot characterization. Each `write_period`-th read triggers a write of `seed^i`.",
+      "write_period": 64
+    },
+    "lane_id_label_contract": {
+      "Conservative": "Conservative",
+      "Seqlock": "Seqlock"
+    },
+    "lane_pair_required_anchoring_fields": [
+      "profile_id",
+      "source_commit",
+      "environment_fingerprint",
+      "n",
+      "seed"
+    ],
+    "fail_closed_when_lane_id_label_wrong": true,
+    "fail_closed_when_anchoring_field_differs_between_lanes": true,
+    "rejected_evidence_kinds_added": [
+      "lane_id_label_wrong",
+      "lane_pair_anchoring_field_differs"
+    ]
+  },
   "policy": {
     "default_decision": "block_promotion_until_lanes_agree_on_isomorphism_witness",
     "fail_closed_when_lanes_disagree": true,

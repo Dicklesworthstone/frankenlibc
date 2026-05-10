@@ -215,6 +215,166 @@ pub fn validate_live_measurement(row: &LiveMeasurementRow) -> Result<(), LiveMea
     Ok(())
 }
 
+/// Matched pair of [`LiveMeasurementRow`]s for the two lanes
+/// (Conservative + Seqlock) under the same profile / commit /
+/// environment / n / seed (bd-8b70o).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveMeasurementPair {
+    pub conservative: LiveMeasurementRow,
+    pub seqlock: LiveMeasurementRow,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LivePairError {
+    LaneRowMismatch(LiveMeasurementError),
+    SourceCommitDiffers,
+    ProfileIdDiffers,
+    EnvironmentFingerprintDiffers,
+    NDiffers,
+    SeedDiffers,
+    ConservativeRowHasWrongLaneId,
+    SeqlockRowHasWrongLaneId,
+}
+
+/// Validate a [`LiveMeasurementPair`] anchors both rows to the same
+/// (profile_id, source_commit, environment_fingerprint, n, seed) and
+/// each row passes [`validate_live_measurement`]. Any divergence
+/// fails closed.
+pub fn validate_live_measurement_pair(pair: &LiveMeasurementPair) -> Result<(), LivePairError> {
+    validate_live_measurement(&pair.conservative).map_err(LivePairError::LaneRowMismatch)?;
+    validate_live_measurement(&pair.seqlock).map_err(LivePairError::LaneRowMismatch)?;
+    if pair.conservative.lane_id != "Conservative" {
+        return Err(LivePairError::ConservativeRowHasWrongLaneId);
+    }
+    if pair.seqlock.lane_id != "Seqlock" {
+        return Err(LivePairError::SeqlockRowHasWrongLaneId);
+    }
+    if pair.conservative.source_commit != pair.seqlock.source_commit {
+        return Err(LivePairError::SourceCommitDiffers);
+    }
+    if pair.conservative.profile_id != pair.seqlock.profile_id {
+        return Err(LivePairError::ProfileIdDiffers);
+    }
+    if pair.conservative.environment_fingerprint != pair.seqlock.environment_fingerprint {
+        return Err(LivePairError::EnvironmentFingerprintDiffers);
+    }
+    if pair.conservative.n != pair.seqlock.n {
+        return Err(LivePairError::NDiffers);
+    }
+    if pair.conservative.seed != pair.seqlock.seed {
+        return Err(LivePairError::SeedDiffers);
+    }
+    Ok(())
+}
+
+/// Drive `n` timed reads against a single lane under a deterministic
+/// write pattern. Returns the latencies in nanoseconds, sorted
+/// ascending (the shape `tail_stats::compute` consumes).
+fn drive_one_lane(lane: LaneId, n: u64, seed: u64) -> Vec<f64> {
+    let p = ProfileGatedReadMostly::new(0, lane);
+    // Deterministic write pattern: write `seed^i` every `write_period`
+    // reads. write_period=64 keeps writers rare relative to readers
+    // (read-mostly hotspot).
+    let write_period: u64 = 64;
+    let mut latencies: Vec<f64> = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        if i % write_period == 0 {
+            p.write((seed ^ i) as u32);
+        }
+        let t0 = std::time::Instant::now();
+        let _ = p.read();
+        let dt = t0.elapsed().as_nanos() as u64;
+        latencies.push(dt as f64);
+    }
+    latencies.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    latencies
+}
+
+/// Run a single-lane live measurement. Computes p99 / p999 via
+/// the bd-juvqm.11 `tail_stats::compute()` library.
+pub fn run_live_measurement(
+    lane: LaneId,
+    profile_id: &str,
+    n: u64,
+    seed: u64,
+    environment_fingerprint: &str,
+    source_commit: &str,
+) -> Result<LiveMeasurementRow, LiveMeasurementError> {
+    if n < crate::tail_stats::MIN_SAMPLES_FOR_P999 as u64 {
+        return Err(LiveMeasurementError::InsufficientSamplesForP999);
+    }
+    let lane_label = match lane {
+        LaneId::Conservative => "Conservative",
+        LaneId::Seqlock => "Seqlock",
+    };
+    let total_start = std::time::Instant::now();
+    let latencies = drive_one_lane(lane, n, seed);
+    let total_elapsed = total_start.elapsed();
+
+    // tail_stats::compute requires the seed for the bootstrap CI. Use
+    // the same seed the lane was driven with so the report is
+    // reproducible end-to-end.
+    let stats = crate::tail_stats::compute(&latencies, seed)
+        .map_err(|_| LiveMeasurementError::InsufficientSamplesForP999)?;
+
+    let total_secs = total_elapsed.as_secs_f64().max(f64::MIN_POSITIVE);
+    let throughput = (n as f64 / total_secs) as u64;
+    // tail_stats returns f64 ns; clamp non-finite to 0 to avoid
+    // poisoning downstream u64 fields.
+    let p99_ns = if stats.p99.is_finite() && stats.p99 >= 0.0 {
+        stats.p99 as u64
+    } else {
+        0
+    };
+    let p999_ns = if stats.p999.is_finite() && stats.p999 >= 0.0 {
+        stats.p999 as u64
+    } else {
+        0
+    };
+    Ok(LiveMeasurementRow {
+        lane_id: lane_label.to_string(),
+        profile_id: profile_id.to_string(),
+        source_commit: source_commit.to_string(),
+        environment_fingerprint: environment_fingerprint.to_string(),
+        p99_ns,
+        p999_ns,
+        throughput_ops_per_sec: throughput,
+        n,
+        seed,
+    })
+}
+
+/// Run live measurements on BOTH lanes under identical anchoring
+/// inputs. Returns a [`LiveMeasurementPair`].
+pub fn run_live_measurement_pair(
+    profile_id: &str,
+    n: u64,
+    seed: u64,
+    environment_fingerprint: &str,
+    source_commit: &str,
+) -> Result<LiveMeasurementPair, LiveMeasurementError> {
+    let conservative = run_live_measurement(
+        LaneId::Conservative,
+        profile_id,
+        n,
+        seed,
+        environment_fingerprint,
+        source_commit,
+    )?;
+    let seqlock = run_live_measurement(
+        LaneId::Seqlock,
+        profile_id,
+        n,
+        seed,
+        environment_fingerprint,
+        source_commit,
+    )?;
+    Ok(LiveMeasurementPair {
+        conservative,
+        seqlock,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
