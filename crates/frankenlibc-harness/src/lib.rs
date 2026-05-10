@@ -47,6 +47,7 @@ pub mod shadow_run;
 pub mod snapshot_diff;
 pub mod stdio_evidence;
 pub mod structured_log;
+pub mod system_fingerprint;
 pub mod tail_stats;
 pub mod traceability;
 pub mod verify;

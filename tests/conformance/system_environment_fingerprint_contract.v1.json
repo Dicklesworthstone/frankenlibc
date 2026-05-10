@@ -1,0 +1,55 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "system-environment-fingerprint-contract",
+  "bead": "bd-6epxt",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "source_commit": "a39413886a340db0c18c7dde2f02ef0d10ee5709",
+  "purpose": "Pin the environment fingerprint format used by every live measurement runner (bd-juvqm.3, bd-8b70o, future tail-evidence harnesses). The fingerprint anchors a LiveMeasurementRow's `environment_fingerprint` field so two p99/p999 measurements can be compared only when they were collected on the same host class. `frankenlibc_harness::system_fingerprint` is the single source of truth for the format, the env override, and the parser.",
+  "format": {
+    "template": "<os>-<arch>-<cpus>cpu-<kernel_release>",
+    "example": "linux-x86_64-64cpu-6.1.0-25-amd64",
+    "rationale": "Four ordered components separated by `-`. The third component must end in `cpu` so callers can robustly distinguish the CPU count from the architecture. The kernel_release component may contain additional `-` characters (`6.1.0-25-amd64-rt`); the parser joins parts[3..] back."
+  },
+  "env_override": {
+    "var_name": "FRANKENLIBC_ENV_FINGERPRINT",
+    "behavior": "If set to a non-empty trimmed string, `environment_fingerprint()` returns that value verbatim, bypassing the detector. Used by CI environments that pin a known-stable fingerprint."
+  },
+  "detection_sources": [
+    "/proc/cpuinfo (count lines starting with `processor`)",
+    "/proc/sys/kernel/osrelease",
+    "std::env::consts::ARCH",
+    "std::thread::available_parallelism (fallback when /proc/cpuinfo is unavailable)"
+  ],
+  "validator_function": "frankenlibc_harness::system_fingerprint::validate_environment_fingerprint",
+  "renderer_function": "frankenlibc_harness::system_fingerprint::from_components",
+  "detector_function": "frankenlibc_harness::system_fingerprint::environment_fingerprint",
+  "components_struct": "frankenlibc_harness::system_fingerprint::EnvironmentFingerprintComponents",
+  "rejected_evidence_kinds": [
+    "invalid_format",
+    "empty_component",
+    "invalid_cpu_count"
+  ],
+  "policy": {
+    "fail_closed_when_format_invalid": true,
+    "fail_closed_when_component_empty": true,
+    "fail_closed_when_cpu_count_non_numeric": true,
+    "rejected_evidence_kinds_must_match_lib_const": true
+  },
+  "downstream_consumers": [
+    {
+      "bead": "bd-juvqm.3",
+      "consumes": "ProfileGatedReadMostly LiveMeasurementRow.environment_fingerprint anchoring."
+    },
+    {
+      "bead": "bd-8b70o",
+      "consumes": "Lane-pair anchoring on environment_fingerprint."
+    }
+  ],
+  "summary": {
+    "bead": "bd-6epxt",
+    "format_segment_count": 4,
+    "env_override_supported": true,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
