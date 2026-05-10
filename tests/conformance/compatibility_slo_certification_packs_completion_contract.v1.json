@@ -1,0 +1,254 @@
+{
+  "schema_version": "compatibility_slo_certification_packs_completion_contract.v1",
+  "original_bead": "bd-26xb.3",
+  "completion_debt_bead": "bd-26xb.3.1",
+  "title": "Flagship 3: Compatibility SLO + Certification Packs completion binding",
+  "purpose": "Bind the existing release dossier, workload compatibility dossier, and user compatibility report to machine-checkable unit and e2e completion evidence for compatibility SLO and certification-pack release claims.",
+  "source_artifacts": {
+    "release_dossier_validator": "scripts/release_dossier_validator.py",
+    "release_dossier_report": "tests/release/dossier_validation_report.v1.json",
+    "release_dossier_gate": "scripts/check_release_dossier.sh",
+    "release_dossier_harness": "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+    "workload_compatibility_contract": "tests/conformance/workload_compatibility_dossier.v1.json",
+    "workload_compatibility_gate": "scripts/check_workload_compatibility_dossier.sh",
+    "workload_compatibility_harness": "crates/frankenlibc-harness/tests/workload_compatibility_dossier_test.rs",
+    "user_compatibility_report": "tests/conformance/user_compatibility_report.v1.json",
+    "completion_checker": "scripts/check_compatibility_slo_certification_packs_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/compatibility_slo_certification_packs_completion_contract_test.rs"
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "required_test_refs": [
+        "dossier_artifact_results_have_required_fields",
+        "dossier_integrity_index_consistent",
+        "dossier_compatibility_policy_present",
+        "manifest_binds_unit_and_e2e_completion_evidence",
+        "checker_validates_compatibility_slo_certification_contract",
+        "checker_emits_completion_report_and_jsonl",
+        "checker_rejects_missing_release_artifact_binding",
+        "checker_rejects_missing_source_test_ref",
+        "checker_rejects_unimplemented_telemetry_event"
+      ],
+      "evidence": [
+        "checked-in release dossier artifact fields",
+        "checked-in release dossier integrity index",
+        "completion checker fail-closed negative cases"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "required_test_refs": [
+        "dossier_validator_produces_valid_report",
+        "dossier_validator_release_notes_hook_tracks_closed_beads",
+        "dossier_validator_release_notes_hook_invalid_limit_falls_back_to_default",
+        "workload_compatibility_dossier_test",
+        "checker_validates_compatibility_slo_certification_contract"
+      ],
+      "evidence": [
+        "release dossier generator writes a full certification pack report",
+        "release notes hook replays closed bead inputs",
+        "workload compatibility dossier binds user-facing workload evidence"
+      ]
+    }
+  ],
+  "completion_debt_evidence": {
+    "required_release_dossier_contract": {
+      "report_schema_version": "v1",
+      "status": "pass",
+      "verdict": "PASS",
+      "summary": {
+        "total_artifacts": 15,
+        "valid": 14,
+        "present_with_issues": 0,
+        "missing": 1,
+        "critical_missing": 0,
+        "errors": 0,
+        "warnings": 1,
+        "release_note_candidates": 8
+      },
+      "required_artifact_ids": [
+        "support_matrix",
+        "reality_report",
+        "conformance_coverage",
+        "claim_reconciliation",
+        "closure_sweep",
+        "replacement_levels",
+        "opportunity_matrix",
+        "math_governance",
+        "controller_ablation",
+        "admission_gate",
+        "production_kernel_manifest",
+        "release_gate_dag",
+        "symbol_fixture_coverage",
+        "e2e_scenario_manifest",
+        "closure_contract"
+      ],
+      "critical_artifact_ids": [
+        "support_matrix",
+        "reality_report",
+        "conformance_coverage",
+        "claim_reconciliation",
+        "closure_sweep",
+        "replacement_levels",
+        "math_governance",
+        "controller_ablation",
+        "admission_gate",
+        "production_kernel_manifest",
+        "release_gate_dag",
+        "closure_contract"
+      ],
+      "optional_missing_artifact": "e2e_scenario_manifest",
+      "compatibility_policy_fields": [
+        "format",
+        "schema_versions",
+        "integrity"
+      ],
+      "release_notes_hook": {
+        "source_path": ".beads/issues.jsonl",
+        "selection_policy": {
+          "status": "closed",
+          "sort": "closed_at_desc_then_id_desc",
+          "limit": 8
+        },
+        "summary": {
+          "selected": 8,
+          "invalid_rows": 0
+        },
+        "required_entry_fields": [
+          "id",
+          "title",
+          "issue_type",
+          "closed_at",
+          "close_reason"
+        ]
+      }
+    },
+    "certification_pack_requirements": {
+      "required_pack_fields": [
+        "passed_workload_set",
+        "deviation_windows",
+        "repair_rate_envelopes",
+        "explicit_unsupported_zones"
+      ],
+      "workload_compatibility_fields": [
+        "trace_id",
+        "bead_id",
+        "workload_id",
+        "claim_scope",
+        "replacement_level",
+        "strict_status",
+        "hardened_status",
+        "freshness_state",
+        "perf_state",
+        "failure_signature",
+        "user_recommendation",
+        "artifact_refs",
+        "exact_reproduction_command",
+        "source_commit",
+        "next_safe_action"
+      ],
+      "user_compatibility_fields": [
+        "workload_id",
+        "environment_id",
+        "runtime_mode",
+        "replacement_level",
+        "support_status",
+        "semantic_status",
+        "support_matrix_row",
+        "oracle_kind",
+        "failure_bundle_refs",
+        "performance_budget_refs",
+        "freshness_state",
+        "known_limitations",
+        "user_recommendation",
+        "regeneration_command"
+      ]
+    },
+    "implementation_refs": [
+      {
+        "id": "release_dossier_validator",
+        "path": "scripts/release_dossier_validator.py",
+        "required_text": [
+          "ARTIFACT_MANIFEST",
+          "compatibility_policy",
+          "release_notes_hook",
+          "integrity_index",
+          "sha256",
+          "dossier_validation_report.v1.json"
+        ]
+      },
+      {
+        "id": "release_dossier_harness",
+        "path": "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+        "required_text": [
+          "dossier_validator_produces_valid_report",
+          "dossier_artifact_results_have_required_fields",
+          "dossier_integrity_index_consistent",
+          "dossier_compatibility_policy_present",
+          "dossier_validator_release_notes_hook_tracks_closed_beads",
+          "dossier_validator_release_notes_hook_invalid_limit_falls_back_to_default"
+        ]
+      },
+      {
+        "id": "release_dossier_gate",
+        "path": "scripts/check_release_dossier.sh",
+        "required_text": [
+          "release_dossier_validator.py",
+          "compatibility_policy",
+          "check_release_dossier: PASS"
+        ]
+      },
+      {
+        "id": "workload_compatibility_contract",
+        "path": "tests/conformance/workload_compatibility_dossier.v1.json",
+        "required_text": [
+          "required_dossier_fields",
+          "user_recommendation",
+          "artifact_refs",
+          "source_commit"
+        ]
+      }
+    ],
+    "test_sources": {
+      "release_dossier_harness": {
+        "path": "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+        "required_test_refs": [
+          "dossier_artifact_results_have_required_fields",
+          "dossier_integrity_index_consistent",
+          "dossier_compatibility_policy_present",
+          "dossier_validator_produces_valid_report",
+          "dossier_validator_release_notes_hook_tracks_closed_beads",
+          "dossier_validator_release_notes_hook_invalid_limit_falls_back_to_default"
+        ]
+      },
+      "workload_compatibility_harness": {
+        "path": "crates/frankenlibc-harness/tests/workload_compatibility_dossier_test.rs",
+        "required_test_refs": [
+          "workload_compatibility_dossier"
+        ]
+      },
+      "completion_harness_test": {
+        "path": "crates/frankenlibc-harness/tests/compatibility_slo_certification_packs_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_and_e2e_completion_evidence",
+          "checker_validates_compatibility_slo_certification_contract",
+          "checker_emits_completion_report_and_jsonl",
+          "checker_rejects_missing_release_artifact_binding",
+          "checker_rejects_missing_source_test_ref",
+          "checker_rejects_unimplemented_telemetry_event"
+        ]
+      }
+    },
+    "telemetry_events": [
+      "compatibility_slo_certification_completion_summary",
+      "compatibility_slo_certification_release_dossier_artifacts",
+      "compatibility_slo_certification_source_bindings",
+      "compatibility_slo_certification_test_bindings",
+      "compatibility_slo_certification_completion_contract_pass",
+      "compatibility_slo_certification_completion_contract_fail"
+    ]
+  }
+}
