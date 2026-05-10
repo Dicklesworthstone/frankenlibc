@@ -339,6 +339,45 @@
       "l3.workload_matrix_gate"
     ]
   },
+  "completion_debt_evidence": {
+    "bead": "bd-5fw.1.1",
+    "test_source": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
+    "unit_primary": {
+      "description": "Unit-level schema and graph invariants for closure_contract.v1.",
+      "required_test_names": [
+        "contract_exists_and_valid",
+        "all_levels_have_machine_checkable_obligations",
+        "transition_requirements_reference_known_invariants"
+      ]
+    },
+    "e2e_primary": {
+      "description": "End-to-end validator execution for passing and intentionally broken closure contracts.",
+      "required_test_names": [
+        "gate_script_passes_and_emits_required_log_fields",
+        "gate_script_fails_for_intentionally_broken_contract"
+      ]
+    },
+    "telemetry_primary": {
+      "description": "Structured JSONL evidence rows emitted by scripts/check_closure_contract.sh for every invariant evaluation.",
+      "log_env": "FRANKENLIBC_CLOSURE_LOG",
+      "default_log_path": "/tmp/frankenlibc_closure_contract.log.jsonl",
+      "required_fields": [
+        "trace_id",
+        "mode",
+        "gate_name",
+        "level",
+        "invariant_id",
+        "check_cmd",
+        "result",
+        "exit_code",
+        "duration_ms",
+        "artifact_ref",
+        "artifact_refs",
+        "detail",
+        "failure_reason"
+      ]
+    }
+  },
   "structured_log_requirements": {
     "format": "jsonl",
     "required_fields": [

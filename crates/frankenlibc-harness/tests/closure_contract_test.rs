@@ -130,9 +130,13 @@ fn transition_requirements_reference_known_invariants() {
     }
 
     for key in ["L0_to_L1", "L1_to_L2", "L2_to_L3"] {
-        let refs = doc["transition_requirements"][key]
-            .as_array()
-            .unwrap_or_else(|| panic!("{key} missing"));
+        let Some(refs) = doc["transition_requirements"][key].as_array() else {
+            assert!(
+                doc["transition_requirements"][key].is_array(),
+                "{key} missing"
+            );
+            return;
+        };
         assert!(!refs.is_empty(), "{key} must not be empty");
         for reference in refs {
             let rid = reference.as_str().expect("transition item must be string");
@@ -141,6 +145,73 @@ fn transition_requirements_reference_known_invariants() {
                 "{key} references unknown invariant_id {rid}"
             );
         }
+    }
+}
+
+#[test]
+fn completion_debt_evidence_binds_required_audit_items() {
+    let doc = load_contract();
+    let evidence = &doc["completion_debt_evidence"];
+    assert_eq!(evidence["bead"].as_str(), Some("bd-5fw.1.1"));
+    assert_eq!(
+        evidence["test_source"].as_str(),
+        Some("crates/frankenlibc-harness/tests/closure_contract_test.rs")
+    );
+
+    let unit_tests: HashSet<_> = evidence["unit_primary"]["required_test_names"]
+        .as_array()
+        .expect("unit test names should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("unit test name should be string"))
+        .collect();
+    assert_eq!(
+        unit_tests,
+        HashSet::from([
+            "contract_exists_and_valid",
+            "all_levels_have_machine_checkable_obligations",
+            "transition_requirements_reference_known_invariants",
+        ])
+    );
+
+    let e2e_tests: HashSet<_> = evidence["e2e_primary"]["required_test_names"]
+        .as_array()
+        .expect("e2e test names should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("e2e test name should be string"))
+        .collect();
+    assert_eq!(
+        e2e_tests,
+        HashSet::from([
+            "gate_script_passes_and_emits_required_log_fields",
+            "gate_script_fails_for_intentionally_broken_contract",
+        ])
+    );
+
+    let telemetry_fields: HashSet<_> = evidence["telemetry_primary"]["required_fields"]
+        .as_array()
+        .expect("telemetry fields should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("telemetry field should be string"))
+        .collect();
+    for field in [
+        "trace_id",
+        "mode",
+        "gate_name",
+        "level",
+        "invariant_id",
+        "check_cmd",
+        "result",
+        "exit_code",
+        "duration_ms",
+        "artifact_ref",
+        "artifact_refs",
+        "detail",
+        "failure_reason",
+    ] {
+        assert!(
+            telemetry_fields.contains(field),
+            "telemetry evidence missing required field {field}"
+        );
     }
 }
 
@@ -201,14 +272,15 @@ fn gate_script_passes_and_emits_required_log_fields() {
         .output()
         .expect("check_closure_contract.sh should execute");
 
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        panic!(
-            "check_closure_contract.sh failed\nstatus={:?}\nstdout:\n{}\nstderr:\n{}",
-            output.status, stdout, stderr
-        );
-    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "check_closure_contract.sh failed\nstatus={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        stdout,
+        stderr
+    );
 
     assert!(
         log_path.exists(),
@@ -302,4 +374,50 @@ fn gate_script_fails_for_intentionally_broken_contract() {
 
     let _ = std::fs::remove_file(broken_path);
     let _ = std::fs::remove_file(broken_log);
+}
+
+#[test]
+fn gate_script_rejects_stale_completion_debt_evidence() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_closure_contract.sh");
+
+    let mut broken = load_contract();
+    let telemetry = broken["completion_debt_evidence"]["telemetry_primary"]["required_fields"]
+        .as_array_mut()
+        .expect("telemetry fields should exist");
+    telemetry.retain(|field| field.as_str() != Some("failure_reason"));
+
+    let broken_path = unique_tmp_path("closure-contract-debt-evidence-broken", ".json");
+    let broken_log = unique_tmp_path("closure-contract-debt-evidence-broken-log", ".jsonl");
+    std::fs::write(
+        &broken_path,
+        serde_json::to_string_pretty(&broken).expect("serialize broken contract"),
+    )
+    .expect("write broken contract file");
+
+    let output = Command::new("bash")
+        .arg(&script)
+        .current_dir(&root)
+        .env("FRANKENLIBC_CLOSURE_CONTRACT_PATH", &broken_path)
+        .env("FRANKENLIBC_CLOSURE_LOG", &broken_log)
+        .env("FRANKENLIBC_CLOSURE_LEVEL", "L0")
+        .output()
+        .expect("check_closure_contract.sh should execute with stale debt evidence");
+
+    assert!(
+        !output.status.success(),
+        "stale completion-debt telemetry evidence should force gate failure"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let merged = format!("{stdout}\n{stderr}");
+    assert!(
+        merged.contains("telemetry_primary.required_fields missing 'failure_reason'"),
+        "failure output must name the stale telemetry binding: {merged}"
+    );
+    assert!(
+        merged.contains("FAILED"),
+        "failure output should include FAILED summary"
+    );
 }

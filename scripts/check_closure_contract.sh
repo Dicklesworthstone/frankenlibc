@@ -80,6 +80,7 @@ def validate_schema(contract: dict[str, Any]) -> list[str]:
         "default_target_level",
         "levels",
         "transition_requirements",
+        "completion_debt_evidence",
         "structured_log_requirements",
     ]
     for key in required_root:
@@ -206,6 +207,75 @@ def validate_schema(contract: dict[str, Any]) -> list[str]:
         required_fields = log_req.get("required_fields")
         if not isinstance(required_fields, list) or not required_fields:
             errors.append("structured_log_requirements.required_fields must be non-empty array")
+
+    completion = contract.get("completion_debt_evidence")
+    if not isinstance(completion, dict):
+        errors.append("completion_debt_evidence must be an object")
+    else:
+        if completion.get("bead") != "bd-5fw.1.1":
+            errors.append("completion_debt_evidence.bead must be bd-5fw.1.1")
+        test_source = completion.get("test_source")
+        if not isinstance(test_source, str) or not test_source:
+            errors.append("completion_debt_evidence.test_source must be non-empty")
+            test_source_text = ""
+        else:
+            source_path = pathlib.Path(test_source)
+            if not source_path.is_absolute():
+                source_path = pathlib.Path(sys.argv[1]).resolve() / source_path
+            if not source_path.is_file():
+                errors.append(f"completion_debt_evidence.test_source missing: {test_source}")
+                test_source_text = ""
+            else:
+                test_source_text = source_path.read_text(encoding="utf-8")
+
+        for section_name in ["unit_primary", "e2e_primary"]:
+            section = completion.get(section_name)
+            if not isinstance(section, dict):
+                errors.append(f"completion_debt_evidence.{section_name} must be an object")
+                continue
+            names = section.get("required_test_names")
+            if not isinstance(names, list) or not names:
+                errors.append(
+                    f"completion_debt_evidence.{section_name}.required_test_names must be non-empty"
+                )
+                continue
+            for name in names:
+                if not isinstance(name, str) or not name:
+                    errors.append(
+                        f"completion_debt_evidence.{section_name}.required_test_names contains invalid test name"
+                    )
+                    continue
+                if f"fn {name}(" not in test_source_text:
+                    errors.append(
+                        f"completion_debt_evidence.{section_name} references missing test '{name}'"
+                    )
+
+        telemetry = completion.get("telemetry_primary")
+        if not isinstance(telemetry, dict):
+            errors.append("completion_debt_evidence.telemetry_primary must be an object")
+        else:
+            if telemetry.get("log_env") != "FRANKENLIBC_CLOSURE_LOG":
+                errors.append("telemetry_primary.log_env must be FRANKENLIBC_CLOSURE_LOG")
+            if telemetry.get("default_log_path") != "/tmp/frankenlibc_closure_contract.log.jsonl":
+                errors.append("telemetry_primary.default_log_path drifted")
+            telemetry_fields = telemetry.get("required_fields")
+            if not isinstance(telemetry_fields, list) or not telemetry_fields:
+                errors.append("telemetry_primary.required_fields must be non-empty")
+                telemetry_fields = []
+            structured_fields = log_req.get("required_fields", []) if isinstance(log_req, dict) else []
+            missing_log_fields = [
+                field
+                for field in structured_fields
+                if field not in telemetry_fields
+            ]
+            if missing_log_fields:
+                errors.append(
+                    "telemetry_primary.required_fields must cover structured_log_requirements "
+                    f"fields: {missing_log_fields}"
+                )
+            for field in ["mode", "gate_name", "exit_code", "duration_ms", "artifact_refs", "detail", "failure_reason"]:
+                if field not in telemetry_fields:
+                    errors.append(f"telemetry_primary.required_fields missing '{field}'")
 
     return errors
 
