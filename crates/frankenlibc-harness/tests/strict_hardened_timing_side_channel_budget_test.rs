@@ -468,3 +468,152 @@ fn anchored_baseline_manifest_exists_on_disk() -> TestResult {
     )?;
     Ok(())
 }
+
+// ── P99 delta helper integration tests (bd-hp41p) ────────────────────
+
+#[test]
+fn manifest_delta_helper_contract_pins_function_names_and_error_variants() -> TestResult {
+    let m = manifest()?;
+    let helper = &m["delta_helper_contract"];
+    ensure(
+        helper["p99_delta_function"].as_str().unwrap_or("")
+            == "frankenlibc_harness::tail_stats::compute_p99_delta",
+        "p99_delta_function",
+    )?;
+    ensure(
+        helper["validator_function"].as_str().unwrap_or("")
+            == "frankenlibc_harness::tail_stats::validate_p99_delta_against_budget",
+        "validator_function",
+    )?;
+    ensure(
+        helper["p99_delta_takes_absolute_value"]
+            .as_bool()
+            .unwrap_or(false),
+        "p99_delta_takes_absolute_value",
+    )?;
+    let variants: BTreeSet<&str> = helper["validator_error_variants"]
+        .as_array()
+        .ok_or_else(|| test_error("validator_error_variants"))?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let expected: BTreeSet<&str> = [
+        "OverBudget",
+        "AmplificationAboveThreshold",
+        "InsufficientSamples",
+        "CiIndistinguishableButOverBudget",
+    ]
+    .into_iter()
+    .collect();
+    ensure(variants == expected, format!("variants: got {variants:?}"))?;
+    Ok(())
+}
+
+#[test]
+fn helper_validates_each_path_budget_against_synthetic_within_budget_pair() -> TestResult {
+    use frankenlibc_harness::tail_stats::{
+        DEFAULT_BOOTSTRAP_ITERS, MIN_SAMPLES_FOR_P99, MIN_SAMPLES_FOR_P999, TailStats,
+        compute_p99_delta, validate_p99_delta_against_budget,
+    };
+
+    fn synth(p99: f64, ci_low: f64, ci_high: f64) -> TailStats {
+        let n = 1000;
+        TailStats {
+            n,
+            p50: p99 * 0.5,
+            p95: p99 * 0.9,
+            p99,
+            p999: p99 * 1.1,
+            p99_ci_low: ci_low,
+            p99_ci_high: ci_high,
+            sufficient_for_p99: n >= MIN_SAMPLES_FOR_P99,
+            sufficient_for_p999: n >= MIN_SAMPLES_FOR_P999,
+            overloaded_host: false,
+            seed: 0,
+            bootstrap_iters: DEFAULT_BOOTSTRAP_ITERS,
+        }
+    }
+
+    let m = manifest()?;
+    let amp = m["policy"]["amplification_threshold_ratio"]
+        .as_f64()
+        .ok_or_else(|| test_error("amplification_threshold_ratio"))?;
+    for path in m["paths"].as_array().ok_or_else(|| test_error("paths"))? {
+        let path_id = path["path_id"].as_str().unwrap_or("?");
+        let budget = path["allowed_p99_delta_budget_ns"]
+            .as_u64()
+            .ok_or_else(|| test_error(format!("budget for {path_id}")))?;
+        // Synthesize a within-budget pair with amplification well under the
+        // threshold: strict=10000ns baseline, hardened=10000+budget/2.
+        // ratio ≈ (10000 + half) / 10000, which is ~1.0125 for budget=250
+        // — comfortably under 3.0.
+        let half = (budget / 2).max(1) as f64;
+        let strict_p99 = 10_000.0;
+        let hardened_p99 = strict_p99 + half;
+        let strict = synth(strict_p99, strict_p99 - 5.0, strict_p99 + 5.0);
+        let hardened = synth(hardened_p99, hardened_p99 - 5.0, hardened_p99 + 5.0);
+        let d = compute_p99_delta(&strict, &hardened);
+        let res = validate_p99_delta_against_budget(&d, budget, amp);
+        ensure(
+            res.is_ok(),
+            format!("path {path_id}: within-budget pair must validate; got {res:?}"),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn helper_rejects_each_path_budget_against_synthetic_over_budget_pair() -> TestResult {
+    use frankenlibc_harness::tail_stats::{
+        DEFAULT_BOOTSTRAP_ITERS, MIN_SAMPLES_FOR_P99, MIN_SAMPLES_FOR_P999, P99DeltaError,
+        TailStats, compute_p99_delta, validate_p99_delta_against_budget,
+    };
+
+    fn synth(p99: f64, ci_low: f64, ci_high: f64) -> TailStats {
+        let n = 1000;
+        TailStats {
+            n,
+            p50: p99 * 0.5,
+            p95: p99 * 0.9,
+            p99,
+            p999: p99 * 1.1,
+            p99_ci_low: ci_low,
+            p99_ci_high: ci_high,
+            sufficient_for_p99: n >= MIN_SAMPLES_FOR_P99,
+            sufficient_for_p999: n >= MIN_SAMPLES_FOR_P999,
+            overloaded_host: false,
+            seed: 0,
+            bootstrap_iters: DEFAULT_BOOTSTRAP_ITERS,
+        }
+    }
+
+    let m = manifest()?;
+    let amp = m["policy"]["amplification_threshold_ratio"]
+        .as_f64()
+        .ok_or_else(|| test_error("amplification_threshold_ratio"))?;
+    for path in m["paths"].as_array().ok_or_else(|| test_error("paths"))? {
+        let path_id = path["path_id"].as_str().unwrap_or("?");
+        let budget = path["allowed_p99_delta_budget_ns"]
+            .as_u64()
+            .ok_or_else(|| test_error(format!("budget for {path_id}")))?;
+        // Over-budget but with disjoint CIs and amplification within threshold.
+        // strict=100, hardened=100+budget*2 — keeps amplification < 3 only when
+        // budget*2 < 200 (200ns budget already maxes out 3x); we pick
+        // amplification 2x by setting hardened=2*strict.
+        let strict_p99 = 100.0;
+        let hardened_p99 = strict_p99 + (budget as f64 * 2.0).max(50.0);
+        let strict = synth(strict_p99, strict_p99 - 5.0, strict_p99 + 5.0);
+        let hardened = synth(hardened_p99, hardened_p99 - 5.0, hardened_p99 + 5.0);
+        let d = compute_p99_delta(&strict, &hardened);
+        let res = validate_p99_delta_against_budget(&d, budget, amp);
+        match res {
+            Err(P99DeltaError::OverBudget) | Err(P99DeltaError::AmplificationAboveThreshold) => {}
+            other => {
+                return Err(test_error(format!(
+                    "path {path_id}: over-budget pair must reject; got {other:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}

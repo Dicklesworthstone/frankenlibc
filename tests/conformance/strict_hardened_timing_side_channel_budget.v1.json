@@ -102,5 +102,24 @@
       "consumes": "RCU/BRAVO read-mostly fast-path prototype must respect this budget — moving a hot path to a faster lock cannot widen the strict/hardened delta beyond the per-path cap."
     }
   ],
-  "regeneration_note": "When a path's strict-vs-hardened semantic gap changes (e.g., hardened gains a new check), update allowed_p99_delta_budget_ns and intentional_divergence_rationale atomically with source_commit. Do NOT raise the cap silently — the harness checker fails closed when delta exceeds budget; raising the cap requires a security review note in this manifest's commit message."
+  "regeneration_note": "When a path's strict-vs-hardened semantic gap changes (e.g., hardened gains a new check), update allowed_p99_delta_budget_ns and intentional_divergence_rationale atomically with source_commit. Do NOT raise the cap silently — the harness checker fails closed when delta exceeds budget; raising the cap requires a security review note in this manifest's commit message.",
+  "delta_helper_contract": {
+    "rationale": "Resolves the gap left by the original bd-juvqm.12 manifest: per-path budgets were pinned but no helper computed the delta from two TailStats instances. `frankenlibc_harness::tail_stats::compute_p99_delta(strict, hardened)` returns a `P99Delta { p99_delta_ns, ci_disjoint, amplification_ratio, sufficient_samples }`; `validate_p99_delta_against_budget(delta, allowed_budget_ns, amplification_threshold)` fails closed against the manifest's per-path cap and amplification_threshold_ratio.",
+    "p99_delta_function": "frankenlibc_harness::tail_stats::compute_p99_delta",
+    "validator_function": "frankenlibc_harness::tail_stats::validate_p99_delta_against_budget",
+    "p99_delta_takes_absolute_value": true,
+    "amplification_ratio_formula": "max(strict.p99, hardened.p99) / min(strict.p99, hardened.p99)",
+    "ci_disjointness_rule": "strict.p99_ci_high < hardened.p99_ci_low OR hardened.p99_ci_high < strict.p99_ci_low",
+    "validator_error_variants": [
+      "OverBudget",
+      "AmplificationAboveThreshold",
+      "InsufficientSamples",
+      "CiIndistinguishableButOverBudget"
+    ],
+    "fail_closed_when_validator_error_variant_unknown": true,
+    "rejected_evidence_kinds_added": [
+      "p99_delta_validator_unknown_error",
+      "p99_delta_helper_drifted_from_manifest"
+    ]
+  }
 }

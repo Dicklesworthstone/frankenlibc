@@ -217,6 +217,111 @@ pub fn compute(samples: &[f64], seed: u64) -> Result<TailStats, TailStatsError> 
     })
 }
 
+/// Strict-vs-hardened p99 delta computed from two [`TailStats`]
+/// instances (bd-hp41p).
+///
+/// Used by the bd-juvqm.12 timing side-channel budget gate to
+/// classify whether an observed p99 delta is (a) within budget, (b)
+/// over budget, (c) just noise (CI overlap), or (d) amplified
+/// beyond the per-path threshold.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct P99Delta {
+    /// Absolute value of `(strict.p99 - hardened.p99)` in
+    /// nanoseconds. Always non-negative — sign is irrelevant for
+    /// budget gating.
+    pub p99_delta_ns: f64,
+    /// True iff the bootstrap p99 CIs of the two TailStats do NOT
+    /// overlap. Disjoint CIs mean the delta is statistically
+    /// distinguishable from noise.
+    pub ci_disjoint: bool,
+    /// `max(strict.p99, hardened.p99) / min(strict.p99, hardened.p99)`.
+    /// If the smaller p99 is 0, the ratio is `f64::INFINITY`.
+    pub amplification_ratio: f64,
+    /// True iff both TailStats have at least
+    /// [`MIN_SAMPLES_FOR_P99`] samples.
+    pub sufficient_samples: bool,
+}
+
+/// Compute a [`P99Delta`] from two [`TailStats`] instances.
+pub fn compute_p99_delta(strict: &TailStats, hardened: &TailStats) -> P99Delta {
+    let p99_delta_ns = (strict.p99 - hardened.p99).abs();
+    let ci_disjoint =
+        strict.p99_ci_high < hardened.p99_ci_low || hardened.p99_ci_high < strict.p99_ci_low;
+    let max = strict.p99.max(hardened.p99);
+    let min = strict.p99.min(hardened.p99);
+    let amplification_ratio = if min > 0.0 {
+        max / min
+    } else if max > 0.0 {
+        f64::INFINITY
+    } else {
+        // Both p99 values are 0 — ratio is undefined; treat as 1 (no amplification).
+        1.0
+    };
+    let sufficient_samples = strict.sufficient_for_p99 && hardened.sufficient_for_p99;
+    P99Delta {
+        p99_delta_ns,
+        ci_disjoint,
+        amplification_ratio,
+        sufficient_samples,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum P99DeltaError {
+    OverBudget,
+    AmplificationAboveThreshold,
+    InsufficientSamples,
+    /// CI intervals overlap (delta is noise) AND the apparent
+    /// p99_delta_ns exceeds budget. The contract distinguishes this
+    /// from a real over-budget event because it requires more
+    /// samples to disambiguate.
+    CiIndistinguishableButOverBudget,
+}
+
+impl core::fmt::Display for P99DeltaError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            P99DeltaError::OverBudget => f.write_str("p99_delta_ns exceeds allowed_budget_ns"),
+            P99DeltaError::AmplificationAboveThreshold => {
+                f.write_str("amplification_ratio exceeds threshold")
+            }
+            P99DeltaError::InsufficientSamples => {
+                f.write_str("insufficient samples for p99 (need >= 100)")
+            }
+            P99DeltaError::CiIndistinguishableButOverBudget => f.write_str(
+                "p99 CIs overlap (delta is noise) but observed delta exceeds budget — collect more samples",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for P99DeltaError {}
+
+/// Validate a [`P99Delta`] against a path's budget. Fails closed
+/// when the delta is over budget, amplification is excessive,
+/// samples are insufficient, or the apparent over-budget is just
+/// noise (CI overlap).
+pub fn validate_p99_delta_against_budget(
+    delta: &P99Delta,
+    allowed_budget_ns: u64,
+    amplification_threshold: f64,
+) -> Result<(), P99DeltaError> {
+    if !delta.sufficient_samples {
+        return Err(P99DeltaError::InsufficientSamples);
+    }
+    let over_budget = delta.p99_delta_ns > allowed_budget_ns as f64;
+    if over_budget && !delta.ci_disjoint {
+        return Err(P99DeltaError::CiIndistinguishableButOverBudget);
+    }
+    if delta.amplification_ratio > amplification_threshold {
+        return Err(P99DeltaError::AmplificationAboveThreshold);
+    }
+    if over_budget {
+        return Err(P99DeltaError::OverBudget);
+    }
+    Ok(())
+}
+
 /// Tiny PCG32 PRNG — duplicated locally so the harness has zero
 /// runtime-RNG crate dependency. The constants match the reference
 /// PCG-XSH-RR implementation.
@@ -407,5 +512,130 @@ mod tests {
         assert!(lo <= p, "lo={lo} > p={p}");
         assert!(hi >= p, "hi={hi} < p={p}");
         assert!(hi >= lo);
+    }
+
+    // ── P99Delta tests (bd-hp41p) ────────────────────────────────────
+
+    fn synth_stats(p99: f64, ci_low: f64, ci_high: f64, n: usize) -> TailStats {
+        TailStats {
+            n,
+            p50: p99 * 0.5,
+            p95: p99 * 0.9,
+            p99,
+            p999: p99 * 1.1,
+            p99_ci_low: ci_low,
+            p99_ci_high: ci_high,
+            sufficient_for_p99: n >= MIN_SAMPLES_FOR_P99,
+            sufficient_for_p999: n >= MIN_SAMPLES_FOR_P999,
+            overloaded_host: false,
+            seed: 0,
+            bootstrap_iters: DEFAULT_BOOTSTRAP_ITERS,
+        }
+    }
+
+    #[test]
+    fn p99_delta_handles_strict_faster_than_hardened() {
+        let strict = synth_stats(100.0, 95.0, 105.0, 1000);
+        let hardened = synth_stats(250.0, 245.0, 255.0, 1000);
+        let d = compute_p99_delta(&strict, &hardened);
+        assert_eq!(d.p99_delta_ns, 150.0);
+        assert!(d.ci_disjoint, "CIs [95,105] and [245,255] must be disjoint");
+        assert!(d.sufficient_samples);
+        assert!((d.amplification_ratio - 2.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn p99_delta_handles_hardened_faster_than_strict_by_taking_abs() {
+        let strict = synth_stats(300.0, 290.0, 310.0, 1000);
+        let hardened = synth_stats(100.0, 95.0, 105.0, 1000);
+        let d = compute_p99_delta(&strict, &hardened);
+        assert_eq!(d.p99_delta_ns, 200.0, "abs delta");
+    }
+
+    #[test]
+    fn p99_delta_ci_overlap_is_detected_as_indistinguishable() {
+        let strict = synth_stats(100.0, 90.0, 110.0, 500);
+        let hardened = synth_stats(150.0, 95.0, 200.0, 500);
+        let d = compute_p99_delta(&strict, &hardened);
+        // strict CI [90,110] overlaps hardened CI [95,200] at [95,110].
+        assert!(!d.ci_disjoint);
+    }
+
+    #[test]
+    fn p99_delta_amplification_ratio_handles_zero() {
+        let strict = synth_stats(0.0, 0.0, 0.0, 1000);
+        let hardened = synth_stats(100.0, 95.0, 105.0, 1000);
+        let d = compute_p99_delta(&strict, &hardened);
+        assert!(d.amplification_ratio.is_infinite());
+    }
+
+    #[test]
+    fn validate_within_budget_passes() {
+        let strict = synth_stats(100.0, 95.0, 105.0, 1000);
+        let hardened = synth_stats(250.0, 245.0, 255.0, 1000);
+        let d = compute_p99_delta(&strict, &hardened);
+        // 150ns delta, 200ns budget → within budget. ratio=2.5 < 3.0.
+        assert!(validate_p99_delta_against_budget(&d, 200, 3.0).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_over_budget_with_disjoint_ci() {
+        let strict = synth_stats(100.0, 95.0, 105.0, 1000);
+        let hardened = synth_stats(400.0, 395.0, 405.0, 1000);
+        let d = compute_p99_delta(&strict, &hardened);
+        // 300ns delta, 200ns budget → over budget. CIs disjoint.
+        // ratio=4.0 > 3.0 → AmplificationAboveThreshold fires first.
+        assert!(matches!(
+            validate_p99_delta_against_budget(&d, 200, 3.0),
+            Err(P99DeltaError::AmplificationAboveThreshold)
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_over_budget_when_amplification_within_threshold() {
+        let strict = synth_stats(100.0, 95.0, 105.0, 1000);
+        let hardened = synth_stats(250.0, 245.0, 255.0, 1000);
+        let d = compute_p99_delta(&strict, &hardened);
+        // 150ns delta, 100ns budget → over budget. ratio=2.5 < 3.0.
+        assert!(matches!(
+            validate_p99_delta_against_budget(&d, 100, 3.0),
+            Err(P99DeltaError::OverBudget)
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_amplification_above_threshold() {
+        let strict = synth_stats(100.0, 95.0, 105.0, 1000);
+        let hardened = synth_stats(500.0, 495.0, 505.0, 1000);
+        let d = compute_p99_delta(&strict, &hardened);
+        // ratio=5.0 > 3.0.
+        assert!(matches!(
+            validate_p99_delta_against_budget(&d, 1_000_000, 3.0),
+            Err(P99DeltaError::AmplificationAboveThreshold)
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_insufficient_samples() {
+        let strict = synth_stats(100.0, 95.0, 105.0, 50);
+        let hardened = synth_stats(150.0, 145.0, 155.0, 50);
+        let d = compute_p99_delta(&strict, &hardened);
+        assert!(matches!(
+            validate_p99_delta_against_budget(&d, 200, 3.0),
+            Err(P99DeltaError::InsufficientSamples)
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_ci_indistinguishable_but_over_budget() {
+        let strict = synth_stats(100.0, 50.0, 200.0, 1000);
+        let hardened = synth_stats(150.0, 80.0, 220.0, 1000);
+        let d = compute_p99_delta(&strict, &hardened);
+        // delta=50, budget=10 → over budget. CIs overlap heavily.
+        assert!(!d.ci_disjoint);
+        assert!(matches!(
+            validate_p99_delta_against_budget(&d, 10, 3.0),
+            Err(P99DeltaError::CiIndistinguishableButOverBudget)
+        ));
     }
 }
