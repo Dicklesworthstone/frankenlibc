@@ -1,0 +1,216 @@
+{
+  "schema": "reverse_loader_process_abi_standalone_completion_contract.v1",
+  "bead": "bd-bp8fl.3.7",
+  "completion_debt_bead": "bd-bp8fl.3.7.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.3.7/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "artifacts": {
+      "base_artifact": "tests/conformance/reverse_loader_process_abi_standalone_gate.v1.json",
+      "base_checker": "scripts/check_reverse_loader_process_abi_standalone_gate.sh",
+      "base_harness_test": "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_gate_test.rs",
+      "standalone_smoke_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "standalone_smoke_checker": "scripts/check_standalone_link_run_smoke.sh",
+      "completion_contract": "tests/conformance/reverse_loader_process_abi_standalone_completion_contract.v1.json",
+      "completion_checker": "scripts/check_reverse_loader_process_abi_standalone_completion_contract.sh",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "tests/conformance/reverse_loader_process_abi_standalone_gate.v1.json:2",
+      "tests/conformance/reverse_loader_process_abi_standalone_gate.v1.json:4",
+      "tests/conformance/reverse_loader_process_abi_standalone_gate.v1.json:7",
+      "tests/conformance/reverse_loader_process_abi_standalone_gate.v1.json:29",
+      "tests/conformance/reverse_loader_process_abi_standalone_gate.v1.json:43",
+      "tests/conformance/reverse_loader_process_abi_standalone_gate.v1.json:65",
+      "tests/conformance/reverse_loader_process_abi_standalone_gate.v1.json:79",
+      "tests/conformance/reverse_loader_process_abi_standalone_gate.v1.json:94",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:49",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:70",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:83",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:101",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:248",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:270",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:275",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:351",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:417",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:460",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:498",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:534",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:547",
+      "scripts/check_reverse_loader_process_abi_standalone_gate.sh:565",
+      "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_gate_test.rs:380",
+      "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_gate_test.rs:519",
+      "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_gate_test.rs:561",
+      "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_gate_test.rs:616",
+      "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_gate_test.rs:635",
+      "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_gate_test.rs:654",
+      "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_gate_test.rs:676",
+      "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_gate_test.rs:706",
+      "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_gate_test.rs:728"
+    ],
+    "gate_policy": {
+      "required_gap_count": 10,
+      "required_runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "required_structured_log_rows": 20,
+      "minimum_positive_smoke_rows": 4,
+      "minimum_negative_smoke_rows": 1,
+      "required_negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "required_evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
+      "required_claim_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "required_claim_rejections": [
+        "ld_preload_only",
+        "version_script_only",
+        "summary_only",
+        "stale_standalone_artifact",
+        "stale_source_commit",
+        "missing_negative_row",
+        "missing_gap_binding",
+        "host_callthrough_overclaim"
+      ],
+      "required_report_checks": [
+        "standalone_smoke_binding",
+        "versioned_symbol_binding",
+        "positive_negative_evidence",
+        "readiness_blocker_binding",
+        "structured_log",
+        "runtime_mode_evidence",
+        "ledger_gap_binding"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "base_harness_test",
+          "name": "gate_artifact_preserves_loader_process_gap_contract"
+        },
+        {
+          "source": "base_harness_test",
+          "name": "stale_source_commit_policy_blocks_reverse_loader_gate_evidence"
+        },
+        {
+          "source": "base_harness_test",
+          "name": "checker_rejects_missing_source_commit_freshness_policy"
+        },
+        {
+          "source": "base_harness_test",
+          "name": "checker_rejects_missing_gap_row"
+        },
+        {
+          "source": "base_harness_test",
+          "name": "checker_rejects_missing_versioned_symbol"
+        },
+        {
+          "source": "base_harness_test",
+          "name": "checker_rejects_missing_negative_row_binding"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "contract_binds_reverse_loader_gate_symbols_and_existing_tests"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_stale_implementation_ref"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_bare_cargo_command"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test reverse_loader_process_abi_standalone_gate_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test reverse_loader_process_abi_standalone_completion_contract_test -- --nocapture"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "required_scripts": [
+        "scripts/check_reverse_loader_process_abi_standalone_gate.sh",
+        "scripts/check_standalone_link_run_smoke.sh --validate-only",
+        "scripts/check_reverse_loader_process_abi_standalone_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {
+          "source": "base_harness_test",
+          "name": "checker_passes_and_emits_report_and_logs"
+        },
+        {
+          "source": "base_harness_test",
+          "name": "checker_rejects_stale_source_commit"
+        },
+        {
+          "source": "base_harness_test",
+          "name": "checker_rejects_expected_actual_mismatch"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_emits_report_log_and_replays_base_gates"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_completion_telemetry_event"
+        }
+      ],
+      "required_commands": [
+        "scripts/check_reverse_loader_process_abi_standalone_completion_contract.sh",
+        "scripts/check_reverse_loader_process_abi_standalone_gate.sh",
+        "scripts/check_standalone_link_run_smoke.sh --validate-only",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test reverse_loader_process_abi_standalone_gate_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test reverse_loader_process_abi_standalone_completion_contract_test -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "required_log_artifacts": [
+        "target/conformance/reverse_loader_process_abi_standalone_completion_contract.report.json",
+        "target/conformance/reverse_loader_process_abi_standalone_completion_contract.log.jsonl"
+      ],
+      "required_events": [
+        "reverse_loader_standalone_units_validated",
+        "reverse_loader_standalone_conformance_validated",
+        "reverse_loader_standalone_telemetry_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "completion_debt_bead",
+        "original_bead",
+        "event",
+        "status",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "gap_count",
+        "structured_log_row_count",
+        "versioned_symbol_requirement_count",
+        "positive_smoke_row_count",
+        "negative_smoke_row_count",
+        "standalone_claim_status",
+        "standalone_artifact_status",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    },
+    "test_sources": {
+      "base_harness_test": "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_gate_test.rs",
+      "completion_harness_test": "crates/frankenlibc-harness/tests/reverse_loader_process_abi_standalone_completion_contract_test.rs"
+    }
+  }
+}
