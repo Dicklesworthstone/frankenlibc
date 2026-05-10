@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1m5.5",
-  "generated_at": "2026-04-27T03:56:49Z",
+  "generated_at": "2026-05-10T06:08:48Z",
   "summary": {
     "total_cve_tests": 12,
     "manifests_valid": 12,
@@ -205,6 +205,33 @@
           ]
         }
       },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:f0de8ab154ac1184",
+        "seed_sha256": "350245dcfe8e1f999ef41d9003462470fe3c0028bcb1e499950c285adb47562a",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
+      },
       "manifest_path": "tests/cve_arena/glibc/cve_2023_6246_syslog_suite/manifest.json",
       "manifest_sha256": "d7a5050e904531fc7cf2fa347911ef8307a30dd11b6aebf48f8f1d385b993655"
     },
@@ -257,6 +284,33 @@
             "ClampSize"
           ]
         }
+      },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:b46ab43e83076b06",
+        "seed_sha256": "b143eab2e1bf60a330f9f4f07408b002b202db758711cfb525b335007eb7c136",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
       },
       "manifest_path": "tests/cve_arena/glibc/cve_2024_2961_iconv/manifest.json",
       "manifest_sha256": "b78a60a9aad07ecc0795a847ea21d96fa1b5d2ef6be28a77681fa8da44366ff8"
@@ -321,6 +375,33 @@
           ]
         }
       },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:c8d97a4a36bfdb74",
+        "seed_sha256": "6d756219fc57e8e69409e7ad9deeff55d93e50ad6eba206583538648a58a2f75",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
+      },
       "manifest_path": "tests/cve_arena/glibc/cve_2024_33599_nscd_suite/manifest.json",
       "manifest_sha256": "4676f50f8f7ea225b7279b05669c279c1dc1df61b2482fa51e748291afde7fb1"
     },
@@ -374,6 +455,33 @@
             "IgnoreDoubleFree"
           ]
         }
+      },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:b065a2c95f4fd38e",
+        "seed_sha256": "8750fc28112c6d093d4b0e868809588ec22db0900f19e6af2296fd604a25eefc",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
       },
       "manifest_path": "tests/cve_arena/glibc/cve_2025_8058_regcomp/manifest.json",
       "manifest_sha256": "85424fdee41e673fd60cad94a24ed6645e5ac3dfe4e47116f11e42a71022f481"
@@ -431,6 +539,33 @@
           ]
         }
       },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:7a62a6eb0f64f0df",
+        "seed_sha256": "e9cecb66a8aed876c875385f7aa851e1977d3bc545e6875c0a7d76ae0529fa7a",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
+      },
       "manifest_path": "tests/cve_arena/synthetic/dcerpc_heap_overflow_cve_2024_38812/manifest.json",
       "manifest_sha256": "0081a2e5df87bc80563cfb3de9910ff25b9a2744c7062f27cac92ad1e7475cce"
     },
@@ -481,6 +616,33 @@
             "UpgradeToSafeVariant"
           ]
         }
+      },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:f9059bd70cf9d6a8",
+        "seed_sha256": "f6cb8806db4306ba7f0d124415a8cc0ebfe8dad19e57cf07521ffcf20b77857d",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
       },
       "manifest_path": "tests/cve_arena/synthetic/format_string_cve_2024_23113/manifest.json",
       "manifest_sha256": "110bc5fcdb41ca844a6118d2b918547ef260d222eb99f5fa54f014b946642801"
@@ -540,6 +702,33 @@
           ]
         }
       },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:b0724e5311311951",
+        "seed_sha256": "2191633ad50a8c30387ad1b184e2787a184903f5b0c26aabc1343c114c0dbe39",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
+      },
       "manifest_path": "tests/cve_arena/synthetic/quic_uaf_cve_2024_24990/manifest.json",
       "manifest_sha256": "5f66bfad5b42d93610f2d439276b9501ad791be36ae80ba3142c9d46940c5290"
     },
@@ -597,6 +786,33 @@
             "IgnoreForeignFree"
           ]
         }
+      },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:31d335f5302082a7",
+        "seed_sha256": "ccf2625e5389803cabcfbca4521aa805e09ce9397d8397d60777289410c12719",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
       },
       "manifest_path": "tests/cve_arena/targets/curl/manifest.json",
       "manifest_sha256": "dac633a48238d0250e4c85fc4a06073482ffd969019680f7d39a28a7eeb74988"
@@ -658,6 +874,33 @@
           ]
         }
       },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:6902f7733d05bea7",
+        "seed_sha256": "cb4d9197f26dcb71c79b8102a5de4b7c49304238adfad34add8089544216c4ce",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
+      },
       "manifest_path": "tests/cve_arena/targets/perl/manifest.json",
       "manifest_sha256": "3b52b5eaaa8d0d116c3d4b3b0ef45335b073a84846a4e5f86de47b2b324bdbdf"
     },
@@ -717,6 +960,33 @@
           ]
         }
       },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:3ba35bb272fdda76",
+        "seed_sha256": "5a062b4376fab00a55e73692a7330ea9cfe37bf405ff209b7c75bb431dd58b7c",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
+      },
       "manifest_path": "tests/cve_arena/targets/redis/manifest.json",
       "manifest_sha256": "f11e5283c00f44b57edfa39abf350774dd6b075cf40e2623a38149e605802b43"
     },
@@ -775,6 +1045,33 @@
             "TruncateWithNull"
           ]
         }
+      },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:0ba895e09c823da3",
+        "seed_sha256": "c3ce9fd173f427520aff5e407810d0098bf4431cef955c36358b90cd77a787d3",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
       },
       "manifest_path": "tests/cve_arena/targets/sudo/manifest.json",
       "manifest_sha256": "7bc1fa0aa20258130a4f86b5147d93eb4609a4ec0d428eae0a78b42b99edf868"
@@ -836,8 +1133,123 @@
           ]
         }
       },
+      "fuzz_replay_seed": {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": "cve_arena:1d73a74140226a9d",
+        "seed_sha256": "ad75359fdca8e584e3e9489c94e4ae35a1583ef5b3f476ee92ac56e34398ae7f",
+        "mutation_axes": [
+          "mode",
+          "category",
+          "cwe_ids",
+          "trigger_files",
+          "healing_actions"
+        ],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "source_manifest_fields": [
+          "cve_id",
+          "test_name",
+          "category",
+          "cwe_ids",
+          "build_cmd",
+          "run_cmd_stock",
+          "run_cmd_tsm",
+          "expected_stock_behavior",
+          "expected_tsm_behavior"
+        ]
+      },
       "manifest_path": "tests/cve_arena/targets/vlc/manifest.json",
       "manifest_sha256": "5ed9dfb5e82624b04f07f85bf783126c7d6db135b325bb0ddc89a332d8a32e07"
     }
-  ]
+  ],
+  "completion_debt_evidence": {
+    "bead": "bd-1m5.5.1",
+    "original_bead": "bd-1m5.5",
+    "test_source": "crates/frankenlibc-harness/tests/cve_corpus_normalization_test.rs",
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Unit-level schema, replay-key, vulnerability-class, and deterministic metadata assertions for the normalized CVE corpus.",
+      "required_test_names": [
+        "corpus_report_schema_complete",
+        "corpus_all_entries_have_replay_keys",
+        "corpus_all_entries_have_vulnerability_classes",
+        "replay_keys_are_deterministic_under_fixed_timestamp"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "End-to-end generator/checker evidence for the corpus report and structured log.",
+      "generator_script": "scripts/generate_cve_corpus_normalization.py",
+      "checker_script": "scripts/check_cve_corpus_normalization.sh",
+      "required_test_names": [
+        "corpus_report_generates_successfully",
+        "normalization_checker_accepts_completion_debt_bindings"
+      ]
+    },
+    "fuzz_primary": {
+      "missing_item_id": "tests.fuzz.primary",
+      "description": "Deterministic fuzz-seed metadata derived from every normalized CVE scenario for downstream strict/hardened replay fuzzing.",
+      "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+      "required_entry_field": "fuzz_replay_seed",
+      "required_seed_fields": [
+        "seed_payload_schema",
+        "seed_id",
+        "seed_sha256",
+        "mutation_axes",
+        "replay_modes",
+        "source_manifest_fields"
+      ],
+      "required_test_names": [
+        "corpus_entries_define_fuzz_replay_seed_contract",
+        "fuzz_replay_seed_keys_are_deterministic_under_fixed_timestamp"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "description": "Conformance-level corpus integrity checks for manifest validity, dual-mode expectations, stable scenario IDs, and manifest digests.",
+      "artifact": "tests/cve_arena/results/corpus_normalization.v1.json",
+      "required_test_names": [
+        "corpus_all_manifests_valid",
+        "corpus_all_entries_have_dual_mode_expectations",
+        "corpus_entries_include_scenario_ids_and_manifest_hashes",
+        "corpus_multiple_vulnerability_classes_covered"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "Structured JSON report and JSONL telemetry emitted by the CVE corpus normalization checker.",
+      "default_report_path": "tests/cve_arena/results/corpus_normalization.v1.json",
+      "default_log_path": "tests/cve_arena/results/corpus_normalization.log.jsonl",
+      "required_test_names": [
+        "structured_log_contains_dual_mode_expectations",
+        "normalization_checker_accepts_completion_debt_bindings"
+      ],
+      "required_events": [
+        "scenario_expectation",
+        "corpus_summary"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "api_family",
+        "event",
+        "bead_id",
+        "completion_debt_bead",
+        "parent_bead",
+        "artifact_refs",
+        "outcome",
+        "failure_signature",
+        "cve_id",
+        "scenario_id",
+        "mode",
+        "expected_outcome",
+        "replay_key",
+        "fuzz_seed_id",
+        "manifest_path",
+        "manifest_sha256"
+      ]
+    }
+  }
 }

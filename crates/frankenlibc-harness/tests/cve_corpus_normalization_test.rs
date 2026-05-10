@@ -1,6 +1,7 @@
 // cve_corpus_normalization_test.rs — bd-1m5.5
 // Integration tests for CVE corpus normalization and deterministic replay metadata.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,10 +16,8 @@ fn repo_root() -> std::path::PathBuf {
 }
 
 fn load_json(path: &Path) -> serde_json::Value {
-    let content = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
-    serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+    let content = std::fs::read_to_string(path).expect("CVE corpus JSON file must be readable");
+    serde_json::from_str(&content).expect("CVE corpus JSON file must parse")
 }
 
 fn unique_temp_path(name: &str, extension: &str) -> std::path::PathBuf {
@@ -52,11 +51,34 @@ fn run_generator_with_args(extra_args: &[&str]) -> std::process::Output {
 
 fn load_jsonl(path: &Path) -> Vec<serde_json::Value> {
     std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e))
+        .expect("CVE corpus JSONL file must be readable")
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| serde_json::from_str(line).expect("each JSONL line must parse"))
         .collect()
+}
+
+fn test_source_text(root: &Path, rel: &str) -> String {
+    std::fs::read_to_string(root.join(rel)).expect("completion-debt test source must be readable")
+}
+
+fn assert_required_tests_are_declared(evidence: &serde_json::Value, section: &str, source: &str) {
+    let tests = evidence[section]["required_test_names"]
+        .as_array()
+        .expect("completion-debt section must carry required_test_names array");
+    assert!(
+        !tests.is_empty(),
+        "{section}.required_test_names must not be empty"
+    );
+    for name in tests {
+        let name = name
+            .as_str()
+            .expect("completion-debt required test name must be a string");
+        assert!(
+            source.contains(&format!("fn {name}(")),
+            "{section} references missing test function {name}"
+        );
+    }
 }
 
 #[test]
@@ -267,10 +289,16 @@ fn structured_log_contains_dual_mode_expectations() {
     for entry in scenario_entries {
         assert_eq!(entry["api_family"].as_str(), Some("cve_arena"));
         assert_eq!(entry["bead_id"].as_str(), Some("bd-1m5.5"));
+        assert_eq!(entry["completion_debt_bead"].as_str(), Some("bd-1m5.5.1"));
+        assert_eq!(entry["parent_bead"].as_str(), Some("bd-1m5.5"));
         assert_eq!(entry["timestamp"].as_str(), Some(fixed_ts));
         assert!(entry["trace_id"].as_str().unwrap().contains("bd-1m5.5:"));
+        assert_eq!(entry["outcome"].as_str(), Some("expected"));
+        assert_eq!(entry["failure_signature"].as_str(), Some("none"));
+        assert!(entry["artifact_refs"].as_array().unwrap().len() >= 3);
         assert!(entry["expected_outcome"].is_string());
         assert!(entry["replay_key"].is_string());
+        assert!(entry["fuzz_seed_id"].is_string());
         assert!(entry["scenario_id"].is_string());
         assert!(entry["manifest_sha256"].is_string());
         assert!(
@@ -279,6 +307,206 @@ fn structured_log_contains_dual_mode_expectations() {
             entry
         );
     }
+}
+
+#[test]
+fn corpus_entries_define_fuzz_replay_seed_contract() {
+    let root = repo_root();
+    let report_path = root.join("tests/cve_arena/results/corpus_normalization.v1.json");
+    let data = load_json(&report_path);
+    let corpus = data["corpus_index"].as_array().unwrap();
+    assert!(!corpus.is_empty(), "No CVE tests in corpus");
+
+    let mut seen_seed_ids = HashSet::new();
+    for entry in corpus {
+        let cve_id = entry["cve_id"].as_str().unwrap_or("unknown");
+        let replay_key = entry["replay"]["replay_key"].as_str().unwrap();
+        let fuzz = &entry["fuzz_replay_seed"];
+        assert_eq!(
+            fuzz["seed_payload_schema"].as_str(),
+            Some("cve-arena-fuzz-seed/v1"),
+            "{cve_id} fuzz seed schema drifted"
+        );
+        assert_eq!(
+            fuzz["seed_id"].as_str().unwrap_or(""),
+            format!("cve_arena:{replay_key}"),
+            "{cve_id} seed_id must bind replay_key"
+        );
+        let digest = fuzz["seed_sha256"].as_str().unwrap_or("");
+        assert_eq!(digest.len(), 64, "{cve_id} seed digest length");
+        assert!(
+            digest.chars().all(|ch| ch.is_ascii_hexdigit()),
+            "{cve_id} seed digest must be hex"
+        );
+        assert!(
+            seen_seed_ids.insert(fuzz["seed_id"].as_str().unwrap().to_string()),
+            "{cve_id} duplicate fuzz seed_id"
+        );
+
+        let modes: Vec<_> = fuzz["replay_modes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        assert_eq!(modes, vec!["strict", "hardened"], "{cve_id} replay modes");
+
+        let axes: HashSet<_> = fuzz["mutation_axes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        for axis in [
+            "mode",
+            "category",
+            "cwe_ids",
+            "trigger_files",
+            "healing_actions",
+        ] {
+            assert!(axes.contains(axis), "{cve_id} missing fuzz axis {axis}");
+        }
+    }
+}
+
+#[test]
+fn fuzz_replay_seed_keys_are_deterministic_under_fixed_timestamp() {
+    let first_report = unique_temp_path("cve_corpus_fuzz_seed_first", "json");
+    let second_report = unique_temp_path("cve_corpus_fuzz_seed_second", "json");
+    let fixed_ts = "2026-03-19T00:00:00Z";
+
+    for report_path in [&first_report, &second_report] {
+        let output = run_generator_with_args(&[
+            "-o",
+            report_path.to_str().unwrap(),
+            "--timestamp",
+            fixed_ts,
+        ]);
+        assert!(
+            output.status.success(),
+            "generator failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let first = load_json(&first_report);
+    let second = load_json(&second_report);
+    let first_entries = first["corpus_index"].as_array().unwrap();
+    let second_entries = second["corpus_index"].as_array().unwrap();
+    assert_eq!(first_entries.len(), second_entries.len());
+
+    for (left, right) in first_entries.iter().zip(second_entries.iter()) {
+        assert_eq!(left["scenario_id"], right["scenario_id"]);
+        assert_eq!(left["fuzz_replay_seed"], right["fuzz_replay_seed"]);
+    }
+}
+
+#[test]
+fn completion_debt_evidence_binds_all_audit_items() {
+    let root = repo_root();
+    let report_path = root.join("tests/cve_arena/results/corpus_normalization.v1.json");
+    let data = load_json(&report_path);
+    let evidence = &data["completion_debt_evidence"];
+
+    assert_eq!(evidence["bead"].as_str(), Some("bd-1m5.5.1"));
+    assert_eq!(evidence["original_bead"].as_str(), Some("bd-1m5.5"));
+    assert_eq!(
+        evidence["test_source"].as_str(),
+        Some("crates/frankenlibc-harness/tests/cve_corpus_normalization_test.rs")
+    );
+
+    let source = test_source_text(&root, evidence["test_source"].as_str().unwrap());
+    for (section, missing_item) in [
+        ("unit_primary", "tests.unit.primary"),
+        ("e2e_primary", "tests.e2e.primary"),
+        ("fuzz_primary", "tests.fuzz.primary"),
+        ("conformance_primary", "tests.conformance.primary"),
+        ("telemetry_primary", "telemetry.primary"),
+    ] {
+        assert_eq!(
+            evidence[section]["missing_item_id"].as_str(),
+            Some(missing_item),
+            "{section}.missing_item_id"
+        );
+        assert_required_tests_are_declared(evidence, section, &source);
+    }
+
+    assert_eq!(
+        evidence["fuzz_primary"]["required_entry_field"].as_str(),
+        Some("fuzz_replay_seed")
+    );
+    let seed_fields: HashSet<_> = evidence["fuzz_primary"]["required_seed_fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    for field in [
+        "seed_payload_schema",
+        "seed_id",
+        "seed_sha256",
+        "mutation_axes",
+        "replay_modes",
+        "source_manifest_fields",
+    ] {
+        assert!(seed_fields.contains(field), "missing seed field {field}");
+    }
+
+    let telemetry = &evidence["telemetry_primary"];
+    assert_eq!(
+        telemetry["default_report_path"].as_str(),
+        Some("tests/cve_arena/results/corpus_normalization.v1.json")
+    );
+    assert_eq!(
+        telemetry["default_log_path"].as_str(),
+        Some("tests/cve_arena/results/corpus_normalization.log.jsonl")
+    );
+    let required_events: HashSet<_> = telemetry["required_events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert!(required_events.contains("scenario_expectation"));
+    assert!(required_events.contains("corpus_summary"));
+}
+
+#[test]
+fn normalization_checker_accepts_completion_debt_bindings() {
+    let root = repo_root();
+    let report_path = unique_temp_path("cve_corpus_normalization_gate_report", "json");
+    let log_path = unique_temp_path("cve_corpus_normalization_gate_log", "jsonl");
+
+    let output = Command::new("bash")
+        .arg(root.join("scripts/check_cve_corpus_normalization.sh"))
+        .current_dir(&root)
+        .env("FRANKENLIBC_CVE_CORPUS_NORMALIZATION_REPORT", &report_path)
+        .env("FRANKENLIBC_CVE_CORPUS_NORMALIZATION_LOG", &log_path)
+        .env(
+            "FRANKENLIBC_CVE_CORPUS_NORMALIZATION_TIMESTAMP",
+            "2026-03-19T00:00:00Z",
+        )
+        .output()
+        .expect("failed to execute CVE corpus normalization checker");
+    assert!(
+        output.status.success(),
+        "CVE corpus checker failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&report_path);
+    assert_eq!(
+        report["completion_debt_evidence"]["bead"].as_str(),
+        Some("bd-1m5.5.1")
+    );
+    let rows = load_jsonl(&log_path);
+    assert!(
+        rows.iter()
+            .any(|row| row["event"].as_str() == Some("corpus_summary")
+                && row["outcome"].as_str() == Some("pass")),
+        "checker log must include passing corpus_summary telemetry"
+    );
 }
 
 #[test]

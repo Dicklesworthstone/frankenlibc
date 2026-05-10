@@ -37,6 +37,12 @@ CWE_CLASSES = {
     "CWE-908": "uninitialized_memory",
 }
 
+ORIGINAL_BEAD = "bd-1m5.5"
+COMPLETION_DEBT_BEAD = "bd-1m5.5.1"
+TEST_SOURCE = "crates/frankenlibc-harness/tests/cve_corpus_normalization_test.rs"
+DEFAULT_REPORT_PATH = "tests/cve_arena/results/corpus_normalization.v1.json"
+DEFAULT_LOG_PATH = "tests/cve_arena/results/corpus_normalization.log.jsonl"
+
 REQUIRED_FIELDS = ["cve_id", "test_name", "category", "description",
                    "build_cmd", "cwe_ids", "tsm_features_tested"]
 
@@ -271,6 +277,137 @@ def build_replay_metadata(manifest, test_dir, normalized):
     }
 
 
+def build_fuzz_seed_metadata(manifest, normalized, triggers, replay):
+    """Build deterministic fuzz replay seed metadata from normalized scenario fields."""
+    tsm = manifest.get("expected_tsm_behavior") or manifest.get("expected_tsm", {})
+    seed_payload = {
+        "base_cve_id": extract_base_cve_id(manifest.get("cve_id", "")),
+        "test_name": manifest.get("test_name", ""),
+        "category": normalized.get("category", ""),
+        "cwe_ids": sorted(manifest.get("cwe_ids", [])),
+        "healing_actions": sorted(tsm.get("healing_actions", [])),
+        "replay_key": replay["replay_key"],
+        "trigger_files": sorted(triggers),
+    }
+    encoded = json.dumps(seed_payload, sort_keys=True, separators=(",", ":"))
+    return {
+        "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+        "seed_id": f"cve_arena:{replay['replay_key']}",
+        "seed_sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+        "mutation_axes": [
+            "mode",
+            "category",
+            "cwe_ids",
+            "trigger_files",
+            "healing_actions",
+        ],
+        "replay_modes": ["strict", "hardened"],
+        "source_manifest_fields": [
+            "cve_id",
+            "test_name",
+            "category",
+            "cwe_ids",
+            "build_cmd",
+            "run_cmd_stock",
+            "run_cmd_tsm",
+            "expected_stock_behavior",
+            "expected_tsm_behavior",
+        ],
+    }
+
+
+def build_completion_debt_evidence():
+    """Bind bd-1m5.5.1 audit items to concrete implementation/test evidence."""
+    return {
+        "bead": COMPLETION_DEBT_BEAD,
+        "original_bead": ORIGINAL_BEAD,
+        "test_source": TEST_SOURCE,
+        "unit_primary": {
+            "missing_item_id": "tests.unit.primary",
+            "description": "Unit-level schema, replay-key, vulnerability-class, and deterministic metadata assertions for the normalized CVE corpus.",
+            "required_test_names": [
+                "corpus_report_schema_complete",
+                "corpus_all_entries_have_replay_keys",
+                "corpus_all_entries_have_vulnerability_classes",
+                "replay_keys_are_deterministic_under_fixed_timestamp",
+            ],
+        },
+        "e2e_primary": {
+            "missing_item_id": "tests.e2e.primary",
+            "description": "End-to-end generator/checker evidence for the corpus report and structured log.",
+            "generator_script": "scripts/generate_cve_corpus_normalization.py",
+            "checker_script": "scripts/check_cve_corpus_normalization.sh",
+            "required_test_names": [
+                "corpus_report_generates_successfully",
+                "normalization_checker_accepts_completion_debt_bindings",
+            ],
+        },
+        "fuzz_primary": {
+            "missing_item_id": "tests.fuzz.primary",
+            "description": "Deterministic fuzz-seed metadata derived from every normalized CVE scenario for downstream strict/hardened replay fuzzing.",
+            "seed_payload_schema": "cve-arena-fuzz-seed/v1",
+            "required_entry_field": "fuzz_replay_seed",
+            "required_seed_fields": [
+                "seed_payload_schema",
+                "seed_id",
+                "seed_sha256",
+                "mutation_axes",
+                "replay_modes",
+                "source_manifest_fields",
+            ],
+            "required_test_names": [
+                "corpus_entries_define_fuzz_replay_seed_contract",
+                "fuzz_replay_seed_keys_are_deterministic_under_fixed_timestamp",
+            ],
+        },
+        "conformance_primary": {
+            "missing_item_id": "tests.conformance.primary",
+            "description": "Conformance-level corpus integrity checks for manifest validity, dual-mode expectations, stable scenario IDs, and manifest digests.",
+            "artifact": DEFAULT_REPORT_PATH,
+            "required_test_names": [
+                "corpus_all_manifests_valid",
+                "corpus_all_entries_have_dual_mode_expectations",
+                "corpus_entries_include_scenario_ids_and_manifest_hashes",
+                "corpus_multiple_vulnerability_classes_covered",
+            ],
+        },
+        "telemetry_primary": {
+            "missing_item_id": "telemetry.primary",
+            "description": "Structured JSON report and JSONL telemetry emitted by the CVE corpus normalization checker.",
+            "default_report_path": DEFAULT_REPORT_PATH,
+            "default_log_path": DEFAULT_LOG_PATH,
+            "required_test_names": [
+                "structured_log_contains_dual_mode_expectations",
+                "normalization_checker_accepts_completion_debt_bindings",
+            ],
+            "required_events": [
+                "scenario_expectation",
+                "corpus_summary",
+            ],
+            "required_fields": [
+                "timestamp",
+                "trace_id",
+                "api_family",
+                "event",
+                "bead_id",
+                "completion_debt_bead",
+                "parent_bead",
+                "artifact_refs",
+                "outcome",
+                "failure_signature",
+                "cve_id",
+                "scenario_id",
+                "mode",
+                "expected_outcome",
+                "replay_key",
+                "fuzz_seed_id",
+                "manifest_path",
+                "manifest_sha256",
+            ],
+        },
+    }
+
+
 def expected_outcome_label(mode, replay):
     """Summarize the expected outcome in a single stable string."""
     if mode == "strict":
@@ -305,15 +442,25 @@ def emit_structured_log(log_path, report_ts, corpus_entries):
             record = {
                 "schema_version": "v1",
                 "timestamp": timestamp,
-                "bead_id": "bd-1m5.5",
-                "trace_id": f"bd-1m5.5:{entry['scenario_id']}:{mode}:{replay['replay_key']}",
+                "bead_id": ORIGINAL_BEAD,
+                "completion_debt_bead": COMPLETION_DEBT_BEAD,
+                "parent_bead": ORIGINAL_BEAD,
+                "trace_id": f"{ORIGINAL_BEAD}:{entry['scenario_id']}:{mode}:{replay['replay_key']}",
                 "api_family": "cve_arena",
                 "event": "scenario_expectation",
+                "artifact_refs": [
+                    DEFAULT_REPORT_PATH,
+                    DEFAULT_LOG_PATH,
+                    entry["manifest_path"],
+                ],
+                "outcome": "expected",
+                "failure_signature": "none",
                 "cve_id": entry["cve_id"],
                 "scenario_id": entry["scenario_id"],
                 "mode": mode,
                 "expected_outcome": expected_outcome_label(mode, replay),
                 "replay_key": replay["replay_key"],
+                "fuzz_seed_id": entry["fuzz_replay_seed"]["seed_id"],
                 "category": entry["category_canonical"],
                 "vulnerability_classes": entry["vulnerability_classes"],
                 "preconditions": replay["preconditions"],
@@ -326,14 +473,25 @@ def emit_structured_log(log_path, report_ts, corpus_entries):
     summary = {
         "schema_version": "v1",
         "timestamp": timestamp,
-        "bead_id": "bd-1m5.5",
-        "trace_id": "bd-1m5.5:summary",
+        "bead_id": ORIGINAL_BEAD,
+        "completion_debt_bead": COMPLETION_DEBT_BEAD,
+        "parent_bead": ORIGINAL_BEAD,
+        "trace_id": f"{ORIGINAL_BEAD}:summary",
         "api_family": "cve_arena",
         "event": "corpus_summary",
+        "artifact_refs": [
+            DEFAULT_REPORT_PATH,
+            DEFAULT_LOG_PATH,
+        ],
+        "outcome": "pass",
+        "failure_signature": "none",
         "scenario_count": len(corpus_entries),
         "strict_events": len(corpus_entries),
         "hardened_events": len(corpus_entries),
         "replay_keys": sorted(entry["replay"]["replay_key"] for entry in corpus_entries),
+        "fuzz_seed_ids": sorted(
+            entry["fuzz_replay_seed"]["seed_id"] for entry in corpus_entries
+        ),
     }
     lines.append(json.dumps(summary, sort_keys=True))
     log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -415,6 +573,8 @@ def main():
         # Triggers
         triggers = get_trigger_files(test_dir)
 
+        fuzz_seed = build_fuzz_seed_metadata(manifest, normalized, triggers, replay)
+
         base_cve = extract_base_cve_id(cve_id)
         scenario_id = build_scenario_id(base_cve, test_name)
 
@@ -435,6 +595,7 @@ def main():
             "issues": issues,
             "normalization_changes": changes,
             "replay": replay,
+            "fuzz_replay_seed": fuzz_seed,
             "manifest_path": str(test_info["manifest_path"].relative_to(root)),
             "manifest_sha256": sha256_file(test_info["manifest_path"]),
         })
@@ -466,6 +627,7 @@ def main():
         },
         "normalization_changes": normalization_changes,
         "corpus_index": corpus_entries,
+        "completion_debt_evidence": build_completion_debt_evidence(),
     }
 
     emit_structured_log(args.log, report_ts, corpus_entries)
