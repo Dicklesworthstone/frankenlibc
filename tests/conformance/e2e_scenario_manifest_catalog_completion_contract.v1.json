@@ -1,0 +1,273 @@
+{
+  "schema_version": "e2e_scenario_manifest_catalog_completion_contract.v1",
+  "bead": "bd-b5a.1",
+  "completion_debt_bead": "bd-b5a.1.1",
+  "description": "Completion-debt evidence binding for the deterministic E2E scenario manifest catalog across smoke, stress, fault, and stability scenario classes.",
+  "completion_debt_evidence": {
+    "bead": "bd-b5a.1.1",
+    "original_bead": "bd-b5a.1",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-b5a.1/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "artifacts": {
+      "scenario_manifest": "tests/conformance/e2e_scenario_manifest.v1.json",
+      "manifest_validator": "scripts/validate_e2e_manifest.py",
+      "e2e_suite": "scripts/e2e_suite.sh",
+      "e2e_suite_checker": "scripts/check_e2e_suite.sh"
+    },
+    "gates": {
+      "manifest_validator": "scripts/validate_e2e_manifest.py",
+      "e2e_suite": "scripts/check_e2e_suite.sh",
+      "completion_contract": "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh"
+    },
+    "test_sources": {
+      "manifest_validation": "crates/frankenlibc-harness/tests/e2e_manifest_validation_test.rs",
+      "e2e_suite": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/e2e_scenario_manifest_catalog_completion_contract_test.rs"
+    },
+    "gate": "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+    "report_path": "target/conformance/e2e_scenario_manifest_catalog_completion_contract.report.json",
+    "log_path": "target/conformance/e2e_scenario_manifest_catalog_completion_contract.log.jsonl",
+    "implementation_refs": [
+      "tests/conformance/e2e_scenario_manifest.v1.json:1",
+      "scripts/validate_e2e_manifest.py:16",
+      "scripts/validate_e2e_manifest.py:249",
+      "scripts/validate_e2e_manifest.py:260",
+      "scripts/validate_e2e_manifest.py:275",
+      "scripts/e2e_suite.sh:31",
+      "scripts/e2e_suite.sh:72",
+      "scripts/e2e_suite.sh:474",
+      "scripts/e2e_suite.sh:484",
+      "scripts/e2e_suite.sh:1153",
+      "scripts/check_e2e_suite.sh:317",
+      "scripts/check_e2e_suite.sh:370",
+      "crates/frankenlibc-harness/tests/e2e_manifest_validation_test.rs:26",
+      "crates/frankenlibc-harness/tests/e2e_manifest_validation_test.rs:76",
+      "crates/frankenlibc-harness/tests/e2e_suite_test.rs:270",
+      "crates/frankenlibc-harness/tests/e2e_suite_test.rs:407",
+      "crates/frankenlibc-harness/tests/e2e_suite_test.rs:766",
+      "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/e2e_scenario_manifest_catalog_completion_contract_test.rs:1"
+    ],
+    "scenario_manifest_contract": {
+      "manifest_path": "tests/conformance/e2e_scenario_manifest.v1.json",
+      "required_manifest_id": "bd-b5a.1-e2e-scenario-catalog",
+      "required_schema_version": "v1",
+      "total_scenario_min": 19,
+      "required_classes": [
+        "smoke",
+        "stress",
+        "fault",
+        "stability"
+      ],
+      "class_minimums": {
+        "smoke": 13,
+        "stress": 2,
+        "fault": 3,
+        "stability": 1
+      },
+      "representative_scenario_ids": [
+        "smoke.coreutils_ls",
+        "stress.repeated_echo",
+        "fault.echo_empty",
+        "stability.link_longrun"
+      ],
+      "required_root_keys": [
+        "schema_version",
+        "manifest_id",
+        "description",
+        "replay_defaults",
+        "scenarios"
+      ],
+      "required_scenario_keys": [
+        "id",
+        "class",
+        "label",
+        "priority",
+        "description",
+        "command",
+        "mode_expectations",
+        "artifact_policy",
+        "replay"
+      ],
+      "required_modes": [
+        "strict",
+        "hardened"
+      ],
+      "required_expectation_keys": [
+        "expected_outcome",
+        "pass_condition",
+        "allowed_exit_codes"
+      ],
+      "required_artifact_policy_keys": [
+        "capture_stdout",
+        "capture_stderr",
+        "capture_env_on_failure",
+        "capture_bundle_on_failure",
+        "required_artifacts"
+      ],
+      "required_replay_keys": [
+        "seed_key",
+        "env_keys",
+        "deterministic_inputs"
+      ],
+      "replay_defaults": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "required_env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_MODE",
+          "TIMEOUT_SECONDS",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs_token": "Pinned seed + pinned command argv + pinned manifest schema."
+      }
+    },
+    "validator_contract": {
+      "source": "manifest_validator",
+      "required_commands": [
+        "validate",
+        "list",
+        "metadata"
+      ],
+      "required_tokens": [
+        "ALLOWED_CLASSES = {\"smoke\", \"stress\", \"fault\", \"stability\"}",
+        "REQUIRED_ROOT_KEYS",
+        "REQUIRED_MODE_KEYS = {\"strict\", \"hardened\"}",
+        "REQUIRED_ARTIFACT_POLICY_KEYS",
+        "REQUIRED_REPLAY_KEYS",
+        "def _cmd_validate",
+        "def _cmd_list",
+        "def _cmd_metadata",
+        "ManifestValidationError"
+      ],
+      "negative_test_ref": {
+        "source": "manifest_validation",
+        "name": "validator_rejects_under_specified_scenario"
+      }
+    },
+    "suite_contract": {
+      "source": "e2e_suite",
+      "checker_source": "e2e_suite_checker",
+      "required_tokens": [
+        "MANIFEST_PATH",
+        "--dry-run-manifest",
+        "manifest_validate",
+        "manifest_case_metadata",
+        "emit_log \"info\" \"manifest_case\"",
+        "scenario_pack_report.json"
+      ],
+      "checker_required_tokens": [
+        "validate_e2e_manifest.py",
+        "Manifest dry-run",
+        "manifest_case",
+        "scenario_pack_report.json"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Unit-level evidence binds the manifest validator, negative schema rejection, metadata lookup, catalog existence, and the completion harness contract checks.",
+      "required_test_refs": [
+        {
+          "source": "manifest_validation",
+          "name": "validator_rejects_under_specified_scenario"
+        },
+        {
+          "source": "manifest_validation",
+          "name": "validator_metadata_lookup_succeeds_for_known_case"
+        },
+        {
+          "source": "e2e_suite",
+          "name": "e2e_manifest_validator_and_catalog_exist"
+        },
+        {
+          "source": "e2e_suite",
+          "name": "e2e_suite_supports_scenario_filter"
+        },
+        {
+          "source": "completion_harness",
+          "name": "contract_binds_e2e_scenario_manifest_unit_and_e2e_evidence"
+        }
+      ],
+      "required_commands": [
+        "python3 scripts/validate_e2e_manifest.py validate --manifest tests/conformance/e2e_scenario_manifest.v1.json",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test e2e_manifest_validation_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "E2E evidence binds the manifest dry-run loader path, filtered scenario execution, structured JSONL trace rows, mode-pair reports, and scenario-pack artifact reporting.",
+      "required_gates": [
+        "scripts/check_e2e_suite.sh",
+        "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh"
+      ],
+      "required_artifacts": [
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "target/e2e_suite/<run_id>/trace.jsonl",
+        "target/e2e_suite/<run_id>/artifact_index.json",
+        "target/e2e_suite/<run_id>/mode_pair_report.json",
+        "target/e2e_suite/<run_id>/scenario_pack_report.json"
+      ],
+      "required_test_refs": [
+        {
+          "source": "e2e_suite",
+          "name": "e2e_suite_supports_manifest_dry_run"
+        },
+        {
+          "source": "e2e_suite",
+          "name": "e2e_suite_runs_and_produces_jsonl"
+        },
+        {
+          "source": "e2e_suite",
+          "name": "e2e_mode_pair_report_valid"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_passes_and_emits_report_and_jsonl"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/e2e_suite.sh --dry-run-manifest fault strict",
+        "bash scripts/check_e2e_suite.sh",
+        "bash scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test e2e_scenario_manifest_catalog_completion_contract_test -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "description": "The completion checker emits pass/fail JSONL rows that bind manifest id, per-class counts, artifact refs, test refs, source commit, and fail-closed signatures.",
+      "required_events": [
+        "e2e_scenario_manifest_catalog_completion_contract_validated",
+        "e2e_scenario_manifest_catalog_completion_contract_failed",
+        "e2e_scenario_manifest_class_bound"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "scenario_class",
+        "scenario_count",
+        "manifest_id",
+        "artifact_refs",
+        "test_refs",
+        "failure_signature"
+      ],
+      "required_test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "checker_passes_and_emits_report_and_jsonl"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_fault_class_binding"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_stale_test_binding"
+        }
+      ]
+    }
+  }
+}
