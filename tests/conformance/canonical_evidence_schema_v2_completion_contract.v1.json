@@ -1,0 +1,184 @@
+{
+  "schema_version": "canonical_evidence_schema_v2_completion_contract.v1",
+  "bead": "bd-33p.1",
+  "completion_debt_bead": "bd-33p.1.1",
+  "description": "Completion-debt evidence binding for canonical structured log schema v2 across unit, conformance, e2e, and telemetry proof surfaces.",
+  "completion_debt_evidence": {
+    "bead": "bd-33p.1.1",
+    "original_bead": "bd-33p.1",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-33p.1/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "schema_artifact": "tests/conformance/log_schema.json",
+    "test_sources": {
+      "structured_log": "crates/frankenlibc-harness/src/structured_log.rs",
+      "structured_log_integration": "crates/frankenlibc-harness/tests/structured_log_test.rs",
+      "schema_contract_harness": "crates/frankenlibc-harness/tests/structured_log_schema_contract_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/canonical_evidence_schema_v2_completion_contract_test.rs"
+    },
+    "gate": "scripts/check_canonical_evidence_schema_v2_completion_contract.sh",
+    "report_path": "target/conformance/canonical_evidence_schema_v2_completion_contract.report.json",
+    "log_path": "target/conformance/canonical_evidence_schema_v2_completion_contract.log.jsonl",
+    "implementation_refs": [
+      "tests/conformance/log_schema.json:1",
+      "crates/frankenlibc-harness/src/structured_log.rs:77",
+      "crates/frankenlibc-harness/src/structured_log.rs:88",
+      "crates/frankenlibc-harness/src/structured_log.rs:91",
+      "crates/frankenlibc-harness/src/structured_log.rs:122",
+      "crates/frankenlibc-harness/src/structured_log.rs:128",
+      "crates/frankenlibc-harness/src/structured_log.rs:135",
+      "crates/frankenlibc-harness/src/structured_log.rs:167",
+      "crates/frankenlibc-harness/src/structured_log.rs:176",
+      "crates/frankenlibc-harness/src/structured_log.rs:236",
+      "crates/frankenlibc-harness/src/structured_log.rs:317",
+      "crates/frankenlibc-harness/src/structured_log.rs:395",
+      "crates/frankenlibc-harness/src/structured_log.rs:472",
+      "crates/frankenlibc-harness/tests/structured_log_test.rs:31",
+      "crates/frankenlibc-harness/tests/structured_log_test.rs:75",
+      "crates/frankenlibc-harness/tests/structured_log_test.rs:125",
+      "crates/frankenlibc-harness/tests/structured_log_schema_contract_test.rs:176",
+      "crates/frankenlibc-harness/tests/structured_log_schema_contract_test.rs:223",
+      "crates/frankenlibc-harness/tests/structured_log_schema_contract_test.rs:289",
+      "scripts/check_canonical_evidence_schema_v2_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/canonical_evidence_schema_v2_completion_contract_test.rs:1"
+    ],
+    "canonical_fields": {
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "level",
+        "event"
+      ],
+      "required_streams": [
+        "unit",
+        "conformance",
+        "e2e",
+        "perf",
+        "release"
+      ],
+      "workflow_fields": [
+        "stream",
+        "gate"
+      ],
+      "span_profile_fields": [
+        "span_id",
+        "parent_span_id",
+        "profile"
+      ],
+      "decision_explainability_fields": [
+        "controller_id",
+        "decision_id",
+        "policy_id",
+        "evidence_seqno",
+        "decision_action",
+        "risk_inputs"
+      ],
+      "artifact_failure_fields": [
+        "source_commit",
+        "target_dir",
+        "failure_signature",
+        "artifact_refs"
+      ],
+      "required_builder_methods": [
+        "with_stream",
+        "with_gate",
+        "with_span",
+        "with_profile",
+        "with_controller_id",
+        "with_join_keys",
+        "with_decision_action",
+        "with_risk_inputs",
+        "with_decision_explainability",
+        "with_source_commit",
+        "with_target_dir",
+        "with_failure_signature",
+        "with_artifacts"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Inline unit tests cover v2 required-field serialization, optional schema fields, validator rejection classes, decision explainability, join keys, and artifact-index compatibility.",
+      "required_test_refs": [
+        {"source": "structured_log", "name": "log_entry_serializes_required_fields"},
+        {"source": "structured_log", "name": "log_entry_with_all_optional_fields"},
+        {"source": "structured_log", "name": "validate_valid_line"},
+        {"source": "structured_log", "name": "validate_missing_required_field"},
+        {"source": "structured_log", "name": "validate_invalid_level"},
+        {"source": "structured_log", "name": "validate_invalid_json"},
+        {"source": "structured_log", "name": "validate_bad_trace_id_format"},
+        {"source": "structured_log", "name": "validate_decision_requires_explainability_fields"},
+        {"source": "structured_log", "name": "validate_decision_rejects_zero_join_ids"},
+        {"source": "structured_log", "name": "artifact_index_serializes"},
+        {"source": "structured_log", "name": "artifact_index_deserializes_legacy_defaults_and_join_key_aliases"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --lib structured_log -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "Integration and schema-contract tests validate schema examples, JSONL emitter output, artifact joins, and multi-line validate_log_file behavior.",
+      "required_test_refs": [
+        {"source": "structured_log_integration", "name": "schema_examples_validate"},
+        {"source": "structured_log_integration", "name": "artifact_index_schema_example_roundtrips"},
+        {"source": "structured_log_integration", "name": "emitter_writes_valid_jsonl"},
+        {"source": "schema_contract_harness", "name": "validator_file_e2e_validates_multiline_jsonl"},
+        {"source": "schema_contract_harness", "name": "validator_file_e2e_surfaces_a_malformed_line_at_the_correct_line_number"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test structured_log_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test structured_log_schema_contract_test -- --nocapture"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "description": "Conformance artifacts pin log_schema.json schema_version=2 and the existing schema contract harness to concrete file:line and test references.",
+      "required_artifacts": [
+        "tests/conformance/log_schema.json",
+        "tests/conformance/structured_log_schema_contract.v1.json"
+      ],
+      "required_test_refs": [
+        {"source": "structured_log_integration", "name": "log_schema_exists_and_valid"},
+        {"source": "schema_contract_harness", "name": "manifest_anchors_to_144_with_completion_debt_bead"},
+        {"source": "schema_contract_harness", "name": "log_entry_struct_carries_required_fields"},
+        {"source": "schema_contract_harness", "name": "log_entry_struct_carries_telemetry_correlation_fields"},
+        {"source": "completion_harness", "name": "manifest_binds_schema_v2_unit_e2e_conformance_and_telemetry_evidence"}
+      ],
+      "required_commands": [
+        "bash scripts/check_canonical_evidence_schema_v2_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test canonical_evidence_schema_v2_completion_contract_test -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "The checker emits pass/fail JSONL rows carrying schema identity, all v2 canonical field groups, artifact refs, test refs, source commit, and fail-closed drift signatures.",
+      "required_events": [
+        "canonical_evidence_schema_v2_completion_contract_validated",
+        "canonical_evidence_schema_v2_completion_contract_failed",
+        "runtime_decision",
+        "validation_pass"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "schema_version",
+        "required_fields",
+        "optional_fields",
+        "test_refs",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "required_test_refs": [
+        {"source": "structured_log", "name": "validate_decision_requires_explainability_fields"},
+        {"source": "structured_log", "name": "validate_decision_rejects_zero_join_ids"},
+        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_profile_field_binding"}
+      ]
+    }
+  }
+}
