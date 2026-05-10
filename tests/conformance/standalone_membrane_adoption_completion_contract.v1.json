@@ -1,0 +1,123 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-membrane-adoption-completion-contract",
+  "bead": "bd-2yx2",
+  "completion_debt_bead": "bd-2yx2.1",
+  "generated_utc": "2026-05-10T00:00:00Z",
+  "purpose": "Completion-debt contract for the standalone frankenlibc-membrane adoption wedge. The audit pass required concrete unit and E2E evidence; this manifest binds the crate membership, workspace dependency, downstream adoption edges, unit-test anchors, and remote cargo validation commands.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-2yx2/scorecard.md",
+    "spec_path": "passes/2026-05-10T03-16-16Z/beads/bd-2yx2/spec.json",
+    "score_before": 570,
+    "score_threshold": 800
+  },
+  "source_artifacts": {
+    "workspace_manifest": "Cargo.toml",
+    "membrane_manifest": "crates/frankenlibc-membrane/Cargo.toml",
+    "membrane_lib": "crates/frankenlibc-membrane/src/lib.rs",
+    "core_manifest": "crates/frankenlibc-core/Cargo.toml",
+    "abi_manifest": "crates/frankenlibc-abi/Cargo.toml",
+    "harness_manifest": "crates/frankenlibc-harness/Cargo.toml",
+    "bench_manifest": "crates/frankenlibc-bench/Cargo.toml",
+    "fuzz_manifest": "crates/frankenlibc-fuzz/Cargo.toml"
+  },
+  "workspace_contract": {
+    "member": "crates/frankenlibc-membrane",
+    "workspace_dependency": "frankenlibc-membrane = { path = \"crates/frankenlibc-membrane\" }",
+    "crate_name": "frankenlibc-membrane",
+    "required_features": [
+      "default = [\"runtime-math-production\"]",
+      "runtime-math-production = []",
+      "runtime-math-research = [\"runtime-math-production\"]"
+    ],
+    "required_lib_needles": [
+      "#![deny(unsafe_code)]",
+      "compile_error!",
+      "pub mod ptr_validator;",
+      "pub mod runtime_math;",
+      "pub use ptr_validator::{ValidationOutcome, ValidationPipeline, ValidationSecurityContext};",
+      "pub use runtime_math::{"
+    ]
+  },
+  "adoption_edges": [
+    {
+      "consumer": "frankenlibc-core",
+      "manifest": "crates/frankenlibc-core/Cargo.toml",
+      "dependency": "frankenlibc-membrane = { workspace = true }"
+    },
+    {
+      "consumer": "frankenlibc-abi",
+      "manifest": "crates/frankenlibc-abi/Cargo.toml",
+      "dependency": "frankenlibc-membrane = { workspace = true }"
+    },
+    {
+      "consumer": "frankenlibc-harness",
+      "manifest": "crates/frankenlibc-harness/Cargo.toml",
+      "dependency": "frankenlibc-membrane = { workspace = true }"
+    },
+    {
+      "consumer": "frankenlibc-bench",
+      "manifest": "crates/frankenlibc-bench/Cargo.toml",
+      "dependency": "frankenlibc-membrane = { workspace = true }"
+    },
+    {
+      "consumer": "frankenlibc-fuzz",
+      "manifest": "crates/frankenlibc-fuzz/Cargo.toml",
+      "dependency": "frankenlibc-membrane = { path = \"../frankenlibc-membrane\" }"
+    }
+  ],
+  "unit_primary": {
+    "missing_item_id": "tests.unit.primary",
+    "test_file": "crates/frankenlibc-membrane/src/lib.rs",
+    "required_test_names": [
+      "memory_model_audit_meets_minimum_site_count",
+      "memory_model_audit_includes_tsm_and_futex_domains"
+    ]
+  },
+  "e2e_primary": {
+    "missing_item_id": "tests.e2e.primary",
+    "scenarios": [
+      {
+        "scenario_id": "standalone_membrane_package_checks_all_targets",
+        "command": "rch cargo check -p frankenlibc-membrane --all-targets",
+        "expected_exit": 0
+      },
+      {
+        "scenario_id": "standalone_membrane_unit_tests_run_without_downstream_packages",
+        "command": "rch cargo test -p frankenlibc-membrane memory_model_audit_tests --lib -- --nocapture",
+        "expected_exit": 0
+      },
+      {
+        "scenario_id": "standalone_membrane_clippy_is_warning_clean",
+        "command": "rch cargo clippy -p frankenlibc-membrane --all-targets -- -D warnings",
+        "expected_exit": 0
+      }
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-2yx2.1",
+    "original_bead": "bd-2yx2",
+    "next_audit_score_threshold": 800,
+    "test_source": "crates/frankenlibc-harness/tests/standalone_membrane_adoption_completion_contract_test.rs",
+    "required_test_names": [
+      "manifest_anchors_completion_debt",
+      "source_artifacts_are_file_backed",
+      "workspace_contract_binds_standalone_crate",
+      "adoption_edges_bind_workspace_consumers",
+      "unit_primary_binds_membrane_unit_tests",
+      "e2e_primary_scenarios_are_remote_cargo_commands",
+      "checker_accepts_manifest_and_emits_report",
+      "checker_rejects_missing_workspace_member",
+      "checker_rejects_missing_adoption_edge"
+    ]
+  },
+  "telemetry_contract": {
+    "required_log_events": [
+      "standalone_membrane_completion_source",
+      "standalone_membrane_completion_unit",
+      "standalone_membrane_completion_e2e",
+      "standalone_membrane_completion_summary"
+    ]
+  }
+}
