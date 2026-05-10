@@ -10,10 +10,10 @@
       "category": "system",
       "required_modules": ["string_abi", "malloc_abi", "unistd_abi", "stdio_abi", "errno_abi", "stdlib_abi", "ctype_abi", "locale_abi", "dirent_abi"],
       "critical_symbols": ["stat", "lstat", "opendir", "readdir", "closedir", "getcwd", "write", "read"],
-      "blocked_by": ["stdio_abi"],
+      "blocked_by": [],
       "interpose_ready": true,
-      "replace_ready": false,
-      "replace_blockers": ["stdio_abi (30 GlibcCallThrough)", "locale_abi (2 Stub)"],
+      "replace_ready": true,
+      "replace_blockers": [],
       "priority_impact": "high"
     },
     {
@@ -23,10 +23,10 @@
       "category": "language_runtime",
       "required_modules": ["malloc_abi", "string_abi", "pthread_abi", "dlfcn_abi", "stdio_abi", "math_abi", "locale_abi", "resolv_abi", "unistd_abi", "socket_abi", "errno_abi", "time_abi", "signal_abi"],
       "critical_symbols": ["dlopen", "dlsym", "pthread_create", "pthread_mutex_lock", "getaddrinfo", "setlocale"],
-      "blocked_by": ["pthread_abi", "dlfcn_abi", "stdio_abi", "locale_abi", "resolv_abi"],
+      "blocked_by": [],
       "interpose_ready": true,
-      "replace_ready": false,
-      "replace_blockers": ["pthread_abi (20 GlibcCallThrough)", "dlfcn_abi (4 GlibcCallThrough)", "stdio_abi (30 GlibcCallThrough)", "locale_abi (2 Stub)", "resolv_abi (4 Stub)"],
+      "replace_ready": true,
+      "replace_blockers": [],
       "priority_impact": "critical"
     },
     {
@@ -36,10 +36,10 @@
       "category": "developer_tool",
       "required_modules": ["malloc_abi", "string_abi", "pthread_abi", "socket_abi", "resolv_abi", "stdio_abi", "unistd_abi", "errno_abi", "process_abi", "time_abi"],
       "critical_symbols": ["pthread_create", "pthread_mutex_lock", "getaddrinfo", "socket", "connect", "fork", "execve"],
-      "blocked_by": ["pthread_abi", "stdio_abi", "resolv_abi"],
+      "blocked_by": [],
       "interpose_ready": true,
-      "replace_ready": false,
-      "replace_blockers": ["pthread_abi (20 GlibcCallThrough)", "stdio_abi (30 GlibcCallThrough)", "resolv_abi (4 Stub)"],
+      "replace_ready": true,
+      "replace_blockers": [],
       "priority_impact": "high"
     },
     {
@@ -49,10 +49,10 @@
       "category": "network",
       "required_modules": ["malloc_abi", "string_abi", "socket_abi", "resolv_abi", "dlfcn_abi", "stdio_abi", "unistd_abi", "errno_abi", "poll_abi", "time_abi"],
       "critical_symbols": ["getaddrinfo", "socket", "connect", "send", "recv", "poll", "dlopen"],
-      "blocked_by": ["resolv_abi", "dlfcn_abi", "stdio_abi"],
+      "blocked_by": [],
       "interpose_ready": true,
-      "replace_ready": false,
-      "replace_blockers": ["resolv_abi (4 Stub)", "dlfcn_abi (4 GlibcCallThrough)", "stdio_abi (30 GlibcCallThrough)"],
+      "replace_ready": true,
+      "replace_blockers": [],
       "priority_impact": "high"
     },
     {
@@ -62,10 +62,10 @@
       "category": "server",
       "required_modules": ["malloc_abi", "string_abi", "pthread_abi", "socket_abi", "resolv_abi", "poll_abi", "unistd_abi", "errno_abi", "signal_abi", "mmap_abi", "time_abi"],
       "critical_symbols": ["pthread_create", "socket", "bind", "listen", "accept", "poll", "mmap"],
-      "blocked_by": ["pthread_abi", "resolv_abi"],
+      "blocked_by": [],
       "interpose_ready": true,
-      "replace_ready": false,
-      "replace_blockers": ["pthread_abi (20 GlibcCallThrough)", "resolv_abi (4 Stub)"],
+      "replace_ready": true,
+      "replace_blockers": [],
       "priority_impact": "critical"
     },
     {
@@ -75,10 +75,10 @@
       "category": "shell",
       "required_modules": ["malloc_abi", "string_abi", "stdio_abi", "unistd_abi", "errno_abi", "signal_abi", "process_abi", "locale_abi", "stdlib_abi", "ctype_abi", "termios_abi"],
       "critical_symbols": ["fork", "execve", "waitpid", "signal", "sigaction", "read", "write", "setlocale"],
-      "blocked_by": ["stdio_abi", "locale_abi"],
+      "blocked_by": [],
       "interpose_ready": true,
-      "replace_ready": false,
-      "replace_blockers": ["stdio_abi (30 GlibcCallThrough)", "locale_abi (2 Stub)"],
+      "replace_ready": true,
+      "replace_blockers": [],
       "priority_impact": "high"
     },
     {
@@ -88,10 +88,10 @@
       "category": "database",
       "required_modules": ["malloc_abi", "string_abi", "stdio_abi", "unistd_abi", "errno_abi", "mmap_abi", "stdlib_abi"],
       "critical_symbols": ["malloc", "free", "mmap", "munmap", "read", "write", "fstat"],
-      "blocked_by": ["stdio_abi"],
+      "blocked_by": [],
       "interpose_ready": true,
-      "replace_ready": false,
-      "replace_blockers": ["stdio_abi (30 GlibcCallThrough)"],
+      "replace_ready": true,
+      "replace_blockers": [],
       "priority_impact": "medium"
     },
     {
@@ -115,10 +115,10 @@
       "category": "container",
       "required_modules": ["malloc_abi", "string_abi", "unistd_abi", "errno_abi", "stdio_abi", "ctype_abi", "stdlib_abi", "signal_abi", "process_abi", "dirent_abi"],
       "critical_symbols": ["malloc", "free", "read", "write", "fork", "execve", "stat"],
-      "blocked_by": ["stdio_abi"],
+      "blocked_by": [],
       "interpose_ready": true,
-      "replace_ready": false,
-      "replace_blockers": ["stdio_abi (30 GlibcCallThrough)"],
+      "replace_ready": true,
+      "replace_blockers": [],
       "priority_impact": "high"
     },
     {
@@ -128,20 +128,15 @@
       "category": "server",
       "required_modules": ["malloc_abi", "string_abi", "pthread_abi", "socket_abi", "poll_abi", "unistd_abi", "errno_abi", "signal_abi", "time_abi", "mmap_abi"],
       "critical_symbols": ["pthread_create", "pthread_mutex_lock", "socket", "bind", "listen", "accept", "poll"],
-      "blocked_by": ["pthread_abi"],
+      "blocked_by": [],
       "interpose_ready": true,
-      "replace_ready": false,
-      "replace_blockers": ["pthread_abi (20 GlibcCallThrough)"],
+      "replace_ready": true,
+      "replace_blockers": [],
       "priority_impact": "medium"
     }
   ],
   "subsystem_impact": {
-    "description": "Number of workloads blocked by each subsystem for Replace artifact.",
-    "stdio_abi": {"blocked_workloads": 7, "workload_ids": ["wl-001", "wl-002", "wl-003", "wl-004", "wl-006", "wl-007", "wl-009"]},
-    "pthread_abi": {"blocked_workloads": 4, "workload_ids": ["wl-002", "wl-003", "wl-005", "wl-010"]},
-    "resolv_abi": {"blocked_workloads": 4, "workload_ids": ["wl-002", "wl-003", "wl-004", "wl-005"]},
-    "dlfcn_abi": {"blocked_workloads": 2, "workload_ids": ["wl-002", "wl-004"]},
-    "locale_abi": {"blocked_workloads": 2, "workload_ids": ["wl-002", "wl-006"]}
+    "description": "Number of workloads blocked by each subsystem for Replace artifact."
   },
   "milestone_mapping": {
     "description": "Maps hard-part milestones to the workloads they unblock.",
@@ -157,8 +152,8 @@
   "summary": {
     "total_workloads": 10,
     "interpose_ready": 10,
-    "replace_ready": 1,
-    "replace_blocked": 9,
+    "replace_ready": 10,
+    "replace_blocked": 0,
     "categories": {
       "system": 1,
       "language_runtime": 1,
@@ -169,7 +164,8 @@
       "database": 1,
       "container": 1
     },
-    "top_blocker": "stdio_abi (blocks 7 workloads)",
-    "most_blocked_workload": "wl-002 python3 (5 module blockers)"
+    "top_blocker": null,
+    "most_blocked_workload": null,
+    "replacement_claim_scope": "Module-level support-taxonomy blockers only; this is not a standalone artifact readiness claim."
   }
 }

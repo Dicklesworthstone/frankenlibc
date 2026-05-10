@@ -4,9 +4,10 @@
 # Validates that:
 #   1. Workload matrix JSON exists and is valid.
 #   2. All workloads have required fields and valid modules.
-#   3. Subsystem impact counts match actual blocker references.
-#   4. Milestone mappings reference valid beads.
-#   5. Summary statistics are consistent.
+#   3. Replacement blockers match support_matrix non-replaceable status truth.
+#   4. Subsystem impact counts match actual blocker references.
+#   5. Milestone mappings reference valid beads.
+#   6. Summary statistics are consistent.
 #
 # Exit codes:
 #   0 — all checks pass
@@ -112,9 +113,73 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 3: Subsystem impact counts match blocker references
+# Check 3: Replacement blockers match support_matrix status truth
 # ---------------------------------------------------------------------------
-echo "--- Check 3: Subsystem impact consistency ---"
+echo "--- Check 3: Replacement blocker status truth ---"
+
+blocker_check=$(python3 -c "
+import json
+from collections import Counter, defaultdict
+
+with open('${WORKLOADS}') as f:
+    wl = json.load(f)
+with open('${MATRIX}') as f:
+    matrix = json.load(f)
+
+blocker_statuses = ('WrapsHostLibc', 'GlibcCallThrough', 'Stub')
+module_counts = defaultdict(Counter)
+for sym in matrix.get('symbols', []):
+    status = sym.get('status')
+    if status in blocker_statuses:
+        module_counts[sym.get('module', 'unknown')][status] += 1
+
+errors = []
+for w in wl.get('workloads', []):
+    wid = w.get('id', '?')
+    required_modules = list(dict.fromkeys(w.get('required_modules', [])))
+    expected_modules = [
+        mod for mod in required_modules
+        if sum(module_counts.get(mod, {}).values()) > 0
+    ]
+    actual_modules = w.get('blocked_by', [])
+    if actual_modules != expected_modules:
+        errors.append(f'{wid}: blocked_by={actual_modules} expected={expected_modules}')
+
+    expected_blockers = []
+    for mod in expected_modules:
+        counts = module_counts.get(mod, {})
+        for status in blocker_statuses:
+            count = counts.get(status, 0)
+            if count:
+                expected_blockers.append(f'{mod} ({count} {status})')
+    actual_blockers = w.get('replace_blockers', [])
+    if actual_blockers != expected_blockers:
+        errors.append(f'{wid}: replace_blockers={actual_blockers} expected={expected_blockers}')
+
+    expected_ready = not expected_modules
+    if bool(w.get('replace_ready')) != expected_ready:
+        errors.append(f'{wid}: replace_ready={w.get(\"replace_ready\")} expected={expected_ready}')
+
+print(f'BLOCKER_ERRORS={len(errors)}')
+for e in errors:
+    print(f'  {e}')
+")
+
+blocker_errs=$(echo "${blocker_check}" | grep '^BLOCKER_ERRORS=' | cut -d= -f2)
+
+if [[ "${blocker_errs}" -gt 0 ]]; then
+    echo "FAIL: ${blocker_errs} replacement blocker error(s):"
+    echo "${blocker_check}" | grep '  '
+    failures=$((failures + 1))
+else
+    echo "PASS: Workload blockers match support_matrix replacement status truth"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 4: Subsystem impact counts match blocker references
+# ---------------------------------------------------------------------------
+echo "--- Check 4: Subsystem impact consistency ---"
 
 impact_check=$(python3 -c "
 import json
@@ -174,9 +239,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 4: Milestone mappings reference valid beads
+# Check 5: Milestone mappings reference valid beads
 # ---------------------------------------------------------------------------
-echo "--- Check 4: Milestone bead references ---"
+echo "--- Check 5: Milestone bead references ---"
 
 milestone_check=$(python3 -c "
 import json
@@ -227,9 +292,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 5: Summary consistency
+# Check 6: Summary consistency
 # ---------------------------------------------------------------------------
-echo "--- Check 5: Summary consistency ---"
+echo "--- Check 6: Summary consistency ---"
 
 sum_check=$(python3 -c "
 import json
@@ -245,6 +310,14 @@ total = len(workloads)
 interpose_ready = sum(1 for w in workloads if w.get('interpose_ready'))
 replace_ready = sum(1 for w in workloads if w.get('replace_ready'))
 replace_blocked = total - replace_ready
+blocker_counts = {}
+workload_blocker_counts = {}
+for w in workloads:
+    wid = w.get('id', '?')
+    mods = w.get('blocked_by', [])
+    workload_blocker_counts[wid] = len(mods)
+    for mod in mods:
+        blocker_counts[mod] = blocker_counts.get(mod, 0) + 1
 
 if summary.get('total_workloads', 0) != total:
     errors.append(f'total_workloads: claimed={summary.get(\"total_workloads\")} actual={total}')
@@ -264,6 +337,27 @@ claimed_cats = summary.get('categories', {})
 for c, count in cats.items():
     if claimed_cats.get(c, 0) != count:
         errors.append(f'categories.{c}: claimed={claimed_cats.get(c)} actual={count}')
+
+top_blocker = summary.get('top_blocker')
+if blocker_counts:
+    actual_top = max(blocker_counts.items(), key=lambda item: (item[1], item[0]))
+    expected_top = f'{actual_top[0]} (blocks {actual_top[1]} workloads)'
+    if top_blocker != expected_top:
+        errors.append(f'top_blocker: claimed={top_blocker!r} actual={expected_top!r}')
+else:
+    if top_blocker is not None:
+        errors.append(f'top_blocker: claimed={top_blocker!r} actual=None')
+
+most_blocked = summary.get('most_blocked_workload')
+if any(count > 0 for count in workload_blocker_counts.values()):
+    actual_wid, actual_count = max(workload_blocker_counts.items(), key=lambda item: (item[1], item[0]))
+    binary = next((w.get('binary', actual_wid) for w in workloads if w.get('id') == actual_wid), actual_wid)
+    expected = f'{actual_wid} {binary} ({actual_count} module blockers)'
+    if most_blocked != expected:
+        errors.append(f'most_blocked_workload: claimed={most_blocked!r} actual={expected!r}')
+else:
+    if most_blocked is not None:
+        errors.append(f'most_blocked_workload: claimed={most_blocked!r} actual=None')
 
 print(f'SUMMARY_ERRORS={len(errors)}')
 for e in errors:

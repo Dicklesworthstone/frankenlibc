@@ -3,10 +3,11 @@
 //! Validates that:
 //! 1. The workload matrix JSON exists and is valid.
 //! 2. All workloads have required fields and reference valid ABI modules.
-//! 3. Subsystem impact counts match actual blocker references.
-//! 4. Every milestone maps to at least one workload.
-//! 5. Summary statistics are consistent.
-//! 6. The CI gate script exists and is executable.
+//! 3. Replacement blockers match support_matrix non-replaceable status truth.
+//! 4. Subsystem impact counts match actual blocker references.
+//! 5. Every milestone maps to at least one workload.
+//! 6. Summary statistics are consistent.
+//! 7. The CI gate script exists and is executable.
 //!
 //! Run: cargo test -p frankenlibc-harness --test workload_matrix_test
 
@@ -153,6 +154,87 @@ fn subsystem_impact_consistent() {
 }
 
 #[test]
+fn replacement_blockers_match_support_matrix() {
+    let wl = load_workloads();
+    let matrix = load_support_matrix();
+    let blocker_statuses = ["WrapsHostLibc", "GlibcCallThrough", "Stub"];
+    let mut module_counts: HashMap<String, HashMap<String, usize>> = HashMap::new();
+
+    for symbol in matrix["symbols"].as_array().unwrap() {
+        let status = symbol["status"].as_str().unwrap_or("");
+        if !blocker_statuses.contains(&status) {
+            continue;
+        }
+        let module = symbol["module"].as_str().unwrap_or("unknown").to_string();
+        *module_counts
+            .entry(module)
+            .or_default()
+            .entry(status.to_string())
+            .or_default() += 1;
+    }
+
+    for workload in wl["workloads"].as_array().unwrap() {
+        let wid = workload["id"].as_str().unwrap_or("?");
+        let mut seen_modules = HashSet::new();
+        let required_modules: Vec<_> = workload["required_modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str())
+            .filter(|module| seen_modules.insert((*module).to_string()))
+            .collect();
+
+        let expected_modules: Vec<String> = required_modules
+            .iter()
+            .filter(|module| {
+                module_counts
+                    .get(**module)
+                    .is_some_and(|counts| counts.values().sum::<usize>() > 0)
+            })
+            .map(|module| (*module).to_string())
+            .collect();
+
+        let actual_modules: Vec<String> = workload["blocked_by"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str().map(String::from))
+            .collect();
+        assert_eq!(
+            actual_modules, expected_modules,
+            "{wid}: blocked_by must match support_matrix replacement blockers"
+        );
+
+        let mut expected_blockers = Vec::new();
+        for module in &expected_modules {
+            let counts = module_counts.get(module.as_str()).unwrap();
+            for status in blocker_statuses {
+                let count = counts.get(status).copied().unwrap_or(0);
+                if count > 0 {
+                    expected_blockers.push(format!("{module} ({count} {status})"));
+                }
+            }
+        }
+        let actual_blockers: Vec<String> = workload["replace_blockers"]
+            .as_array()
+            .expect("replace_blockers must be an array")
+            .iter()
+            .filter_map(|value| value.as_str().map(String::from))
+            .collect();
+        assert_eq!(
+            actual_blockers, expected_blockers,
+            "{wid}: replace_blockers must match support_matrix status counts"
+        );
+
+        assert_eq!(
+            workload["replace_ready"].as_bool(),
+            Some(expected_modules.is_empty()),
+            "{wid}: replace_ready must reflect replacement blocker presence"
+        );
+    }
+}
+
+#[test]
 fn milestones_reference_valid_workloads() {
     let wl = load_workloads();
     let valid_ids: HashSet<String> = wl["workloads"]
@@ -191,6 +273,8 @@ fn summary_consistent() {
         .iter()
         .filter(|w| w["replace_ready"].as_bool() == Some(true))
         .count();
+    let mut blocker_counts: HashMap<String, usize> = HashMap::new();
+    let mut workload_blocker_counts: HashMap<String, usize> = HashMap::new();
 
     assert_eq!(
         summary["total_workloads"].as_u64().unwrap() as usize,
@@ -218,6 +302,14 @@ fn summary_consistent() {
     for w in workloads {
         let c = w["category"].as_str().unwrap_or("unknown");
         *cats.entry(c.to_string()).or_default() += 1;
+
+        let wid = w["id"].as_str().unwrap_or("?").to_string();
+        let blocked_by = w["blocked_by"].as_array().unwrap();
+        workload_blocker_counts.insert(wid, blocked_by.len());
+        for module in blocked_by {
+            let module = module.as_str().unwrap_or("unknown");
+            *blocker_counts.entry(module.to_string()).or_default() += 1;
+        }
     }
     let claimed_cats = summary["categories"].as_object().unwrap();
     for (c, count) in &cats {
@@ -225,6 +317,35 @@ fn summary_consistent() {
         assert_eq!(
             claimed, *count,
             "categories.{c}: claimed={claimed} actual={count}"
+        );
+    }
+
+    if blocker_counts.is_empty() {
+        assert!(
+            summary["top_blocker"].is_null(),
+            "top_blocker must be null when no blockers remain"
+        );
+    } else {
+        let (module, count) = blocker_counts
+            .iter()
+            .max_by(|(left_module, left_count), (right_module, right_count)| {
+                left_count
+                    .cmp(right_count)
+                    .then_with(|| left_module.cmp(right_module))
+            })
+            .unwrap();
+        let expected = format!("{module} (blocks {count} workloads)");
+        assert_eq!(
+            summary["top_blocker"].as_str(),
+            Some(expected.as_str()),
+            "top_blocker mismatch"
+        );
+    }
+
+    if workload_blocker_counts.values().all(|count| *count == 0) {
+        assert!(
+            summary["most_blocked_workload"].is_null(),
+            "most_blocked_workload must be null when no blockers remain"
         );
     }
 }
