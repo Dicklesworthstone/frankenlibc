@@ -361,6 +361,13 @@ fn spawn_exec_ops_fixture_executes_with_host_parity_via_harness_matrix() {
                         case.name
                     )
                 });
+            if case.function == "system" {
+                assert_ne!(
+                    result.host_output, "SKIP",
+                    "system fixture {} ({mode}) must execute a host oracle, not a canned result",
+                    case.name
+                );
+            }
             assert!(
                 result.host_parity,
                 "spawn_exec_ops case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",

@@ -15655,9 +15655,26 @@ fn execute_system_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    let _command = inputs.get("command").and_then(|v| v.as_str()).unwrap_or("");
-    // system() would actually run a command - stub expected value
-    Ok(non_host_execution("0".to_string()))
+    let command = parse_string(inputs, "command")?;
+    if command != "true" {
+        return Err(format!("unsupported system command fixture: {command}"));
+    }
+
+    let command_c = CString::new(command).map_err(|err| format!("CString: {err}"))?;
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    // SAFETY: the fixture command is a fixed, null-terminated "true" CString.
+    let host_rc = unsafe { libc::system(command_c.as_ptr()) };
+
+    unsafe {
+        frankenlibc_abi::errno_abi::set_abi_errno(0);
+    }
+    // SAFETY: the fixture command is a fixed, null-terminated "true" CString.
+    let impl_rc = unsafe { frankenlibc_abi::stdlib_abi::system(command_c.as_ptr()) };
+
+    Ok(parity_execution(host_rc.to_string(), impl_rc.to_string()))
 }
 
 fn execute_getlogin_case(mode: &str) -> Result<DifferentialExecution, String> {
