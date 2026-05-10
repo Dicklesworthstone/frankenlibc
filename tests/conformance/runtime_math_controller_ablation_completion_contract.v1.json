@@ -1,0 +1,118 @@
+{
+  "schema_version": "runtime_math_controller_ablation_completion_contract.v1",
+  "bead": "bd-3ot.2",
+  "completion_debt_bead": "bd-3ot.2.1",
+  "description": "Completion-debt evidence binding for the controller ablation harness, production/research partition execution, and migration plan.",
+  "completion_debt_evidence": {
+    "bead": "bd-3ot.2.1",
+    "original_bead": "bd-3ot.2",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-3ot.2/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "artifacts": {
+      "controller_ablation_report": "tests/runtime_math/controller_ablation_report.v1.json",
+      "controller_ablation_runner": "scripts/controller_ablation.py",
+      "controller_ablation_gate": "scripts/check_controller_ablation.sh",
+      "production_manifest": "tests/runtime_math/production_kernel_manifest.v1.json",
+      "math_value_ablations": "tests/conformance/math_value_ablations.v1.json",
+      "math_value_proof": "tests/conformance/math_value_proof.json",
+      "governance": "tests/conformance/math_governance.json"
+    },
+    "test_sources": {
+      "controller_ablation": "crates/frankenlibc-harness/tests/controller_ablation_test.rs",
+      "math_value_ablations": "crates/frankenlibc-harness/tests/math_value_ablations_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/runtime_math_controller_ablation_completion_contract_test.rs"
+    },
+    "gate": "scripts/check_runtime_math_controller_ablation_completion_contract.sh",
+    "report_path": "target/conformance/runtime_math_controller_ablation_completion_contract.report.json",
+    "log_path": "target/conformance/runtime_math_controller_ablation_completion_contract.log.jsonl",
+    "implementation_refs": [
+      "tests/runtime_math/controller_ablation_report.v1.json:1",
+      "tests/runtime_math/production_kernel_manifest.v1.json:1",
+      "tests/conformance/math_value_ablations.v1.json:1",
+      "scripts/controller_ablation.py:1",
+      "scripts/check_controller_ablation.sh:1",
+      "crates/frankenlibc-harness/tests/controller_ablation_test.rs:1",
+      "crates/frankenlibc-harness/tests/math_value_ablations_test.rs:1",
+      "scripts/check_runtime_math_controller_ablation_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/runtime_math_controller_ablation_completion_contract_test.rs:1"
+    ],
+    "expected_partition": {
+      "total_modules": 69,
+      "production_retain": 25,
+      "research_retire": 44,
+      "blocked": 0,
+      "errors": 0
+    },
+    "ablation_contract": {
+      "required_summary_fields": [
+        "total_modules",
+        "production_retain",
+        "research_retire",
+        "blocked",
+        "errors",
+        "warnings"
+      ],
+      "required_decision_fields": [
+        "module",
+        "tier",
+        "decision",
+        "partition",
+        "reason",
+        "migration_action"
+      ],
+      "allowed_decisions": [
+        "RETAIN",
+        "RETIRE",
+        "BLOCK"
+      ],
+      "required_migration_fields": [
+        "description",
+        "feature_gate",
+        "total_to_retire",
+        "compile_time_enforcement",
+        "modules",
+        "verification"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Harness unit tests validate ablation report shape, partition invariants, math-value ablation coverage, and the completion contract.",
+      "required_test_refs": [
+        {"source": "controller_ablation", "name": "controller_ablation_passes"},
+        {"source": "controller_ablation", "name": "controller_ablation_partition_invariants"},
+        {"source": "math_value_ablations", "name": "module_set_matches_math_value_proof"},
+        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_and_migration_evidence"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test controller_ablation_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test math_value_ablations_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "The controller ablation gate validates the generated partition report end-to-end; the completion checker validates the gate/report/log wiring without regenerating tracked artifacts.",
+      "required_test_refs": [
+        {"source": "controller_ablation", "name": "controller_ablation_passes"},
+        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"}
+      ],
+      "required_commands": [
+        "bash scripts/check_controller_ablation.sh",
+        "bash scripts/check_runtime_math_controller_ablation_completion_contract.sh"
+      ]
+    },
+    "migrations_primary": {
+      "missing_item_id": "migrations.primary",
+      "description": "The migration plan routes 44 research controllers behind runtime-math-research and keeps the 25 retained production controllers in the default runtime-math-production kernel.",
+      "required_feature_gate": "runtime-math-research",
+      "required_default_feature": "runtime-math-production",
+      "required_research_retire_count": 44,
+      "required_production_retain_count": 25,
+      "required_test_refs": [
+        {"source": "controller_ablation", "name": "controller_ablation_partition_invariants"},
+        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_and_migration_evidence"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_research_migration_binding"}
+      ]
+    }
+  }
+}
