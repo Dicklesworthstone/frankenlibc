@@ -1,0 +1,414 @@
+{
+  "schema_version": "deterministic_e2e_packs_completion_contract.v1",
+  "original_bead": "bd-w2c3.9.2",
+  "completion_debt_bead": "bd-w2c3.9.2.1",
+  "title": "T8.2 deterministic E2E packs completion contract",
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.9.2/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary"
+    ]
+  },
+  "source_artifacts": {
+    "e2e_manifest_contract": "tests/conformance/e2e_scenario_manifest_catalog_completion_contract.v1.json",
+    "e2e_manifest": "tests/conformance/e2e_scenario_manifest.v1.json",
+    "e2e_manifest_checker": "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+    "e2e_manifest_test": "crates/frankenlibc-harness/tests/e2e_scenario_manifest_catalog_completion_contract_test.rs",
+    "e2e_suite": "scripts/e2e_suite.sh",
+    "e2e_suite_checker": "scripts/check_e2e_suite.sh",
+    "e2e_suite_test": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
+    "replay_pair_contract": "tests/conformance/replay_engine_pair_comparator_completion_contract.v1.json",
+    "replay_pair_checker": "scripts/check_replay_engine_pair_comparator_completion_contract.sh",
+    "replay_pair_test": "crates/frankenlibc-harness/tests/replay_engine_pair_comparator_completion_contract_test.rs",
+    "runtime_replay_gate": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+    "runtime_replay_checker": "scripts/check_runtime_evidence_replay_gate.sh",
+    "runtime_replay_test": "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_test.rs",
+    "strict_hardened_gate": "tests/conformance/strict_hardened_evidence_e2e.v1.json",
+    "strict_hardened_checker": "scripts/check_strict_hardened_evidence_e2e.sh",
+    "strict_hardened_test": "crates/frankenlibc-harness/tests/strict_hardened_evidence_e2e_test.rs"
+  },
+  "implementation_refs": [
+    {
+      "kind": "e2e_manifest_scenario_contract",
+      "path": "tests/conformance/e2e_scenario_manifest_catalog_completion_contract.v1.json",
+      "line": 52,
+      "anchor": "\"scenario_manifest_contract\""
+    },
+    {
+      "kind": "e2e_manifest_unit_primary",
+      "path": "tests/conformance/e2e_scenario_manifest_catalog_completion_contract.v1.json",
+      "line": 166,
+      "anchor": "\"unit_primary\""
+    },
+    {
+      "kind": "e2e_manifest_e2e_primary",
+      "path": "tests/conformance/e2e_scenario_manifest_catalog_completion_contract.v1.json",
+      "line": 196,
+      "anchor": "\"e2e_primary\""
+    },
+    {
+      "kind": "e2e_manifest_telemetry_primary",
+      "path": "tests/conformance/e2e_scenario_manifest_catalog_completion_contract.v1.json",
+      "line": 235,
+      "anchor": "\"telemetry_primary\""
+    },
+    {
+      "kind": "replay_pair_source_contract",
+      "path": "tests/conformance/replay_engine_pair_comparator_completion_contract.v1.json",
+      "line": 7,
+      "anchor": "\"source_contract\""
+    },
+    {
+      "kind": "replay_pair_components",
+      "path": "tests/conformance/replay_engine_pair_comparator_completion_contract.v1.json",
+      "line": 8,
+      "anchor": "\"components\""
+    },
+    {
+      "kind": "replay_pair_unit_primary",
+      "path": "tests/conformance/replay_engine_pair_comparator_completion_contract.v1.json",
+      "line": 119,
+      "anchor": "\"unit_primary\""
+    },
+    {
+      "kind": "replay_pair_e2e_primary",
+      "path": "tests/conformance/replay_engine_pair_comparator_completion_contract.v1.json",
+      "line": 137,
+      "anchor": "\"e2e_primary\""
+    },
+    {
+      "kind": "runtime_replay_policy",
+      "path": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "line": 34,
+      "anchor": "\"claim_policy\""
+    },
+    {
+      "kind": "runtime_replay_decisions",
+      "path": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "line": 36,
+      "anchor": "\"required_decisions\""
+    },
+    {
+      "kind": "runtime_replay_modes",
+      "path": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "line": 37,
+      "anchor": "\"required_modes\""
+    },
+    {
+      "kind": "runtime_replay_records",
+      "path": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "line": 65,
+      "anchor": "\"replay_records\""
+    },
+    {
+      "kind": "strict_hardened_families",
+      "path": "tests/conformance/strict_hardened_evidence_e2e.v1.json",
+      "line": 19,
+      "anchor": "\"required_api_families\""
+    },
+    {
+      "kind": "strict_hardened_modes",
+      "path": "tests/conformance/strict_hardened_evidence_e2e.v1.json",
+      "line": 26,
+      "anchor": "\"required_modes\""
+    },
+    {
+      "kind": "strict_hardened_policy",
+      "path": "tests/conformance/strict_hardened_evidence_e2e.v1.json",
+      "line": 60,
+      "anchor": "\"scenario_policy\""
+    },
+    {
+      "kind": "strict_hardened_scenarios",
+      "path": "tests/conformance/strict_hardened_evidence_e2e.v1.json",
+      "line": 104,
+      "anchor": "\"scenarios\""
+    }
+  ],
+  "deterministic_pack_contract": {
+    "required_manifest_classes": [
+      "smoke",
+      "stress",
+      "fault",
+      "stability"
+    ],
+    "class_minimums": {
+      "smoke": 13,
+      "stress": 2,
+      "fault": 3,
+      "stability": 1
+    },
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_replay_seed_key": "FRANKENLIBC_E2E_SEED",
+    "required_replay_env_keys": [
+      "FRANKENLIBC_E2E_SEED",
+      "FRANKENLIBC_MODE",
+      "LD_PRELOAD"
+    ],
+    "required_replay_components": [
+      "replay_key_controller",
+      "strict_hardened_pair_comparator",
+      "checker_fail_closed_validation",
+      "strict_hardened_runtime_evidence"
+    ],
+    "required_runtime_decisions": [
+      "Allow",
+      "FullValidate",
+      "Repair",
+      "Deny"
+    ],
+    "security_evidence_markers": [
+      "redacted_required_field",
+      "decision_mismatch",
+      "strict_hardened_e2e_real_network_required",
+      "strict_hardened_e2e_destructive_operation",
+      "strict_hardened_e2e_strict_repair_not_allowed"
+    ]
+  },
+  "evidence_bindings": [
+    {
+      "binding_id": "e2e_scenario_manifest_catalog",
+      "artifact_key": "e2e_manifest_contract",
+      "identity_field": "schema_version",
+      "identity_value": "e2e_scenario_manifest_catalog_completion_contract.v1",
+      "expected_bead": "bd-b5a.1",
+      "expected_completion_debt_bead": "bd-b5a.1.1",
+      "covers": [
+        "tests.unit.primary",
+        "tests.e2e.primary"
+      ],
+      "required_artifact_keys": [
+        "e2e_manifest",
+        "e2e_manifest_checker",
+        "e2e_manifest_test",
+        "e2e_suite",
+        "e2e_suite_checker",
+        "e2e_suite_test"
+      ],
+      "required_test_refs": [
+        {
+          "source": "e2e_manifest_test",
+          "name": "contract_binds_e2e_scenario_manifest_unit_and_e2e_evidence"
+        },
+        {
+          "source": "e2e_manifest_test",
+          "name": "checker_passes_and_emits_report_and_jsonl"
+        },
+        {
+          "source": "e2e_suite_test",
+          "name": "e2e_suite_supports_manifest_dry_run"
+        },
+        {
+          "source": "e2e_suite_test",
+          "name": "e2e_mode_pair_report_valid"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test e2e_scenario_manifest_catalog_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "binding_id": "replay_pair_comparator",
+      "artifact_key": "replay_pair_contract",
+      "identity_field": "schema_version",
+      "identity_value": "replay_engine_pair_comparator_completion_contract.v1",
+      "expected_bead": "bd-b5a.2",
+      "expected_completion_debt_bead": "bd-b5a.2.1",
+      "covers": [
+        "tests.unit.primary",
+        "tests.e2e.primary"
+      ],
+      "required_artifact_keys": [
+        "replay_pair_checker",
+        "replay_pair_test",
+        "runtime_replay_gate",
+        "runtime_replay_test",
+        "strict_hardened_gate",
+        "strict_hardened_test"
+      ],
+      "required_test_refs": [
+        {
+          "source": "replay_pair_test",
+          "name": "manifest_binds_replay_engine_and_pair_comparator_evidence"
+        },
+        {
+          "source": "replay_pair_test",
+          "name": "checker_emits_report_log_and_validates_replay_contract"
+        },
+        {
+          "source": "replay_pair_test",
+          "name": "checker_rejects_missing_pair_marker"
+        },
+        {
+          "source": "e2e_suite_test",
+          "name": "replay_keys_are_deterministic_for_same_seed_and_manifest"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_replay_engine_pair_comparator_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test replay_engine_pair_comparator_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "binding_id": "runtime_evidence_replay_gate",
+      "artifact_key": "runtime_replay_gate",
+      "identity_field": "manifest_id",
+      "identity_value": "runtime-evidence-replay-gate",
+      "expected_bead": "bd-bp8fl.9.4",
+      "covers": [
+        "tests.unit.primary",
+        "tests.conformance.primary"
+      ],
+      "required_artifact_keys": [
+        "runtime_replay_checker",
+        "runtime_replay_test"
+      ],
+      "required_test_refs": [
+        {
+          "source": "runtime_replay_test",
+          "name": "gate_artifact_covers_runtime_evidence_replay_contract"
+        },
+        {
+          "source": "runtime_replay_test",
+          "name": "gate_script_passes_and_emits_report_and_jsonl_log"
+        },
+        {
+          "source": "runtime_replay_test",
+          "name": "gate_fails_closed_for_redacted_required_field"
+        },
+        {
+          "source": "runtime_replay_test",
+          "name": "gate_fails_closed_for_decision_mismatch"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_runtime_evidence_replay_gate.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_evidence_replay_gate_test -- --nocapture"
+      ]
+    },
+    {
+      "binding_id": "strict_hardened_runtime_evidence_e2e",
+      "artifact_key": "strict_hardened_gate",
+      "identity_field": "manifest_id",
+      "identity_value": "strict-hardened-evidence-e2e",
+      "expected_bead": "bd-b92jd.4.3",
+      "covers": [
+        "tests.e2e.primary",
+        "tests.conformance.primary"
+      ],
+      "required_artifact_keys": [
+        "strict_hardened_checker",
+        "strict_hardened_test"
+      ],
+      "required_test_refs": [
+        {
+          "source": "strict_hardened_test",
+          "name": "e2e_artifact_covers_strict_hardened_runtime_evidence_contract"
+        },
+        {
+          "source": "strict_hardened_test",
+          "name": "e2e_gate_script_passes_and_emits_report_and_jsonl_log"
+        },
+        {
+          "source": "strict_hardened_test",
+          "name": "e2e_gate_fails_closed_for_real_network_requirement"
+        },
+        {
+          "source": "strict_hardened_test",
+          "name": "e2e_gate_fails_closed_for_destructive_operation_requirement"
+        },
+        {
+          "source": "strict_hardened_test",
+          "name": "e2e_gate_fails_closed_for_strict_mode_repair_attempt"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_strict_hardened_evidence_e2e.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test strict_hardened_evidence_e2e_test -- --nocapture"
+      ]
+    }
+  ],
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "binding_ids": [
+        "e2e_scenario_manifest_catalog",
+        "replay_pair_comparator",
+        "runtime_evidence_replay_gate"
+      ],
+      "validation_commands": [
+        "bash scripts/check_deterministic_e2e_packs_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test deterministic_e2e_packs_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "binding_ids": [
+        "e2e_scenario_manifest_catalog",
+        "replay_pair_comparator",
+        "strict_hardened_runtime_evidence_e2e"
+      ],
+      "validation_commands": [
+        "bash scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+        "bash scripts/check_replay_engine_pair_comparator_completion_contract.sh",
+        "bash scripts/check_strict_hardened_evidence_e2e.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test e2e_scenario_manifest_catalog_completion_contract_test --test replay_engine_pair_comparator_completion_contract_test --test strict_hardened_evidence_e2e_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "status": "covered",
+      "binding_ids": [
+        "runtime_evidence_replay_gate",
+        "strict_hardened_runtime_evidence_e2e"
+      ],
+      "validation_commands": [
+        "bash scripts/check_runtime_evidence_replay_gate.sh",
+        "bash scripts/check_strict_hardened_evidence_e2e.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_evidence_replay_gate_test --test strict_hardened_evidence_e2e_test -- --nocapture"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "report_schema": "deterministic_e2e_packs_completion_contract.report.v1",
+    "required_events": [
+      "deterministic_e2e_unit_bound",
+      "deterministic_e2e_pack_bound",
+      "deterministic_e2e_replay_bound",
+      "deterministic_e2e_conformance_bound",
+      "deterministic_e2e_security_bound",
+      "deterministic_e2e_completion_contract_validated"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "original_bead",
+      "completion_debt_bead",
+      "status",
+      "evidence_binding_ids",
+      "missing_item_ids",
+      "artifact_refs",
+      "validation_commands",
+      "source_commit",
+      "scenario_classes",
+      "replay_components",
+      "runtime_modes",
+      "runtime_decisions",
+      "security_markers",
+      "failure_signature"
+    ]
+  }
+}
