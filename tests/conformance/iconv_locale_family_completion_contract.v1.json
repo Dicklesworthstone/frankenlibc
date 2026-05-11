@@ -1,0 +1,351 @@
+{
+  "schema_version": "iconv_locale_family_completion_contract.v1",
+  "bead": "bd-ldj.4",
+  "completion_debt_bead": "bd-ldj.4.1",
+  "manifest_id": "bd-ldj-4-iconv-locale-family-completion-contract",
+  "purpose": "Bind the existing native iconv/locale implementation, core unit coverage, ABI integration coverage, and isolated conformance-matrix executions to the bd-ldj.4.1 unit and e2e completion-debt obligations.",
+  "source_artifacts": {
+    "core_locale": "crates/frankenlibc-core/src/locale/mod.rs",
+    "core_locale_catgets": "crates/frankenlibc-core/src/locale/catgets.rs",
+    "core_iconv": "crates/frankenlibc-core/src/iconv/mod.rs",
+    "abi_locale": "crates/frankenlibc-abi/src/locale_abi.rs",
+    "abi_iconv": "crates/frankenlibc-abi/src/iconv_abi.rs",
+    "abi_locale_test": "crates/frankenlibc-abi/tests/locale_abi_test.rs",
+    "abi_iconv_test": "crates/frankenlibc-abi/tests/iconv_abi_test.rs",
+    "support_matrix": "support_matrix.json",
+    "locale_fixture": "tests/conformance/fixtures/locale_ops.json",
+    "iconv_fixture": "tests/conformance/fixtures/iconv_phase1.json",
+    "locale_conformance_test": "crates/frankenlibc-harness/tests/locale_ops_conformance_test.rs",
+    "iconv_conformance_test": "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+    "iconv_scope_ledger": "tests/conformance/iconv_codec_scope_ledger.v1.json",
+    "iconv_scope_test": "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+    "locale_iconv_breadth_ledger": "tests/conformance/locale_iconv_breadth_scope_ledger.v1.json",
+    "locale_iconv_breadth_test": "crates/frankenlibc-harness/tests/locale_iconv_breadth_scope_ledger_test.rs",
+    "iconv_stateful_fixture_pack": "tests/conformance/iconv_stateful_codec_fixture_pack.v1.json",
+    "iconv_stateful_fixture_pack_test": "crates/frankenlibc-harness/tests/iconv_stateful_codec_fixture_pack_test.rs",
+    "locale_catalog_transliteration_fixture_pack": "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json",
+    "locale_catalog_transliteration_fixture_pack_test": "crates/frankenlibc-harness/tests/locale_catalog_transliteration_fixture_pack_test.rs",
+    "completion_checker": "scripts/check_iconv_locale_family_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/iconv_locale_family_completion_contract_test.rs"
+  },
+  "completion_debt": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-ldj.4",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-ldj.4/scorecard.md",
+    "audit_score": 585,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "target_symbols": [
+    "iconv_open",
+    "iconv",
+    "iconv_close",
+    "setlocale",
+    "localeconv",
+    "nl_langinfo",
+    "nl_langinfo_l",
+    "newlocale",
+    "duplocale",
+    "freelocale",
+    "uselocale",
+    "gettext",
+    "ngettext",
+    "dgettext",
+    "textdomain",
+    "bindtextdomain",
+    "catopen",
+    "catgets",
+    "catclose"
+  ],
+  "completion_debt_evidence": {
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "core_locale",
+          "name": "valid_category_accepts_all_defined_categories",
+          "covers": ["locale category acceptance"]
+        },
+        {
+          "artifact": "core_locale",
+          "name": "valid_category_rejects_out_of_range",
+          "covers": ["locale category rejection"]
+        },
+        {
+          "artifact": "core_locale",
+          "name": "c_locale_conv_decimal_point_is_dot",
+          "covers": ["C locale numeric defaults"]
+        },
+        {
+          "artifact": "core_locale",
+          "name": "is_c_locale_recognises_c",
+          "covers": ["C locale name recognition"]
+        },
+        {
+          "artifact": "core_locale",
+          "name": "is_c_locale_rejects_other_names",
+          "covers": ["unsupported locale rejection"]
+        },
+        {
+          "artifact": "core_locale_catgets",
+          "name": "parse_minimal_catalog_with_one_message",
+          "covers": ["message catalog parsing"]
+        },
+        {
+          "artifact": "core_locale_catgets",
+          "name": "parse_rejects_invalid_magic",
+          "covers": ["message catalog invalid magic rejection"]
+        },
+        {
+          "artifact": "core_locale_catgets",
+          "name": "lookup_handles_collision_chain_via_plane_depth",
+          "covers": ["message catalog collision lookup"]
+        },
+        {
+          "artifact": "core_locale_catgets",
+          "name": "message_bytes_excludes_nul_terminator",
+          "covers": ["catgets message byte contract"]
+        },
+        {
+          "artifact": "core_iconv",
+          "name": "iconv_open_recognizes_phase1_encodings",
+          "covers": ["phase-1 iconv supported codecs"]
+        },
+        {
+          "artifact": "core_iconv",
+          "name": "iconv_open_rejects_out_of_scope_codecs",
+          "covers": ["phase-1 iconv unsupported codec rejection"]
+        },
+        {
+          "artifact": "core_iconv",
+          "name": "utf8_to_latin1_basic_conversion",
+          "covers": ["UTF-8 to Latin-1 conversion"]
+        },
+        {
+          "artifact": "core_iconv",
+          "name": "utf8_to_utf16le_conversion",
+          "covers": ["UTF-8 to UTF-16LE conversion"]
+        },
+        {
+          "artifact": "core_iconv",
+          "name": "utf8_to_utf32_first_conversion_emits_bom",
+          "covers": ["UTF-32 BOM emission"]
+        },
+        {
+          "artifact": "core_iconv",
+          "name": "e2big_reports_partial_progress",
+          "covers": ["E2BIG progress contract"]
+        },
+        {
+          "artifact": "core_iconv",
+          "name": "invalid_utf8_reports_eilseq",
+          "covers": ["EILSEQ invalid UTF-8 contract"]
+        },
+        {
+          "artifact": "core_iconv",
+          "name": "incomplete_utf8_reports_einval",
+          "covers": ["EINVAL incomplete UTF-8 contract"]
+        },
+        {
+          "artifact": "core_iconv",
+          "name": "latin1_unrepresentable_reports_eilseq",
+          "covers": ["unrepresentable code point contract"]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-core locale:: -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-core iconv:: -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test iconv_locale_family_completion_contract_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "abi_locale_test",
+          "name": "setlocale_set_c_locale",
+          "covers": ["ABI setlocale C locale"]
+        },
+        {
+          "artifact": "abi_locale_test",
+          "name": "localeconv_stable_pointer",
+          "covers": ["ABI localeconv static storage"]
+        },
+        {
+          "artifact": "abi_locale_test",
+          "name": "nl_langinfo_codeset",
+          "covers": ["ABI nl_langinfo CODESET"]
+        },
+        {
+          "artifact": "abi_locale_test",
+          "name": "textdomain_query_reflects_previous_set",
+          "covers": ["ABI textdomain state"]
+        },
+        {
+          "artifact": "abi_locale_test",
+          "name": "bindtextdomain_query_reflects_previous_set",
+          "covers": ["ABI bindtextdomain state"]
+        },
+        {
+          "artifact": "abi_locale_test",
+          "name": "newlocale_c_locale_succeeds",
+          "covers": ["ABI newlocale"]
+        },
+        {
+          "artifact": "abi_locale_test",
+          "name": "nl_langinfo_l_codeset",
+          "covers": ["ABI nl_langinfo_l"]
+        },
+        {
+          "artifact": "abi_locale_test",
+          "name": "generated_catalog_hit_miss_and_close_match_host",
+          "covers": ["ABI catopen/catgets/catclose host parity"]
+        },
+        {
+          "artifact": "abi_iconv_test",
+          "name": "iconv_open_utf8_to_utf16le",
+          "covers": ["ABI iconv_open"]
+        },
+        {
+          "artifact": "abi_iconv_test",
+          "name": "iconv_utf8_to_latin1",
+          "covers": ["ABI iconv conversion"]
+        },
+        {
+          "artifact": "abi_iconv_test",
+          "name": "iconv_e2big_partial_progress",
+          "covers": ["ABI iconv E2BIG"]
+        },
+        {
+          "artifact": "abi_iconv_test",
+          "name": "iconv_invalid_utf8_reports_eilseq_and_preserves_progress",
+          "covers": ["ABI iconv EILSEQ"]
+        },
+        {
+          "artifact": "abi_iconv_test",
+          "name": "iconv_close_double_close_returns_error",
+          "covers": ["ABI iconv_close descriptor invalidation"]
+        },
+        {
+          "artifact": "locale_conformance_test",
+          "name": "locale_ops_fixture_executes_mode_specific_contracts",
+          "covers": ["isolated strict+hardened locale fixture execution"]
+        },
+        {
+          "artifact": "iconv_conformance_test",
+          "name": "iconv_phase1_fixture_executes_via_isolated_harness",
+          "covers": ["isolated strict+hardened iconv fixture execution"]
+        },
+        {
+          "artifact": "iconv_scope_test",
+          "name": "iconv_scope_ledger_included_set_matches_phase1_contract",
+          "covers": ["phase-1 iconv codec scope"]
+        },
+        {
+          "artifact": "locale_iconv_breadth_test",
+          "name": "implemented_bootstrap_cross_references_canonical_phase1_ledger",
+          "covers": ["locale/iconv breadth ledger bootstrap linkage"]
+        },
+        {
+          "artifact": "iconv_stateful_fixture_pack_test",
+          "name": "manifest_defines_iconv_stateful_schema_and_required_coverage",
+          "covers": ["stateful iconv fixture-pack contract"]
+        },
+        {
+          "artifact": "locale_catalog_transliteration_fixture_pack_test",
+          "name": "manifest_defines_locale_fixture_schema_and_required_classes",
+          "covers": ["locale catalog/transliteration fixture-pack contract"]
+        }
+      ],
+      "required_artifacts": [
+        {
+          "artifact": "locale_fixture",
+          "assertion": "covers strict+hardened setlocale, localeconv, nl_langinfo, nl_langinfo_l, and POSIX locale_t operations through conformance-matrix input rows"
+        },
+        {
+          "artifact": "iconv_fixture",
+          "assertion": "covers strict+hardened iconv_open, iconv, iconv_close, E2BIG, EILSEQ, and EINVAL rows through conformance-matrix input rows"
+        },
+        {
+          "artifact": "locale_conformance_test",
+          "assertion": "executes locale fixture rows through the isolated harness conformance-matrix-case subprocess"
+        },
+        {
+          "artifact": "iconv_conformance_test",
+          "assertion": "executes iconv fixture rows through the isolated harness conformance-matrix-case subprocess"
+        },
+        {
+          "artifact": "iconv_scope_ledger",
+          "assertion": "pins included phase-1 codecs and explicit unsupported codec families"
+        },
+        {
+          "artifact": "locale_iconv_breadth_ledger",
+          "assertion": "separates implemented bootstrap rows from planned and unsupported breadth rows"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test locale_abi_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test iconv_abi_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test locale_ops_conformance_test locale_ops_fixture_executes_mode_specific_contracts -- --exact --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --exact --nocapture"
+      ],
+      "expected_fixture_modes": ["strict", "hardened"]
+    }
+  },
+  "required_source_contract": {
+    "support_matrix": {
+      "expected_status": "Implemented",
+      "expected_symbol_modules": {
+        "iconv_open": "iconv_abi",
+        "iconv": "iconv_abi",
+        "iconv_close": "iconv_abi",
+        "setlocale": "locale_abi",
+        "localeconv": "locale_abi",
+        "nl_langinfo": "locale_abi",
+        "nl_langinfo_l": "locale_abi",
+        "newlocale": "locale_abi",
+        "duplocale": "locale_abi",
+        "freelocale": "locale_abi",
+        "uselocale": "locale_abi",
+        "gettext": "locale_abi",
+        "ngettext": "locale_abi",
+        "dgettext": "locale_abi",
+        "textdomain": "locale_abi",
+        "bindtextdomain": "locale_abi",
+        "catopen": "locale_abi",
+        "catgets": "locale_abi",
+        "catclose": "locale_abi"
+      }
+    },
+    "abi_exports": {
+      "expected_marker": "pub unsafe extern \"C\" fn <symbol>"
+    },
+    "locale_fixture": {
+      "required_functions": [
+        "setlocale",
+        "localeconv",
+        "nl_langinfo",
+        "nl_langinfo_l",
+        "newlocale",
+        "uselocale",
+        "duplocale",
+        "freelocale"
+      ],
+      "required_modes": ["strict", "hardened"]
+    },
+    "iconv_fixture": {
+      "required_functions": ["iconv_open", "iconv", "iconv_close"],
+      "required_error_codes": [7, 22, 84],
+      "required_modes": ["strict", "hardened"]
+    },
+    "iconv_scope_ledger": {
+      "required_included_codecs": [
+        "UTF-8",
+        "ISO-8859-1",
+        "UTF-16LE",
+        "UTF-32"
+      ],
+      "required_module": "iconv_abi"
+    }
+  }
+}
