@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-w2c3.5.3",
-  "generated_at": "2026-04-27T03:59:01Z",
+  "generated_at": "2026-05-11T03:19:03Z",
   "status": "pass",
   "summary": {
     "total_modules": 69,
@@ -754,8 +754,8 @@
   "artifact_integrity": {
     "governance": {
       "path": "tests/conformance/math_governance.json",
-      "sha256": "6eb3ebf8ca062357a010be1ab5344034c91003295def1aa32a75ff1d33acbc4b",
-      "size_bytes": 10618
+      "sha256": "22edcae73f6fbefd0133a42efb3492f4b7ea6e83a8501c19e1821f7616dc4b3c",
+      "size_bytes": 13377
     },
     "manifest": {
       "path": "tests/runtime_math/production_kernel_manifest.v1.json",
@@ -764,7 +764,7 @@
     },
     "ablation_report": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "71f693eabf6d298f56553829e8b727f3273bad84388254890527078e3513ad92",
+      "sha256": "3706b64c2d29259d690ce61a418eac0e631c3144367392b6d08ec760ef6907b2",
       "size_bytes": 35306
     },
     "linkage": {
