@@ -1,0 +1,305 @@
+{
+  "schema_version": "release_dossier_validator_completion_contract.v1",
+  "manifest_id": "bd-5fw.3.1-release-dossier-validator-completion-contract",
+  "completion_debt_bead": "bd-5fw.3.1",
+  "original_bead": "bd-5fw.3",
+  "trace_id": "bd-5fw.3.1::release-dossier-validator::v1",
+  "generated_at_utc": "2026-05-11T10:58:00Z",
+  "purpose": "Bind the release artifact dossier spec and integrity validator to machine-checkable completion-debt evidence for tests.unit.primary, tests.e2e.primary, and tests.conformance.primary.",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-5fw.3/scorecard.md",
+  "source_artifacts": [
+    {
+      "id": "release_dossier_validator",
+      "path": "scripts/release_dossier_validator.py",
+      "role": "canonical release artifact manifest, SHA256 integrity validator, report writer, compatibility policy, and release-notes hook"
+    },
+    {
+      "id": "release_dossier_gate",
+      "path": "scripts/check_release_dossier.sh",
+      "role": "shell gate for non-strict CI and strict release dossier validation"
+    },
+    {
+      "id": "release_dossier_report",
+      "path": "tests/release/dossier_validation_report.v1.json",
+      "role": "checked-in release dossier report generated from the validator"
+    },
+    {
+      "id": "release_dossier_harness_test",
+      "path": "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+      "role": "Rust unit and E2E tests for dossier generation, artifact result fields, integrity index consistency, compatibility policy, and release-notes hook behavior"
+    },
+    {
+      "id": "completion_contract",
+      "path": "tests/release/release_dossier_validator_completion_contract.v1.json",
+      "role": "completion-debt contract for bd-5fw.3.1"
+    },
+    {
+      "id": "completion_gate",
+      "path": "scripts/check_release_dossier_validator_completion_contract.sh",
+      "role": "fail-closed checker for this completion-debt contract"
+    },
+    {
+      "id": "completion_harness_test",
+      "path": "crates/frankenlibc-harness/tests/release_dossier_validator_completion_contract_test.rs",
+      "role": "Rust positive and negative tests for this completion checker and its structured log row"
+    }
+  ],
+  "implementation_refs": [
+    "scripts/release_dossier_validator.py:36",
+    "scripts/release_dossier_validator.py:205",
+    "scripts/release_dossier_validator.py:226",
+    "scripts/release_dossier_validator.py:342",
+    "scripts/release_dossier_validator.py:350",
+    "scripts/release_dossier_validator.py:432",
+    "scripts/release_dossier_validator.py:467",
+    "scripts/release_dossier_validator.py:480",
+    "scripts/release_dossier_validator.py:497",
+    "scripts/release_dossier_validator.py:510",
+    "scripts/check_release_dossier.sh:14",
+    "scripts/check_release_dossier.sh:23",
+    "scripts/check_release_dossier.sh:45",
+    "scripts/check_release_dossier.sh:62",
+    "tests/release/dossier_validation_report.v1.json:1",
+    "tests/release/dossier_validation_report.v1.json:7",
+    "tests/release/dossier_validation_report.v1.json:23",
+    "tests/release/dossier_validation_report.v1.json:210",
+    "tests/release/dossier_validation_report.v1.json:282",
+    "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:26",
+    "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:153",
+    "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:197",
+    "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:236",
+    "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:257",
+    "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:348"
+  ],
+  "dossier_contract": {
+    "required_report_schema_version": "v1",
+    "required_report_status": "pass",
+    "required_verdict": "PASS",
+    "required_artifact_count": 15,
+    "required_integrity_entries": 14,
+    "required_summary": {
+      "total_artifacts": 15,
+      "valid": 14,
+      "present_with_issues": 0,
+      "missing": 1,
+      "critical_missing": 0,
+      "errors": 0,
+      "warnings": 1,
+      "release_note_candidates": 8
+    },
+    "required_artifact_ids": [
+      "support_matrix",
+      "reality_report",
+      "conformance_coverage",
+      "claim_reconciliation",
+      "closure_sweep",
+      "replacement_levels",
+      "opportunity_matrix",
+      "math_governance",
+      "controller_ablation",
+      "admission_gate",
+      "production_kernel_manifest",
+      "release_gate_dag",
+      "symbol_fixture_coverage",
+      "e2e_scenario_manifest",
+      "closure_contract"
+    ],
+    "required_critical_artifacts": [
+      "support_matrix",
+      "reality_report",
+      "conformance_coverage",
+      "claim_reconciliation",
+      "closure_sweep",
+      "replacement_levels",
+      "math_governance",
+      "controller_ablation",
+      "admission_gate",
+      "production_kernel_manifest",
+      "release_gate_dag",
+      "closure_contract"
+    ],
+    "required_present_noncritical_artifacts": [
+      "opportunity_matrix",
+      "symbol_fixture_coverage"
+    ],
+    "allowed_missing_artifacts": [
+      "e2e_scenario_manifest"
+    ],
+    "required_artifact_result_fields": [
+      "id",
+      "path",
+      "kind",
+      "required",
+      "critical",
+      "status",
+      "sha256",
+      "size_bytes",
+      "schema_valid",
+      "findings"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "bead",
+      "status",
+      "verdict",
+      "summary",
+      "artifact_results",
+      "integrity_index",
+      "findings",
+      "compatibility_policy",
+      "dossier_manifest_version",
+      "release_notes_hook"
+    ],
+    "required_policy_fields": [
+      "format",
+      "schema_versions",
+      "integrity"
+    ],
+    "release_notes_hook": {
+      "required_fields": [
+        "source_path",
+        "selection_policy",
+        "entries",
+        "release_notes_markdown",
+        "summary"
+      ],
+      "required_limit": 8,
+      "required_selected": 8,
+      "required_invalid_rows": 0
+    },
+    "validator_source_markers": [
+      "ARTIFACT_MANIFEST",
+      "hashlib.sha256",
+      "def sha256_file",
+      "def validate_artifact",
+      "integrity_index",
+      "compatibility_policy",
+      "release_notes_hook",
+      "json.dump(report"
+    ],
+    "gate_source_markers": [
+      "python3 \"$SCRIPT_DIR/release_dossier_validator.py\" || true",
+      "--strict",
+      "critical_missing",
+      "check_release_dossier: PASS"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "spec_item": "tests.unit.primary",
+      "description": "Unit evidence pins the artifact-result schema, integrity index consistency, compatibility policy fields, and this completion binder.",
+      "implementation_refs": [
+        "scripts/release_dossier_validator.py",
+        "tests/release/dossier_validation_report.v1.json",
+        "tests/release/release_dossier_validator_completion_contract.v1.json",
+        "scripts/check_release_dossier_validator_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+        "crates/frankenlibc-harness/tests/release_dossier_validator_completion_contract_test.rs"
+      ],
+      "required_positive_tests": [
+        "dossier_artifact_results_have_required_fields",
+        "dossier_integrity_index_consistent",
+        "dossier_compatibility_policy_present",
+        "manifest_binds_unit_e2e_conformance_completion_debt",
+        "checker_accepts_release_dossier_validator_completion_contract"
+      ],
+      "required_negative_tests": [
+        "checker_rejects_missing_unit_binding",
+        "checker_rejects_removed_required_artifact_id",
+        "checker_rejects_missing_integrity_binding"
+      ],
+      "validation_commands": [
+        "jq empty tests/release/release_dossier_validator_completion_contract.v1.json",
+        "bash -n scripts/check_release_dossier_validator_completion_contract.sh",
+        "bash scripts/check_release_dossier_validator_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_dossier_validator_completion_contract_test manifest_binds_unit_e2e_conformance_completion_debt checker_accepts_release_dossier_validator_completion_contract -- --nocapture"
+      ]
+    },
+    {
+      "spec_item": "tests.e2e.primary",
+      "description": "E2E evidence runs the validator/gate path and proves the checker emits a report plus canonical structured log row.",
+      "implementation_refs": [
+        "scripts/release_dossier_validator.py",
+        "scripts/check_release_dossier.sh",
+        "tests/release/dossier_validation_report.v1.json",
+        "scripts/check_release_dossier_validator_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+        "crates/frankenlibc-harness/tests/release_dossier_validator_completion_contract_test.rs"
+      ],
+      "required_positive_tests": [
+        "dossier_validator_produces_valid_report",
+        "dossier_validator_release_notes_hook_tracks_closed_beads",
+        "dossier_validator_release_notes_hook_invalid_limit_falls_back_to_default",
+        "checker_emits_structured_report_and_log"
+      ],
+      "required_negative_tests": [
+        "checker_rejects_missing_e2e_binding",
+        "checker_rejects_non_pass_dossier_report",
+        "checker_rejects_removed_required_artifact_id"
+      ],
+      "validation_commands": [
+        "bash scripts/check_release_dossier.sh",
+        "bash scripts/check_release_dossier.sh --strict",
+        "bash scripts/check_release_dossier_validator_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_dossier_validator_test dossier_validator_produces_valid_report dossier_validator_release_notes_hook_tracks_closed_beads dossier_validator_release_notes_hook_invalid_limit_falls_back_to_default -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_dossier_validator_completion_contract_test checker_emits_structured_report_and_log -- --nocapture"
+      ]
+    },
+    {
+      "spec_item": "tests.conformance.primary",
+      "description": "Conformance evidence binds the 15-artifact manifest, the allowed noncritical E2E gap, strict PASS dossier status, 14-entry SHA256 integrity index, and fail-closed drift checks.",
+      "implementation_refs": [
+        "scripts/release_dossier_validator.py",
+        "scripts/check_release_dossier.sh",
+        "tests/release/dossier_validation_report.v1.json",
+        "tests/release/release_dossier_validator_completion_contract.v1.json",
+        "scripts/check_release_dossier_validator_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+        "crates/frankenlibc-harness/tests/release_dossier_validator_completion_contract_test.rs"
+      ],
+      "required_positive_tests": [
+        "dossier_validator_produces_valid_report",
+        "dossier_integrity_index_consistent",
+        "checker_accepts_release_dossier_validator_completion_contract"
+      ],
+      "required_negative_tests": [
+        "checker_rejects_missing_conformance_binding",
+        "checker_rejects_removed_required_artifact_id",
+        "checker_rejects_missing_integrity_binding",
+        "checker_rejects_non_pass_dossier_report"
+      ],
+      "validation_commands": [
+        "jq empty tests/release/dossier_validation_report.v1.json",
+        "bash scripts/check_release_dossier.sh --strict",
+        "bash scripts/check_release_dossier_validator_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_dossier_validator_completion_contract_test -- --nocapture"
+      ]
+    }
+  ],
+  "structured_log_contract": {
+    "stream": "release",
+    "event": "release_dossier_validator_completion_contract_validated",
+    "gate": "release_dossier_validator_completion",
+    "required_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "stream",
+      "gate",
+      "outcome",
+      "source_commit",
+      "target_dir",
+      "failure_signature",
+      "artifact_refs",
+      "details"
+    ]
+  }
+}

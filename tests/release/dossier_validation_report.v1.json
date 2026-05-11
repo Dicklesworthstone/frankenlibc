@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-27T03:58:37Z",
+  "generated_at": "2026-05-11T11:04:17Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -39,8 +39,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "2e826b4b558da12478339671787d5491f7198371ec3c573d362c634416ba66b3",
-      "size_bytes": 253,
+      "sha256": "a1c81d05ba2e33e4d91eb44a3a710637945a03e229b8fecfb5e270dd132328f1",
+      "size_bytes": 252,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -87,8 +87,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "7af8bf39d6c9f8d66b2e20c3f9feaf73f45af0dc1c6bbe343061a938214f0699",
-      "size_bytes": 11583,
+      "sha256": "8887da6abc1f8b12cf57612992cb7dfc80a917f64950b83fe28df28d626b5c3b",
+      "size_bytes": 12690,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -111,8 +111,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "6eb3ebf8ca062357a010be1ab5344034c91003295def1aa32a75ff1d33acbc4b",
-      "size_bytes": 10618,
+      "sha256": "22edcae73f6fbefd0133a42efb3492f4b7ea6e83a8501c19e1821f7616dc4b3c",
+      "size_bytes": 13377,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -123,7 +123,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "71f693eabf6d298f56553829e8b727f3273bad84388254890527078e3513ad92",
+      "sha256": "3706b64c2d29259d690ce61a418eac0e631c3144367392b6d08ec760ef6907b2",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "5111d2674690b6685c21b14c65272b710d5612f355d4a7516f68228b557e7f59",
+      "sha256": "f7a3377443082cf885fb2d33452140055080f190bd78e1bf0be289e20c10c152",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -171,8 +171,8 @@
       "kind": "report",
       "required": true,
       "critical": false,
-      "sha256": "37d9c49c21f8eb0c5872d1aa799b27460dbf5584880c9852866f810617e735ed",
-      "size_bytes": 1843746,
+      "sha256": "6211103403e9d2cd527fa7f3ea462218b82cb66cc260d43e7aae10d9e6dcec64",
+      "size_bytes": 1844233,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -200,8 +200,8 @@
       "kind": "manifest",
       "required": true,
       "critical": true,
-      "sha256": "010986108042545014423d900ba398a6f07d128fce736f5296f92a22d52471a7",
-      "size_bytes": 12925,
+      "sha256": "eadec0e4063ebc841ae8d11fd8f6580b554b06cbc14d81c17328a6f6e22305f1",
+      "size_bytes": 14269,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -215,8 +215,8 @@
     },
     "reality_report": {
       "path": "tests/conformance/reality_report.v1.json",
-      "sha256": "2e826b4b558da12478339671787d5491f7198371ec3c573d362c634416ba66b3",
-      "size_bytes": 253
+      "sha256": "a1c81d05ba2e33e4d91eb44a3a710637945a03e229b8fecfb5e270dd132328f1",
+      "size_bytes": 252
     },
     "conformance_coverage": {
       "path": "tests/conformance/conformance_coverage_baseline.v1.json",
@@ -235,8 +235,8 @@
     },
     "replacement_levels": {
       "path": "tests/conformance/replacement_levels.json",
-      "sha256": "7af8bf39d6c9f8d66b2e20c3f9feaf73f45af0dc1c6bbe343061a938214f0699",
-      "size_bytes": 11583
+      "sha256": "8887da6abc1f8b12cf57612992cb7dfc80a917f64950b83fe28df28d626b5c3b",
+      "size_bytes": 12690
     },
     "opportunity_matrix": {
       "path": "tests/conformance/opportunity_matrix.json",
@@ -245,17 +245,17 @@
     },
     "math_governance": {
       "path": "tests/conformance/math_governance.json",
-      "sha256": "6eb3ebf8ca062357a010be1ab5344034c91003295def1aa32a75ff1d33acbc4b",
-      "size_bytes": 10618
+      "sha256": "22edcae73f6fbefd0133a42efb3492f4b7ea6e83a8501c19e1821f7616dc4b3c",
+      "size_bytes": 13377
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "71f693eabf6d298f56553829e8b727f3273bad84388254890527078e3513ad92",
+      "sha256": "3706b64c2d29259d690ce61a418eac0e631c3144367392b6d08ec760ef6907b2",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "5111d2674690b6685c21b14c65272b710d5612f355d4a7516f68228b557e7f59",
+      "sha256": "f7a3377443082cf885fb2d33452140055080f190bd78e1bf0be289e20c10c152",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -270,13 +270,13 @@
     },
     "symbol_fixture_coverage": {
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
-      "sha256": "37d9c49c21f8eb0c5872d1aa799b27460dbf5584880c9852866f810617e735ed",
-      "size_bytes": 1843746
+      "sha256": "6211103403e9d2cd527fa7f3ea462218b82cb66cc260d43e7aae10d9e6dcec64",
+      "size_bytes": 1844233
     },
     "closure_contract": {
       "path": "tests/conformance/closure_contract.v1.json",
-      "sha256": "010986108042545014423d900ba398a6f07d128fce736f5296f92a22d52471a7",
-      "size_bytes": 12925
+      "sha256": "eadec0e4063ebc841ae8d11fd8f6580b554b06cbc14d81c17328a6f6e22305f1",
+      "size_bytes": 14269
     }
   },
   "release_notes_hook": {
@@ -288,89 +288,113 @@
     },
     "entries": [
       {
-        "id": "bd-rex8a",
-        "title": "PORT: 5 fts64_* LFS-aliases (open/close/read/children/set)",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T23:04:47.796944630Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "withdrawn: fts64_open/close/read/children/set are already implemented at unistd_abi.rs lines 20055-20086 (forwarding to fts_*); my probe was checking the wrong symbol set"
+        "id": "bd-33xi.1",
+        "title": "[completion-debt] Integration: real-world application testing",
+        "issue_type": "task",
+        "priority": 0,
+        "closed_at": "2026-05-11T10:54:07.232283792Z",
+        "closed_by": "WildForest",
+        "labels": [
+          "audit-debt",
+          "audit-pass-2026-05-10"
+        ],
+        "close_reason": "Implemented and validated the real-world application testing completion contract for bd-33xi. Implementation evidence: - tests/conformance/real_world_application_testing_completion_contract.v1.json:2\u2026"
       },
       {
-        "id": "bd-jt6vm",
-        "title": "PORT: 4 BSD compatibility helpers (explicit_memset + reallocarr + consttime_bcmp + pidfile_signal)",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T22:54:06.170153360Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "shipped: 4 BSD compat helpers (explicit_memset, reallocarr, consttime_bcmp, pidfile_signal) + 10 abi tests"
+        "id": "bd-33p.3.1",
+        "title": "[completion-debt] Evidence compliance gate: schema + artifact index + failure-injection tests",
+        "issue_type": "task",
+        "priority": 0,
+        "closed_at": "2026-05-11T10:32:14.199655923Z",
+        "closed_by": "WildForest",
+        "labels": [
+          "audit-debt",
+          "audit-pass-2026-05-10"
+        ],
+        "close_reason": "Implemented and validated the evidence-compliance gate completion contract. Implementation evidence: - tests/conformance/evidence_compliance_gate_completion_contract.v1.json:52 binds tests.unit.prima\u2026"
       },
       {
-        "id": "bd-0ar9l",
-        "title": "PORT: 3 Linux 6.7+ futex2 syscall wrappers (futex_wake/wait/requeue)",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T22:35:24.207196861Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "shipped: 3 futex2 syscall wrappers (futex_wake/wait/requeue) + 3 abi tests"
+        "id": "bd-32e.6.1",
+        "title": "[completion-debt] TSM: E2E tests - full pipeline integration under load",
+        "issue_type": "task",
+        "priority": 0,
+        "closed_at": "2026-05-11T10:20:00.619846951Z",
+        "closed_by": "WildForest",
+        "labels": [
+          "audit-debt",
+          "audit-pass-2026-05-10"
+        ],
+        "close_reason": "Implemented and validated the TSM full-pipeline under-load completion contract. Implementation evidence: - tests/conformance/tsm_full_pipeline_load_completion_contract.v1.json:49 binds the missing un\u2026"
       },
       {
-        "id": "bd-idcx7",
-        "title": "PORT: 7 Linux 6.13+ syscall wrappers (xattr-at family + open_tree_attr + file_getattr/setattr)",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T22:26:35.418588568Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "shipped: 7 Linux 6.13+ syscall wrappers (setxattrat/getxattrat/listxattrat/removexattrat/open_tree_attr/file_getattr/file_setattr) + 8 abi tests verifying kernel reach"
+        "id": "bd-2vv.9.1",
+        "title": "[completion-debt] Full symbol-universe normalization + support classification pipeline",
+        "issue_type": "task",
+        "priority": 0,
+        "closed_at": "2026-05-11T10:06:04.117158251Z",
+        "closed_by": "WildForest",
+        "labels": [
+          "audit-debt",
+          "audit-pass-2026-05-10"
+        ],
+        "close_reason": "Implemented and validated full symbol-universe normalization completion evidence. Implementation evidence: - scripts/generate_symbol_universe_normalization.py:38 maps all current support-matrix modul\u2026"
       },
       {
-        "id": "bd-dcfj5",
-        "title": "PORT: 37 libresolv helpers (byte-order, p_/fp_ debug, HOSTALIASES, LOC, sym_, /etc/hosts iter)",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T22:10:30.480959059Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "shipped: 37 libresolv last-mile helpers (byte-order, p_/fp_ debug, HOSTALIASES, LOC, sym_, /etc/hosts iter) + 13 abi tests"
+        "id": "bd-2vv.16.1",
+        "title": "[completion-debt] bd-2vv subtask: resync reality_report/docs to current support_matrix universe",
+        "issue_type": "task",
+        "priority": 0,
+        "closed_at": "2026-05-11T09:45:19.017688340Z",
+        "closed_by": "WildForest",
+        "labels": [
+          "audit-debt",
+          "audit-pass-2026-05-10"
+        ],
+        "close_reason": "Implemented support-matrix universe docs completion conformance binding for missing tests.conformance.primary. Evidence refs: tests/conformance/support_matrix_universe_docs_completion_contract.v1.jso\u2026"
       },
       {
-        "id": "bd-qn6q1",
-        "title": "PORT: 51 GLIBC_PRIVATE _thread_db_* libthread_db offset/size data symbols",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T21:49:47.118366246Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "shipped: 50 GLIBC_PRIVATE _thread_db_* zeroed placeholders + 7 abi tests; libthread_db introspects no thread layout and gracefully degrades"
+        "id": "bd-2vv.13.1",
+        "title": "[completion-debt] bd-2vv subtask: reality snapshot + parity docs synchronization",
+        "issue_type": "task",
+        "priority": 0,
+        "closed_at": "2026-05-11T09:36:57.934058074Z",
+        "closed_by": "WildForest",
+        "labels": [
+          "audit-debt",
+          "audit-pass-2026-05-10"
+        ],
+        "close_reason": "Implemented reality snapshot docs completion conformance binding for missing tests.conformance.primary. Evidence refs: tests/conformance/reality_snapshot_parity_docs_completion_contract.v1.json:7 sou\u2026"
       },
       {
-        "id": "bd-pjnky",
-        "title": "PORT: 18 GLIBC_PRIVATE libnsl NIS+/yp internal helpers",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T21:40:49.127558603Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "shipped: 18 libnsl GLIBC_PRIVATE NIS+/yp internal helper stubs + 18 abi tests"
+        "id": "bd-2k6b.1",
+        "title": "[completion-debt] bd-rqn subtask: Runtime-math module classification matrix (production vs research) with rationale",
+        "issue_type": "task",
+        "priority": 0,
+        "closed_at": "2026-05-11T09:24:23.860453742Z",
+        "closed_by": "WildForest",
+        "labels": [
+          "audit-debt",
+          "audit-pass-2026-05-10"
+        ],
+        "close_reason": "Implemented runtime-math classification matrix completion binding for missing tests.unit.primary. Evidence refs: tests/conformance/runtime_math_classification_matrix_completion_contract.v1.json:7 sou\u2026"
       },
       {
-        "id": "bd-v7fi8",
-        "title": "PORT: 25 libuuid functions (RFC 4122/v1/v3/v4/v5/v6/v7 UUID handling)",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T21:32:55.568099726Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "withdrawn: project hooks gate libuuid out of scope (libuuid is util-linux's separate libuuid.so.1, not part of glibc's libc.so.6 \u2014 frankenlibc-abi only promises the libc surface). Keeping uuid_abi ou\u2026"
+        "id": "bd-2hh.1.1",
+        "title": "[completion-debt] Conformance: Fixture capture pipeline (per-ABI-family golden fixtures)",
+        "issue_type": "task",
+        "priority": 0,
+        "closed_at": "2026-05-11T09:07:07.811478981Z",
+        "closed_by": "WildForest",
+        "labels": [
+          "audit-debt",
+          "audit-pass-2026-05-10"
+        ],
+        "close_reason": "Implemented fixture capture pipeline completion binding. Evidence refs: tests/conformance/fixture_capture_pipeline_completion_contract.v1.json:7 source artifacts, :141 required unit/e2e/golden/confor\u2026"
       }
     ],
-    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-rex8a` PORT: 5 fts64_* LFS-aliases (open/close/read/children/set) (feature, closed 2026-04-26T23:04:47.796944630Z)\n  withdrawn: fts64_open/close/read/children/set are already implemented at unistd_abi.rs lines 20055-20086 (forwarding to fts_*); my probe was checking the wrong symbol set\n- `bd-jt6vm` PORT: 4 BSD compatibility helpers (explicit_memset + reallocarr + consttime_bcmp + pidfile_signal) (feature, closed 2026-04-26T22:54:06.170153360Z)\n  shipped: 4 BSD compat helpers (explicit_memset, reallocarr, consttime_bcmp, pidfile_signal) + 10 abi tests\n- `bd-0ar9l` PORT: 3 Linux 6.7+ futex2 syscall wrappers (futex_wake/wait/requeue) (feature, closed 2026-04-26T22:35:24.207196861Z)\n  shipped: 3 futex2 syscall wrappers (futex_wake/wait/requeue) + 3 abi tests\n- `bd-idcx7` PORT: 7 Linux 6.13+ syscall wrappers (xattr-at family + open_tree_attr + file_getattr/setattr) (feature, closed 2026-04-26T22:26:35.418588568Z)\n  shipped: 7 Linux 6.13+ syscall wrappers (setxattrat/getxattrat/listxattrat/removexattrat/open_tree_attr/file_getattr/file_setattr) + 8 abi tests verifying kernel reach\n- `bd-dcfj5` PORT: 37 libresolv helpers (byte-order, p_/fp_ debug, HOSTALIASES, LOC, sym_, /etc/hosts iter) (feature, closed 2026-04-26T22:10:30.480959059Z)\n  shipped: 37 libresolv last-mile helpers (byte-order, p_/fp_ debug, HOSTALIASES, LOC, sym_, /etc/hosts iter) + 13 abi tests\n- `bd-qn6q1` PORT: 51 GLIBC_PRIVATE _thread_db_* libthread_db offset/size data symbols (feature, closed 2026-04-26T21:49:47.118366246Z)\n  shipped: 50 GLIBC_PRIVATE _thread_db_* zeroed placeholders + 7 abi tests; libthread_db introspects no thread layout and gracefully degrades\n- `bd-pjnky` PORT: 18 GLIBC_PRIVATE libnsl NIS+/yp internal helpers (feature, closed 2026-04-26T21:40:49.127558603Z)\n  shipped: 18 libnsl GLIBC_PRIVATE NIS+/yp internal helper stubs + 18 abi tests\n- `bd-v7fi8` PORT: 25 libuuid functions (RFC 4122/v1/v3/v4/v5/v6/v7 UUID handling) (feature, closed 2026-04-26T21:32:55.568099726Z)\n  withdrawn: project hooks gate libuuid out of scope (libuuid is util-linux's separate libuuid.so.1, not part of glibc's libc.so.6 \u2014 frankenlibc-abi only promises the libc surface). Keeping uuid_abi ou\u2026",
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-33xi.1` [completion-debt] Integration: real-world application testing (task, closed 2026-05-11T10:54:07.232283792Z)\n  Implemented and validated the real-world application testing completion contract for bd-33xi. Implementation evidence: - tests/conformance/real_world_application_testing_completion_contract.v1.json:2\u2026\n- `bd-33p.3.1` [completion-debt] Evidence compliance gate: schema + artifact index + failure-injection tests (task, closed 2026-05-11T10:32:14.199655923Z)\n  Implemented and validated the evidence-compliance gate completion contract. Implementation evidence: - tests/conformance/evidence_compliance_gate_completion_contract.v1.json:52 binds tests.unit.prima\u2026\n- `bd-32e.6.1` [completion-debt] TSM: E2E tests - full pipeline integration under load (task, closed 2026-05-11T10:20:00.619846951Z)\n  Implemented and validated the TSM full-pipeline under-load completion contract. Implementation evidence: - tests/conformance/tsm_full_pipeline_load_completion_contract.v1.json:49 binds the missing un\u2026\n- `bd-2vv.9.1` [completion-debt] Full symbol-universe normalization + support classification pipeline (task, closed 2026-05-11T10:06:04.117158251Z)\n  Implemented and validated full symbol-universe normalization completion evidence. Implementation evidence: - scripts/generate_symbol_universe_normalization.py:38 maps all current support-matrix modul\u2026\n- `bd-2vv.16.1` [completion-debt] bd-2vv subtask: resync reality_report/docs to current support_matrix universe (task, closed 2026-05-11T09:45:19.017688340Z)\n  Implemented support-matrix universe docs completion conformance binding for missing tests.conformance.primary. Evidence refs: tests/conformance/support_matrix_universe_docs_completion_contract.v1.jso\u2026\n- `bd-2vv.13.1` [completion-debt] bd-2vv subtask: reality snapshot + parity docs synchronization (task, closed 2026-05-11T09:36:57.934058074Z)\n  Implemented reality snapshot docs completion conformance binding for missing tests.conformance.primary. Evidence refs: tests/conformance/reality_snapshot_parity_docs_completion_contract.v1.json:7 sou\u2026\n- `bd-2k6b.1` [completion-debt] bd-rqn subtask: Runtime-math module classification matrix (production vs research) with rationale (task, closed 2026-05-11T09:24:23.860453742Z)\n  Implemented runtime-math classification matrix completion binding for missing tests.unit.primary. Evidence refs: tests/conformance/runtime_math_classification_matrix_completion_contract.v1.json:7 sou\u2026\n- `bd-2hh.1.1` [completion-debt] Conformance: Fixture capture pipeline (per-ABI-family golden fixtures) (task, closed 2026-05-11T09:07:07.811478981Z)\n  Implemented fixture capture pipeline completion binding. Evidence refs: tests/conformance/fixture_capture_pipeline_completion_contract.v1.json:7 source artifacts, :141 required unit/e2e/golden/confor\u2026",
     "summary": {
-      "closed_total": 1398,
+      "closed_total": 1992,
       "selected": 8,
       "invalid_rows": 0
     }
