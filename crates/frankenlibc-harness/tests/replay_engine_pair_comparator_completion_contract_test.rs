@@ -418,7 +418,10 @@ fn checker_rejects_missing_pair_marker() -> TestResult {
     let mutated = out_dir.join("contract.json");
     write_json(&mutated, &manifest)?;
     let output = run_checker(&root, &mutated, &out_dir)?;
-    assert!(!output.status.success(), "checker should reject marker drift");
+    assert!(
+        !output.status.success(),
+        "checker should reject marker drift"
+    );
     let report =
         read_json(&out_dir.join("replay_engine_pair_comparator_completion_contract.report.json"))?;
     let errors = serde_json::to_string(&report["errors"])?;
