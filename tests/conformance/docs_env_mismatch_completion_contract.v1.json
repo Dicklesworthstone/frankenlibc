@@ -1,0 +1,211 @@
+{
+  "schema_version": "docs_env_mismatch_completion_contract.v1",
+  "bead_id": "bd-29b.2.1",
+  "original_bead": "bd-29b.2",
+  "trace_id": "bd-29b.2.1::docs-env-mismatch::completion::v1",
+  "description": "Completion contract binding the docs environment inventory generator, docs/code mismatch classifier, remediation report, governance trace, base gate, and harness tests to the missing unit and e2e completion-debt obligations.",
+  "source_artifacts": [
+    {
+      "id": "docs_env_inventory",
+      "kind": "inventory",
+      "path": "tests/conformance/docs_env_inventory.v1.json",
+      "evidence": "Canonical generated inventory of documented FRANKENLIBC_* environment keys with mention paths, lines, snippets, and summary counts."
+    },
+    {
+      "id": "docs_mismatch_report",
+      "kind": "classification_report",
+      "path": "tests/conformance/env_docs_code_mismatch_report.v1.json",
+      "evidence": "Canonical docs/code mismatch classification report with missing-in-docs, missing-in-code, semantic-drift, and unresolved-ambiguous counts reconciled to zero."
+    },
+    {
+      "id": "docs_source_map",
+      "kind": "governance_map",
+      "path": "tests/conformance/docs_source_of_truth_map.v1.json",
+      "evidence": "Canonical docs source-of-truth map assigning owners, backing artifacts, review policy, freshness status, and update triggers for major documentation surfaces."
+    },
+    {
+      "id": "docs_trace",
+      "kind": "structured_trace",
+      "path": "tests/conformance/docs_source_of_truth_trace.v1.jsonl",
+      "evidence": "Structured docs-governance JSONL trace with one row per governed section and required owner/source/update-trigger fields."
+    },
+    {
+      "id": "docs_env_generator",
+      "kind": "implementation",
+      "path": "scripts/generate_docs_env_mismatch_report.py",
+      "evidence": "Deterministic generator for docs env inventory, docs/code mismatch classification, remediation rows, source-of-truth map, and structured trace output."
+    },
+    {
+      "id": "docs_env_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_docs_env_mismatch.sh",
+      "evidence": "End-to-end gate that runs the generator in check mode, performs a deterministic dry run, requires all mismatch counts to be zero, and validates docs-governance surfaces."
+    },
+    {
+      "id": "docs_env_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
+      "evidence": "Rust harness test covering inventory shape, mismatch classification rows, zero summary counts, empty unresolved list, source-of-truth governance, trace rows, and base gate execution."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/docs_env_mismatch_completion_contract.v1.json",
+      "evidence": "Machine-readable completion-debt binding for the missing unit and e2e proof obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_docs_env_mismatch_completion_contract.sh",
+      "evidence": "Fail-closed validator for completion source bindings, docs inventory/report shape, governance trace completeness, base gate replay, and missing-item bindings."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_completion_contract_test.rs",
+      "evidence": "Rust integration test that validates the completion contract, checker report/log output, existing base gate pass path, and negative failure modes."
+    }
+  ],
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ],
+    "required_docs_summary": {
+      "total_keys_min": 25,
+      "total_mentions_min": 25,
+      "required_docs_files": [
+        "README.md",
+        "DEPLOYMENT.md",
+        "AGENTS.md",
+        "FEATURE_PARITY.md",
+        "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+        "PROPOSED_ARCHITECTURE.md",
+        "EXISTING_GLIBC_STRUCTURE.md"
+      ],
+      "required_env_keys": [
+        "FRANKENLIBC_MODE",
+        "FRANKENLIBC_LOG",
+        "FRANKENLIBC_LIB"
+      ]
+    },
+    "required_report_summary": {
+      "docs_keys_min": 25,
+      "code_keys_min": 25,
+      "missing_in_docs_count": 0,
+      "missing_in_code_count": 0,
+      "semantic_drift_count": 0,
+      "unresolved_ambiguous_count": 0
+    },
+    "required_governance": {
+      "surface_count_min": 6,
+      "missing_section_count": 0,
+      "required_surfaces": [
+        "README",
+        "ARCHITECTURE",
+        "DEPLOYMENT",
+        "SECURITY",
+        "API",
+        "TROUBLESHOOTING"
+      ],
+      "required_trace_fields": [
+        "trace_id",
+        "bead_id",
+        "doc_surface",
+        "doc_section",
+        "source_artifact",
+        "freshness_status",
+        "owner",
+        "review_policy",
+        "update_trigger",
+        "artifact_refs"
+      ]
+    },
+    "required_generator_surfaces": [
+      "collect_docs_mentions",
+      "build_docs_inventory",
+      "classify_mismatches",
+      "build_docs_governance_artifacts",
+      "canonical_json",
+      "canonical_jsonl"
+    ],
+    "required_gate_behavior": [
+      "generate_docs_env_mismatch_report.py",
+      "--check",
+      "PASS: docs/code mismatch report reconciled",
+      "PASS: docs source-of-truth map validated"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "scripts/generate_docs_env_mismatch_report.py",
+        "tests/conformance/docs_env_inventory.v1.json",
+        "tests/conformance/env_docs_code_mismatch_report.v1.json",
+        "tests/conformance/docs_env_mismatch_completion_contract.v1.json",
+        "scripts/check_docs_env_mismatch_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
+        "crates/frankenlibc-harness/tests/docs_env_mismatch_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "docs_env_mismatch_test::docs_inventory_exists_and_has_expected_shape",
+        "docs_env_mismatch_test::mismatch_report_is_fully_classified",
+        "docs_env_mismatch_test::mismatch_summary_counts_are_zero",
+        "docs_env_mismatch_completion_contract_test::contract_binds_docs_env_unit_and_e2e_sources",
+        "docs_env_mismatch_completion_contract_test::checker_accepts_docs_env_mismatch_completion_contract"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "implementation_refs": [
+        "scripts/check_docs_env_mismatch.sh",
+        "scripts/generate_docs_env_mismatch_report.py",
+        "tests/conformance/docs_source_of_truth_map.v1.json",
+        "tests/conformance/docs_source_of_truth_trace.v1.jsonl",
+        "scripts/check_docs_env_mismatch_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
+        "crates/frankenlibc-harness/tests/docs_env_mismatch_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "scripts/check_docs_env_mismatch.sh",
+        "docs_env_mismatch_test::gate_script_passes",
+        "docs_env_mismatch_test::governance_trace_rows_cover_every_section",
+        "docs_env_mismatch_completion_contract_test::completion_contract_runs_base_docs_env_gate"
+      ]
+    }
+  ],
+  "required_base_test_functions": [
+    "docs_inventory_exists_and_has_expected_shape",
+    "mismatch_report_is_fully_classified",
+    "mismatch_summary_counts_are_zero",
+    "unresolved_ambiguous_is_empty",
+    "source_of_truth_map_covers_major_surfaces",
+    "governed_sections_have_sources_owners_and_triggers",
+    "governance_trace_rows_cover_every_section",
+    "gate_script_passes"
+  ],
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_docs_env_unit_and_e2e_sources",
+      "checker_accepts_docs_env_mismatch_completion_contract",
+      "completion_contract_runs_base_docs_env_gate"
+    ],
+    "negative": [
+      "checker_rejects_missing_e2e_binding",
+      "checker_rejects_unresolved_mismatch_report",
+      "checker_rejects_missing_governance_surface"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/docs_env_mismatch_completion_contract.v1.json",
+      "scripts/check_docs_env_mismatch_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/docs_env_mismatch_completion_contract_test.rs"
+    ]
+  }
+}
