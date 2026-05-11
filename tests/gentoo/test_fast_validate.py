@@ -20,8 +20,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TIER1_FILE = REPO_ROOT / "configs" / "gentoo" / "tier1-mini.txt"
 EXCLUSIONS_FILE = REPO_ROOT / "configs" / "gentoo" / "exclusions.json"
+PACKAGE_TIERS_FILE = REPO_ROOT / "configs" / "gentoo" / "package-tiers.json"
 TOP100_FILE = REPO_ROOT / "configs" / "gentoo" / "top100-packages.txt"
 FAST_VALIDATE_SCRIPT = REPO_ROOT / "scripts" / "gentoo" / "fast-validate.sh"
+UPDATE_PACKAGE_LIST_SCRIPT = REPO_ROOT / "scripts" / "gentoo" / "update-package-list.py"
 
 
 def load_tier1_packages() -> list[str]:
@@ -44,14 +46,109 @@ def load_exclusions() -> set[str]:
 
 def load_top100_packages() -> set[str]:
     """Load all packages from top100-packages.txt."""
+    return set(load_top100_package_list())
+
+
+def load_top100_package_list() -> list[str]:
+    """Load the ordered checked-in top100 package golden."""
     if not TOP100_FILE.exists():
-        return set()
+        return []
     lines = TOP100_FILE.read_text().splitlines()
-    return {
+    return [
         line.strip()
         for line in lines
         if line.strip() and not line.strip().startswith("#")
-    }
+    ]
+
+
+def flatten_package_tiers() -> list[str]:
+    """Load the ordered package list from package-tiers.json."""
+    data = json.loads(PACKAGE_TIERS_FILE.read_text())
+    return [
+        package
+        for tier in data["tiers"]
+        for package in tier["packages"]
+    ]
+
+
+class TestTop100PackageSelection(unittest.TestCase):
+    """Validate the top100 package-selection golden and telemetry contract."""
+
+    def test_top100_golden_matches_package_tiers(self) -> None:
+        self.assertEqual(
+            load_top100_package_list(),
+            flatten_package_tiers(),
+            "top100-packages.txt must be the ordered golden generated from package-tiers.json",
+        )
+
+    def test_update_package_list_regenerates_checked_in_golden(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            generated = Path(tmpdir) / "top100-packages.txt"
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(UPDATE_PACKAGE_LIST_SCRIPT),
+                    "--output",
+                    str(generated),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=str(REPO_ROOT),
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"update-package-list.py failed: {result.stderr}",
+            )
+            self.assertEqual(
+                generated.read_text(),
+                TOP100_FILE.read_text(),
+                "regenerated top100 package golden drifted from the checked-in artifact",
+            )
+
+    def test_update_package_list_check_emits_selection_telemetry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            telemetry_path = Path(tmpdir) / "top100-selection-telemetry.json"
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(UPDATE_PACKAGE_LIST_SCRIPT),
+                    "--check",
+                    "--telemetry",
+                    str(telemetry_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=str(REPO_ROOT),
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"update-package-list.py --check failed: {result.stderr}",
+            )
+            telemetry = json.loads(telemetry_path.read_text())
+            self.assertEqual(
+                telemetry["schema_version"],
+                "gentoo_top100_package_selection_telemetry.v1",
+            )
+            self.assertEqual(telemetry["bead"], "bd-2icq.5")
+            self.assertEqual(telemetry["event"], "top100_package_selection_validated")
+            self.assertEqual(telemetry["status"], "pass")
+            self.assertTrue(telemetry["check_only"])
+            self.assertEqual(telemetry["package_count"], 100)
+            self.assertEqual(telemetry["tier_count"], 5)
+            self.assertEqual(telemetry["first_package"], "sys-libs/glibc")
+            self.assertEqual(telemetry["last_package"], "media-video/vlc")
+            self.assertEqual(
+                telemetry["selection_criteria"]["popularity_weight"],
+                0.35,
+            )
+            self.assertEqual(
+                set(telemetry["tier_package_counts"].values()),
+                {20},
+            )
 
 
 class TestTier1MiniPackageList(unittest.TestCase):

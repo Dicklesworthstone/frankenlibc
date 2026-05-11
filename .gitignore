@@ -183,6 +183,9 @@ git_show_*.txt
 # Archived root scratch
 /artifacts/root-scratch/
 
+# Gentoo fast-validate dry-run output; historical checked-in runs remain tracked.
+/artifacts/gentoo-builds/fast-validate/20*/
+
 # Conformance harness build artifacts (case-runner binaries are
 # rebuilt per fixture batch and frequently exceed 50 MB)
 tests/conformance/conformance-matrix-case-runner-*.bin
