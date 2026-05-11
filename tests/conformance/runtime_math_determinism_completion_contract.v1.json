@@ -1,0 +1,222 @@
+{
+  "schema_version": "runtime_math_determinism_completion_contract.v1",
+  "manifest_id": "bd-1fk1.1-runtime-math-determinism-completion-contract",
+  "original_bead": "bd-1fk1",
+  "completion_debt_bead": "bd-1fk1.1",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-1fk1/scorecard.md",
+  "source_artifacts": {
+    "runtime_math_mod": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+    "determinism_proof_source": "crates/frankenlibc-harness/src/runtime_math_determinism_proofs.rs",
+    "determinism_gate_script": "scripts/check_runtime_math_determinism_proofs.sh",
+    "determinism_harness_test": "crates/frankenlibc-harness/tests/runtime_math_determinism_proofs_test.rs",
+    "harness_cli": "crates/frankenlibc-harness/src/bin/harness.rs",
+    "snapshot_schema_doc": "crates/frankenlibc-membrane/src/runtime_math/runtime_kernel_snapshot_schema.md",
+    "verification_matrix": "tests/conformance/verification_matrix.json",
+    "proof_binder_validation": "tests/conformance/proof_binder_validation.v1.json",
+    "ci_script": "scripts/ci.sh",
+    "completion_checker": "scripts/check_runtime_math_determinism_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/runtime_math_determinism_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.integration.primary"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Unit evidence binds RuntimeMathKernel explicit-mode construction, replay determinism, snapshot schema drift checks, monotone counter/range invariants, and observe-pipeline state transitions.",
+      "required_test_refs": [
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_kernel_snapshot_schema_doc_matches_constant"
+        },
+        {
+          "source": "runtime_math_mod",
+          "name": "snapshot_contract_ranges_are_sane_for_fresh_kernel"
+        },
+        {
+          "source": "runtime_math_mod",
+          "name": "snapshot_decision_and_evidence_counters_are_monotone"
+        },
+        {
+          "source": "runtime_math_mod",
+          "name": "deterministic_replay_produces_identical_decisions_and_evidence"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_kernel_snapshot_schema_doc_matches_constant --lib -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane snapshot_contract_ranges_are_sane_for_fresh_kernel --lib -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane deterministic_replay_produces_identical_decisions_and_evidence --lib -- --nocapture"
+      ]
+    },
+    "integration_primary": {
+      "missing_item_id": "tests.integration.primary",
+      "description": "Integration evidence binds the runtime-math determinism proof subcommand, gate script, structured log/report assertions, proof obligation row, verification matrix row, and this completion contract checker.",
+      "required_scripts": [
+        "scripts/check_runtime_math_determinism_proofs.sh",
+        "scripts/check_runtime_math_determinism_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {
+          "source": "determinism_harness_test",
+          "name": "runtime_math_kernel_snapshot_golden_checksum_matches_manifest"
+        },
+        {
+          "source": "determinism_harness_test",
+          "name": "gate_script_exists_and_executable"
+        },
+        {
+          "source": "determinism_harness_test",
+          "name": "gate_script_emits_logs_and_report"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "manifest_binds_runtime_math_determinism_unit_and_integration_items"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_validates_runtime_math_determinism_contract_and_emits_report_log"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_observe_binding"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_unit_test_binding"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_local_cargo_command"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_determinism_proofs_test -- --nocapture",
+        "bash scripts/check_runtime_math_determinism_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_determinism_completion_contract_test -- --nocapture"
+      ]
+    }
+  },
+  "required_determinism_contract": {
+    "seed": 3735928559,
+    "seed_literal": "0xDEAD_BEEF",
+    "steps": 512,
+    "modes": [
+      "strict",
+      "hardened"
+    ],
+    "scenario_families": [
+      "PointerValidation",
+      "Allocator",
+      "StringMemory",
+      "Threading",
+      "Socket",
+      "Inet",
+      "Time"
+    ],
+    "required_source_text": {
+      "determinism_proof_source": [
+        "for mode in [SafetyLevel::Strict, SafetyLevel::Hardened]",
+        "RuntimeMathKernel::new_for_mode(mode)",
+        "let d1 = k1.decide(mode, ctx)",
+        "let d2 = k2.decide(mode, ctx)",
+        "k1.note_check_order_outcome(mode, family, aligned, recent_page, &o1, exit_stage)",
+        "k1.observe_validation_result(mode, ctx.family, d1.profile, estimated_cost_ns, adverse)",
+        "let final_snapshot_equal = snap1_after == snap2_after",
+        "check_snapshot_invariants(&snap1_before, &snap1_after)",
+        "\"state_before\": check.before",
+        "\"state_after\": check.after",
+        "\"invariant_result\": if check.ok { \"pass\" } else { \"fail\" }"
+      ],
+      "determinism_gate_script": [
+        "runtime-math-determinism-proofs",
+        "--log",
+        "--report",
+        "runtime_math_determinism_proofs.log.jsonl",
+        "runtime_math_determinism_proofs.report.json"
+      ],
+      "determinism_harness_test": [
+        "gate_script_emits_logs_and_report",
+        "runtime_math.determinism.proof_step",
+        "runtime_math.determinism.gram_eigenvalue_check",
+        "runtime_math.determinism.boundary_assumption",
+        "runtime_math.determinism.mode_finish"
+      ],
+      "harness_cli": [
+        "RuntimeMathDeterminismProofs",
+        "runtime_math_determinism_proofs.log.jsonl",
+        "runtime_math_determinism_proofs.report.json",
+        "frankenlibc_harness::runtime_math_determinism_proofs::run_and_write"
+      ],
+      "snapshot_schema_doc": [
+        "RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION = 2",
+        "schema_version",
+        "decisions",
+        "full_validation_trigger_ppm",
+        "repair_trigger_ppm"
+      ],
+      "ci_script": [
+        "scripts/check_runtime_math_determinism_proofs.sh"
+      ]
+    },
+    "required_verification_matrix": {
+      "bead_id": "bd-1fk1",
+      "status": "complete",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --test runtime_math_determinism_proofs_test -- --nocapture",
+        "cargo test -p frankenlibc-membrane runtime_kernel_snapshot_schema_doc_matches_constant -- --nocapture"
+      ],
+      "e2e_cmds": [
+        "scripts/check_runtime_math_determinism_proofs.sh"
+      ],
+      "expected_assertions": [
+        "two fresh kernels driven identically must yield identical per-step decisions and final RuntimeKernelSnapshot (strict and hardened)",
+        "observe_validation_result path determinism is exercised (decide+observe integration), not only decide()",
+        "snapshot invariants hold (schema version, monotone counters, ppm/action bounds, no NaN/Inf in f64 fields)",
+        "gate emits structured JSONL logs plus a machine-readable JSON report"
+      ]
+    },
+    "proof_obligation": {
+      "obligation_id": "PO-03",
+      "statement": "Deterministic Replay Theorem: same (mode, inputs, env snapshot) produces identical decisions and evidence.",
+      "verification_command": "rch exec -- cargo test -p frankenlibc-harness --test runtime_math_determinism_proofs_test -- --nocapture"
+    }
+  },
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "determinism_contract",
+      "unit_bindings",
+      "integration_bindings",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "source_commit",
+      "status",
+      "outcome",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ],
+    "required_events": [
+      "runtime_math_determinism_unit_bindings_verified",
+      "runtime_math_determinism_integration_bindings_verified",
+      "runtime_math_determinism_contract_verified",
+      "runtime_math_determinism_completion_contract_pass"
+    ],
+    "forbidden_pass_events": [
+      "runtime_math_determinism_completion_contract_fail"
+    ]
+  }
+}
