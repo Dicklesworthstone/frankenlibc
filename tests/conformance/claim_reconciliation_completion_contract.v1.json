@@ -1,0 +1,158 @@
+{
+  "schema_version": "claim_reconciliation_completion_contract.v1",
+  "bead": "bd-w2c3.10.1",
+  "completion_debt_bead": "bd-w2c3.10.1.1",
+  "manifest_id": "bd-w2c3-10-1-claim-reconciliation-completion-contract",
+  "purpose": "Bind the existing claim-reconciliation engine, canonical report, shell gate, and drift-routing harness coverage to the bd-w2c3.10.1.1 unit and e2e completion-debt obligations.",
+  "source_artifacts": {
+    "claim_reconciliation_engine": "scripts/claim_reconciliation.py",
+    "claim_reconciliation_gate": "scripts/check_claim_reconciliation.sh",
+    "claim_reconciliation_report": "tests/conformance/claim_reconciliation_report.v1.json",
+    "claim_reconciliation_test": "crates/frankenlibc-harness/tests/claim_reconciliation_test.rs",
+    "support_matrix": "support_matrix.json",
+    "reality_report": "tests/conformance/reality_report.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "hard_parts_truth_table": "tests/conformance/hard_parts_truth_table.v1.json",
+    "feature_parity": "FEATURE_PARITY.md",
+    "readme": "README.md",
+    "release_claim_control_contract": "tests/conformance/release_claim_control_completion_contract.v1.json",
+    "release_claim_control_checker": "scripts/check_release_claim_control_completion_contract.sh",
+    "completion_checker": "scripts/check_claim_reconciliation_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/claim_reconciliation_completion_contract_test.rs"
+  },
+  "completion_debt": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-w2c3.10.1",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.10.1/scorecard.md",
+    "audit_score": 585,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "claim_reconciliation_surface": {
+    "input_artifacts": [
+      "support_matrix.json",
+      "tests/conformance/reality_report.v1.json",
+      "tests/conformance/replacement_levels.json",
+      "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "tests/conformance/hard_parts_truth_table.v1.json",
+      "FEATURE_PARITY.md",
+      "README.md"
+    ],
+    "env_overrides": [
+      "FLC_CLAIM_RECON_SUPPORT_MATRIX",
+      "FLC_CLAIM_RECON_REALITY_REPORT",
+      "FLC_CLAIM_RECON_REPLACEMENT_LEVELS",
+      "FLC_CLAIM_RECON_SMOKE_SUMMARY",
+      "FLC_CLAIM_RECON_HARD_PARTS",
+      "FLC_CLAIM_RECON_FEATURE_PARITY",
+      "FLC_CLAIM_RECON_README",
+      "FLC_CLAIM_RECON_CANONICAL_REPORT"
+    ]
+  },
+  "completion_debt_evidence": {
+    "unit_primary": {
+      "required_engine_functions": [
+        "env_path",
+        "load_json",
+        "repo_relative",
+        "normalize_source_name",
+        "enrich_findings",
+        "build_owner_summary",
+        "extract_md_counts",
+        "check_count_consistency",
+        "check_replacement_levels",
+        "check_replacement_level_text_consistency",
+        "check_module_taxonomy",
+        "check_hard_parts",
+        "check_timestamp_consistency",
+        "check_readme_claims",
+        "check_readme_replacement_smoke_claims",
+        "check_readme_smoke_summary_claims",
+        "check_feature_parity_done_claims",
+        "main"
+      ],
+      "required_test_refs": [
+        {
+          "artifact": "claim_reconciliation_test",
+          "name": "claim_reconciliation_gate_passes",
+          "covers": ["canonical pass report parity", "stable report path", "input artifact listing"]
+        },
+        {
+          "artifact": "claim_reconciliation_test",
+          "name": "claim_reconciliation_detects_readme_drift_and_routes_owner",
+          "covers": ["README count drift", "owner routing"]
+        },
+        {
+          "artifact": "claim_reconciliation_test",
+          "name": "claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner",
+          "covers": ["replacement-level blocker drift", "owner routing"]
+        },
+        {
+          "artifact": "claim_reconciliation_test",
+          "name": "claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_owner",
+          "covers": ["README smoke overclaim rejection"]
+        },
+        {
+          "artifact": "claim_reconciliation_test",
+          "name": "claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner",
+          "covers": ["checked smoke summary drift", "canonical smoke artifact linkage"]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test claim_reconciliation_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test claim_reconciliation_completion_contract_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "required_artifacts": [
+        {
+          "artifact": "support_matrix",
+          "assertion": "source of truth for symbol support counts and taxonomy"
+        },
+        {
+          "artifact": "reality_report",
+          "assertion": "aggregate reality snapshot cross-checked against support_matrix"
+        },
+        {
+          "artifact": "replacement_levels",
+          "assertion": "replacement-level blockers and L1 claim gate stay aligned with current support truth"
+        },
+        {
+          "artifact": "smoke_summary",
+          "assertion": "checked README smoke status is derived from canonical smoke evidence"
+        },
+        {
+          "artifact": "hard_parts_truth_table",
+          "assertion": "hard-parts symbol expectations participate in claim reconciliation"
+        },
+        {
+          "artifact": "feature_parity",
+          "assertion": "FEATURE_PARITY claims are reconciled against machine artifacts"
+        },
+        {
+          "artifact": "readme",
+          "assertion": "README public claims are reconciled against machine artifacts"
+        }
+      ],
+      "required_report_contract": {
+        "schema_version": "v1",
+        "bead": "bd-w2c3.10.1",
+        "status": "pass",
+        "report_artifact_path": "tests/conformance/claim_reconciliation_report.v1.json",
+        "summary": {
+          "critical": 0,
+          "errors": 0,
+          "warnings": 0,
+          "total_findings": 0
+        }
+      },
+      "required_commands": [
+        "bash scripts/check_claim_reconciliation.sh <report>",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_claim_control_completion_contract_test -- --nocapture"
+      ]
+    }
+  }
+}
