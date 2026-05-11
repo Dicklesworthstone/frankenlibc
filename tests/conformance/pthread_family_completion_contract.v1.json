@@ -1,0 +1,422 @@
+{
+  "schema_version": "pthread_family_completion_contract.v1",
+  "bead": "bd-ldj.2",
+  "completion_debt_bead": "bd-ldj.2.1",
+  "manifest_id": "bd-ldj-2-pthread-family-completion-contract",
+  "purpose": "Bind the existing native pthread implementation, Rust unit/integration coverage, and LD_PRELOAD C fixture evidence to the bd-ldj.2.1 completion-debt unit, integration, and e2e obligations.",
+  "source_artifacts": {
+    "core_thread": "crates/frankenlibc-core/src/pthread/thread.rs",
+    "core_mutex": "crates/frankenlibc-core/src/pthread/mutex.rs",
+    "core_cond": "crates/frankenlibc-core/src/pthread/cond.rs",
+    "core_rwlock": "crates/frankenlibc-core/src/pthread/rwlock.rs",
+    "core_tls": "crates/frankenlibc-core/src/pthread/tls.rs",
+    "abi_pthread": "crates/frankenlibc-abi/src/pthread_abi.rs",
+    "abi_pthread_test": "crates/frankenlibc-abi/tests/pthread_abi_test.rs",
+    "abi_thread_lifecycle_test": "crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs",
+    "abi_mutex_core_test": "crates/frankenlibc-abi/tests/pthread_mutex_core_test.rs",
+    "abi_cond_core_test": "crates/frankenlibc-abi/tests/pthread_cond_core_test.rs",
+    "abi_rwlock_core_test": "crates/frankenlibc-abi/tests/pthread_rwlock_core_test.rs",
+    "abi_once_test": "crates/frankenlibc-abi/tests/pthread_once_test.rs",
+    "abi_tsd_test": "crates/frankenlibc-abi/tests/pthread_tsd_test.rs",
+    "abi_barrier_spin_diff_test": "crates/frankenlibc-abi/tests/conformance_diff_pthread_barrier_spin.rs",
+    "support_matrix": "support_matrix.json",
+    "pthread_thread_fixture": "tests/conformance/fixtures/pthread_thread.json",
+    "pthread_mutex_fixture": "tests/conformance/fixtures/pthread_mutex.json",
+    "pthread_cond_fixture": "tests/conformance/fixtures/pthread_cond.json",
+    "pthread_tls_keys_fixture": "tests/conformance/fixtures/pthread_tls_keys.json",
+    "pthread_gnu_extensions_fixture": "tests/conformance/fixtures/pthread_gnu_extensions.json",
+    "conformance_thread_test": "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs",
+    "conformance_mutex_test": "crates/frankenlibc-harness/tests/pthread_mutex_conformance_test.rs",
+    "conformance_cond_test": "crates/frankenlibc-harness/tests/pthread_cond_conformance_test.rs",
+    "conformance_tls_test": "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs",
+    "conformance_gnu_test": "crates/frankenlibc-harness/tests/pthread_gnu_extensions_conformance_test.rs",
+    "e2e_c_fixture_runner": "scripts/c_fixture_suite.sh",
+    "e2e_pthread_fixture": "tests/integration/fixture_pthread.c",
+    "e2e_pthread_mutex_adversarial_fixture": "tests/integration/fixture_pthread_mutex_adversarial.c",
+    "thread_stress_spec": "tests/conformance/pthread_thread_stress_scenarios.v1.json",
+    "thread_stress_runner": "scripts/bd1f35_thread_stress_run.sh",
+    "completion_checker": "scripts/check_pthread_family_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/pthread_family_completion_contract_test.rs"
+  },
+  "completion_debt": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-ldj.2",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-ldj.2/scorecard.md",
+    "audit_score": 585,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.integration.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "target_symbols": [
+    "pthread_create",
+    "pthread_join",
+    "pthread_detach",
+    "pthread_self",
+    "pthread_equal",
+    "pthread_mutex_init",
+    "pthread_mutex_destroy",
+    "pthread_mutex_lock",
+    "pthread_mutex_trylock",
+    "pthread_mutex_unlock",
+    "pthread_cond_init",
+    "pthread_cond_destroy",
+    "pthread_cond_wait",
+    "pthread_cond_timedwait",
+    "pthread_cond_clockwait",
+    "pthread_cond_signal",
+    "pthread_cond_broadcast",
+    "pthread_rwlock_init",
+    "pthread_rwlock_destroy",
+    "pthread_rwlock_rdlock",
+    "pthread_rwlock_wrlock",
+    "pthread_rwlock_unlock",
+    "pthread_rwlock_tryrdlock",
+    "pthread_rwlock_trywrlock",
+    "pthread_barrier_init",
+    "pthread_barrier_destroy",
+    "pthread_barrier_wait",
+    "pthread_key_create",
+    "pthread_key_delete",
+    "pthread_getspecific",
+    "pthread_setspecific",
+    "pthread_once",
+    "pthread_spin_init",
+    "pthread_spin_destroy",
+    "pthread_spin_lock",
+    "pthread_spin_trylock",
+    "pthread_spin_unlock",
+    "pthread_cancel",
+    "pthread_getattr_np",
+    "pthread_tryjoin_np",
+    "pthread_timedjoin_np",
+    "pthread_clockjoin_np"
+  ],
+  "completion_debt_evidence": {
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "core_thread",
+          "name": "create_and_join_thread_returns_value",
+          "covers": [
+            "core clone-backed create/join return value"
+          ]
+        },
+        {
+          "artifact": "core_thread",
+          "name": "multiple_threads_created_and_joined",
+          "covers": [
+            "core thread lifecycle fanout"
+          ]
+        },
+        {
+          "artifact": "core_thread",
+          "name": "join_after_detach_returns_einval",
+          "covers": [
+            "core detach/join error contract"
+          ]
+        },
+        {
+          "artifact": "core_mutex",
+          "name": "contract_errorcheck_relock_is_ededlk",
+          "covers": [
+            "errorcheck mutex relock semantics"
+          ]
+        },
+        {
+          "artifact": "core_mutex",
+          "name": "contract_recursive_relock_succeeds_nonblocking",
+          "covers": [
+            "recursive mutex relock semantics"
+          ]
+        },
+        {
+          "artifact": "core_mutex",
+          "name": "posix_mutex_unlock_conformance_table",
+          "covers": [
+            "mutex unlock POSIX outcome table"
+          ]
+        },
+        {
+          "artifact": "core_cond",
+          "name": "scenario_timedwait_monotonic_past_deadline",
+          "covers": [
+            "cond timedwait timeout semantics"
+          ]
+        },
+        {
+          "artifact": "core_cond",
+          "name": "scenario_signal_before_wait_not_queued",
+          "covers": [
+            "cond signal non-queueing semantics"
+          ]
+        },
+        {
+          "artifact": "core_cond",
+          "name": "posix_cond_destroy_conformance_table",
+          "covers": [
+            "cond destroy POSIX outcome table"
+          ]
+        },
+        {
+          "artifact": "core_rwlock",
+          "name": "sanitize_rwlock_kind_check",
+          "covers": [
+            "rwlock kind sanitization"
+          ]
+        },
+        {
+          "artifact": "core_tls",
+          "name": "setspecific_and_getspecific_roundtrip",
+          "covers": [
+            "pthread TLS set/get round-trip"
+          ]
+        },
+        {
+          "artifact": "core_tls",
+          "name": "destructor_iteration_is_bounded_at_max",
+          "covers": [
+            "pthread TLS destructor iteration bound"
+          ]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-core pthread:: -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test pthread_family_completion_contract_test -- --nocapture"
+      ]
+    },
+    "integration_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "abi_pthread_test",
+          "name": "thread_create_join",
+          "covers": [
+            "ABI pthread_create/pthread_join"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "mutex_errorcheck_double_lock_returns_edeadlk",
+          "covers": [
+            "ABI errorcheck mutex relock"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "mutex_zeroed_static_initializer_promotes_on_first_use",
+          "covers": [
+            "ABI PTHREAD_MUTEX_INITIALIZER lazy promotion"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "condvar_wait_signal_wakeup",
+          "covers": [
+            "ABI cond wait/signal wakeup"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "cond_clockwait_rejects_invalid_clockid",
+          "covers": [
+            "ABI pthread_cond_clockwait validation"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "rwlock_multiple_readers",
+          "covers": [
+            "ABI rwlock concurrent readers"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "key_setspecific_getspecific",
+          "covers": [
+            "ABI pthread TLS set/get"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "once_runs_exactly_once",
+          "covers": [
+            "ABI pthread_once"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "barrier_single_thread_wait",
+          "covers": [
+            "ABI pthread_barrier_wait"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "spinlock_trylock_fails_locked",
+          "covers": [
+            "ABI pthread spin trylock busy"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "cancel_running_thread",
+          "covers": [
+            "ABI pthread_cancel"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "getattr_np_returns_valid_info",
+          "covers": [
+            "ABI pthread_getattr_np"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "tryjoin_np_on_finished_thread",
+          "covers": [
+            "ABI pthread_tryjoin_np"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "timedjoin_np_succeeds_before_deadline",
+          "covers": [
+            "ABI pthread_timedjoin_np"
+          ]
+        },
+        {
+          "artifact": "abi_pthread_test",
+          "name": "clockjoin_np_monotonic_succeeds_before_deadline",
+          "covers": [
+            "ABI pthread_clockjoin_np"
+          ]
+        },
+        {
+          "artifact": "abi_thread_lifecycle_test",
+          "name": "pthread_detach_makes_subsequent_join_fail_with_esrch",
+          "covers": [
+            "ABI detach consumed-handle contract"
+          ]
+        },
+        {
+          "artifact": "abi_mutex_core_test",
+          "name": "futex_mutex_contention_increments_wait_and_wake_counters",
+          "covers": [
+            "native futex mutex contention telemetry"
+          ]
+        },
+        {
+          "artifact": "abi_cond_core_test",
+          "name": "condvar_broadcast_wakes_multiple_timedwait_threads",
+          "covers": [
+            "native cond broadcast wakeup"
+          ]
+        },
+        {
+          "artifact": "abi_rwlock_core_test",
+          "name": "rwlock_writer_blocks_reader_until_unlock",
+          "covers": [
+            "native rwlock exclusion"
+          ]
+        },
+        {
+          "artifact": "abi_once_test",
+          "name": "once_concurrent_threads_run_exactly_once",
+          "covers": [
+            "pthread_once concurrency"
+          ]
+        },
+        {
+          "artifact": "abi_tsd_test",
+          "name": "tsd_isolated_across_concurrent_threads",
+          "covers": [
+            "pthread TLS cross-thread isolation"
+          ]
+        },
+        {
+          "artifact": "abi_barrier_spin_diff_test",
+          "name": "diff_pthread_barrier_wait_count_one_releases_immediately",
+          "covers": [
+            "barrier behavior parity"
+          ]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_abi_test thread_create_join -- --exact --nocapture --test-threads=1",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_abi_test cond_clockwait_rejects_invalid_clockid -- --exact --nocapture --test-threads=1",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_abi_test mutex_zeroed_static_initializer_promotes_on_first_use -- --exact --nocapture --test-threads=1",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_abi_test clockjoin_np_monotonic_succeeds_before_deadline -- --exact --nocapture --test-threads=1",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_mutex_core_test futex_mutex_contention_increments_wait_and_wake_counters -- --exact --nocapture --test-threads=1",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_cond_core_test condvar_broadcast_wakes_multiple_timedwait_threads -- --exact --nocapture --test-threads=1",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_rwlock_core_test rwlock_writer_blocks_reader_until_unlock -- --exact --nocapture --test-threads=1",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_once_test once_concurrent_threads_run_exactly_once -- --exact --nocapture --test-threads=1",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_tsd_test tsd_isolated_across_concurrent_threads -- --exact --nocapture --test-threads=1",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test conformance_diff_pthread_barrier_spin diff_pthread_barrier_wait_count_one_releases_immediately -- --exact --nocapture --test-threads=1"
+      ]
+    },
+    "e2e_primary": {
+      "required_artifacts": [
+        {
+          "artifact": "e2e_c_fixture_runner",
+          "assertion": "runs selected C fixtures under LD_PRELOAD in strict and hardened modes with structured trace output"
+        },
+        {
+          "artifact": "e2e_pthread_fixture",
+          "assertion": "exercises pthread_create, pthread_join, pthread_self, pthread_equal, and mutex operations through a C process"
+        },
+        {
+          "artifact": "e2e_pthread_mutex_adversarial_fixture",
+          "assertion": "exercises errorcheck mutex attributes, trylock busy, unlock-without-lock, and destroy-while-locked through a C process"
+        },
+        {
+          "artifact": "thread_stress_runner",
+          "assertion": "reuses the same C fixture in strict+hardened thread-stress scenarios"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> FIXTURE_FILTER=fixture_pthread.c BEAD_ID=bd-ldj.2.1 bash -lc 'cargo build -p frankenlibc-abi --release && scripts/c_fixture_suite.sh'",
+        "rch exec -- env CARGO_TARGET_DIR=<target> FIXTURE_FILTER=fixture_pthread_mutex_adversarial.c BEAD_ID=bd-ldj.2.1 bash -lc 'cargo build -p frankenlibc-abi --release && scripts/c_fixture_suite.sh'"
+      ],
+      "expected_report": "target/c_fixture_suite/<run_id>/artifact_index.json",
+      "expected_log": "target/c_fixture_suite/<run_id>/trace.jsonl"
+    }
+  },
+  "required_source_contract": {
+    "support_matrix": {
+      "expected_status": "Implemented",
+      "expected_module": "pthread_abi",
+      "expected_symbols": 42
+    },
+    "abi_exports": {
+      "source_artifact": "abi_pthread",
+      "expected_marker": "pub unsafe extern \"C\" fn <symbol>"
+    },
+    "pthread_thread_fixture": {
+      "required_calls": [
+        "pthread_create",
+        "pthread_join",
+        "pthread_self",
+        "pthread_equal",
+        "pthread_mutex_lock",
+        "pthread_mutex_unlock"
+      ]
+    },
+    "pthread_mutex_adversarial_fixture": {
+      "required_calls": [
+        "pthread_mutexattr_settype",
+        "pthread_mutex_trylock",
+        "pthread_mutex_unlock",
+        "pthread_mutex_destroy"
+      ]
+    },
+    "thread_stress_spec": {
+      "required_modes": [
+        "strict",
+        "hardened"
+      ],
+      "required_fixture_id": "c_fixture_pthread_common_adversarial"
+    }
+  }
+}

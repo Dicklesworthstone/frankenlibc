@@ -439,6 +439,19 @@ fn mutex_lock_unlock() {
 }
 
 #[test]
+fn mutex_zeroed_static_initializer_promotes_on_first_use() {
+    unsafe {
+        let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
+
+        assert_eq!(pthread_mutex_lock(&mut mutex), 0);
+        assert_eq!(pthread_mutex_trylock(&mut mutex), libc::EBUSY);
+        assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
+        assert_eq!(pthread_mutex_unlock(&mut mutex), libc::EPERM);
+        assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+    }
+}
+
+#[test]
 fn mutex_trylock_succeeds_when_unlocked() {
     unsafe {
         let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();

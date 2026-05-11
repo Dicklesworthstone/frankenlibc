@@ -660,6 +660,45 @@ fn clear_managed_mutex(mutex: *mut libc::pthread_mutex_t) {
     }
 }
 
+fn ensure_managed_default_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
+    if is_managed_mutex(mutex) {
+        return true;
+    }
+
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return false;
+    };
+    let Some(magic_ptr) = mutex_magic_ptr(mutex) else {
+        return false;
+    };
+    let Some(type_ptr) = mutex_type_ptr(mutex) else {
+        return false;
+    };
+    let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+        return false;
+    };
+    let Some(count_ptr) = mutex_lock_count_ptr(mutex) else {
+        return false;
+    };
+
+    // SAFETY: all pointers were alignment-checked and point into pthread_mutex_t storage.
+    let word = unsafe { &*word_ptr };
+    let magic = unsafe { &*magic_ptr };
+    let mtype = unsafe { &*type_ptr };
+    let owner = unsafe { &*owner_ptr };
+    let count = unsafe { &*count_ptr };
+
+    if word.load(Ordering::Acquire) != 0 || magic.load(Ordering::Acquire) != 0 {
+        return false;
+    }
+
+    mtype.store(PTHREAD_MUTEX_NORMAL_TYPE, Ordering::Release);
+    owner.store(MUTEX_NO_OWNER, Ordering::Release);
+    count.store(0, Ordering::Release);
+    magic.store(MANAGED_MUTEX_MAGIC, Ordering::Release);
+    true
+}
+
 fn rwlock_word_ptr(rwlock: *mut libc::pthread_rwlock_t) -> Option<*mut AtomicI32> {
     if rwlock.is_null() {
         return None;
@@ -2281,7 +2320,7 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t
     if mutex.is_null() {
         return libc::EINVAL;
     }
-    if !is_managed_mutex(mutex) {
+    if !ensure_managed_default_mutex(mutex) {
         return libc::EINVAL;
     }
 
@@ -2318,7 +2357,7 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t
 /// POSIX `pthread_mutex_lock`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -> c_int {
-    if !is_managed_mutex(mutex) {
+    if !ensure_managed_default_mutex(mutex) {
         return libc::EINVAL;
     }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
@@ -2389,7 +2428,7 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
 /// POSIX `pthread_mutex_trylock`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t) -> c_int {
-    if !is_managed_mutex(mutex) {
+    if !ensure_managed_default_mutex(mutex) {
         return libc::EINVAL;
     }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
@@ -2459,7 +2498,7 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
 /// POSIX `pthread_mutex_unlock`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t) -> c_int {
-    if !is_managed_mutex(mutex) {
+    if !ensure_managed_default_mutex(mutex) {
         return libc::EINVAL;
     }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
