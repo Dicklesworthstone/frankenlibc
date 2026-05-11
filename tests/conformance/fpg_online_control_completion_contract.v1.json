@@ -1,0 +1,231 @@
+{
+  "schema_version": "fpg_online_control_completion_contract.v1",
+  "bead": "bd-bp8fl.3.9",
+  "completion_debt_bead": "bd-bp8fl.3.9.1",
+  "manifest_id": "bd-bp8fl-3-9-fpg-online-control-completion-contract",
+  "purpose": "Bind the existing fpg proof-online-control evidence gate to the bd-bp8fl.3.9.1 completion-debt unit and conformance obligations.",
+  "source_artifacts": {
+    "source_gate": "tests/conformance/fpg_online_control_gate.v1.json",
+    "source_checker": "scripts/check_fpg_online_control_gate.sh",
+    "source_test": "crates/frankenlibc-harness/tests/fpg_online_control_gate_test.rs",
+    "feature_parity": "FEATURE_PARITY.md",
+    "gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+    "owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "runtime_env_inventory": "tests/conformance/runtime_env_inventory.v1.json",
+    "perf_budget_policy": "tests/conformance/perf_budget_policy.json",
+    "anytime_valid_monitor_spec": "tests/conformance/anytime_valid_monitor_spec.json",
+    "optimization_proof_ledger": "tests/conformance/optimization_proof_ledger.v1.json",
+    "risk_pareto_calibration": "tests/runtime_math/risk_pareto_calibration.v1.json",
+    "runtime_math_linkage": "tests/runtime_math/runtime_math_linkage.v1.json",
+    "completion_checker": "scripts/check_fpg_online_control_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/fpg_online_control_completion_contract_test.rs"
+  },
+  "completion_debt": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-bp8fl.3.9",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.3.9/scorecard.md",
+    "audit_score": 585,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.conformance.primary"
+    ]
+  },
+  "completion_debt_evidence": {
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "source_test",
+          "name": "gate_artifact_covers_online_control_rows",
+          "covers": [
+            "gate schema",
+            "thirteen online-control gap IDs",
+            "input artifact paths",
+            "source commit freshness policy",
+            "required log fields"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "gate_rejects_premature_done_claim",
+          "covers": [
+            "DONE promotion block",
+            "claim policy fail-closed behavior"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "gate_rejects_stale_gate_source_commit",
+          "covers": [
+            "stale source commit rejection"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "gate_rejects_stale_feature_parity_binding",
+          "covers": [
+            "FEATURE_PARITY line drift rejection"
+          ]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_online_control_gate_test gate_artifact_covers_online_control_rows",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_online_control_completion_contract_test -- --nocapture"
+      ]
+    },
+    "conformance_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "source_test",
+          "name": "gate_script_passes_and_emits_structured_artifacts",
+          "covers": [
+            "source gate script execution",
+            "deterministic report emission",
+            "structured JSONL emission"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "gate_rejects_missing_online_control_anchor",
+          "covers": [
+            "missing evidence anchor fail-closed behavior"
+          ]
+        }
+      ],
+      "required_artifacts": [
+        {
+          "artifact": "source_gate",
+          "assertion": "contains all thirteen fpg-proof-online-control gap IDs and evidence anchors"
+        },
+        {
+          "artifact": "source_checker",
+          "assertion": "validates the source gate against FEATURE_PARITY.md, gap ledger, gap groups, owner-family groups, runtime inventory, budget, monitor, proof ledger, calibration, and linkage artifacts"
+        },
+        {
+          "artifact": "gap_ledger",
+          "assertion": "contains every proof_math gap row referenced by the source gate"
+        },
+        {
+          "artifact": "gap_groups",
+          "assertion": "binds fpg-proof-online-control to the thirteen expected gap IDs"
+        },
+        {
+          "artifact": "owner_family_groups",
+          "assertion": "binds the owner-family group to bd-bp8fl.3.9"
+        },
+        {
+          "artifact": "runtime_env_inventory",
+          "assertion": "keeps runtime environment inventory available for drift and observability anchors"
+        },
+        {
+          "artifact": "perf_budget_policy",
+          "assertion": "keeps latency and budget policy rows available for online-control anchors"
+        },
+        {
+          "artifact": "anytime_valid_monitor_spec",
+          "assertion": "keeps e-process monitor parameters available for sequential regression anchors"
+        },
+        {
+          "artifact": "optimization_proof_ledger",
+          "assertion": "keeps missing-proof rejection evidence available for CHC/CEGAR anchors"
+        },
+        {
+          "artifact": "risk_pareto_calibration",
+          "assertion": "keeps strict and hardened replay decisions available for controller anchors"
+        },
+        {
+          "artifact": "runtime_math_linkage",
+          "assertion": "keeps runtime decision surface linkage available for reachability and observability anchors"
+        }
+      ],
+      "required_commands": [
+        "jq empty tests/conformance/fpg_online_control_gate.v1.json",
+        "bash scripts/check_fpg_online_control_gate.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_online_control_gate_test -- --nocapture"
+      ],
+      "expected_report": "target/conformance/fpg_online_control_completion_contract.report.json",
+      "expected_log": "target/conformance/fpg_online_control_completion_contract.log.jsonl"
+    }
+  },
+  "required_source_gate_contract": {
+    "schema_version": "v1",
+    "source_bead": "bd-bp8fl.3.9",
+    "completion_debt_bead": "bd-bp8fl.3.9.1",
+    "owner_family_group": "fpg-proof-online-control",
+    "expected_manifest_id": "fpg-online-control-gate",
+    "expected_gap_count": 13,
+    "expected_required_log_field_count": 16,
+    "expected_input_artifact_count": 10,
+    "expected_gap_ids": [
+      "fp-proof-math-df8f42355e99",
+      "fp-proof-math-6d3837dc2cdd",
+      "fp-proof-math-1a1ed91c6ee8",
+      "fp-proof-math-5a7ebb15c2f5",
+      "fp-proof-math-b9be3da6001d",
+      "fp-proof-math-eb51f3bf762d",
+      "fp-proof-math-96c6e9c65324",
+      "fp-proof-math-f929ecc9dcd6",
+      "fp-proof-math-c215c413371b",
+      "fp-proof-math-050acfed5d6f",
+      "fp-proof-math-fa21b6b68812",
+      "fp-proof-math-76ad47f58ff9",
+      "fp-proof-math-10bc920debc7"
+    ],
+    "source_commit_freshness_policy": {
+      "recorded_source_commit_field": "source_commit",
+      "comparison_target": "current git HEAD",
+      "stale_result": "block_online_control_gate_evidence",
+      "online_control_evidence_allowed_when_stale": false,
+      "rejected_evidence_kind": "stale_source_commit"
+    },
+    "claim_policy": {
+      "default_decision": "block_done_until_online_control_evidence_current",
+      "allow_status_without_full_closure": [
+        "PLANNED",
+        "IN_PROGRESS"
+      ],
+      "block_status_without_all_anchors": [
+        "DONE"
+      ],
+      "block_replacement_levels_without_evidence": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "missing_or_stale_result": "claim_blocked"
+    },
+    "required_source_markers": {
+      "source_checker": [
+        "EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY",
+        "REQUIRED_LOG_FIELDS",
+        "EXPECTED_GAP_IDS",
+        "runtime_env_inventory",
+        "risk_pareto_calibration",
+        "block_done_until_online_control_evidence_current",
+        "source_commit_is_current"
+      ],
+      "source_test": [
+        "gate_artifact_covers_online_control_rows",
+        "gate_script_passes_and_emits_structured_artifacts",
+        "gate_rejects_missing_online_control_anchor",
+        "gate_rejects_premature_done_claim",
+        "gate_rejects_stale_gate_source_commit",
+        "gate_rejects_stale_feature_parity_binding"
+      ],
+      "feature_parity": [
+        "sequential regression control",
+        "tail-risk control",
+        "noncommutative contention stability"
+      ],
+      "owner_family_groups": [
+        "fpg-proof-online-control",
+        "bd-bp8fl.3.9",
+        "runtime_math_replay_and_budget_gate"
+      ],
+      "gap_groups": [
+        "fpg-proof-online-control",
+        "runtime_math_replay_and_budget_gate"
+      ]
+    }
+  }
+}
