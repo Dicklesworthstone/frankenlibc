@@ -247,5 +247,67 @@ printf 'fake emerge %s\n' "$*"
         self.assertEqual(telemetry_events[-1]["instrumented_phase_events"], 1)
 
 
+class DependencyGraphGoldenTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.repo_root = Path(__file__).resolve().parents[2]
+        self.data_dir = self.repo_root / "data/gentoo"
+
+    def test_dependency_graph_artifacts_match_golden_contract(self) -> None:
+        graph = json.loads((self.data_dir / "dependency-graph.json").read_text(encoding="utf-8"))
+        waves = json.loads((self.data_dir / "build-waves.json").read_text(encoding="utf-8"))
+        order = (self.data_dir / "build-order.txt").read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(graph["schema_version"], "v1")
+        self.assertEqual(graph["bead"], "bd-2icq.6")
+        self.assertEqual(
+            graph["metrics"],
+            {
+                "package_count": 100,
+                "edge_count": 441,
+                "wave_count": 6,
+                "estimated_total_build_time_minutes": 651,
+                "estimated_total_build_time_hours": 10.85,
+                "scc_count": 100,
+                "largest_scc_size": 1,
+            },
+        )
+
+        expected_bootstrap_order = [
+            "sys-devel/binutils",
+            "sys-devel/make",
+            "sys-devel/patch",
+            "sys-kernel/linux-headers",
+            "sys-libs/glibc",
+            "sys-devel/gcc",
+        ]
+        self.assertEqual(order[:6], expected_bootstrap_order)
+        self.assertEqual(graph["build_order"][:6], expected_bootstrap_order)
+        self.assertEqual(len(order), 100)
+        self.assertEqual(len(set(order)), 100)
+
+        flattened_waves = [
+            package
+            for wave in waves["waves"]
+            for package in wave["packages"]
+        ]
+        self.assertEqual(waves["schema_version"], "v1")
+        self.assertEqual(waves["bead"], "bd-2icq.6")
+        self.assertEqual(waves["wave_count"], graph["metrics"]["wave_count"])
+        self.assertEqual(flattened_waves, order)
+        self.assertEqual(graph["build_waves"][0], expected_bootstrap_order[:4])
+        self.assertEqual(graph["build_waves"][1], ["sys-libs/glibc"])
+        self.assertEqual(graph["build_waves"][2], ["sys-devel/gcc"])
+
+        edges = {
+            (edge["from"], edge["to"], edge["kind"])
+            for edge in graph["edges"]
+        }
+        self.assertIn(("sys-kernel/linux-headers", "sys-libs/glibc", "BDEPEND"), edges)
+        self.assertIn(("sys-devel/binutils", "sys-devel/gcc", "BDEPEND"), edges)
+        self.assertIn(("sys-libs/glibc", "sys-devel/gcc", "RDEPEND"), edges)
+        self.assertIn(("dev-libs/openssl", "net-misc/curl", "RDEPEND"), edges)
+        self.assertIn(("net-libs/libevent", "net-misc/mosquitto", "RDEPEND"), edges)
+
+
 if __name__ == "__main__":
     unittest.main()
