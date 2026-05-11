@@ -1,0 +1,219 @@
+{
+  "schema_version": "user_workload_replay_manifest_completion_contract.v1",
+  "bead": "bd-b92jd.3.1.1",
+  "original_bead": "bd-b92jd.3.1",
+  "title": "Completion proof for user workload replay manifest and checker",
+  "trace_id": "bd-b92jd.3.1.1::user-workload-replay-manifest::v1",
+  "source_artifacts": [
+    {
+      "id": "source_manifest",
+      "path": "tests/conformance/user_workload_replay_manifest.v1.json",
+      "role": "source workload replay manifest for bd-b92jd.3.1"
+    },
+    {
+      "id": "source_checker",
+      "path": "scripts/check_user_workload_replay_manifest.sh",
+      "role": "source workload replay manifest checker and telemetry emitter"
+    },
+    {
+      "id": "source_harness_test",
+      "path": "crates/frankenlibc-harness/tests/user_workload_replay_manifest_test.rs",
+      "role": "source unit tests for manifest shape, checker pass path, and negative fixtures"
+    },
+    {
+      "id": "completion_checker",
+      "path": "scripts/check_user_workload_replay_manifest_completion_contract.sh",
+      "role": "bd-b92jd.3.1.1 completion checker"
+    },
+    {
+      "id": "completion_harness_test",
+      "path": "crates/frankenlibc-harness/tests/user_workload_replay_manifest_completion_contract_test.rs",
+      "role": "bd-b92jd.3.1.1 completion harness proof"
+    }
+  ],
+  "completion_debt_evidence": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "audit_score": 200,
+    "next_audit_score_threshold": 800,
+    "missing_item_bindings": [
+      {
+        "spec_item": "tests.unit.primary",
+        "description": "Unit evidence binds the workload replay manifest shape, category/mode coverage, optional skip policy, and negative fixture tests to source harness coverage.",
+        "implementation_refs": [
+          "tests/conformance/user_workload_replay_manifest.v1.json",
+          "scripts/check_user_workload_replay_manifest.sh"
+        ],
+        "test_refs": [
+          "crates/frankenlibc-harness/tests/user_workload_replay_manifest_test.rs",
+          "crates/frankenlibc-harness/tests/user_workload_replay_manifest_completion_contract_test.rs"
+        ],
+        "required_positive_tests": [
+          "manifest_exists_and_declares_replay_contract",
+          "workloads_cover_categories_command_shapes_env_and_timeouts",
+          "optional_tool_probe_has_deterministic_skip_reason",
+          "gate_script_passes_and_emits_report_and_jsonl_rows",
+          "checker_validates_user_workload_replay_manifest_completion_contract"
+        ],
+        "required_negative_tests": [
+          "gate_rejects_invalid_command_argv_fixture",
+          "gate_rejects_invalid_env_overlay_fixture",
+          "gate_rejects_invalid_timeout_fixture",
+          "gate_rejects_missing_optional_skip_policy_fixture",
+          "gate_rejects_stale_source_commit_fixture",
+          "checker_rejects_missing_unit_binding",
+          "checker_rejects_missing_required_log_field",
+          "checker_rejects_missing_negative_fixture_binding"
+        ],
+        "required_commands": [
+          "bash scripts/check_user_workload_replay_manifest_completion_contract.sh",
+          "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test user_workload_replay_manifest_test -- --nocapture",
+          "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test user_workload_replay_manifest_completion_contract_test -- --nocapture"
+        ]
+      },
+      {
+        "spec_item": "tests.conformance.primary",
+        "description": "Conformance evidence binds the source replay manifest checker dry-run to a deterministic 5-workload, 15-row baseline/strict/hardened matrix report.",
+        "implementation_refs": [
+          "tests/conformance/user_workload_replay_manifest.v1.json",
+          "scripts/check_user_workload_replay_manifest.sh"
+        ],
+        "test_refs": [
+          "crates/frankenlibc-harness/tests/user_workload_replay_manifest_test.rs",
+          "crates/frankenlibc-harness/tests/user_workload_replay_manifest_completion_contract_test.rs"
+        ],
+        "required_positive_tests": [
+          "gate_script_passes_and_emits_report_and_jsonl_rows",
+          "checker_validates_user_workload_replay_manifest_completion_contract"
+        ],
+        "required_negative_tests": [
+          "checker_rejects_missing_required_log_field"
+        ],
+        "required_commands": [
+          "bash scripts/check_user_workload_replay_manifest.sh --dry-run",
+          "bash scripts/check_user_workload_replay_manifest_completion_contract.sh"
+        ]
+      },
+      {
+        "spec_item": "telemetry.primary",
+        "description": "Telemetry evidence binds every replay matrix row to required JSONL fields including trace_id, bead_id, workload_id, runtime_mode, artifact_refs, source_commit, target_dir, and failure_signature.",
+        "implementation_refs": [
+          "scripts/check_user_workload_replay_manifest.sh",
+          "tests/conformance/user_workload_replay_manifest.v1.json"
+        ],
+        "test_refs": [
+          "crates/frankenlibc-harness/tests/user_workload_replay_manifest_test.rs",
+          "crates/frankenlibc-harness/tests/user_workload_replay_manifest_completion_contract_test.rs"
+        ],
+        "required_positive_tests": [
+          "gate_script_passes_and_emits_report_and_jsonl_rows",
+          "checker_validates_user_workload_replay_manifest_completion_contract"
+        ],
+        "required_negative_tests": [
+          "checker_rejects_missing_required_log_field"
+        ],
+        "required_commands": [
+          "bash scripts/check_user_workload_replay_manifest_completion_contract.sh",
+          "jq -c 'select(has(\"trace_id\") | not)' target/conformance/user_workload_replay_manifest_completion_contract.source.log.jsonl"
+        ]
+      }
+    ]
+  },
+  "user_workload_replay_manifest_contract": {
+    "source_manifest_path": "tests/conformance/user_workload_replay_manifest.v1.json",
+    "source_checker_path": "scripts/check_user_workload_replay_manifest.sh",
+    "source_harness_test_path": "crates/frankenlibc-harness/tests/user_workload_replay_manifest_test.rs",
+    "source_bead": "bd-b92jd.3.1",
+    "required_modes": [
+      "baseline",
+      "strict",
+      "hardened"
+    ],
+    "required_categories": [
+      "coreutils",
+      "shell_pipeline",
+      "dynamic_runtime",
+      "c_fixture",
+      "optional_tool"
+    ],
+    "expected_workload_count": 5,
+    "expected_matrix_row_count": 15,
+    "expected_optional_workload_count": 1,
+    "required_log_fields": [
+      "trace_id",
+      "bead_id",
+      "workload_id",
+      "category",
+      "runtime_mode",
+      "command_kind",
+      "command_argv",
+      "env_overlay",
+      "timeout_ms",
+      "expected_exit",
+      "expected_stdout_kind",
+      "optional",
+      "skip_reason",
+      "artifact_refs",
+      "source_commit",
+      "target_dir",
+      "failure_signature"
+    ],
+    "required_failure_signatures": [
+      "workload_replay_invalid_command_argv",
+      "workload_replay_invalid_env_overlay",
+      "workload_replay_timeout_policy_invalid",
+      "workload_replay_optional_skip_missing",
+      "workload_replay_stale_source_commit"
+    ],
+    "required_unit_tests": [
+      "manifest_exists_and_declares_replay_contract",
+      "workloads_cover_categories_command_shapes_env_and_timeouts",
+      "optional_tool_probe_has_deterministic_skip_reason",
+      "gate_script_passes_and_emits_report_and_jsonl_rows",
+      "gate_rejects_invalid_command_argv_fixture",
+      "gate_rejects_invalid_env_overlay_fixture",
+      "gate_rejects_invalid_timeout_fixture",
+      "gate_rejects_missing_optional_skip_policy_fixture",
+      "gate_rejects_stale_source_commit_fixture"
+    ],
+    "required_source_checks": [
+      "json_parse",
+      "top_level_shape",
+      "required_log_fields",
+      "runtime_mode_policy",
+      "artifact_freshness",
+      "required_categories",
+      "workload_rows",
+      "timeout_policy",
+      "optional_skip_policy",
+      "category_coverage",
+      "summary_counts",
+      "structured_log_rows"
+    ]
+  },
+  "completion_output_contract": {
+    "report_path": "target/conformance/user_workload_replay_manifest_completion_contract.report.json",
+    "log_path": "target/conformance/user_workload_replay_manifest_completion_contract.log.jsonl",
+    "source_report_path": "target/conformance/user_workload_replay_manifest_completion_contract.source.report.json",
+    "source_log_path": "target/conformance/user_workload_replay_manifest_completion_contract.source.log.jsonl",
+    "required_report_fields": [
+      "schema_version",
+      "bead_id",
+      "original_bead",
+      "trace_id",
+      "source_commit",
+      "status",
+      "summary",
+      "source_artifacts",
+      "missing_item_bindings",
+      "artifact_refs",
+      "errors"
+    ],
+    "required_events": [
+      "source_artifacts_validated",
+      "completion_bindings_validated",
+      "source_gate_replayed",
+      "telemetry_rows_validated",
+      "user_workload_replay_manifest_completion_contract_pass"
+    ]
+  }
+}
