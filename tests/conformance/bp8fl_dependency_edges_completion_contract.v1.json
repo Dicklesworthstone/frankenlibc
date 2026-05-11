@@ -1,0 +1,254 @@
+{
+  "schema_version": "bp8fl_dependency_edges_completion_contract.v1",
+  "bead": "bd-bp8fl.2.9.1",
+  "original_bead": "bd-bp8fl.2.9",
+  "trace_id": "bd-bp8fl.2.9.1::dependency-edges::v1",
+  "generated_at_utc": "2026-05-11T16:30:00Z",
+  "purpose": "Bind the bd-bp8fl.2.9 tracker-repair dependency wiring to deterministic unit and e2e completion-debt proof without changing the source gates.",
+  "source_artifacts": [
+    {
+      "id": "issues_jsonl",
+      "path": ".beads/issues.jsonl",
+      "role": "no-db tracker source of truth"
+    },
+    {
+      "id": "user_compatibility_report_manifest",
+      "path": "tests/conformance/user_compatibility_report.v1.json",
+      "role": "bd-bp8fl.10.8 user-report source gate"
+    },
+    {
+      "id": "user_compatibility_report_checker",
+      "path": "scripts/generate_user_compatibility_report.sh",
+      "role": "bd-bp8fl.10.8 report generation gate"
+    },
+    {
+      "id": "user_compatibility_report_test",
+      "path": "crates/frankenlibc-harness/tests/user_compatibility_report_test.rs",
+      "role": "bd-bp8fl.10.8 harness proof"
+    },
+    {
+      "id": "release_readme_example_gate_manifest",
+      "path": "tests/conformance/release_readme_example_workload_gate.v1.json",
+      "role": "bd-bp8fl.10.4 README/release example source gate"
+    },
+    {
+      "id": "release_readme_example_gate_checker",
+      "path": "scripts/check_release_readme_example_workload_gate.sh",
+      "role": "bd-bp8fl.10.4 README/release example checker"
+    },
+    {
+      "id": "release_readme_example_gate_test",
+      "path": "crates/frankenlibc-harness/tests/release_readme_example_workload_gate_test.rs",
+      "role": "bd-bp8fl.10.4 harness proof"
+    },
+    {
+      "id": "release_claim_checker",
+      "path": "scripts/release/check_replacement_claim_evidence.sh",
+      "role": "bd-bp8fl.6.4 replacement-claim source gate"
+    },
+    {
+      "id": "release_claim_gate_test",
+      "path": "crates/frankenlibc-harness/tests/release_claim_gate_test.rs",
+      "role": "bd-bp8fl.6.4 harness proof"
+    },
+    {
+      "id": "standalone_readiness_matrix",
+      "path": "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+      "role": "bd-bp8fl.6.6 standalone readiness source matrix"
+    },
+    {
+      "id": "standalone_readiness_checker",
+      "path": "scripts/check_standalone_readiness_matrix.sh",
+      "role": "bd-bp8fl.6.6 standalone readiness checker"
+    },
+    {
+      "id": "standalone_readiness_test",
+      "path": "crates/frankenlibc-harness/tests/standalone_readiness_matrix_test.rs",
+      "role": "bd-bp8fl.6.6 harness proof"
+    },
+    {
+      "id": "perf_budget_policy",
+      "path": "tests/conformance/perf_budget_policy.json",
+      "role": "bd-bp8fl.8.6 workload-linked performance budget source gate"
+    },
+    {
+      "id": "perf_budget_checker",
+      "path": "scripts/check_perf_budget.sh",
+      "role": "bd-bp8fl.8.6 performance budget checker"
+    },
+    {
+      "id": "perf_budget_test",
+      "path": "crates/frankenlibc-harness/tests/perf_budget_test.rs",
+      "role": "bd-bp8fl.8.6 harness proof"
+    },
+    {
+      "id": "first_optimization_gate",
+      "path": "tests/conformance/first_optimization_gate.v1.json",
+      "role": "bd-bp8fl.8.4 first optimization source gate"
+    },
+    {
+      "id": "first_optimization_checker",
+      "path": "scripts/check_first_optimization_gate.sh",
+      "role": "bd-bp8fl.8.4 first optimization checker"
+    },
+    {
+      "id": "first_optimization_test",
+      "path": "crates/frankenlibc-harness/tests/first_optimization_gate_test.rs",
+      "role": "bd-bp8fl.8.4 harness proof"
+    },
+    {
+      "id": "completion_checker",
+      "path": "scripts/check_bp8fl_dependency_edges_completion_contract.sh",
+      "role": "bd-bp8fl.2.9.1 completion checker"
+    },
+    {
+      "id": "completion_test",
+      "path": "crates/frankenlibc-harness/tests/bp8fl_dependency_edges_completion_contract_test.rs",
+      "role": "bd-bp8fl.2.9.1 completion harness proof"
+    }
+  ],
+  "dependency_edges": {
+    "tracker_mode": "no-db",
+    "required_dependency_type": "blocks",
+    "required_source_status": "closed",
+    "required_target_status": "closed",
+    "edges": [
+      {
+        "edge_id": "readme-release-examples-consume-compatibility-report",
+        "source": "bd-bp8fl.10.4",
+        "target": "bd-bp8fl.10.8",
+        "scenario_id": "user-report-to-readme-release-gate",
+        "rationale": "README/release examples must consume the generated user compatibility report before advertising support."
+      },
+      {
+        "edge_id": "release-tags-consume-standalone-readiness-matrix",
+        "source": "bd-bp8fl.6.4",
+        "target": "bd-bp8fl.6.6",
+        "scenario_id": "replacement-claim-to-standalone-readiness-gate",
+        "rationale": "Release tags cannot overclaim standalone replacement readiness without the L2/L3 proof matrix."
+      },
+      {
+        "edge_id": "first-optimization-consumes-workload-performance-budgets",
+        "source": "bd-bp8fl.8.4",
+        "target": "bd-bp8fl.8.6",
+        "scenario_id": "optimization-to-user-workload-performance-budget-gate",
+        "rationale": "The first optimization bead must use user-workload-linked performance budgets."
+      }
+    ],
+    "read_only_commands": [
+      "br show bd-bp8fl.2.9 --no-db --json",
+      "br show bd-bp8fl.10.4 --no-db --json",
+      "br show bd-bp8fl.10.8 --no-db --json",
+      "br show bd-bp8fl.6.4 --no-db --json",
+      "br show bd-bp8fl.6.6 --no-db --json",
+      "br show bd-bp8fl.8.4 --no-db --json",
+      "br show bd-bp8fl.8.6 --no-db --json",
+      "br dep cycles --no-db --json",
+      "bv --robot-insights"
+    ],
+    "forbidden_command_fragments": [
+      "br sync --flush-only",
+      "br sync --import-only",
+      "br sync --rebuild",
+      "br dep add",
+      "br update",
+      "br close",
+      "br create",
+      "git clean",
+      "git reset --hard",
+      "rm -rf"
+    ]
+  },
+  "completion_debt_evidence": {
+    "missing_item_bindings": [
+      {
+        "spec_item": "tests.unit.primary",
+        "implementation_refs": [
+          "tests/conformance/bp8fl_dependency_edges_completion_contract.v1.json",
+          "scripts/check_bp8fl_dependency_edges_completion_contract.sh"
+        ],
+        "test_refs": [
+          "crates/frankenlibc-harness/tests/bp8fl_dependency_edges_completion_contract_test.rs"
+        ],
+        "required_positive_tests": [
+          "manifest_binds_dependency_edges_and_completion_items",
+          "checker_verifies_tracker_edges_fixture_and_emits_report_log"
+        ],
+        "required_negative_tests": [
+          "checker_rejects_destructive_tracker_command",
+          "checker_rejects_missing_dependency_edge",
+          "checker_rejects_missing_unit_binding"
+        ]
+      },
+      {
+        "spec_item": "tests.e2e.primary",
+        "implementation_refs": [
+          "scripts/check_bp8fl_dependency_edges_completion_contract.sh"
+        ],
+        "test_refs": [
+          "crates/frankenlibc-harness/tests/bp8fl_dependency_edges_completion_contract_test.rs"
+        ],
+        "required_commands": [
+          "bash scripts/check_bp8fl_dependency_edges_completion_contract.sh",
+          "br dep cycles --no-db --json",
+          "bv --robot-insights",
+          "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test bp8fl_dependency_edges_completion_contract_test -- --nocapture",
+          "rch exec -- env CARGO_TARGET_DIR=<target> cargo check -p frankenlibc-harness --test bp8fl_dependency_edges_completion_contract_test",
+          "rch exec -- env CARGO_TARGET_DIR=<target> cargo clippy -p frankenlibc-harness --test bp8fl_dependency_edges_completion_contract_test -- -D warnings"
+        ]
+      }
+    ],
+    "required_bv_cycle_break": {
+      "status_state": "available",
+      "cycle_count": 0,
+      "advisory_terms": [
+        "No cycles detected",
+        "proper DAG"
+      ]
+    }
+  },
+  "completion_output_contract": {
+    "report_path": "target/conformance/bp8fl_dependency_edges_completion_contract.report.json",
+    "log_path": "target/conformance/bp8fl_dependency_edges_completion_contract.log.jsonl",
+    "required_report_fields": [
+      "schema_version",
+      "bead_id",
+      "original_bead",
+      "trace_id",
+      "source_commit",
+      "status",
+      "summary",
+      "dependency_edges",
+      "cycle_proof",
+      "bv_cycle_break",
+      "missing_item_bindings",
+      "source_artifacts",
+      "artifact_refs",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "bead_id",
+      "original_bead",
+      "scenario_id",
+      "event",
+      "status",
+      "expected",
+      "actual",
+      "artifact_refs",
+      "source_commit",
+      "target_dir",
+      "failure_signature"
+    ],
+    "required_events": [
+      "source_artifacts_validated",
+      "read_only_policy_validated",
+      "missing_item_bindings_validated",
+      "dependency_edges_verified",
+      "tracker_cycles_verified",
+      "bv_cycle_break_verified",
+      "bp8fl_dependency_edges_completion_contract_validated"
+    ]
+  }
+}
