@@ -1,0 +1,347 @@
+{
+  "schema_version": "executable_docs_validation_completion_contract.v1",
+  "bead_id": "bd-3rw.5.2",
+  "original_bead": "bd-3rw.5",
+  "trace_id": "bd-3rw.5.2::executable-docs-validation::completion::v1",
+  "purpose": "Bind executable documentation validation, CI drift enforcement, release-note hooks, fuzz target evidence, conformance reports, and structured telemetry to the missing completion-debt items for bd-3rw.5.",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-3rw.5/scorecard.md",
+  "source_artifacts": [
+    {
+      "id": "docs_env_generator",
+      "path": "scripts/generate_docs_env_mismatch_report.py",
+      "role": "docs inventory, docs/code mismatch classifier, source-of-truth map, and JSONL trace generator"
+    },
+    {
+      "id": "docs_env_gate",
+      "path": "scripts/check_docs_env_mismatch.sh",
+      "role": "CI drift gate for executable docs governance and docs/code mismatch reconciliation"
+    },
+    {
+      "id": "docs_env_report",
+      "path": "tests/conformance/env_docs_code_mismatch_report.v1.json",
+      "role": "canonical zero-drift docs/code mismatch conformance report"
+    },
+    {
+      "id": "docs_source_map",
+      "path": "tests/conformance/docs_source_of_truth_map.v1.json",
+      "role": "canonical docs source-of-truth map with owners, backing artifacts, and update triggers"
+    },
+    {
+      "id": "docs_trace",
+      "path": "tests/conformance/docs_source_of_truth_trace.v1.jsonl",
+      "role": "structured docs governance trace rows"
+    },
+    {
+      "id": "claim_reconciliation",
+      "path": "scripts/claim_reconciliation.py",
+      "role": "README, FEATURE_PARITY, support matrix, replacement, and smoke claim reconciler"
+    },
+    {
+      "id": "claim_reconciliation_gate",
+      "path": "scripts/check_claim_reconciliation.sh",
+      "role": "CI gate for public-claim contradictions"
+    },
+    {
+      "id": "claim_reconciliation_report",
+      "path": "tests/conformance/claim_reconciliation_report.v1.json",
+      "role": "canonical claim reconciliation conformance report"
+    },
+    {
+      "id": "ld_preload_smoke_summary",
+      "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "role": "canonical smoke summary backing README smoke-status claims"
+    },
+    {
+      "id": "release_dossier_validator",
+      "path": "scripts/release_dossier_validator.py",
+      "role": "release artifact validator and release-note hook implementation"
+    },
+    {
+      "id": "release_dossier_completion_gate",
+      "path": "scripts/check_release_dossier_validator_completion_contract.sh",
+      "role": "fail-closed release dossier and release-note-hook completion gate"
+    },
+    {
+      "id": "release_dossier_report",
+      "path": "tests/release/dossier_validation_report.v1.json",
+      "role": "checked release dossier report with release_notes_hook payload"
+    },
+    {
+      "id": "fuzz_phase1_completion_contract",
+      "path": "tests/conformance/fuzz_phase1_targets_completion_contract.v1.json",
+      "role": "fuzz target completion contract used to satisfy generic fuzz-primary audit evidence"
+    },
+    {
+      "id": "fuzz_phase1_completion_gate",
+      "path": "scripts/check_fuzz_phase1_targets_completion_contract.sh",
+      "role": "fail-closed fuzz target completion gate"
+    },
+    {
+      "id": "fuzz_phase1_harness_test",
+      "path": "crates/frankenlibc-harness/tests/fuzz_phase1_targets_completion_contract_test.rs",
+      "role": "Rust harness test for fuzz target unit/e2e/fuzz bindings"
+    },
+    {
+      "id": "completion_contract",
+      "path": "tests/conformance/executable_docs_validation_completion_contract.v1.json",
+      "role": "completion-debt contract for bd-3rw.5.2"
+    },
+    {
+      "id": "completion_gate",
+      "path": "scripts/check_executable_docs_validation_completion_contract.sh",
+      "role": "fail-closed checker for this completion contract"
+    },
+    {
+      "id": "completion_harness_test",
+      "path": "crates/frankenlibc-harness/tests/executable_docs_validation_completion_contract_test.rs",
+      "role": "Rust positive and negative tests for this completion checker"
+    }
+  ],
+  "implementation_refs": [
+    "scripts/generate_docs_env_mismatch_report.py:25",
+    "scripts/generate_docs_env_mismatch_report.py:341",
+    "scripts/generate_docs_env_mismatch_report.py:360",
+    "scripts/generate_docs_env_mismatch_report.py:393",
+    "scripts/generate_docs_env_mismatch_report.py:556",
+    "scripts/check_docs_env_mismatch.sh:1",
+    "scripts/claim_reconciliation.py:57",
+    "scripts/claim_reconciliation.py:820",
+    "scripts/claim_reconciliation.py:927",
+    "scripts/check_claim_reconciliation.sh:1",
+    "scripts/release_dossier_validator.py:226",
+    "scripts/release_dossier_validator.py:330",
+    "scripts/release_dossier_validator.py:350",
+    "scripts/release_dossier_validator.py:476",
+    "scripts/check_release_dossier_validator_completion_contract.sh:1",
+    "scripts/check_fuzz_phase1_targets_completion_contract.sh:32",
+    "scripts/check_fuzz_phase1_targets_completion_contract.sh:337",
+    "scripts/check_fuzz_phase1_targets_completion_contract.sh:576",
+    "tests/release/dossier_validation_report.v1.json:282",
+    "tests/conformance/fuzz_phase1_targets_completion_contract.v1.json:24"
+  ],
+  "required_source_markers": [
+    {
+      "path": "scripts/generate_docs_env_mismatch_report.py",
+      "markers": [
+        "DOC_GOVERNANCE_SURFACES",
+        "collect_docs_mentions",
+        "build_docs_inventory",
+        "build_docs_governance_artifacts",
+        "classify_mismatches"
+      ]
+    },
+    {
+      "path": "scripts/claim_reconciliation.py",
+      "markers": [
+        "SMOKE_SUMMARY_CLAIM_RE",
+        "smoke_summary_claim_stale",
+        "check_readme_smoke_summary_claims",
+        "SOURCE_OWNER_MAP"
+      ]
+    },
+    {
+      "path": "scripts/release_dossier_validator.py",
+      "markers": [
+        "build_release_notes_hook",
+        "release_notes_hook",
+        "Release Notes Candidates",
+        "selection_policy"
+      ]
+    },
+    {
+      "path": "scripts/check_fuzz_phase1_targets_completion_contract.sh",
+      "markers": [
+        "REQUIRED_TARGETS",
+        "fuzz_phase1_e2e",
+        "fuzz_phase1_summary"
+      ]
+    }
+  ],
+  "base_gates": [
+    {
+      "id": "docs_env_gate",
+      "command": "bash scripts/check_docs_env_mismatch.sh",
+      "expected_stdout": [
+        "PASS: docs/code mismatch report reconciled",
+        "PASS: docs source-of-truth map validated"
+      ]
+    },
+    {
+      "id": "claim_reconciliation_gate",
+      "command": "bash scripts/check_claim_reconciliation.sh <out_dir>/claim_reconciliation_report.v1.json",
+      "expected_stdout": [
+        "PASS: No contradictions detected across canonical artifacts."
+      ]
+    },
+    {
+      "id": "release_dossier_completion_gate",
+      "command": "bash scripts/check_release_dossier_validator_completion_contract.sh",
+      "expected_stdout": [
+        "PASS: release dossier validator completion contract"
+      ]
+    },
+    {
+      "id": "fuzz_phase1_completion_gate",
+      "command": "bash scripts/check_fuzz_phase1_targets_completion_contract.sh",
+      "expected_stdout": [
+        "fuzz_phase1_targets_completion_contract: PASS"
+      ]
+    }
+  ],
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "scripts/generate_docs_env_mismatch_report.py:341",
+        "scripts/claim_reconciliation.py:820",
+        "scripts/release_dossier_validator.py:226",
+        "tests/conformance/executable_docs_validation_completion_contract.v1.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs:30",
+        "crates/frankenlibc-harness/tests/claim_reconciliation_test.rs:44",
+        "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:258",
+        "crates/frankenlibc-harness/tests/executable_docs_validation_completion_contract_test.rs:1"
+      ],
+      "runtime_validation": [
+        "docs_env_mismatch_test::docs_inventory_exists_and_has_expected_shape",
+        "docs_env_mismatch_test::mismatch_summary_counts_are_zero",
+        "claim_reconciliation_test::claim_reconciliation_gate_passes",
+        "release_dossier_validator_test::dossier_validator_release_notes_hook_tracks_closed_beads",
+        "executable_docs_validation_completion_contract_test::manifest_binds_all_missing_items_and_sources"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "implementation_refs": [
+        "scripts/check_docs_env_mismatch.sh:1",
+        "scripts/check_claim_reconciliation.sh:1",
+        "scripts/check_release_dossier_validator_completion_contract.sh:1",
+        "scripts/check_executable_docs_validation_completion_contract.sh:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs:396",
+        "crates/frankenlibc-harness/tests/release_dossier_validator_completion_contract_test.rs:282",
+        "crates/frankenlibc-harness/tests/executable_docs_validation_completion_contract_test.rs:1"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_docs_env_mismatch.sh",
+        "bash scripts/check_claim_reconciliation.sh <out_dir>/claim_reconciliation_report.v1.json",
+        "bash scripts/check_release_dossier_validator_completion_contract.sh",
+        "executable_docs_validation_completion_contract_test::checker_accepts_contract_and_emits_report_log"
+      ]
+    },
+    {
+      "missing_item_id": "tests.fuzz.primary",
+      "implementation_refs": [
+        "tests/conformance/fuzz_phase1_targets_completion_contract.v1.json:24",
+        "scripts/check_fuzz_phase1_targets_completion_contract.sh:32",
+        "scripts/check_fuzz_phase1_targets_completion_contract.sh:337"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/fuzz_phase1_targets_completion_contract_test.rs:130",
+        "crates/frankenlibc-harness/tests/fuzz_phase1_targets_completion_contract_test.rs:243"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_fuzz_phase1_targets_completion_contract.sh",
+        "fuzz_phase1_targets_completion_contract_test::manifest_binds_unit_e2e_and_fuzz_missing_items",
+        "fuzz_phase1_targets_completion_contract_test::checker_accepts_manifest_and_emits_evidence"
+      ]
+    },
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "implementation_refs": [
+        "tests/conformance/env_docs_code_mismatch_report.v1.json:1",
+        "tests/conformance/claim_reconciliation_report.v1.json:1",
+        "tests/conformance/ld_preload_smoke_summary.v1.json:1",
+        "tests/release/dossier_validation_report.v1.json:282"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs:169",
+        "crates/frankenlibc-harness/tests/claim_reconciliation_test.rs:338",
+        "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:27"
+      ],
+      "runtime_validation": [
+        "scripts/check_docs_env_mismatch.sh",
+        "scripts/check_claim_reconciliation.sh <out_dir>/claim_reconciliation_report.v1.json",
+        "scripts/check_release_dossier_validator_completion_contract.sh"
+      ]
+    },
+    {
+      "missing_item_id": "telemetry.primary",
+      "implementation_refs": [
+        "tests/conformance/docs_source_of_truth_trace.v1.jsonl:1",
+        "tests/release/dossier_validation_report.v1.json:282",
+        "scripts/check_executable_docs_validation_completion_contract.sh:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs:319",
+        "crates/frankenlibc-harness/tests/release_dossier_validator_completion_contract_test.rs:315",
+        "crates/frankenlibc-harness/tests/executable_docs_validation_completion_contract_test.rs:1"
+      ],
+      "runtime_validation": [
+        "docs_env_mismatch_test::governance_trace_rows_cover_every_section",
+        "release_dossier_validator_completion_contract_test::checker_emits_structured_report_and_log",
+        "executable_docs_validation_completion_contract_test::checker_accepts_contract_and_emits_report_log"
+      ]
+    }
+  ],
+  "required_test_functions": {
+    "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs": [
+      "docs_inventory_exists_and_has_expected_shape",
+      "mismatch_summary_counts_are_zero",
+      "readme_smoke_status_is_backed_by_canonical_smoke_artifact",
+      "governance_trace_rows_cover_every_section",
+      "gate_script_passes"
+    ],
+    "crates/frankenlibc-harness/tests/claim_reconciliation_test.rs": [
+      "claim_reconciliation_gate_passes",
+      "claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner"
+    ],
+    "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs": [
+      "dossier_validator_produces_valid_report",
+      "dossier_validator_release_notes_hook_tracks_closed_beads",
+      "dossier_validator_release_notes_hook_invalid_limit_falls_back_to_default"
+    ],
+    "crates/frankenlibc-harness/tests/fuzz_phase1_targets_completion_contract_test.rs": [
+      "manifest_binds_unit_e2e_and_fuzz_missing_items",
+      "checker_accepts_manifest_and_emits_evidence"
+    ],
+    "crates/frankenlibc-harness/tests/executable_docs_validation_completion_contract_test.rs": [
+      "manifest_binds_all_missing_items_and_sources",
+      "checker_accepts_contract_and_emits_report_log",
+      "checker_rejects_missing_fuzz_binding",
+      "checker_rejects_missing_source_artifact",
+      "checker_rejects_missing_telemetry_event"
+    ]
+  },
+  "telemetry_contract": {
+    "required_events": [
+      "executable_docs_sources_validated",
+      "executable_docs_base_gates_validated",
+      "executable_docs_bindings_validated",
+      "executable_docs_completion_contract_validated"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "bead_id",
+      "original_bead",
+      "trace_id",
+      "status",
+      "source_commit",
+      "summary",
+      "artifact_refs",
+      "base_gate_results",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "bead_id",
+      "event",
+      "status",
+      "failure_signature",
+      "artifact_refs"
+    ]
+  }
+}
