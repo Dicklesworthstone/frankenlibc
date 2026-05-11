@@ -1,0 +1,286 @@
+{
+  "schema_version": "log_parsing_validation_completion_contract.v1",
+  "bead": "bd-2icq.19",
+  "completion_debt_bead": "bd-2icq.19.1",
+  "description": "Completion-debt evidence binding for the Gentoo log parsing and validation infrastructure: parser behavior, integrity validation, aggregate telemetry extraction, fixtures, unit coverage, and a structured completion telemetry gate.",
+  "next_audit_score_threshold": 800,
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "beads_compliance_audit/passes/2026-05-10T-pass3-cumulative-patches/beads/bd-2icq.19/scorecard.md",
+    "missing_items": [
+      "tests.unit.primary",
+      "telemetry.primary"
+    ]
+  },
+  "source_paths": {
+    "format_doc": "docs/gentoo/log-format.md",
+    "parser": "scripts/gentoo/log_parser.py",
+    "validator": "scripts/gentoo/log_validator.py",
+    "stats": "scripts/gentoo/log_stats.py",
+    "unit_tests": "tests/gentoo/test_log_parser.py",
+    "fixtures_dir": "tests/gentoo/fixtures/sample_logs",
+    "runtime_fixture": "tests/gentoo/fixtures/sample_logs/valid_runtime.jsonl",
+    "hook_fixture": "tests/gentoo/fixtures/sample_logs/valid_hook.jsonl",
+    "invalid_json_fixture": "tests/gentoo/fixtures/sample_logs/invalid_json.jsonl",
+    "invalid_missing_field_fixture": "tests/gentoo/fixtures/sample_logs/invalid_missing_field.jsonl",
+    "completion_contract": "tests/conformance/log_parsing_validation_completion_contract.v1.json",
+    "completion_checker": "scripts/check_log_parsing_validation_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/log_parsing_validation_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    {
+      "kind": "parser_entry_model",
+      "path": "scripts/gentoo/log_parser.py",
+      "line": 23,
+      "anchor": "class LogEntry"
+    },
+    {
+      "kind": "parser_file_iteration",
+      "path": "scripts/gentoo/log_parser.py",
+      "line": 43,
+      "anchor": "def parse_file"
+    },
+    {
+      "kind": "parser_jsonl_line_normalization",
+      "path": "scripts/gentoo/log_parser.py",
+      "line": 50,
+      "anchor": "def parse_line"
+    },
+    {
+      "kind": "parser_runtime_and_hook_schema",
+      "path": "scripts/gentoo/log_parser.py",
+      "line": 65,
+      "anchor": "def _normalize"
+    },
+    {
+      "kind": "parser_strict_error_policy",
+      "path": "scripts/gentoo/log_parser.py",
+      "line": 118,
+      "anchor": "def _handle_error"
+    },
+    {
+      "kind": "validator_action_vocabulary",
+      "path": "scripts/gentoo/log_validator.py",
+      "line": 17,
+      "anchor": "KNOWN_HEALING_ACTIONS"
+    },
+    {
+      "kind": "validator_integrity_checks",
+      "path": "scripts/gentoo/log_validator.py",
+      "line": 53,
+      "anchor": "def validate_entry"
+    },
+    {
+      "kind": "stats_aggregation",
+      "path": "scripts/gentoo/log_stats.py",
+      "line": 24,
+      "anchor": "def record"
+    },
+    {
+      "kind": "stats_telemetry_snapshot",
+      "path": "scripts/gentoo/log_stats.py",
+      "line": 43,
+      "anchor": "def to_dict"
+    },
+    {
+      "kind": "schema_documentation",
+      "path": "docs/gentoo/log-format.md",
+      "line": 30,
+      "anchor": "Required:"
+    },
+    {
+      "kind": "schema_validation_rules",
+      "path": "docs/gentoo/log-format.md",
+      "line": 57,
+      "anchor": "## Validation Rules"
+    },
+    {
+      "kind": "unit_runtime_fixture_test",
+      "path": "tests/gentoo/test_log_parser.py",
+      "line": 29,
+      "anchor": "def test_parse_valid_runtime_log"
+    },
+    {
+      "kind": "unit_hook_fixture_test",
+      "path": "tests/gentoo/test_log_parser.py",
+      "line": 37,
+      "anchor": "def test_parse_valid_hook_log"
+    },
+    {
+      "kind": "unit_strict_error_test",
+      "path": "tests/gentoo/test_log_parser.py",
+      "line": 44,
+      "anchor": "def test_invalid_json_raises_in_strict_mode"
+    },
+    {
+      "kind": "unit_non_strict_error_test",
+      "path": "tests/gentoo/test_log_parser.py",
+      "line": 49,
+      "anchor": "def test_invalid_line_collected_in_non_strict_mode"
+    },
+    {
+      "kind": "unit_stats_validator_test",
+      "path": "tests/gentoo/test_log_parser.py",
+      "line": 56,
+      "anchor": "def test_stats_and_validator"
+    },
+    {
+      "kind": "completion_checker",
+      "path": "scripts/check_log_parsing_validation_completion_contract.sh",
+      "line": 2,
+      "anchor": "log_parsing_validation_completion_contract"
+    },
+    {
+      "kind": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/log_parsing_validation_completion_contract_test.rs",
+      "line": 1,
+      "anchor": "bd-2icq.19.1"
+    }
+  ],
+  "source_anchors": {
+    "parser": [
+      "class LogEntry",
+      "class LogParser",
+      "def parse_file",
+      "def parse_line",
+      "def _normalize",
+      "def _handle_error",
+      "__hook_event__",
+      "missing required field(s)"
+    ],
+    "validator": [
+      "KNOWN_HEALING_ACTIONS",
+      "POINTER_RE",
+      "class ValidationIssue",
+      "class LogValidator",
+      "def validate_entry",
+      "def validate",
+      "non-monotonic timestamp"
+    ],
+    "stats": [
+      "class LogStats",
+      "def record",
+      "def extend",
+      "def latency_avg_ns",
+      "def to_dict",
+      "unique_pid_count"
+    ],
+    "unit_tests": [
+      "def test_parse_valid_runtime_log",
+      "def test_parse_valid_hook_log",
+      "def test_invalid_json_raises_in_strict_mode",
+      "def test_invalid_line_collected_in_non_strict_mode",
+      "def test_stats_and_validator"
+    ],
+    "completion_checker": [
+      "EXPECTED_MISSING_ITEMS",
+      "validate_manifest",
+      "run_fixture_probe",
+      "log_parsing_completion_summary"
+    ],
+    "completion_harness": [
+      "manifest_binds_unit_and_telemetry_items",
+      "checker_emits_structured_unit_and_telemetry_evidence",
+      "checker_rejects_missing_unit_test_binding"
+    ]
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "description": "Checked-in unittest coverage exercises valid runtime JSONL, hook JSONL normalization, strict malformed JSON failure, non-strict missing-field collection, stats aggregation, and validator success paths.",
+      "implementation_refs": [
+        "parser_entry_model",
+        "parser_file_iteration",
+        "parser_jsonl_line_normalization",
+        "parser_runtime_and_hook_schema",
+        "parser_strict_error_policy",
+        "validator_integrity_checks",
+        "stats_aggregation"
+      ],
+      "test_refs": [
+        "unit_runtime_fixture_test",
+        "unit_hook_fixture_test",
+        "unit_strict_error_test",
+        "unit_non_strict_error_test",
+        "unit_stats_validator_test",
+        "completion_harness"
+      ],
+      "validation_commands": [
+        "python3 -m py_compile scripts/gentoo/log_parser.py scripts/gentoo/log_validator.py scripts/gentoo/log_stats.py tests/gentoo/test_log_parser.py",
+        "python3 -m unittest tests/gentoo/test_log_parser.py",
+        "bash scripts/check_log_parsing_validation_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test log_parsing_validation_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "telemetry.primary",
+      "status": "covered",
+      "description": "The stats aggregator converts parsed runtime and hook fixtures into a deterministic telemetry snapshot; the completion checker writes a report and structured JSONL rows tying that telemetry to the audit-debt bead.",
+      "implementation_refs": [
+        "stats_telemetry_snapshot",
+        "validator_action_vocabulary",
+        "validator_integrity_checks",
+        "schema_documentation",
+        "schema_validation_rules",
+        "completion_checker",
+        "completion_harness"
+      ],
+      "test_refs": [
+        "unit_stats_validator_test",
+        "completion_harness"
+      ],
+      "telemetry_refs": [
+        {
+          "path": "target/conformance/log_parsing_validation_completion_contract.report.json",
+          "anchor": "telemetry_summary"
+        },
+        {
+          "path": "target/conformance/log_parsing_validation_completion_contract.log.jsonl",
+          "anchor": "log_parsing_completion_summary"
+        }
+      ],
+      "validation_commands": [
+        "bash scripts/check_log_parsing_validation_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test log_parsing_validation_completion_contract_test -- --nocapture"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "report_path": "target/conformance/log_parsing_validation_completion_contract.report.json",
+    "log_path": "target/conformance/log_parsing_validation_completion_contract.log.jsonl",
+    "required_events": [
+      "log_parsing_source_bound",
+      "log_parsing_unit_bound",
+      "log_parsing_telemetry_bound",
+      "log_parsing_completion_summary"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "bead",
+      "completion_debt_bead",
+      "status",
+      "audit_bindings",
+      "unit_test_inventory",
+      "telemetry_summary"
+    ],
+    "required_summary_fields": [
+      "total_entries",
+      "by_call",
+      "by_action",
+      "latency_avg_ns",
+      "latency_max_ns",
+      "unique_pid_count",
+      "fixture_count",
+      "parser_error_count",
+      "validation_issue_count"
+    ],
+    "expected_summary": {
+      "total_entries": 3,
+      "runtime_entries": 2,
+      "hook_entries": 1,
+      "parser_error_count": 1,
+      "validation_issue_count": 0
+    }
+  }
+}
