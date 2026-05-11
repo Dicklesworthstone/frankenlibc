@@ -165,40 +165,6 @@ fn write_mutated_manifest(
     Ok((path, out_dir))
 }
 
-fn tracked_snapshot(root: &Path, prefix: &str) -> TestResult<PathBuf> {
-    let out_dir = unique_output_dir(root, prefix)?;
-    let archive = out_dir.join("repo.tar");
-    let archive_output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["archive", "--format=tar", "-o"])
-        .arg(&archive)
-        .arg("HEAD")
-        .output()?;
-    assert!(
-        archive_output.status.success(),
-        "git archive failed stdout={} stderr={}",
-        String::from_utf8_lossy(&archive_output.stdout),
-        String::from_utf8_lossy(&archive_output.stderr)
-    );
-
-    let snapshot = out_dir.join("repo");
-    std::fs::create_dir_all(&snapshot)?;
-    let extract_output = Command::new("tar")
-        .arg("-xf")
-        .arg(&archive)
-        .arg("-C")
-        .arg(&snapshot)
-        .output()?;
-    assert!(
-        extract_output.status.success(),
-        "tar extract failed stdout={} stderr={}",
-        String::from_utf8_lossy(&extract_output.stdout),
-        String::from_utf8_lossy(&extract_output.stderr)
-    );
-    Ok(snapshot)
-}
-
 fn failure_signatures(report: &Value) -> BTreeSet<&str> {
     report
         .get("errors")
@@ -306,7 +272,6 @@ fn checker_accepts_runtime_env_inventory_completion_contract() -> TestResult {
 #[test]
 fn completion_contract_runs_base_inventory_gate() -> TestResult {
     let root = workspace_root()?;
-    let root = tracked_snapshot(&root, "runtime-env-base-gate-snapshot")?;
     let output = Command::new("bash")
         .arg(base_gate_path(&root))
         .current_dir(&root)

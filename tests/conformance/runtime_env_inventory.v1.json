@@ -72,17 +72,24 @@
       "write_count": 4
     },
     {
-      "access_count": 3,
+      "access_count": 4,
       "accesses": [
         {
-          "line": 200,
+          "line": 271,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_CLOSURE_CONTRACT_PATH\", &contract_path)"
         },
         {
-          "line": 280,
+          "line": 352,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
+          "scope": "harness",
+          "snippet": ".env(\"FRANKENLIBC_CLOSURE_CONTRACT_PATH\", &broken_path)"
+        },
+        {
+          "line": 401,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
@@ -110,13 +117,20 @@
       },
       "read_count": 1,
       "reference_count": 0,
-      "write_count": 2
+      "write_count": 3
     },
     {
-      "access_count": 2,
+      "access_count": 3,
       "accesses": [
         {
-          "line": 282,
+          "line": 354,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
+          "scope": "harness",
+          "snippet": ".env(\"FRANKENLIBC_CLOSURE_LEVEL\", \"L0\")"
+        },
+        {
+          "line": 403,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
@@ -148,20 +162,27 @@
       },
       "read_count": 1,
       "reference_count": 0,
-      "write_count": 1
+      "write_count": 2
     },
     {
-      "access_count": 3,
+      "access_count": 6,
       "accesses": [
         {
-          "line": 199,
+          "line": 270,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_CLOSURE_LOG\", &log_path)"
         },
         {
-          "line": 281,
+          "line": 353,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
+          "scope": "harness",
+          "snippet": ".env(\"FRANKENLIBC_CLOSURE_LOG\", &broken_log)"
+        },
+        {
+          "line": 402,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
@@ -173,6 +194,20 @@
           "path": "scripts/check_closure_contract.sh",
           "scope": "scripts",
           "snippet": "LOG_PATH=\"${FRANKENLIBC_CLOSURE_LOG:-/tmp/frankenlibc_closure_contract.log.jsonl}\""
+        },
+        {
+          "line": 257,
+          "operation": "reference",
+          "path": "scripts/check_closure_contract.sh",
+          "scope": "scripts",
+          "snippet": "if telemetry.get(\"log_env\") != \"FRANKENLIBC_CLOSURE_LOG\":"
+        },
+        {
+          "line": 258,
+          "operation": "reference",
+          "path": "scripts/check_closure_contract.sh",
+          "scope": "scripts",
+          "snippet": "errors.append(\"telemetry_primary.log_env must be FRANKENLIBC_CLOSURE_LOG\")"
         }
       ],
       "env_key": "FRANKENLIBC_CLOSURE_LOG",
@@ -188,11 +223,11 @@
         "safety_impact": "low"
       },
       "read_count": 1,
-      "reference_count": 0,
-      "write_count": 2
+      "reference_count": 2,
+      "write_count": 3
     },
     {
-      "access_count": 27,
+      "access_count": 33,
       "accesses": [
         {
           "line": 35,
@@ -349,7 +384,42 @@
           "snippet": "\"replay\":{\"seed_key\":\"FRANKENLIBC_E2E_SEED\",\"env_keys\":[\"FRANKENLIBC_E2E_SEED\"],\"deterministic_inputs\":\"static argv\"}"
         },
         {
-          "line": 110,
+          "line": 84,
+          "operation": "reference",
+          "path": "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "\"FRANKENLIBC_E2E_SEED\","
+        },
+        {
+          "line": 369,
+          "operation": "reference",
+          "path": "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "if replay_defaults.get(\"seed_key\") != \"FRANKENLIBC_E2E_SEED\":"
+        },
+        {
+          "line": 492,
+          "operation": "reference",
+          "path": "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "if replay.get(\"seed_key\") != \"FRANKENLIBC_E2E_SEED\":"
+        },
+        {
+          "line": 495,
+          "operation": "reference",
+          "path": "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "if \"FRANKENLIBC_E2E_SEED\" not in replay_env:"
+        },
+        {
+          "line": 496,
+          "operation": "reference",
+          "path": "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "fail(f\"{ctx}.replay.env_keys missing FRANKENLIBC_E2E_SEED\")"
+        },
+        {
+          "line": 383,
           "operation": "write",
           "path": "scripts/check_e2e_suite.sh",
           "scope": "scripts",
@@ -368,6 +438,13 @@
           "path": "scripts/check_hard_parts_e2e.sh",
           "scope": "scripts",
           "snippet": "FRANKENLIBC_E2E_SEED=\"${SEED}\" \\"
+        },
+        {
+          "line": 256,
+          "operation": "reference",
+          "path": "scripts/check_replay_engine_pair_comparator_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(isinstance(replay, dict) and replay.get(\"seed_key\") == \"FRANKENLIBC_E2E_SEED\", f\"scenario replay seed drifted: {scenario.get('id')}\", errors)"
         },
         {
           "line": 33,
@@ -397,7 +474,7 @@
         "safety_impact": "low"
       },
       "read_count": 1,
-      "reference_count": 17,
+      "reference_count": 23,
       "write_count": 9
     },
     {
@@ -435,8 +512,15 @@
       "write_count": 1
     },
     {
-      "access_count": 2,
+      "access_count": 3,
       "accesses": [
+        {
+          "line": 157,
+          "operation": "reference",
+          "path": "scripts/check_ci_pipeline_integration_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(\"FRANKENLIBC_EXTENDED_GATES\" in ci_script, \"ci.sh must keep extended gate switch\")"
+        },
         {
           "line": 50,
           "operation": "read",
@@ -466,7 +550,7 @@
         "safety_impact": "medium"
       },
       "read_count": 1,
-      "reference_count": 0,
+      "reference_count": 1,
       "write_count": 1
     },
     {
@@ -630,8 +714,15 @@
       "write_count": 2
     },
     {
-      "access_count": 7,
+      "access_count": 8,
       "accesses": [
+        {
+          "line": 264,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_completion_contract_test.rs",
+          "scope": "harness",
+          "snippet": "assert!(required_keys.contains(\"FRANKENLIBC_LOG\"));"
+        },
         {
           "line": 298,
           "operation": "read",
@@ -640,7 +731,7 @@
           "snippet": "let logging_enabled = std::env::var_os(\"FRANKENLIBC_LOG\").is_some();"
         },
         {
-          "line": 23,
+          "line": 109,
           "operation": "read_write",
           "path": "scripts/gentoo/build-package.sh",
           "scope": "scripts",
@@ -695,18 +786,102 @@
         "safety_impact": "medium"
       },
       "read_count": 5,
-      "reference_count": 1,
+      "reference_count": 2,
       "write_count": 2
     },
     {
-      "access_count": 1,
+      "access_count": 13,
       "accesses": [
+        {
+          "line": 46,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "if [[ -d \"${FRANKENLIBC_LOG_DIR:-}\" ]]; then"
+        },
+        {
+          "line": 53,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "done < <(find \"${FRANKENLIBC_LOG_DIR}\" -type f -name '*.jsonl' -print0 2>/dev/null)"
+        },
+        {
+          "line": 63,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "if [[ -d \"${FRANKENLIBC_LOG_DIR:-}\" ]]; then"
+        },
+        {
+          "line": 66,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "done < <(find \"${FRANKENLIBC_LOG_DIR}\" -type f -name '*.jsonl' -print0 2>/dev/null)"
+        },
+        {
+          "line": 100,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "\"$(json_escape \"${FRANKENLIBC_LOG_DIR}\")\" \\"
+        },
+        {
+          "line": 112,
+          "operation": "read_write",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "export FRANKENLIBC_LOG_DIR=\"${FRANKENLIBC_LOG_DIR:-${DEFAULT_PORTAGE_LOG_DIR}}\""
+        },
+        {
+          "line": 116,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "mkdir -p \"${FRANKENLIBC_LOG_DIR}\" \"$(dirname \"${FRANKENLIBC_PORTAGE_LOG}\")\" \"$(dirname \"${FRANKENLIBC_RUNNER_TELEMETRY}\")\""
+        },
+        {
+          "line": 175,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "\"portage_log_dir\": \"${FRANKENLIBC_LOG_DIR}\","
+        },
+        {
+          "line": 283,
+          "operation": "write",
+          "path": "scripts/gentoo/build-runner.py",
+          "scope": "scripts",
+          "snippet": "\"FRANKENLIBC_LOG_DIR=/results/portage-frankenlibc\","
+        },
         {
           "line": 149,
           "operation": "read",
           "path": "scripts/gentoo/frankenlibc-ebuild-hooks.sh",
           "scope": "scripts",
           "snippet": "local base_dir=\"${FRANKENLIBC_LOG_DIR:-/var/log/frankenlibc/portage}\""
+        },
+        {
+          "line": 190,
+          "operation": "write",
+          "path": "tests/gentoo/test-build-runner.py",
+          "scope": "tests",
+          "snippet": "self.assertIn(\"FRANKENLIBC_LOG_DIR=/results/portage-frankenlibc\", env_values)"
+        },
+        {
+          "line": 206,
+          "operation": "read",
+          "path": "tests/gentoo/test-build-runner.py",
+          "scope": "tests",
+          "snippet": "mkdir -p \"${FRANKENLIBC_LOG_DIR}/app-misc__hello\""
+        },
+        {
+          "line": 208,
+          "operation": "read",
+          "path": "tests/gentoo/test-build-runner.py",
+          "scope": "tests",
+          "snippet": "printf '{\"call\":\"malloc\",\"action\":\"ClampSize\"}\\n' >> \"${FRANKENLIBC_LOG_DIR}/app-misc__hello/src_test.jsonl\""
         }
       ],
       "env_key": "FRANKENLIBC_LOG_DIR",
@@ -721,22 +896,22 @@
         "parse_rule": "shell path prefix for per-atom/phase log placement",
         "safety_impact": "low"
       },
-      "read_count": 1,
+      "read_count": 11,
       "reference_count": 0,
-      "write_count": 0
+      "write_count": 3
     },
     {
-      "access_count": 14,
+      "access_count": 15,
       "accesses": [
         {
-          "line": 22,
+          "line": 108,
           "operation": "read_write",
           "path": "scripts/gentoo/build-package.sh",
           "scope": "scripts",
           "snippet": "export FRANKENLIBC_LOG_FILE=\"${FRANKENLIBC_LOG_FILE:-${FRANKEN_LOG}}\""
         },
         {
-          "line": 23,
+          "line": 109,
           "operation": "read",
           "path": "scripts/gentoo/build-package.sh",
           "scope": "scripts",
@@ -792,35 +967,42 @@
           "snippet": "-e \"FRANKENLIBC_LOG_FILE=/results/frankenlibc.jsonl\""
         },
         {
-          "line": 49,
+          "line": 209,
+          "operation": "read",
+          "path": "tests/gentoo/test-build-runner.py",
+          "scope": "tests",
+          "snippet": "printf '{\"call\":\"free\",\"action\":\"ReturnSafeDefault\"}\\n' >> \"${FRANKENLIBC_LOG_FILE}\""
+        },
+        {
+          "line": 86,
           "operation": "read",
           "path": "tests/gentoo/test-integration.sh",
           "scope": "tests",
           "snippet": "[[ -n \"${FRANKENLIBC_LOG_FILE:-}\" ]]"
         },
         {
-          "line": 50,
+          "line": 87,
           "operation": "read",
           "path": "tests/gentoo/test-integration.sh",
           "scope": "tests",
           "snippet": "[[ \"${FRANKENLIBC_LOG_FILE}\" == */src_test.jsonl ]]"
         },
         {
-          "line": 106,
+          "line": 107,
           "operation": "write",
           "path": "tests/gentoo/test_docker_integration.py",
           "scope": "tests",
           "snippet": "\"FRANKENLIBC_LOG_FILE=/tmp/test.log\","
         },
         {
-          "line": 110,
+          "line": 111,
           "operation": "reference",
           "path": "tests/gentoo/test_docker_integration.py",
           "scope": "tests",
           "snippet": "\"echo $FRANKENLIBC_MODE $FRANKENLIBC_LOG_FILE\","
         },
         {
-          "line": 209,
+          "line": 210,
           "operation": "write",
           "path": "tests/gentoo/test_docker_integration.py",
           "scope": "tests",
@@ -839,12 +1021,12 @@
         "parse_rule": "shell path alias; exported into FRANKENLIBC_LOG for runtime consumption",
         "safety_impact": "low"
       },
-      "read_count": 5,
+      "read_count": 6,
       "reference_count": 2,
       "write_count": 8
     },
     {
-      "access_count": 160,
+      "access_count": 189,
       "accesses": [
         {
           "line": 141,
@@ -1267,9 +1449,51 @@
           "snippet": "env.insert(\"FRANKENLIBC_MODE\".to_string(), mode.to_string());"
         },
         {
+          "line": 263,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_completion_contract_test.rs",
+          "scope": "harness",
+          "snippet": "assert!(required_keys.contains(\"FRANKENLIBC_MODE\"));"
+        },
+        {
+          "line": 132,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/dual_mode_unit_integrity_completion_contract_test.rs",
+          "scope": "harness",
+          "snippet": "Some(\"FRANKENLIBC_MODE\")"
+        },
+        {
+          "line": 227,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/dual_mode_unit_integrity_completion_contract_test.rs",
+          "scope": "harness",
+          "snippet": "Some(\"FRANKENLIBC_MODE\")"
+        },
+        {
+          "line": 240,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/env_semantics_drift_gate_completion_contract_test.rs",
+          "scope": "harness",
+          "snippet": "\"FRANKENLIBC_MODE\""
+        },
+        {
+          "line": 218,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/mode_contract_lock_completion_contract_test.rs",
+          "scope": "harness",
+          "snippet": "Some(\"FRANKENLIBC_MODE\")"
+        },
+        {
           "line": 40,
           "operation": "reference",
           "path": "crates/frankenlibc-harness/tests/mode_contract_lock_test.rs",
+          "scope": "harness",
+          "snippet": "Some(\"FRANKENLIBC_MODE\")"
+        },
+        {
+          "line": 202,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_completion_contract_test.rs",
           "scope": "harness",
           "snippet": "Some(\"FRANKENLIBC_MODE\")"
         },
@@ -1286,6 +1510,20 @@
           "path": "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs",
           "scope": "harness",
           "snippet": "\"isolated conformance should override ambient FRANKENLIBC_MODE\\nstdout:\\n{}\\nstderr:\\n{}\","
+        },
+        {
+          "line": 132,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/runtime_mode_startup_selection_completion_contract_test.rs",
+          "scope": "harness",
+          "snippet": "Some(\"FRANKENLIBC_MODE\")"
+        },
+        {
+          "line": 198,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/runtime_mode_startup_selection_completion_contract_test.rs",
+          "scope": "harness",
+          "snippet": "Some(\"FRANKENLIBC_MODE\")"
         },
         {
           "line": 133,
@@ -1358,6 +1596,41 @@
           "snippet": "\"{id}: FRANKENLIBC_MODE must match runtime mode\""
         },
         {
+          "line": 155,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/workload_compatibility_dossier_test.rs",
+          "scope": "harness",
+          "snippet": "\"reproduction_command\": \"FRANKENLIBC_MODE=hardened /usr/bin/python3 -c 'print(1)'\","
+        },
+        {
+          "line": 345,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/workload_compatibility_dossier_test.rs",
+          "scope": "harness",
+          "snippet": ".is_some_and(|command| command.contains(\"FRANKENLIBC_MODE=hardened\"))"
+        },
+        {
+          "line": 120,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/workload_reproducer_manifest_test.rs",
+          "scope": "harness",
+          "snippet": "\"FRANKENLIBC_MODE\": mode,"
+        },
+        {
+          "line": 148,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/workload_reproducer_manifest_test.rs",
+          "scope": "harness",
+          "snippet": "\"FRANKENLIBC_MODE\": \"strict\","
+        },
+        {
+          "line": 459,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/workload_reproducer_manifest_test.rs",
+          "scope": "harness",
+          "snippet": ".is_some_and(|text| text.contains(\"FRANKENLIBC_MODE\")),"
+        },
+        {
           "line": 133,
           "operation": "read",
           "path": "crates/frankenlibc-membrane/src/config.rs",
@@ -1414,21 +1687,28 @@
           "snippet": "env FRANKENLIBC_MODE=\"${mode}\" bash -lc \"${cmd}\""
         },
         {
-          "line": 177,
+          "line": 178,
           "operation": "write",
           "path": "scripts/c_fixture_suite.sh",
           "scope": "scripts",
           "snippet": "env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" \"${bin}\" \\"
         },
         {
-          "line": 90,
+          "line": 94,
           "operation": "write",
           "path": "scripts/check_allocator_e2e.sh",
           "scope": "scripts",
           "snippet": "env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" \"${bin}\" \\"
         },
         {
-          "line": 327,
+          "line": 254,
+          "operation": "reference",
+          "path": "scripts/check_allocator_e2e_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "\"FRANKENLIBC_MODE\","
+        },
+        {
+          "line": 397,
           "operation": "read",
           "path": "scripts/check_closure_contract.sh",
           "scope": "scripts",
@@ -1447,6 +1727,20 @@
           "path": "scripts/check_double_free_stress.sh",
           "scope": "scripts",
           "snippet": "FRANKENLIBC_MODE=\"${mode}\" \\"
+        },
+        {
+          "line": 159,
+          "operation": "reference",
+          "path": "scripts/check_dual_mode_unit_integrity_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(details.get(\"env_key\") == \"FRANKENLIBC_MODE\", \"mode_env_key\", \"dual-mode contract must target FRANKENLIBC_MODE\")"
+        },
+        {
+          "line": 85,
+          "operation": "reference",
+          "path": "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "\"FRANKENLIBC_MODE\","
         },
         {
           "line": 24,
@@ -1568,6 +1862,27 @@
           "snippet": "\"symbol\": \"FRANKENLIBC_MODE\","
         },
         {
+          "line": 249,
+          "operation": "reference",
+          "path": "scripts/check_mode_contract_lock_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(mode_row is not None, \"runtime env inventory missing FRANKENLIBC_MODE row\")"
+        },
+        {
+          "line": 262,
+          "operation": "reference",
+          "path": "scripts/check_mode_contract_lock_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(docs_mode is not None, \"docs env inventory missing FRANKENLIBC_MODE row\")"
+        },
+        {
+          "line": 266,
+          "operation": "reference",
+          "path": "scripts/check_mode_contract_lock_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(mode in joined_snippets, f\"docs env inventory FRANKENLIBC_MODE mentions missing {mode}\")"
+        },
+        {
           "line": 404,
           "operation": "write",
           "path": "scripts/check_packaging.sh",
@@ -1587,6 +1902,13 @@
           "path": "scripts/check_preemption_storms.sh",
           "scope": "scripts",
           "snippet": "FRANKENLIBC_MODE=\"${mode}\" \\"
+        },
+        {
+          "line": 337,
+          "operation": "reference",
+          "path": "scripts/check_pthread_family_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(\"FRANKENLIBC_MODE\" in runner, \"e2e runner must set FRANKENLIBC_MODE\")"
         },
         {
           "line": 561,
@@ -1615,6 +1937,48 @@
           "path": "scripts/check_runtime_mode_evidence_logging_coverage.sh",
           "scope": "scripts",
           "snippet": "require(controls.get(\"inherited_frankenlibc_mode_is_overridden\") is True, \"inherited_mode_not_overridden\", f\"{campaign_id}: inherited FRANKENLIBC_MODE must be overridden\", campaign_id=campaign_id)"
+        },
+        {
+          "line": 160,
+          "operation": "reference",
+          "path": "scripts/check_runtime_mode_startup_selection_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(policy.get(\"env_key\") == \"FRANKENLIBC_MODE\", \"startup_env_key\", \"startup contract must target FRANKENLIBC_MODE\")"
+        },
+        {
+          "line": 175,
+          "operation": "reference",
+          "path": "scripts/check_runtime_mode_startup_selection_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(policy.get(\"subprocess_env_override_required\") is True, \"subprocess_override\", \"subprocess FRANKENLIBC_MODE override is required\")"
+        },
+        {
+          "line": 228,
+          "operation": "reference",
+          "path": "scripts/check_runtime_mode_startup_selection_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "\"coverage policy must target FRANKENLIBC_MODE\","
+        },
+        {
+          "line": 230,
+          "operation": "reference",
+          "path": "scripts/check_runtime_mode_startup_selection_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "\"FRANKENLIBC_MODE must be set before subprocess launch\","
+        },
+        {
+          "line": 231,
+          "operation": "reference",
+          "path": "scripts/check_runtime_mode_startup_selection_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "\"inherited FRANKENLIBC_MODE must be overridden\","
+        },
+        {
+          "line": 247,
+          "operation": "reference",
+          "path": "scripts/check_runtime_mode_startup_selection_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(policy.get(\"env_key\") == \"FRANKENLIBC_MODE\", \"evidence_env_key\", \"runtime evidence contract env key drifted\")"
         },
         {
           "line": 132,
@@ -1687,21 +2051,28 @@
           "snippet": "env={**dict(os.environ), \"FRANKENLIBC_MODE\": mode},"
         },
         {
-          "line": 21,
+          "line": 93,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "\"$(json_escape \"${FRANKENLIBC_MODE}\")\" \\"
+        },
+        {
+          "line": 107,
           "operation": "read_write",
           "path": "scripts/gentoo/build-package.sh",
           "scope": "scripts",
           "snippet": "export FRANKENLIBC_MODE=\"${FRANKENLIBC_MODE:-hardened}\""
         },
         {
-          "line": 68,
+          "line": 170,
           "operation": "read",
           "path": "scripts/gentoo/build-package.sh",
           "scope": "scripts",
           "snippet": "\"frankenlibc_mode\": \"${FRANKENLIBC_MODE}\","
         },
         {
-          "line": 231,
+          "line": 277,
           "operation": "write",
           "path": "scripts/gentoo/build-runner.py",
           "scope": "scripts",
@@ -1932,28 +2303,42 @@
           "snippet": "-e \"FRANKENLIBC_MODE=${FRANKENLIBC_MODE}\""
         },
         {
-          "line": 104,
+          "line": 187,
+          "operation": "write",
+          "path": "tests/gentoo/test-build-runner.py",
+          "scope": "tests",
+          "snippet": "self.assertIn(\"FRANKENLIBC_MODE=hardened\", env_values)"
+        },
+        {
+          "line": 218,
+          "operation": "reference",
+          "path": "tests/gentoo/test-build-runner.py",
+          "scope": "tests",
+          "snippet": "env[\"FRANKENLIBC_MODE\"] = \"strict\""
+        },
+        {
+          "line": 105,
           "operation": "write",
           "path": "tests/gentoo/test_docker_integration.py",
           "scope": "tests",
           "snippet": "\"FRANKENLIBC_MODE=hardened\","
         },
         {
-          "line": 110,
+          "line": 111,
           "operation": "reference",
           "path": "tests/gentoo/test_docker_integration.py",
           "scope": "tests",
           "snippet": "\"echo $FRANKENLIBC_MODE $FRANKENLIBC_LOG_FILE\","
         },
         {
-          "line": 207,
+          "line": 208,
           "operation": "write",
           "path": "tests/gentoo/test_docker_integration.py",
           "scope": "tests",
           "snippet": "f\"FRANKENLIBC_MODE={mode}\","
         },
         {
-          "line": 222,
+          "line": 223,
           "operation": "write",
           "path": "tests/gentoo/test_docker_integration.py",
           "scope": "tests",
@@ -1985,9 +2370,9 @@
         "parse_rule": "case-insensitive parser in membrane config; unknown values resolve to strict",
         "safety_impact": "high"
       },
-      "read_count": 29,
-      "reference_count": 84,
-      "write_count": 52
+      "read_count": 30,
+      "reference_count": 109,
+      "write_count": 55
     },
     {
       "access_count": 2,
@@ -2412,8 +2797,22 @@
       "write_count": 1
     },
     {
-      "access_count": 2,
+      "access_count": 4,
       "accesses": [
+        {
+          "line": 95,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "\"$(json_escape \"${FRANKENLIBC_PHASE_ALLOWLIST}\")\" \\"
+        },
+        {
+          "line": 111,
+          "operation": "read_write",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "export FRANKENLIBC_PHASE_ALLOWLIST=\"${FRANKENLIBC_PHASE_ALLOWLIST:-src_test pkg_test}\""
+        },
         {
           "line": 85,
           "operation": "read",
@@ -2441,13 +2840,34 @@
         "parse_rule": "shell word-membership check with src_/pkg_ alias normalization",
         "safety_impact": "medium"
       },
-      "read_count": 2,
+      "read_count": 4,
       "reference_count": 0,
-      "write_count": 0
+      "write_count": 1
     },
     {
-      "access_count": 10,
+      "access_count": 14,
       "accesses": [
+        {
+          "line": 94,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "\"$(json_escape \"${FRANKENLIBC_PORTAGE_ENABLE}\")\" \\"
+        },
+        {
+          "line": 110,
+          "operation": "read_write",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "export FRANKENLIBC_PORTAGE_ENABLE=\"${FRANKENLIBC_PORTAGE_ENABLE:-1}\""
+        },
+        {
+          "line": 281,
+          "operation": "write",
+          "path": "scripts/gentoo/build-runner.py",
+          "scope": "scripts",
+          "snippet": "\"FRANKENLIBC_PORTAGE_ENABLE=1\","
+        },
         {
           "line": 116,
           "operation": "read",
@@ -2517,6 +2937,13 @@
           "path": "tests/gentoo/e2e/test_test_suite.sh",
           "scope": "tests",
           "snippet": "env_opts+=(-e \"FRANKENLIBC_PORTAGE_ENABLE=0\")"
+        },
+        {
+          "line": 189,
+          "operation": "write",
+          "path": "tests/gentoo/test-build-runner.py",
+          "scope": "tests",
+          "snippet": "self.assertIn(\"FRANKENLIBC_PORTAGE_ENABLE=1\", env_values)"
         }
       ],
       "env_key": "FRANKENLIBC_PORTAGE_ENABLE",
@@ -2532,19 +2959,75 @@
         "parse_rule": "enabled only when value == \"1\"",
         "safety_impact": "medium"
       },
-      "read_count": 2,
+      "read_count": 4,
       "reference_count": 0,
-      "write_count": 9
+      "write_count": 12
     },
     {
-      "access_count": 1,
+      "access_count": 9,
       "accesses": [
+        {
+          "line": 72,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "count_jsonl_matches \"${FRANKENLIBC_PORTAGE_LOG:-}\" '\"event\"\\s*:\\s*\"enable\"|enabled:'"
+        },
+        {
+          "line": 99,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "\"$(json_escape \"${FRANKENLIBC_PORTAGE_LOG}\")\" \\"
+        },
+        {
+          "line": 113,
+          "operation": "read_write",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "export FRANKENLIBC_PORTAGE_LOG=\"${FRANKENLIBC_PORTAGE_LOG:-${DEFAULT_PORTAGE_LOG}}\""
+        },
+        {
+          "line": 116,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "mkdir -p \"${FRANKENLIBC_LOG_DIR}\" \"$(dirname \"${FRANKENLIBC_PORTAGE_LOG}\")\" \"$(dirname \"${FRANKENLIBC_RUNNER_TELEMETRY}\")\""
+        },
+        {
+          "line": 174,
+          "operation": "read",
+          "path": "scripts/gentoo/build-package.sh",
+          "scope": "scripts",
+          "snippet": "\"portage_hook_log\": \"${FRANKENLIBC_PORTAGE_LOG}\","
+        },
+        {
+          "line": 285,
+          "operation": "write",
+          "path": "scripts/gentoo/build-runner.py",
+          "scope": "scripts",
+          "snippet": "\"FRANKENLIBC_PORTAGE_LOG=/results/portage-hooks.jsonl\","
+        },
         {
           "line": 55,
           "operation": "read",
           "path": "scripts/gentoo/frankenlibc-ebuild-hooks.sh",
           "scope": "scripts",
           "snippet": "local log_file=\"${FRANKENLIBC_PORTAGE_LOG:-/var/log/frankenlibc/portage/hooks.jsonl}\""
+        },
+        {
+          "line": 191,
+          "operation": "write",
+          "path": "tests/gentoo/test-build-runner.py",
+          "scope": "tests",
+          "snippet": "self.assertIn(\"FRANKENLIBC_PORTAGE_LOG=/results/portage-hooks.jsonl\", env_values)"
+        },
+        {
+          "line": 207,
+          "operation": "read",
+          "path": "tests/gentoo/test-build-runner.py",
+          "scope": "tests",
+          "snippet": "printf '{\"event\":\"enable\",\"message\":\"enabled: fake emerge\"}\\n' >> \"${FRANKENLIBC_PORTAGE_LOG}\""
         }
       ],
       "env_key": "FRANKENLIBC_PORTAGE_LOG",
@@ -2559,12 +3042,12 @@
         "parse_rule": "shell path override for hook decision log append",
         "safety_impact": "low"
       },
-      "read_count": 1,
+      "read_count": 7,
       "reference_count": 0,
-      "write_count": 0
+      "write_count": 3
     },
     {
-      "access_count": 3,
+      "access_count": 6,
       "accesses": [
         {
           "line": 170,
@@ -2579,6 +3062,27 @@
           "path": "crates/frankenlibc-harness/tests/release_gate_dag_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_RELEASE_SIMULATE_FAIL_GATE\", \"e2e\")"
+        },
+        {
+          "line": 446,
+          "operation": "reference",
+          "path": "scripts/check_full_release_rehearsal_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "env={\"FRANKENLIBC_RELEASE_SIMULATE_FAIL_GATE\": str(fail_gate)},"
+        },
+        {
+          "line": 457,
+          "operation": "reference",
+          "path": "scripts/check_release_dry_run_dag_dossier_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "env={\"FRANKENLIBC_RELEASE_SIMULATE_FAIL_GATE\": str(fail_gate)},"
+        },
+        {
+          "line": 535,
+          "operation": "reference",
+          "path": "scripts/check_release_gate_orchestration_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "{\"FRANKENLIBC_RELEASE_SIMULATE_FAIL_GATE\": fail_gate},"
         },
         {
           "line": 145,
@@ -2602,7 +3106,7 @@
         "safety_impact": "low"
       },
       "read_count": 1,
-      "reference_count": 0,
+      "reference_count": 3,
       "write_count": 2
     },
     {
@@ -2669,8 +3173,15 @@
       "write_count": 1
     },
     {
-      "access_count": 1,
+      "access_count": 2,
       "accesses": [
+        {
+          "line": 523,
+          "operation": "reference",
+          "path": "scripts/check_release_dry_run_dag_dossier_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "env={\"FRANKENLIBC_TMPDIR\": str(OUT_DIR)},"
+        },
         {
           "line": 30,
           "operation": "reference",
@@ -2692,14 +3203,14 @@
         "safety_impact": "low"
       },
       "read_count": 0,
-      "reference_count": 1,
+      "reference_count": 2,
       "write_count": 0
     }
   ],
   "schema_version": "v1",
   "summary": {
     "keys_with_reads": 25,
-    "keys_with_writes": 23,
+    "keys_with_writes": 26,
     "scanned_extensions": [
       ".py",
       ".rs",
