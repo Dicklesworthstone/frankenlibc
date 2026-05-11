@@ -1,0 +1,235 @@
+{
+  "schema_version": "real_program_smoke_suite_completion_contract.v1",
+  "bead": "bd-bp8fl.10.2",
+  "completion_debt_bead": "bd-bp8fl.10.2.1",
+  "manifest_id": "bd-bp8fl-10-2-real-program-smoke-suite-completion-contract",
+  "purpose": "Bind the existing deterministic real-program L0/L1 smoke suite to the bd-bp8fl.10.2.1 completion-debt unit and e2e obligations.",
+  "source_artifacts": {
+    "smoke_manifest": "tests/conformance/real_program_smoke_suite.v1.json",
+    "smoke_checker": "scripts/check_real_program_smoke_suite.sh",
+    "smoke_test": "crates/frankenlibc-harness/tests/real_program_smoke_suite_test.rs",
+    "vertical_slice": "tests/conformance/user_workload_vertical_slice.v1.json",
+    "freshness_contract": "tests/conformance/workload_evidence_freshness_contract.v1.json",
+    "completion_checker": "scripts/check_real_program_smoke_suite_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/real_program_smoke_suite_completion_contract_test.rs"
+  },
+  "completion_debt": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-bp8fl.10.2",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.10.2/scorecard.md",
+    "audit_score": 585,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "completion_debt_evidence": {
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "smoke_test",
+          "name": "manifest_defines_case_schema_and_log_contract",
+          "covers": [
+            "case schema",
+            "structured log fields"
+          ]
+        },
+        {
+          "artifact": "smoke_test",
+          "name": "stale_source_commit_policy_blocks_real_program_smoke_evidence",
+          "covers": [
+            "source commit freshness policy",
+            "stale evidence block rule"
+          ]
+        },
+        {
+          "artifact": "smoke_test",
+          "name": "manifest_defines_failure_bundle_schema_and_fixture_classes",
+          "covers": [
+            "failure bundle schema",
+            "failure class fixtures"
+          ]
+        },
+        {
+          "artifact": "smoke_test",
+          "name": "cases_cover_required_domains_modes_levels_and_artifact_kinds",
+          "covers": [
+            "required domains",
+            "strict and hardened modes",
+            "L0 and L1 replacement levels",
+            "artifact kind coverage"
+          ]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test real_program_smoke_suite_test manifest_defines_case_schema_and_log_contract",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test real_program_smoke_suite_completion_contract_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "smoke_test",
+          "name": "run_mode_writes_artifacts_and_blocks_claims_without_current_artifacts",
+          "covers": [
+            "run mode",
+            "artifact writing",
+            "missing-artifact claim block"
+          ]
+        },
+        {
+          "artifact": "smoke_test",
+          "name": "validate_only_rejects_stale_recorded_source_commit",
+          "covers": [
+            "validate-only stale evidence rejection"
+          ]
+        },
+        {
+          "artifact": "smoke_test",
+          "name": "current_standalone_artifact_rows_block_host_glibc_dependency",
+          "covers": [
+            "standalone host dependency probe"
+          ]
+        },
+        {
+          "artifact": "smoke_test",
+          "name": "bundle_fixture_mode_covers_required_classes_and_redacts_runner_env",
+          "covers": [
+            "failure bundle fixture mode",
+            "environment redaction"
+          ]
+        },
+        {
+          "artifact": "smoke_test",
+          "name": "gate_script_exists_and_is_executable",
+          "covers": [
+            "gate script executable mode"
+          ]
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_real_program_smoke_suite.sh --validate-only",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test real_program_smoke_suite_test -- --nocapture"
+      ],
+      "expected_report": "target/conformance/real_program_smoke_suite.report.json",
+      "expected_log": "target/conformance/real_program_smoke_suite.log.jsonl"
+    }
+  },
+  "required_real_program_smoke_contract": {
+    "schema_version": "v1",
+    "source_bead": "bd-bp8fl.10.2",
+    "completion_debt_bead": "bd-bp8fl.10.2.1",
+    "expected_case_count": 20,
+    "expected_ld_preload_interpose_case_count": 16,
+    "expected_standalone_future_case_count": 4,
+    "expected_standalone_direct_link_real_program_case_count": 2,
+    "expected_strict_case_count": 10,
+    "expected_hardened_case_count": 10,
+    "expected_l0_case_count": 8,
+    "expected_l1_case_count": 12,
+    "expected_non_support_claim_policy_rows": 6,
+    "expected_failure_bundle_schema_fields": 26,
+    "expected_failure_bundle_fixture_case_count": 6,
+    "required_domains": [
+      "shell_coreutils",
+      "build_tool",
+      "resolver_nss",
+      "locale_iconv",
+      "stdio_file",
+      "threaded",
+      "failure_unsupported",
+      "standalone_future"
+    ],
+    "required_runtime_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_replacement_levels": [
+      "L0",
+      "L1"
+    ],
+    "required_case_fields": [
+      "case_id",
+      "workload_id",
+      "domain",
+      "command",
+      "argv",
+      "env",
+      "timeout_ms",
+      "runtime_mode",
+      "replacement_level",
+      "artifact_kind",
+      "expected",
+      "allowed_divergence",
+      "cleanup",
+      "oracle_kind",
+      "support_claim"
+    ],
+    "required_log_fields": [
+      "trace_id",
+      "bead_id",
+      "workload_id",
+      "command",
+      "runtime_mode",
+      "replacement_level",
+      "oracle_kind",
+      "expected_status",
+      "actual_status",
+      "errno",
+      "duration_ms",
+      "artifact_refs",
+      "artifact_hashes",
+      "source_commit",
+      "target_dir",
+      "bundle_id",
+      "failure_class",
+      "next_safe_action",
+      "failure_signature"
+    ],
+    "source_commit_freshness_policy": {
+      "recorded_source_commit_field": "source_commit",
+      "comparison_target": "current git HEAD",
+      "stale_result": "block_real_program_smoke_evidence",
+      "real_program_smoke_evidence_allowed_when_stale": false,
+      "rejected_evidence_kind": "stale_source_commit"
+    },
+    "required_source_markers": {
+      "smoke_checker": [
+        "REQUIRED_CASE_FIELDS",
+        "REQUIRED_LOG_FIELDS",
+        "NON_SUPPORT_STATUSES",
+        "--bundle-fixtures",
+        "block_real_program_smoke_evidence"
+      ],
+      "smoke_test": [
+        "manifest_defines_case_schema_and_log_contract",
+        "cases_cover_required_domains_modes_levels_and_artifact_kinds",
+        "run_mode_writes_artifacts_and_blocks_claims_without_current_artifacts",
+        "bundle_fixture_mode_covers_required_classes_and_redacts_runner_env",
+        "gate_script_exists_and_is_executable"
+      ],
+      "vertical_slice": [
+        "scripts/check_real_program_smoke_suite.sh",
+        "tests/conformance/real_program_smoke_suite.v1.json"
+      ],
+      "freshness_contract": [
+        "real_program_smoke",
+        "scripts/check_real_program_smoke_suite.sh",
+        "stale_real_program_smoke_suite"
+      ]
+    }
+  },
+  "validator_contract": {
+    "checker": "scripts/check_real_program_smoke_suite_completion_contract.sh",
+    "report_path": "target/conformance/real_program_smoke_suite_completion_contract.report.json",
+    "log_path": "target/conformance/real_program_smoke_suite_completion_contract.log.jsonl",
+    "must_fail_when": [
+      "source artifact is missing",
+      "required unit or e2e test ref is missing",
+      "case count drifts",
+      "required domain/mode/level coverage drifts",
+      "source commit freshness policy changes",
+      "cargo validation command is not routed through rch"
+    ]
+  }
+}
