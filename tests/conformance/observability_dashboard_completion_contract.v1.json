@@ -1,0 +1,275 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "observability-dashboard-completion-contract",
+  "bead": "bd-282v",
+  "completion_debt_bead": "bd-282v.1",
+  "generated_utc": "2026-05-11T00:00:00Z",
+  "purpose": "Completion-debt contract for the production observability dashboard originally closed under bd-282v. The audit pass required explicit tests.unit.primary, tests.e2e.primary, and telemetry.primary evidence. This contract binds the existing exporter-backed dashboard implementation, library unit coverage, harness CLI e2e coverage, and checker-emitted telemetry into a deterministic closeout artifact.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T-pass3-cumulative-patches/beads/bd-282v/scorecard.md",
+    "spec_path": "beads_compliance_audit/passes/2026-05-10T-pass3-cumulative-patches/beads/bd-282v/spec.json",
+    "score_before": 680,
+    "score_threshold": 800,
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ]
+  },
+  "runtime_target": {
+    "max_seconds": 30,
+    "external_services_allowed": false,
+    "docker_required": false,
+    "network_required": false,
+    "coverage_artifacts": [
+      "target/conformance/observability_dashboard_completion_contract.report.json",
+      "target/conformance/observability_dashboard_completion_contract.log.jsonl"
+    ]
+  },
+  "source_evidence": [
+    {
+      "artifact_id": "dashboard_aggregator",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-harness/src/observability_dashboard.rs",
+      "line_ref": "crates/frankenlibc-harness/src/observability_dashboard.rs:838",
+      "required_needles": [
+        "pub fn build_from_paths(paths: &[PathBuf])",
+        "state.invalid_rows += 1",
+        "Ok(state.finalize(paths))"
+      ]
+    },
+    {
+      "artifact_id": "dashboard_writer",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-harness/src/observability_dashboard.rs",
+      "line_ref": "crates/frankenlibc-harness/src/observability_dashboard.rs:873",
+      "required_needles": [
+        "pub fn write_bundle(",
+        "report.to_prometheus_text()",
+        "report.to_statsd_text()",
+        "report.to_grafana_dashboard_json()",
+        "report.to_alert_rules_yaml()"
+      ]
+    },
+    {
+      "artifact_id": "dashboard_capture_pipeline",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-harness/src/observability_dashboard.rs",
+      "line_ref": "crates/frankenlibc-harness/src/observability_dashboard.rs:890",
+      "required_needles": [
+        "pub fn capture_bundle(",
+        "membrane_metrics.jsonl",
+        "allocator_metrics.jsonl",
+        "runtime_math.jsonl",
+        "observability_dashboard.current.v1.json",
+        "observability_dashboard.prom",
+        "observability_dashboard.statsd",
+        "observability_dashboard.grafana.json",
+        "observability_dashboard.alerts.yaml"
+      ]
+    },
+    {
+      "artifact_id": "dashboard_unit_test",
+      "kind": "unit_test",
+      "path": "crates/frankenlibc-harness/src/observability_dashboard.rs",
+      "line_ref": "crates/frankenlibc-harness/src/observability_dashboard.rs:2067",
+      "required_needles": [
+        "fn capture_bundle_seeds_real_exporters()",
+        "bundle.report.summary.invalid_rows",
+        "bundle.report.allocator.allocations_total",
+        "bundle.report.runtime_math.snapshot_decisions",
+        "bundle.prometheus_output.exists()",
+        "bundle.statsd_output.exists()",
+        "bundle.grafana_output.exists()",
+        "bundle.alerts_output.exists()"
+      ]
+    },
+    {
+      "artifact_id": "allocator_jsonl_export",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-abi/src/malloc_abi.rs",
+      "line_ref": "crates/frankenlibc-abi/src/malloc_abi.rs:839",
+      "required_needles": [
+        "export_alloc_stats_snapshot_jsonl_from_snapshot",
+        "allocator_metrics_snapshot",
+        "allocations_total",
+        "bytes_allocated",
+        "artifact_refs",
+        "pub fn export_alloc_stats_snapshot_jsonl("
+      ]
+    },
+    {
+      "artifact_id": "cli_capture_command",
+      "kind": "cli_e2e_surface",
+      "path": "crates/frankenlibc-harness/src/bin/harness.rs",
+      "line_ref": "crates/frankenlibc-harness/src/bin/harness.rs:516",
+      "required_needles": [
+        "Capture exporter-driven observability JSONL inputs and build the dashboard bundle",
+        "ObservabilityCapture",
+        "seed_sample",
+        "observability_dashboard::capture_bundle"
+      ]
+    },
+    {
+      "artifact_id": "dashboard_e2e_test",
+      "kind": "e2e_test",
+      "path": "crates/frankenlibc-harness/tests/observability_dashboard_test.rs",
+      "line_ref": "crates/frankenlibc-harness/tests/observability_dashboard_test.rs:17",
+      "required_needles": [
+        "fn observability_capture_command_writes_exporter_bundle_files()",
+        "CARGO_BIN_EXE_harness",
+        "observability-capture",
+        "--seed-sample",
+        "observability_dashboard.current.v1.json",
+        "observability_dashboard.prom",
+        "observability_dashboard.statsd",
+        "observability_dashboard.grafana.json",
+        "observability_dashboard.alerts.yaml",
+        "frankenlibc_validations_total",
+        "frankenlibc.allocator.allocations_total:2|g",
+        "FrankenLibCAllocatorArenaPressure"
+      ]
+    }
+  ],
+  "test_bindings": [
+    {
+      "binding_id": "unit_primary",
+      "missing_item_id": "tests.unit.primary",
+      "description": "Library-level tests prove the seeded exporter path and allocator JSONL metrics snapshot used by the dashboard without invoking the harness binary.",
+      "required_artifact_ids": [
+        "dashboard_unit_test"
+      ],
+      "required_test_refs": [
+        {
+          "source_artifact_id": "dashboard_unit_test",
+          "name": "capture_bundle_seeds_real_exporters"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness observability_dashboard::tests::capture_bundle_seeds_real_exporters --lib -- --nocapture"
+      ]
+    },
+    {
+      "binding_id": "e2e_primary",
+      "missing_item_id": "tests.e2e.primary",
+      "description": "Harness CLI e2e coverage runs observability-capture, writes the raw JSONL inputs, and verifies every rendered dashboard output format.",
+      "required_artifact_ids": [
+        "cli_capture_command",
+        "dashboard_e2e_test"
+      ],
+      "required_test_refs": [
+        {
+          "source_artifact_id": "dashboard_e2e_test",
+          "name": "observability_capture_command_writes_exporter_bundle_files"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test observability_dashboard_test -- --nocapture"
+      ]
+    },
+    {
+      "binding_id": "telemetry_primary",
+      "missing_item_id": "telemetry.primary",
+      "description": "The capture pipeline emits membrane, allocator, and runtime math JSONL inputs plus JSON, Prometheus, StatsD, Grafana, and alert-rule dashboard artifacts; this checker emits completion telemetry tying those artifacts to the audit-debt bead.",
+      "required_artifact_ids": [
+        "dashboard_capture_pipeline",
+        "dashboard_writer",
+        "dashboard_e2e_test"
+      ],
+      "required_fragments": [
+        "membrane_metrics.jsonl",
+        "allocator_metrics.jsonl",
+        "runtime_math.jsonl",
+        "observability_dashboard.current.v1.json",
+        "observability_dashboard.prom",
+        "observability_dashboard.statsd",
+        "observability_dashboard.grafana.json",
+        "observability_dashboard.alerts.yaml",
+        "frankenlibc_validations_total",
+        "frankenlibc_allocator_bytes_allocated",
+        "frankenlibc_runtime_decisions_total",
+        "frankenlibc.allocator.allocations_total:2|g",
+        "FrankenLibCAllocatorArenaPressure"
+      ],
+      "required_commands": [
+        "bash scripts/check_observability_dashboard_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test observability_dashboard_completion_contract_test -- --nocapture"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "missing_item_id": "telemetry.primary",
+    "report_path": "target/conformance/observability_dashboard_completion_contract.report.json",
+    "log_path": "target/conformance/observability_dashboard_completion_contract.log.jsonl",
+    "required_generated_outputs": [
+      "inputs/membrane_metrics.jsonl",
+      "inputs/allocator_metrics.jsonl",
+      "inputs/runtime_math.jsonl",
+      "observability_dashboard.current.v1.json",
+      "observability_dashboard.prom",
+      "observability_dashboard.statsd",
+      "observability_dashboard.grafana.json",
+      "observability_dashboard.alerts.yaml"
+    ],
+    "required_metric_fragments": [
+      "frankenlibc_validations_total",
+      "frankenlibc_allocator_bytes_allocated",
+      "frankenlibc_runtime_decisions_total",
+      "frankenlibc.allocator.allocations_total:2|g",
+      "FrankenLibCAllocatorArenaPressure"
+    ],
+    "required_log_events": [
+      "observability_dashboard_source_bound",
+      "observability_dashboard_test_binding_bound",
+      "observability_dashboard_telemetry_bound",
+      "observability_dashboard_completion_contract_summary"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "completion_debt_bead",
+      "artifact_id",
+      "artifact_path",
+      "missing_item_id",
+      "evidence_kind",
+      "source_line_ref",
+      "status",
+      "artifact_refs",
+      "failure_signature"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-282v.1",
+    "original_bead": "bd-282v",
+    "test_source": "crates/frankenlibc-harness/tests/observability_dashboard_completion_contract_test.rs",
+    "checker": "scripts/check_observability_dashboard_completion_contract.sh",
+    "next_audit_score_threshold": 800,
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_names": [
+        "manifest_binds_observability_dashboard_completion_debt",
+        "source_evidence_pins_dashboard_pipeline_unit_and_e2e_paths",
+        "checker_accepts_contract_and_emits_telemetry"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_test_names": [
+        "source_evidence_pins_dashboard_pipeline_unit_and_e2e_paths",
+        "checker_accepts_contract_and_emits_telemetry"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "required_test_names": [
+        "checker_accepts_contract_and_emits_telemetry",
+        "checker_rejects_missing_unit_binding",
+        "checker_rejects_missing_telemetry_output",
+        "checker_rejects_stale_source_needle"
+      ]
+    }
+  }
+}
