@@ -1,0 +1,364 @@
+{
+  "schema_version": "overload_e2e_formal_guarantees_rollback_completion_contract.v1",
+  "manifest_id": "bd-w2c3.7.3.1-overload-e2e-formal-guarantees-rollback-completion",
+  "original_bead": "bd-w2c3.7.3",
+  "completion_debt_bead": "bd-w2c3.7.3.1",
+  "audit": {
+    "scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.7.3/scorecard.md",
+    "audit_score": 570,
+    "next_audit_score_threshold": 800,
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ],
+    "acceptance_criteria": [
+      "Produce guarantee reports (miscoverage/tail risk/regret/divergence) and define emergency rollback triggers.",
+      "Comprehensive unit tests are required for all touched logic.",
+      "Deterministic e2e scripts are required for externally visible behavior.",
+      "Structured logs must include trace_id, mode, api_family, symbol, decision_path, healing_action, errno, latency_ns, artifact_refs."
+    ]
+  },
+  "source_artifacts": {
+    "compute_pressure_contract": "tests/conformance/compute_pressure_graceful_degradation_completion_contract.v1.json",
+    "compute_pressure_checker": "scripts/check_compute_pressure_graceful_degradation_completion_contract.sh",
+    "compute_pressure_harness": "crates/frankenlibc-harness/tests/compute_pressure_graceful_degradation_completion_contract_test.rs",
+    "pressure_sensing_scenarios": "tests/conformance/pressure_sensing_scenarios.v1.json",
+    "runtime_risk_monitor_contract": "tests/conformance/runtime_risk_monitor_calibration.v1.json",
+    "runtime_risk_monitor_checker": "scripts/check_runtime_risk_monitor_calibration.sh",
+    "runtime_risk_monitor_harness": "crates/frankenlibc-harness/tests/runtime_risk_monitor_calibration_test.rs",
+    "runtime_math_risk_pareto_contract": "tests/conformance/runtime_math_risk_pareto_completion_contract.v1.json",
+    "runtime_math_risk_pareto_checker": "scripts/check_runtime_math_risk_pareto_completion_contract.sh",
+    "runtime_math_risk_pareto_harness": "crates/frankenlibc-harness/tests/runtime_math_risk_pareto_completion_contract_test.rs",
+    "risk_pareto_calibration": "tests/runtime_math/risk_pareto_calibration.v1.json",
+    "perf_regression_contract": "tests/conformance/perf_regression_gate_completion_contract.v1.json",
+    "perf_attribution_policy": "tests/conformance/perf_regression_attribution.v1.json",
+    "perf_gate": "scripts/perf_gate.sh",
+    "perf_e2e_scenario": "scripts/e2e_perf_regression_scenario.sh",
+    "perf_regression_harness": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
+    "completion_checker": "scripts/check_overload_e2e_formal_guarantees_rollback_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/overload_e2e_formal_guarantees_rollback_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    {
+      "kind": "scorecard_missing_unit_e2e",
+      "path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.7.3/scorecard.md",
+      "line": 35,
+      "anchor": "tests.unit.primary"
+    },
+    {
+      "kind": "compute_pressure_overload_campaign",
+      "path": "tests/conformance/compute_pressure_graceful_degradation_completion_contract.v1.json",
+      "line": 49,
+      "anchor": "\"pressure_sensing\""
+    },
+    {
+      "kind": "compute_pressure_family_degradation",
+      "path": "tests/conformance/compute_pressure_graceful_degradation_completion_contract.v1.json",
+      "line": 93,
+      "anchor": "\"family_degradation\""
+    },
+    {
+      "kind": "compute_pressure_backpressure",
+      "path": "tests/conformance/compute_pressure_graceful_degradation_completion_contract.v1.json",
+      "line": 117,
+      "anchor": "\"backpressure\""
+    },
+    {
+      "kind": "runtime_risk_required_monitors",
+      "path": "tests/conformance/runtime_risk_monitor_calibration.v1.json",
+      "line": 31,
+      "anchor": "\"required_monitors\""
+    },
+    {
+      "kind": "runtime_risk_cvar_tail",
+      "path": "tests/conformance/runtime_risk_monitor_calibration.v1.json",
+      "line": 113,
+      "anchor": "cal-cvar-resolver-tail-latency"
+    },
+    {
+      "kind": "runtime_risk_conformal_miscoverage",
+      "path": "tests/conformance/runtime_risk_monitor_calibration.v1.json",
+      "line": 140,
+      "anchor": "cal-conformal-stdio-clean-baseline"
+    },
+    {
+      "kind": "runtime_risk_fail_closed_cases",
+      "path": "tests/conformance/runtime_risk_monitor_calibration.v1.json",
+      "line": 194,
+      "anchor": "\"negative_calibration_cases\""
+    },
+    {
+      "kind": "risk_pareto_regret_divergence_gate",
+      "path": "tests/conformance/runtime_math_risk_pareto_completion_contract.v1.json",
+      "line": 58,
+      "anchor": "\"required_check_ids\""
+    },
+    {
+      "kind": "risk_pareto_coverage_bindings",
+      "path": "tests/conformance/runtime_math_risk_pareto_completion_contract.v1.json",
+      "line": 249,
+      "anchor": "\"completion_coverage\""
+    },
+    {
+      "kind": "perf_auto_throttle_policy",
+      "path": "tests/conformance/perf_regression_attribution.v1.json",
+      "line": 99,
+      "anchor": "\"auto_throttle_policy\""
+    },
+    {
+      "kind": "perf_rollback_trigger",
+      "path": "tests/conformance/perf_regression_attribution.v1.json",
+      "line": 172,
+      "anchor": "\"baseline_and_budget_violation\""
+    },
+    {
+      "kind": "perf_gate_overload_skip",
+      "path": "scripts/perf_gate.sh",
+      "line": 67,
+      "anchor": "should_skip_overloaded"
+    },
+    {
+      "kind": "perf_gate_auto_throttle_report",
+      "path": "scripts/perf_gate.sh",
+      "line": 677,
+      "anchor": "write_report \"auto_throttled\""
+    },
+    {
+      "kind": "perf_e2e_overloaded_scenario",
+      "path": "scripts/e2e_perf_regression_scenario.sh",
+      "line": 160,
+      "anchor": "SCENARIO"
+    },
+    {
+      "kind": "runtime_risk_harness_gate",
+      "path": "crates/frankenlibc-harness/tests/runtime_risk_monitor_calibration_test.rs",
+      "line": 301,
+      "anchor": "gate_script_passes_and_emits_report_and_jsonl_log"
+    },
+    {
+      "kind": "perf_harness_overload_e2e",
+      "path": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
+      "line": 451,
+      "anchor": "e2e_overloaded_host_script_passes"
+    }
+  ],
+  "required_source_contract": {
+    "overload_campaign": {
+      "compute_pressure_original_bead": "bd-w2c3.7",
+      "compute_pressure_completion_bead": "bd-w2c3.7.4",
+      "required_regimes": [
+        "Nominal",
+        "Pressured",
+        "Overloaded",
+        "Recovery"
+      ],
+      "required_modes": [
+        "strict",
+        "hardened"
+      ],
+      "required_scenario_ids": [
+        "steady_state_nominal",
+        "escalation_calm_to_overloaded",
+        "full_cycle_nominal_overloaded_recovery_nominal",
+        "hysteresis_oscillation",
+        "recovery_spike"
+      ],
+      "required_overload_events": [
+        "runtime_pressure_sensor",
+        "runtime_overload_policy_applied"
+      ],
+      "required_backpressure_ring_count": 5
+    },
+    "formal_guarantees": {
+      "required_metrics": [
+        "miscoverage",
+        "tail_risk",
+        "regret",
+        "divergence"
+      ],
+      "required_monitors": [
+        "eprocess",
+        "changepoint",
+        "cvar",
+        "conformal",
+        "risk"
+      ],
+      "required_modes": [
+        "strict",
+        "hardened"
+      ],
+      "allowed_false_positive_count": 0,
+      "allowed_false_negative_count": 0,
+      "required_risk_check_ids": [
+        "calibration_baseline_match",
+        "pareto_regret_saturates_at_cap",
+        "pareto_budget_enforcement_counter",
+        "risk_family_isolation",
+        "risk_adverse_rate_monotonicity",
+        "real_workload_divergence_guard"
+      ],
+      "required_fail_closed_signatures": [
+        "runtime_calibration_stale_fixture_outcomes",
+        "runtime_calibration_threshold_edge_case_mismatch",
+        "runtime_calibration_disabled_monitor",
+        "runtime_calibration_false_positive_budget_exceeded",
+        "runtime_calibration_false_negative_budget_exceeded"
+      ]
+    },
+    "rollback_policy": {
+      "required_perf_regression_classes": [
+        "baseline_regression",
+        "target_budget_violation",
+        "baseline_and_budget_violation"
+      ],
+      "required_auto_throttle_action": "skip_benchmarks",
+      "required_auto_throttle_status": "auto_throttled",
+      "required_rollback_action_fragment": "Prioritize rollback or immediate hotfix",
+      "required_report_fields": [
+        "status",
+        "host_state",
+        "throttle_action",
+        "host_context",
+        "summary",
+        "event_log_path"
+      ]
+    },
+    "structured_logging": {
+      "required_fields": [
+        "trace_id",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "artifact_refs"
+      ],
+      "required_events": [
+        "overload_e2e_campaign_bound",
+        "overload_formal_guarantees_bound",
+        "overload_rollback_triggers_bound",
+        "overload_completion_contract_validated"
+      ]
+    }
+  },
+  "test_sources": {
+    "compute_pressure_harness": {
+      "path": "crates/frankenlibc-harness/tests/compute_pressure_graceful_degradation_completion_contract_test.rs",
+      "required_test_refs": [
+        "contract_binds_track6_unit_and_e2e_evidence",
+        "checker_emits_graceful_degradation_report_and_jsonl",
+        "checker_rejects_missing_overloaded_regime",
+        "checker_rejects_missing_backpressure_ring_path"
+      ]
+    },
+    "runtime_risk_monitor_harness": {
+      "path": "crates/frankenlibc-harness/tests/runtime_risk_monitor_calibration_test.rs",
+      "required_test_refs": [
+        "gate_artifact_covers_runtime_risk_monitor_calibration_contract",
+        "gate_script_passes_and_emits_report_and_jsonl_log",
+        "gate_fails_closed_for_disabled_monitor",
+        "gate_fails_closed_for_false_positive_budget_overrun",
+        "gate_fails_closed_for_false_negative_budget_overrun"
+      ]
+    },
+    "runtime_math_risk_pareto_harness": {
+      "path": "crates/frankenlibc-harness/tests/runtime_math_risk_pareto_completion_contract_test.rs",
+      "required_test_refs": [
+        "manifest_binds_risk_pareto_unit_and_e2e_items",
+        "checker_emits_report_log_and_validates_calibration",
+        "checker_rejects_missing_source_check",
+        "checker_rejects_non_rch_cargo_validation_command"
+      ]
+    },
+    "perf_regression_harness": {
+      "path": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
+      "required_test_refs": [
+        "auto_throttle_contract_complete",
+        "triage_contract_complete",
+        "e2e_overloaded_host_script_passes",
+        "full_gate_script_passes",
+        "benchmark_gate_wrapper_invokes_rch_with_expected_contract"
+      ]
+    },
+    "completion_harness": {
+      "path": "crates/frankenlibc-harness/tests/overload_e2e_formal_guarantees_rollback_completion_contract_test.rs",
+      "required_test_refs": [
+        "manifest_binds_overload_unit_and_e2e_completion_evidence",
+        "checker_emits_overload_completion_report_and_jsonl",
+        "checker_rejects_missing_cvar_monitor",
+        "checker_rejects_missing_auto_throttle_gate_feature",
+        "checker_rejects_local_cargo_validation_command"
+      ]
+    }
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/runtime_risk_monitor_calibration_test.rs::gate_artifact_covers_runtime_risk_monitor_calibration_contract",
+        "crates/frankenlibc-harness/tests/runtime_risk_monitor_calibration_test.rs::gate_fails_closed_for_disabled_monitor",
+        "crates/frankenlibc-harness/tests/runtime_risk_monitor_calibration_test.rs::gate_fails_closed_for_false_positive_budget_overrun",
+        "crates/frankenlibc-harness/tests/runtime_math_risk_pareto_completion_contract_test.rs::manifest_binds_risk_pareto_unit_and_e2e_items",
+        "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs::auto_throttle_contract_complete",
+        "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs::triage_contract_complete",
+        "crates/frankenlibc-harness/tests/overload_e2e_formal_guarantees_rollback_completion_contract_test.rs::manifest_binds_overload_unit_and_e2e_completion_evidence"
+      ],
+      "validation_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test overload_e2e_formal_guarantees_rollback_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_risk_monitor_calibration_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_risk_pareto_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/compute_pressure_graceful_degradation_completion_contract_test.rs::checker_emits_graceful_degradation_report_and_jsonl",
+        "crates/frankenlibc-harness/tests/runtime_risk_monitor_calibration_test.rs::gate_script_passes_and_emits_report_and_jsonl_log",
+        "crates/frankenlibc-harness/tests/runtime_math_risk_pareto_completion_contract_test.rs::checker_emits_report_log_and_validates_calibration",
+        "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs::e2e_overloaded_host_script_passes",
+        "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs::full_gate_script_passes",
+        "crates/frankenlibc-harness/tests/overload_e2e_formal_guarantees_rollback_completion_contract_test.rs::checker_emits_overload_completion_report_and_jsonl"
+      ],
+      "validation_commands": [
+        "bash scripts/check_overload_e2e_formal_guarantees_rollback_completion_contract.sh",
+        "bash scripts/check_compute_pressure_graceful_degradation_completion_contract.sh",
+        "bash scripts/check_runtime_risk_monitor_calibration.sh",
+        "bash scripts/check_runtime_math_risk_pareto_completion_contract.sh",
+        "bash scripts/e2e_perf_regression_scenario.sh --scenario overloaded",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test compute_pressure_graceful_degradation_completion_contract_test --test perf_regression_gate_test -- --nocapture"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "report_schema": "overload_e2e_formal_guarantees_rollback_completion_contract.report.v1",
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "original_bead",
+      "completion_debt_bead",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs",
+      "status",
+      "failure_signature"
+    ],
+    "required_events": [
+      "overload_e2e_campaign_bound",
+      "overload_formal_guarantees_bound",
+      "overload_rollback_triggers_bound",
+      "overload_completion_contract_validated"
+    ]
+  }
+}
