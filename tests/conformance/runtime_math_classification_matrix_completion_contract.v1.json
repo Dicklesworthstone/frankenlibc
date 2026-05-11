@@ -1,0 +1,164 @@
+{
+  "schema_version": "runtime_math_classification_matrix_completion_contract.v1",
+  "bead_id": "bd-2k6b.1",
+  "original_bead": "bd-2k6b",
+  "trace_id": "bd-2k6b.1::runtime-math-classification-matrix::completion::v1",
+  "description": "Completion contract binding the runtime-math production/research classification matrix, integrity gate, structured classification logs, and harness tests to the missing unit-test completion-debt obligation.",
+  "source_artifacts": [
+    {
+      "id": "classification_matrix",
+      "kind": "manifest",
+      "path": "tests/runtime_math/runtime_math_classification_matrix.v1.json",
+      "evidence": "Runtime-math module classification matrix with production/research status, decision-law linkage, manifest routing, rationale refs, and transition notes."
+    },
+    {
+      "id": "classification_gate",
+      "kind": "gate",
+      "path": "scripts/check_runtime_math_classification_matrix.sh",
+      "evidence": "Fail-closed validator that cross-checks the matrix against math governance, runtime-math linkage, and the production kernel manifest while emitting structured logs."
+    },
+    {
+      "id": "classification_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/runtime_math_classification_matrix_test.rs",
+      "evidence": "Harness unit tests for matrix existence, module coverage, governance/linkage consistency, transition notes, summary counts, manifest reference, gate executable bit, and structured log emission."
+    },
+    {
+      "id": "math_governance",
+      "kind": "source_of_truth",
+      "path": "tests/conformance/math_governance.json",
+      "evidence": "Governance source for module classification tier and rationale references."
+    },
+    {
+      "id": "runtime_math_linkage",
+      "kind": "source_of_truth",
+      "path": "tests/runtime_math/runtime_math_linkage.v1.json",
+      "evidence": "Decision-law linkage source for module linkage status and runtime decision target references."
+    },
+    {
+      "id": "production_kernel_manifest",
+      "kind": "source_of_truth",
+      "path": "tests/runtime_math/production_kernel_manifest.v1.json",
+      "evidence": "Production/research manifest routing source that references the classification matrix."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/runtime_math_classification_matrix_completion_contract.v1.json",
+      "evidence": "Machine-readable completion-debt binding for the runtime-math classification matrix unit-test obligation."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_runtime_math_classification_matrix_completion_contract.sh",
+      "evidence": "Fail-closed completion validator for matrix counts, base gate replay, structured log rows, unit binding, and required test surfaces."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/runtime_math_classification_matrix_completion_contract_test.rs",
+      "evidence": "Rust integration test validating the completion contract, checker report/log output, base gate replay, and negative drift modes."
+    }
+  ],
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.unit.primary"
+    ],
+    "required_matrix": {
+      "total_modules": 69,
+      "classification_counts": {
+        "production_core": 12,
+        "production_monitor": 13,
+        "research": 44
+      },
+      "linkage_status_counts": {
+        "Production": 69,
+        "ResearchOnly": 0
+      },
+      "production_manifest_modules": 25,
+      "research_only_manifest_modules": 44,
+      "research_modules_currently_in_production_manifest": 0,
+      "allowed_classifications": [
+        "production_core",
+        "production_monitor",
+        "research"
+      ],
+      "allowed_linkage_statuses": [
+        "Production",
+        "ResearchOnly"
+      ]
+    },
+    "required_gate": {
+      "command": "bash scripts/check_runtime_math_classification_matrix.sh",
+      "pass_marker": "PASS: runtime_math classification matrix covers 69 modules",
+      "report_path": "target/conformance/runtime_math_classification_matrix.report.json",
+      "log_path": "target/conformance/runtime_math_classification_matrix.log.jsonl"
+    },
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "module",
+      "decision",
+      "linkage_status",
+      "rationale_ref",
+      "decision_target_ref",
+      "transition_stage",
+      "outcome"
+    ],
+    "required_unit_test_functions": [
+      "matrix_exists_and_valid",
+      "matrix_module_coverage_matches_sources",
+      "matrix_rows_match_governance_and_linkage",
+      "research_rows_have_transition_notes",
+      "summary_consistent",
+      "manifest_references_matrix",
+      "gate_script_exists_and_executable",
+      "gate_script_emits_structured_logs"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "tests/runtime_math/runtime_math_classification_matrix.v1.json",
+        "scripts/check_runtime_math_classification_matrix.sh",
+        "tests/conformance/math_governance.json",
+        "tests/runtime_math/runtime_math_linkage.v1.json",
+        "tests/runtime_math/production_kernel_manifest.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/runtime_math_classification_matrix_test.rs",
+        "crates/frankenlibc-harness/tests/runtime_math_classification_matrix_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "runtime_math_classification_matrix_test::matrix_exists_and_valid",
+        "runtime_math_classification_matrix_test::matrix_module_coverage_matches_sources",
+        "runtime_math_classification_matrix_test::matrix_rows_match_governance_and_linkage",
+        "runtime_math_classification_matrix_test::gate_script_emits_structured_logs",
+        "runtime_math_classification_matrix_completion_contract_test::checker_accepts_runtime_math_classification_completion_contract"
+      ]
+    }
+  ],
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_runtime_math_classification_unit_item",
+      "checker_accepts_runtime_math_classification_completion_contract",
+      "checker_replays_classification_gate_and_log"
+    ],
+    "negative": [
+      "checker_rejects_missing_unit_binding",
+      "checker_rejects_matrix_count_drift",
+      "checker_rejects_classification_log_drift"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/runtime_math_classification_matrix_completion_contract.v1.json",
+      "scripts/check_runtime_math_classification_matrix_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/runtime_math_classification_matrix_completion_contract_test.rs",
+      "tests/runtime_math/runtime_math_classification_matrix.v1.json"
+    ]
+  }
+}
