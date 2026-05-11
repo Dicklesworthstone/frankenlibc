@@ -1,0 +1,272 @@
+{
+  "schema_version": "hardened_repair_deny_completion_contract.v1",
+  "manifest_id": "bd-w2c3.3.2.1-hardened-repair-deny-completion",
+  "original_bead": "bd-w2c3.3.2",
+  "completion_debt_bead": "bd-w2c3.3.2.1",
+  "audit": {
+    "scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.3.2/scorecard.md",
+    "audit_score": 570,
+    "next_audit_score_threshold": 800,
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "purpose": "Bind the existing hardened repair/deny matrix, deterministic policy IDs, fixture-backed deny coverage, and gate telemetry to explicit unit and e2e completion evidence.",
+  "source_artifacts": {
+    "matrix": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+    "matrix_checker": "scripts/check_hardened_repair_deny_matrix.sh",
+    "matrix_harness": "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs",
+    "iconv_fixture": "tests/conformance/fixtures/iconv_phase1.json",
+    "conformance_executor": "crates/frankenlibc_conformance/src/lib.rs",
+    "healing_source": "crates/frankenlibc-membrane/src/heal.rs",
+    "completion_contract": "tests/conformance/hardened_repair_deny_completion_contract.v1.json",
+    "completion_checker": "scripts/check_hardened_repair_deny_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/hardened_repair_deny_completion_contract_test.rs"
+  },
+  "required_source_truth": {
+    "matrix": {
+      "schema_version": "v1",
+      "bead": "bd-w2c3.3.2",
+      "total_invalid_input_classes": 15,
+      "covered_invalid_input_classes": 15,
+      "entry_count": 15,
+      "repair_entries": 9,
+      "deny_entries": 6,
+      "required_decisions": [
+        "Repair",
+        "Deny"
+      ],
+      "required_healing_actions": [
+        "ClampSize",
+        "TruncateWithNull",
+        "IgnoreDoubleFree",
+        "IgnoreForeignFree",
+        "ReallocAsMalloc",
+        "ReturnSafeDefault",
+        "UpgradeToSafeVariant",
+        "None"
+      ],
+      "required_policy_id_prefixes": [
+        "tsm.repair.",
+        "tsm.deny."
+      ],
+      "required_fixture_ref": "tests/conformance/fixtures/iconv_phase1.json#/cases/hardened_unsupported_encoding_denied"
+    },
+    "checker": {
+      "required_tokens": [
+        "known_healing_actions drift detected",
+        "fixture_case_refs",
+        "Repair cannot use healing_action=None",
+        "Deny must use healing_action=None",
+        "policy_mapping_sha256",
+        "hardened_repair_deny"
+      ],
+      "required_log_fields": [
+        "trace_id",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "artifact_refs",
+        "policy_ids"
+      ]
+    },
+    "iconv_deny_case": {
+      "case_name": "hardened_unsupported_encoding_denied",
+      "expected_output": "open_err errno=22",
+      "expected_errno": 22,
+      "unit_test": "execute_iconv_case_hardened_unsupported_encoding_denied"
+    }
+  },
+  "implementation_refs": [
+    {
+      "kind": "matrix_schema",
+      "path": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+      "line": 2,
+      "anchor": "\"schema_version\": \"v1\""
+    },
+    {
+      "kind": "matrix_known_actions",
+      "path": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+      "line": 6,
+      "anchor": "\"known_healing_actions\""
+    },
+    {
+      "kind": "matrix_iconv_deny_entry",
+      "path": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+      "line": 186,
+      "anchor": "iconv_unsupported_encoding_deny"
+    },
+    {
+      "kind": "matrix_policy_id",
+      "path": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+      "line": 192,
+      "anchor": "tsm.deny.iconv.iconv_unsupported_encoding.v1"
+    },
+    {
+      "kind": "matrix_summary",
+      "path": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+      "line": 306,
+      "anchor": "\"summary\""
+    },
+    {
+      "kind": "checker_healing_action_sync",
+      "path": "scripts/check_hardened_repair_deny_matrix.sh",
+      "line": 98,
+      "anchor": "missing_from_matrix"
+    },
+    {
+      "kind": "checker_policy_regex",
+      "path": "scripts/check_hardened_repair_deny_matrix.sh",
+      "line": 128,
+      "anchor": "policy_re"
+    },
+    {
+      "kind": "checker_repair_deny_semantics",
+      "path": "scripts/check_hardened_repair_deny_matrix.sh",
+      "line": 171,
+      "anchor": "decision == \"Repair\""
+    },
+    {
+      "kind": "checker_policy_hash",
+      "path": "scripts/check_hardened_repair_deny_matrix.sh",
+      "line": 274,
+      "anchor": "policy_rows_for_hash.sort"
+    },
+    {
+      "kind": "checker_structured_log",
+      "path": "scripts/check_hardened_repair_deny_matrix.sh",
+      "line": 311,
+      "anchor": "trace_id"
+    },
+    {
+      "kind": "matrix_unit_summary_test",
+      "path": "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs",
+      "line": 87,
+      "anchor": "matrix_exists_and_summary_is_consistent"
+    },
+    {
+      "kind": "matrix_unit_healing_action_test",
+      "path": "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs",
+      "line": 174,
+      "anchor": "known_healing_actions_match_live_healing_action_enum"
+    },
+    {
+      "kind": "matrix_e2e_gate_test",
+      "path": "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs",
+      "line": 242,
+      "anchor": "gate_script_is_executable_and_passes"
+    },
+    {
+      "kind": "matrix_policy_determinism_test",
+      "path": "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs",
+      "line": 342,
+      "anchor": "policy_mapping_is_deterministic_across_reloads"
+    },
+    {
+      "kind": "iconv_hardened_deny_fixture",
+      "path": "tests/conformance/fixtures/iconv_phase1.json",
+      "line": 107,
+      "anchor": "hardened_unsupported_encoding_denied"
+    },
+    {
+      "kind": "iconv_hardened_deny_unit",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "line": 18469,
+      "anchor": "execute_iconv_case_hardened_unsupported_encoding_denied"
+    },
+    {
+      "kind": "healing_action_enum",
+      "path": "crates/frankenlibc-membrane/src/heal.rs",
+      "line": 15,
+      "anchor": "pub enum HealingAction"
+    }
+  ],
+  "test_sources": {
+    "matrix_harness": {
+      "path": "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs",
+      "required_test_refs": [
+        "matrix_exists_and_summary_is_consistent",
+        "known_healing_actions_match_live_healing_action_enum",
+        "fixture_refs_exist_and_are_hardened_cases",
+        "gate_script_is_executable_and_passes",
+        "policy_mapping_is_deterministic_across_reloads"
+      ]
+    },
+    "conformance_executor": {
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "required_test_refs": [
+        "execute_iconv_case_hardened_unsupported_encoding_denied"
+      ]
+    },
+    "completion_harness": {
+      "path": "crates/frankenlibc-harness/tests/hardened_repair_deny_completion_contract_test.rs",
+      "required_test_refs": [
+        "manifest_binds_hardened_repair_deny_unit_and_e2e_items",
+        "checker_validates_matrix_and_emits_report_log"
+      ]
+    }
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs::matrix_exists_and_summary_is_consistent",
+        "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs::known_healing_actions_match_live_healing_action_enum",
+        "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs::fixture_refs_exist_and_are_hardened_cases",
+        "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs::policy_mapping_is_deterministic_across_reloads",
+        "crates/frankenlibc_conformance/src/lib.rs::execute_iconv_case_hardened_unsupported_encoding_denied",
+        "crates/frankenlibc-harness/tests/hardened_repair_deny_completion_contract_test.rs::manifest_binds_hardened_repair_deny_unit_and_e2e_items"
+      ],
+      "validation_commands": [
+        "jq empty tests/conformance/hardened_repair_deny_completion_contract.v1.json",
+        "bash -n scripts/check_hardened_repair_deny_completion_contract.sh",
+        "bash scripts/check_hardened_repair_deny_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test hardened_repair_deny_matrix_test matrix_exists_and_summary_is_consistent -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test hardened_repair_deny_matrix_test known_healing_actions_match_live_healing_action_enum -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc_conformance execute_iconv_case_hardened_unsupported_encoding_denied -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test hardened_repair_deny_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "test_refs": [
+        "scripts/check_hardened_repair_deny_matrix.sh",
+        "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs::gate_script_is_executable_and_passes",
+        "crates/frankenlibc-harness/tests/hardened_repair_deny_completion_contract_test.rs::checker_validates_matrix_and_emits_report_log"
+      ],
+      "validation_commands": [
+        "bash scripts/check_hardened_repair_deny_matrix.sh",
+        "bash scripts/check_hardened_repair_deny_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test hardened_repair_deny_matrix_test gate_script_is_executable_and_passes -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test hardened_repair_deny_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo clippy -p frankenlibc-harness --test hardened_repair_deny_completion_contract_test -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_events": [
+      "hardened_repair_deny_contract_validated",
+      "hardened_repair_deny_matrix_validated",
+      "hardened_repair_deny_gate_replayed",
+      "hardened_repair_deny_completion_summary"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ]
+  }
+}
