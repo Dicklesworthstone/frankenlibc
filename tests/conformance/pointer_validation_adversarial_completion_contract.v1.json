@@ -1,0 +1,170 @@
+{
+  "schema_version": "pointer_validation_adversarial_completion_contract.v1",
+  "bead": "bd-66wz.3",
+  "completion_debt_bead": "bd-66wz.3.1",
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-66wz.3/scorecard.md",
+    "missing_item_ids": [
+      "tests.unit.primary"
+    ],
+    "closed_reason_original": "Added ptr validation adversarial tests (foreign/free/doublefree/canary) + stabilized cache-hit assertions"
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-66wz.3.1",
+    "original_bead": "bd-66wz.3",
+    "next_audit_score_threshold": 800,
+    "gate": "scripts/check_pointer_validation_adversarial_completion_contract.sh",
+    "test_sources": {
+      "ptr_validator_unit": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "contract_test": "crates/frankenlibc-harness/tests/pointer_validation_adversarial_completion_contract_test.rs",
+      "stage_coverage_contract": "tests/conformance/validation_pipeline_stage_coverage_contract.v1.json"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2066",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2195",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2225",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2234",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2246",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2328"
+    ],
+    "adversarial_cases": [
+      {
+        "id": "foreign_validate_unknown_unbounded",
+        "requirement": "Foreign pointer validation returns ValidationOutcome::Foreign and remains Unknown without owned allocation bounds or generation metadata.",
+        "source": "ptr_validator_unit",
+        "test": "foreign_pointer_allowed",
+        "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2066",
+        "required_tokens": [
+          "ValidationOutcome::Foreign",
+          "SafetyState::Unknown",
+          "alloc_base.is_none()",
+          "remaining.is_none()",
+          "generation.is_none()"
+        ]
+      },
+      {
+        "id": "foreign_free_reported",
+        "requirement": "Freeing a non-owned pointer reports FreeResult::ForeignPointer instead of treating it as an owned allocation.",
+        "source": "ptr_validator_unit",
+        "test": "foreign_free_reported",
+        "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2225",
+        "required_tokens": [
+          "FreeResult::ForeignPointer"
+        ]
+      },
+      {
+        "id": "double_free_reported",
+        "requirement": "An owned pointer frees once as Freed and a second free reports DoubleFree.",
+        "source": "ptr_validator_unit",
+        "test": "double_free_reported",
+        "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2234",
+        "required_tokens": [
+          "FreeResult::Freed",
+          "FreeResult::DoubleFree"
+        ]
+      },
+      {
+        "id": "uaf_cache_invalidated_after_free",
+        "requirement": "A cached valid pointer is not returned as CachedValid after free and loses read/write permission.",
+        "source": "ptr_validator_unit",
+        "test": "tls_cache_does_not_allow_uaf_after_free",
+        "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2195",
+        "required_tokens": [
+          "lock_tls_cache_epoch_for_tests",
+          "ValidationOutcome::CachedValid",
+          "FreeResult::Freed",
+          "!outcome.can_read()",
+          "!outcome.can_write()"
+        ]
+      },
+      {
+        "id": "canary_corruption_free_quarantines",
+        "requirement": "Trailing canary corruption is reported on free and the pointer remains non-readable and non-writable afterward.",
+        "source": "ptr_validator_unit",
+        "test": "canary_corruption_detected_via_pipeline_free",
+        "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2246",
+        "required_tokens": [
+          "inject_trailing_canary_corruption",
+          "FreeResult::FreedWithCanaryCorruption",
+          "!outcome.can_read()",
+          "!outcome.can_write()",
+          "ValidationOutcome::CachedValid"
+        ]
+      },
+      {
+        "id": "foreign_early_exit_skips_deep_integrity",
+        "requirement": "Foreign pointer early exit never runs owned-allocation fingerprint, canary, or bounds stages.",
+        "source": "ptr_validator_unit",
+        "test": "foreign_pointer_early_exit_skips_deep_integrity_stages",
+        "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2328",
+        "required_tokens": [
+          "ValidationOutcome::Foreign",
+          "!stages.contains(\"fingerprint\")",
+          "!stages.contains(\"canary\")",
+          "!stages.contains(\"bounds\")"
+        ]
+      }
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "ptr_validator_unit",
+          "name": "foreign_pointer_allowed",
+          "case_id": "foreign_validate_unknown_unbounded"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "foreign_free_reported",
+          "case_id": "foreign_free_reported"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "double_free_reported",
+          "case_id": "double_free_reported"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "tls_cache_does_not_allow_uaf_after_free",
+          "case_id": "uaf_cache_invalidated_after_free"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "canary_corruption_detected_via_pipeline_free",
+          "case_id": "canary_corruption_free_quarantines"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "foreign_pointer_early_exit_skips_deep_integrity_stages",
+          "case_id": "foreign_early_exit_skips_deep_integrity"
+        }
+      ],
+      "validation_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-pointer-validation-adversarial-unit cargo test --locked -p frankenlibc-membrane ptr_validator --lib -- --nocapture --test-threads=1",
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-pointer-validation-adversarial-completion-test cargo test -p frankenlibc-harness --test pointer_validation_adversarial_completion_contract_test -- --nocapture"
+      ]
+    },
+    "telemetry_contract": {
+      "required_events": [
+        "pointer_validation_adversarial_completion_contract_validated",
+        "pointer_validation_adversarial_completion_contract_failed"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "missing_item_id",
+        "adversarial_case_ids",
+        "test_refs",
+        "validation_commands",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    }
+  }
+}
