@@ -1,0 +1,191 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "gentoo-portage-mechanics-completion-contract",
+  "bead": "bd-2icq.2",
+  "completion_debt_bead": "bd-2icq.2.1",
+  "generated_utc": "2026-05-11T00:00:00Z",
+  "purpose": "Completion-debt contract for the Gentoo Portage mechanics study originally closed under bd-2icq.2. The audit pass required explicit tests.golden.primary and telemetry.primary evidence. This contract binds the existing Portage workflow docs, USE flag matrix, bashrc template, ebuild hook implementation, and base-image golden contract to a checker that emits deterministic telemetry.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T-pass3-cumulative-patches/beads/bd-2icq.2/scorecard.md",
+    "spec_path": "beads_compliance_audit/passes/2026-05-10T-pass3-cumulative-patches/beads/bd-2icq.2/spec.json",
+    "score_before": 145,
+    "score_after_deterministic_patch": 860,
+    "score_threshold": 800
+  },
+  "runtime_target": {
+    "max_seconds": 30,
+    "external_services_allowed": false,
+    "docker_required": false,
+    "portage_required": false,
+    "coverage_artifacts": [
+      "target/conformance/gentoo_portage_mechanics_completion_contract.report.json",
+      "target/conformance/gentoo_portage_mechanics_completion_contract.log.jsonl"
+    ]
+  },
+  "source_evidence": [
+    {
+      "artifact_id": "portage_workflow_refresher",
+      "kind": "documentation",
+      "path": "docs/gentoo/portage-integration.md",
+      "line_ref": "docs/gentoo/portage-integration.md:11",
+      "required_needles": [
+        "Portage Workflow Refresher",
+        "emerge -ptv <atom>",
+        "FEATURES=\"test\" emerge -1v dev-db/redis",
+        "FRANKENLIBC_LOG",
+        "package atom",
+        "ebuild phase",
+        "FrankenLibC log path"
+      ]
+    },
+    {
+      "artifact_id": "use_flag_matrix",
+      "kind": "golden_support",
+      "path": "docs/gentoo/use-flag-matrix.md",
+      "line_ref": "docs/gentoo/use-flag-matrix.md:11",
+      "required_needles": [
+        "Flag Impact Matrix",
+        "`static` / `static-libs`",
+        "`jemalloc`",
+        "`threads`",
+        "Recording Requirements",
+        "whether interposition was confirmed active"
+      ]
+    },
+    {
+      "artifact_id": "portage_bashrc_template",
+      "kind": "configuration",
+      "path": "configs/gentoo/frankenlibc.bashrc",
+      "line_ref": "configs/gentoo/frankenlibc.bashrc:8",
+      "required_needles": [
+        "FRANKENLIBC_PORTAGE_ENABLE=1",
+        "FRANKENLIBC_LIB=\"/opt/frankenlibc/lib/libfrankenlibc_abi.so\"",
+        "FRANKENLIBC_PHASE_ALLOWLIST",
+        "FRANKENLIBC_PACKAGE_BLOCKLIST",
+        "FRANKENLIBC_SKIP_STATIC",
+        "FRANKENLIBC_PORTAGE_LOG"
+      ]
+    },
+    {
+      "artifact_id": "ebuild_hook_implementation",
+      "kind": "shell_hook",
+      "path": "scripts/gentoo/frankenlibc-ebuild-hooks.sh",
+      "line_ref": "scripts/gentoo/frankenlibc-ebuild-hooks.sh:53",
+      "required_needles": [
+        "frankenlibc::log()",
+        "frankenlibc::phase_allowed()",
+        "frankenlibc::package_blocked()",
+        "skip: static-libs USE flag detected",
+        "FRANKENLIBC_LOG_FILE",
+        "pre_src_test()",
+        "post_pkg_test()"
+      ]
+    },
+    {
+      "artifact_id": "base_image_golden_contract",
+      "kind": "golden_fixture",
+      "path": "tests/gentoo/base-image-contract.golden.json",
+      "line_ref": "tests/gentoo/base-image-contract.golden.json:1",
+      "required_needles": [
+        "\"contract\": \"gentoo-stage3-base-image\"",
+        "\"COPY configs/gentoo/portage-bashrc /etc/portage/bashrc\"",
+        "\"COPY scripts/gentoo/frankenlibc-ebuild-hooks.sh /opt/frankenlibc/scripts/gentoo/frankenlibc-ebuild-hooks.sh\"",
+        "\"ENV FRANKENLIBC_PORTAGE_ENABLE=1\"",
+        "\"ENV FRANKENLIBC_PHASE_ALLOWLIST=\\\"src_test pkg_test\\\"\"",
+        "\"emerge -p sys-apps/coreutils >/tmp/coreutils-plan.txt && test -s /tmp/coreutils-plan.txt\""
+      ]
+    }
+  ],
+  "golden_contract": {
+    "missing_item_id": "tests.golden.primary",
+    "description": "The base-image golden contract pins the Portage stage3/builder/make.conf/build-script/runtime-test mechanics that make the Portage study reproducible without requiring Docker or live emerge during the completion gate.",
+    "golden_file": "tests/gentoo/base-image-contract.golden.json",
+    "required_sections": [
+      "stage3",
+      "builder",
+      "make_conf",
+      "build_script",
+      "runtime_test"
+    ],
+    "required_paths": [
+      "docker/gentoo/Dockerfile.stage3",
+      "docker/gentoo/Dockerfile.builder",
+      "configs/gentoo/make.conf",
+      "scripts/gentoo/build-base-image.sh",
+      "tests/gentoo/test-base-image.sh"
+    ],
+    "required_line_fragments": [
+      "emerge-webrsync;",
+      "FEATURES=\"parallel-fetch test\"",
+      "USE=\"-static -static-libs\"",
+      "COPY configs/gentoo/portage-bashrc /etc/portage/bashrc",
+      "COPY scripts/gentoo/frankenlibc-ebuild-hooks.sh /opt/frankenlibc/scripts/gentoo/frankenlibc-ebuild-hooks.sh",
+      "ENV FRANKENLIBC_PORTAGE_ENABLE=1",
+      "ENV FRANKENLIBC_MODE=hardened",
+      "ENV FRANKENLIBC_PHASE_ALLOWLIST=\"src_test pkg_test\"",
+      "emerge -p sys-apps/coreutils >/tmp/coreutils-plan.txt && test -s /tmp/coreutils-plan.txt"
+    ],
+    "required_test_names": [
+      "manifest_anchors_portage_mechanics_completion_debt",
+      "source_evidence_pins_portage_docs_hooks_and_use_flags",
+      "golden_contract_pins_base_image_mechanics",
+      "checker_accepts_contract_and_emits_telemetry"
+    ]
+  },
+  "telemetry_contract": {
+    "missing_item_id": "telemetry.primary",
+    "description": "The checker emits one telemetry row per pinned Portage mechanics artifact, one golden row, and one summary row with fail-closed status and artifact references.",
+    "report_path": "target/conformance/gentoo_portage_mechanics_completion_contract.report.json",
+    "log_path": "target/conformance/gentoo_portage_mechanics_completion_contract.log.jsonl",
+    "required_log_events": [
+      "gentoo_portage_mechanics_artifact",
+      "gentoo_portage_mechanics_golden",
+      "gentoo_portage_mechanics_contract_summary"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "completion_debt_bead",
+      "artifact_id",
+      "artifact_path",
+      "evidence_kind",
+      "source_line_ref",
+      "status",
+      "artifact_refs",
+      "failure_signature"
+    ],
+    "required_test_names": [
+      "checker_accepts_contract_and_emits_telemetry",
+      "checker_rejects_missing_golden_binding",
+      "checker_rejects_missing_telemetry_field",
+      "checker_rejects_stale_source_needle"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-2icq.2.1",
+    "original_bead": "bd-2icq.2",
+    "test_source": "crates/frankenlibc-harness/tests/gentoo_portage_mechanics_completion_contract_test.rs",
+    "checker": "scripts/check_gentoo_portage_mechanics_completion_contract.sh",
+    "next_audit_score_threshold": 800,
+    "golden_primary": {
+      "missing_item_id": "tests.golden.primary",
+      "description": "Golden evidence is the base-image contract plus source-evidence needles for emerge, ebuild hook, USE flag, bashrc, and telemetry logging mechanics.",
+      "required_test_names": [
+        "golden_contract_pins_base_image_mechanics",
+        "checker_rejects_missing_golden_binding"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "Telemetry evidence is the checker-generated JSON report and JSONL rows for each Portage mechanics artifact and the summary contract.",
+      "required_test_names": [
+        "checker_accepts_contract_and_emits_telemetry",
+        "checker_rejects_missing_telemetry_field",
+        "checker_rejects_stale_source_needle"
+      ]
+    }
+  }
+}
