@@ -1,0 +1,291 @@
+{
+  "schema_version": "tsm_full_pipeline_load_completion_contract.v1",
+  "manifest_id": "bd-32e.6.1-tsm-full-pipeline-load-completion-contract",
+  "generated_utc": "2026-05-11T10:10:00Z",
+  "description": "Completion-debt evidence binding for the TSM full validation pipeline under realistic load, concurrency, adversarial pointer inputs, latency-budget checks, monotone lattice transitions, and structured telemetry.",
+  "bead": "bd-32e.6",
+  "source_modules": [
+    "crates/frankenlibc-membrane/src/ptr_validator.rs",
+    "crates/frankenlibc-membrane/src/arena.rs",
+    "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
+    "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs",
+    "crates/frankenlibc-bench/benches/membrane_bench.rs"
+  ],
+  "completion_debt_evidence": {
+    "bead": "bd-32e.6.1",
+    "original_bead": "bd-32e.6",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-32e.6/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "test_sources": {
+      "ptr_validator_unit": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "arena_unit": "crates/frankenlibc-membrane/src/arena.rs",
+      "tsm_pipeline_e2e": "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
+      "allocator_sequences": "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/tsm_full_pipeline_load_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:1992",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2195",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2225",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2234",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2246",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2369",
+      "crates/frankenlibc-membrane/src/arena.rs:589",
+      "crates/frankenlibc-membrane/src/arena.rs:720",
+      "crates/frankenlibc-membrane/src/arena.rs:802",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:53",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:120",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:164",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:266",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:298",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:385",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:420",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs:536",
+      "scripts/check_tsm_full_pipeline_load_completion_contract.sh:1",
+      "tests/conformance/tsm_full_pipeline_load_completion_contract.v1.json:1",
+      "crates/frankenlibc-harness/tests/tsm_full_pipeline_load_completion_contract_test.rs:1"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "next_audit_score_threshold": 800,
+      "required_test_refs": [
+        {"source": "ptr_validator_unit", "name": "null_pointer_detected"},
+        {"source": "ptr_validator_unit", "name": "tls_cache_does_not_allow_uaf_after_free"},
+        {"source": "ptr_validator_unit", "name": "foreign_free_reported"},
+        {"source": "ptr_validator_unit", "name": "double_free_reported"},
+        {"source": "ptr_validator_unit", "name": "canary_corruption_detected_via_pipeline_free"},
+        {"source": "ptr_validator_unit", "name": "allocated_pointer_property_validates_as_live"},
+        {"source": "ptr_validator_unit", "name": "freed_pointer_property_becomes_temporal_violation"},
+        {"source": "ptr_validator_unit", "name": "dependency_safe_order_property_holds"},
+        {"source": "arena_unit", "name": "generation_increases"},
+        {"source": "arena_unit", "name": "free_promotes_slot_to_quarantined_with_new_generation"},
+        {"source": "arena_unit", "name": "foreign_pointer_detected"},
+        {"source": "arena_unit", "name": "proof_uaf_detection_probability_one"},
+        {"source": "arena_unit", "name": "proof_double_free_always_detected"},
+        {"source": "allocator_sequences", "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"},
+        {"source": "allocator_sequences", "name": "concurrent_double_free_detection_basic_10k_16t_10pct"},
+        {"source": "allocator_sequences", "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"},
+        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_and_load_dimensions"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane null_pointer_detected -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane tls_cache_does_not_allow_uaf_after_free -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane double_free_reported -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane proof_uaf_detection_probability_one -- --nocapture"
+      ],
+      "evidence_summary": "Inline validator, arena, and allocator-sequence tests cover null, foreign pointer, live allocation, UAF, double-free, canary corruption, TLS cache invalidation, generation monotonicity, dependency ordering, and adversarial pointer fault matrices."
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "next_audit_score_threshold": 800,
+      "required_test_refs": [
+        {"source": "tsm_pipeline_e2e", "name": "null_pointer_validates_as_null"},
+        {"source": "tsm_pipeline_e2e", "name": "low_addresses_validate_as_null_or_invalid"},
+        {"source": "tsm_pipeline_e2e", "name": "foreign_pointer_is_allowed_with_unknown_state"},
+        {"source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle"},
+        {"source": "tsm_pipeline_e2e", "name": "double_free_detected"},
+        {"source": "tsm_pipeline_e2e", "name": "foreign_pointer_free_detected"},
+        {"source": "tsm_pipeline_e2e", "name": "multiple_allocations_independent"},
+        {"source": "tsm_pipeline_e2e", "name": "safety_state_lattice_monotonicity"},
+        {"source": "tsm_pipeline_e2e", "name": "concurrent_validate_on_shared_pipeline"},
+        {"source": "tsm_pipeline_e2e", "name": "concurrent_read_validate_live_pointer"},
+        {"source": "tsm_pipeline_e2e", "name": "validation_latency_within_budget"},
+        {"source": "tsm_pipeline_e2e", "name": "mixed_workload_deterministic"},
+        {"source": "tsm_pipeline_e2e", "name": "concurrent_mixed_workload"},
+        {"source": "tsm_pipeline_e2e", "name": "tls_cache_hits_on_repeated_validation"},
+        {"source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload"},
+        {"source": "tsm_pipeline_e2e", "name": "validation_outcome_abstraction_fields"},
+        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl_scenario_rows"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test tsm_full_pipeline_load_completion_contract_test -- --nocapture",
+        "bash scripts/check_tsm_full_pipeline_load_completion_contract.sh"
+      ],
+      "evidence_summary": "The TSM E2E suite exercises full pipeline null, foreign, allocation/free, double-free, temporal violation, cache, metrics, deterministic mixed-workload, and concurrent mixed-workload paths."
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "next_audit_score_threshold": 800,
+      "default_report_path": "target/conformance/tsm_full_pipeline_load_completion_contract.report.json",
+      "default_log_path": "target/conformance/tsm_full_pipeline_load_completion_contract.log.jsonl",
+      "required_test_refs": [
+        {"source": "ptr_validator_unit", "name": "validation_log_export_includes_trace_and_decision_ids"},
+        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl_scenario_rows"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_concurrency_dimension"}
+      ],
+      "required_events": [
+        "tsm_full_pipeline_load_completion_contract_validated",
+        "tsm_full_pipeline_load_completion_contract_failed",
+        "tsm_pipeline_load_scenario"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "level",
+        "event",
+        "mode",
+        "runtime_mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "artifact_refs",
+        "bead_id",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "scenario_id",
+        "coverage_dimensions",
+        "failure_signature"
+      ],
+      "evidence_summary": "The checker emits one JSONL scenario row per load-profile binding plus a terminal pass/fail row, each carrying trace_id, mode, API family, symbol, decision path, healing action, errno, latency, and artifact references."
+    },
+    "workload_contract": {
+      "required_dimensions": [
+        "null_validation",
+        "low_address_rejection",
+        "foreign_pointer_validation",
+        "allocation_lifecycle",
+        "uaf_temporal_violation",
+        "double_free_detection",
+        "foreign_pointer_free",
+        "bounds_remaining",
+        "tls_cache_repeated_validation",
+        "pipeline_metrics",
+        "deterministic_mixed_workload",
+        "concurrent_alloc_validate_free",
+        "concurrent_read_validation",
+        "concurrent_mixed_workload",
+        "latency_budget_guard",
+        "monotone_lattice_transition",
+        "adversarial_fault_matrix"
+      ],
+      "required_modes": ["strict", "hardened"],
+      "latency_budget": {
+        "strict_target_ns": 20,
+        "hardened_target_ns": 200,
+        "ci_guard_ns": 50000,
+        "measurement_test": "validation_latency_within_budget",
+        "criterion_bench": "crates/frankenlibc-bench/benches/membrane_bench.rs"
+      },
+      "scenario_matrix": [
+        {
+          "scenario_id": "strict-fast-path-null-foreign",
+          "mode": "strict",
+          "api_family": "membrane",
+          "symbol": "ValidationPipeline::validate",
+          "decision_path": "null_check -> foreign_or_live_classification",
+          "healing_action": "none",
+          "errno": 0,
+          "latency_ns": 20,
+          "coverage_dimensions": [
+            "null_validation",
+            "low_address_rejection",
+            "foreign_pointer_validation",
+            "pipeline_metrics"
+          ],
+          "test_refs": [
+            {"source": "tsm_pipeline_e2e", "name": "null_pointer_validates_as_null"},
+            {"source": "tsm_pipeline_e2e", "name": "low_addresses_validate_as_null_or_invalid"},
+            {"source": "tsm_pipeline_e2e", "name": "foreign_pointer_is_allowed_with_unknown_state"},
+            {"source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload"}
+          ],
+          "artifact_refs": [
+            "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
+            "target/conformance/tsm_full_pipeline_load_completion_contract.log.jsonl"
+          ]
+        },
+        {
+          "scenario_id": "strict-lifecycle-cache-latency",
+          "mode": "strict",
+          "api_family": "membrane",
+          "symbol": "ValidationPipeline::allocate/free/validate",
+          "decision_path": "allocate -> validate -> cache -> free -> temporal_violation",
+          "healing_action": "none",
+          "errno": 0,
+          "latency_ns": 20,
+          "coverage_dimensions": [
+            "allocation_lifecycle",
+            "bounds_remaining",
+            "uaf_temporal_violation",
+            "tls_cache_repeated_validation",
+            "latency_budget_guard",
+            "monotone_lattice_transition"
+          ],
+          "test_refs": [
+            {"source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle"},
+            {"source": "tsm_pipeline_e2e", "name": "multiple_allocations_independent"},
+            {"source": "tsm_pipeline_e2e", "name": "safety_state_lattice_monotonicity"},
+            {"source": "tsm_pipeline_e2e", "name": "validation_latency_within_budget"},
+            {"source": "tsm_pipeline_e2e", "name": "tls_cache_hits_on_repeated_validation"},
+            {"source": "tsm_pipeline_e2e", "name": "validation_outcome_abstraction_fields"}
+          ],
+          "artifact_refs": [
+            "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
+            "crates/frankenlibc-bench/benches/membrane_bench.rs"
+          ]
+        },
+        {
+          "scenario_id": "hardened-adversarial-temporal",
+          "mode": "hardened",
+          "api_family": "membrane",
+          "symbol": "ValidationPipeline::free",
+          "decision_path": "arena_lookup -> generation_check -> repair_or_deny",
+          "healing_action": "IgnoreDoubleFree",
+          "errno": 0,
+          "latency_ns": 200,
+          "coverage_dimensions": [
+            "double_free_detection",
+            "foreign_pointer_free",
+            "uaf_temporal_violation",
+            "adversarial_fault_matrix",
+            "monotone_lattice_transition"
+          ],
+          "test_refs": [
+            {"source": "tsm_pipeline_e2e", "name": "double_free_detected"},
+            {"source": "tsm_pipeline_e2e", "name": "foreign_pointer_free_detected"},
+            {"source": "allocator_sequences", "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"},
+            {"source": "allocator_sequences", "name": "concurrent_double_free_detection_basic_10k_16t_10pct"}
+          ],
+          "artifact_refs": [
+            "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs",
+            "tests/conformance/allocator_membrane_invariant_completion_contract.v1.json"
+          ]
+        },
+        {
+          "scenario_id": "hardened-concurrent-mixed-load",
+          "mode": "hardened",
+          "api_family": "membrane",
+          "symbol": "ValidationPipeline::shared",
+          "decision_path": "shared_pipeline -> concurrent_validate -> concurrent_free",
+          "healing_action": "none",
+          "errno": 0,
+          "latency_ns": 200,
+          "coverage_dimensions": [
+            "deterministic_mixed_workload",
+            "concurrent_alloc_validate_free",
+            "concurrent_read_validation",
+            "concurrent_mixed_workload",
+            "pipeline_metrics",
+            "adversarial_fault_matrix"
+          ],
+          "test_refs": [
+            {"source": "tsm_pipeline_e2e", "name": "mixed_workload_deterministic"},
+            {"source": "tsm_pipeline_e2e", "name": "concurrent_validate_on_shared_pipeline"},
+            {"source": "tsm_pipeline_e2e", "name": "concurrent_read_validate_live_pointer"},
+            {"source": "tsm_pipeline_e2e", "name": "concurrent_mixed_workload"},
+            {"source": "allocator_sequences", "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"}
+          ],
+          "artifact_refs": [
+            "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
+            "target/conformance/tsm_full_pipeline_load_completion_contract.report.json"
+          ]
+        }
+      ]
+    }
+  }
+}
