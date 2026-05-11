@@ -1,0 +1,233 @@
+{
+  "schema_version": "standalone_host_dependency_probe_completion_contract.v1",
+  "original_bead": "bd-zyck1.35",
+  "completion_debt_bead": "bd-zyck1.35.1",
+  "title": "Standalone host dependency probe stale-source completion contract",
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-zyck1.35/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "missing_items": [
+      "tests.conformance.primary"
+    ]
+  },
+  "source_artifacts": {
+    "probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+    "probe_checker": "scripts/check_standalone_host_dependency_probe_plan.sh",
+    "probe_test": "crates/frankenlibc-harness/tests/standalone_host_dependency_probe_plan_test.rs",
+    "standalone_artifact": "tests/conformance/standalone_replacement_artifact.v1.json"
+  },
+  "implementation_refs": [
+    {
+      "kind": "plan_source_commit_freshness_policy",
+      "path": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "line": 5,
+      "anchor": "\"source_commit_freshness_policy\""
+    },
+    {
+      "kind": "plan_generated_outputs",
+      "path": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "line": 24,
+      "anchor": "\"generated_outputs\""
+    },
+    {
+      "kind": "plan_required_log_fields",
+      "path": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "line": 29,
+      "anchor": "\"required_log_fields\""
+    },
+    {
+      "kind": "plan_required_probe_types",
+      "path": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "line": 45,
+      "anchor": "\"required_probe_types\""
+    },
+    {
+      "kind": "plan_forge_blocker_projection",
+      "path": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "line": 93,
+      "anchor": "\"current_forge_blocker_projection\""
+    },
+    {
+      "kind": "plan_failure_signature_mapping",
+      "path": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "line": 306,
+      "anchor": "\"failure_signature_to_negative_test\""
+    },
+    {
+      "kind": "plan_probe_rows",
+      "path": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "line": 365,
+      "anchor": "\"probe_rows\""
+    },
+    {
+      "kind": "plan_summary",
+      "path": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
+      "line": 817,
+      "anchor": "\"summary\""
+    },
+    {
+      "kind": "checker_expected_freshness_policy",
+      "path": "scripts/check_standalone_host_dependency_probe_plan.sh",
+      "line": 212,
+      "anchor": "EXPECTED_FRESHNESS_POLICY"
+    },
+    {
+      "kind": "checker_policy_match",
+      "path": "scripts/check_standalone_host_dependency_probe_plan.sh",
+      "line": 365,
+      "anchor": "source_commit_freshness_policy must match"
+    },
+    {
+      "kind": "checker_missing_probe_types",
+      "path": "scripts/check_standalone_host_dependency_probe_plan.sh",
+      "line": 573,
+      "anchor": "missing_probe_types"
+    },
+    {
+      "kind": "checker_freshness_report",
+      "path": "scripts/check_standalone_host_dependency_probe_plan.sh",
+      "line": 794,
+      "anchor": "\"source_commit_freshness\""
+    },
+    {
+      "kind": "test_stale_policy",
+      "path": "crates/frankenlibc-harness/tests/standalone_host_dependency_probe_plan_test.rs",
+      "line": 830,
+      "anchor": "fn stale_source_commit_policy_blocks_host_dependency_probe_evidence"
+    },
+    {
+      "kind": "test_stale_helper",
+      "path": "crates/frankenlibc-harness/tests/standalone_host_dependency_probe_plan_test.rs",
+      "line": 862,
+      "anchor": "fn stale_recorded_source_commit_helper_rejects_host_dependency_probe_evidence"
+    },
+    {
+      "kind": "test_checker_report",
+      "path": "crates/frankenlibc-harness/tests/standalone_host_dependency_probe_plan_test.rs",
+      "line": 879,
+      "anchor": "fn checker_emits_report_and_required_jsonl_rows"
+    },
+    {
+      "kind": "test_checker_missing_freshness",
+      "path": "crates/frankenlibc-harness/tests/standalone_host_dependency_probe_plan_test.rs",
+      "line": 1009,
+      "anchor": "fn checker_rejects_missing_source_commit_freshness_policy"
+    }
+  ],
+  "conformance_contract": {
+    "source_plan_bead": "bd-b92jd.1.1",
+    "required_source_commit_freshness_policy": {
+      "recorded_source_commit_field": "source_commit",
+      "comparison_target": "current git HEAD",
+      "stale_result": "block_standalone_host_dependency_probe_evidence",
+      "host_dependency_probe_evidence_allowed_when_stale": false,
+      "rejected_evidence_kind": "stale_source_commit"
+    },
+    "required_report_status": "pass",
+    "required_probe_count": 14,
+    "required_probe_type_count": 14,
+    "required_log_field_count": 14,
+    "required_claim_blocked_count": 13,
+    "required_l2_l3_blocker_count": 13,
+    "required_negative_claim_test_count_min": 5,
+    "required_forge_projection_field_count": 19,
+    "required_forge_projection_blocking_reason_count": 10,
+    "required_forge_projection_failure_signature_count": 6,
+    "required_stale_source_tests": [
+      "stale_source_commit_policy_blocks_host_dependency_probe_evidence",
+      "stale_recorded_source_commit_helper_rejects_host_dependency_probe_evidence",
+      "checker_rejects_missing_source_commit_freshness_policy",
+      "checker_rejects_source_commit_policy_that_allows_stale_evidence",
+      "checker_rejects_stale_recorded_source_commit"
+    ]
+  },
+  "evidence_bindings": [
+    {
+      "binding_id": "standalone_host_dependency_probe_stale_source_gate",
+      "artifact_key": "probe_plan",
+      "identity_field": "bead",
+      "identity_value": "bd-b92jd.1.1",
+      "covers": [
+        "tests.conformance.primary"
+      ],
+      "required_artifact_keys": [
+        "probe_checker",
+        "probe_test",
+        "standalone_artifact"
+      ],
+      "required_test_refs": [
+        {
+          "source": "probe_test",
+          "name": "plan_has_required_shape_and_probe_coverage"
+        },
+        {
+          "source": "probe_test",
+          "name": "checker_emits_report_and_required_jsonl_rows"
+        },
+        {
+          "source": "probe_test",
+          "name": "stale_source_commit_policy_blocks_host_dependency_probe_evidence"
+        },
+        {
+          "source": "probe_test",
+          "name": "checker_rejects_missing_source_commit_freshness_policy"
+        },
+        {
+          "source": "probe_test",
+          "name": "checker_rejects_source_commit_policy_that_allows_stale_evidence"
+        },
+        {
+          "source": "probe_test",
+          "name": "checker_rejects_stale_recorded_source_commit"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_standalone_host_dependency_probe_plan.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test standalone_host_dependency_probe_plan_test -- --nocapture"
+      ]
+    }
+  ],
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "status": "covered",
+      "binding_ids": [
+        "standalone_host_dependency_probe_stale_source_gate"
+      ],
+      "validation_commands": [
+        "bash scripts/check_standalone_host_dependency_probe_completion_contract.sh",
+        "bash scripts/check_standalone_host_dependency_probe_plan.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test standalone_host_dependency_probe_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test standalone_host_dependency_probe_plan_test -- --nocapture"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "report_schema": "standalone_host_dependency_probe_completion_contract.report.v1",
+    "required_events": [
+      "standalone_host_probe_conformance_bound",
+      "standalone_host_probe_stale_source_bound",
+      "standalone_host_probe_completion_contract_validated"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "original_bead",
+      "completion_debt_bead",
+      "status",
+      "evidence_binding_ids",
+      "missing_item_ids",
+      "artifact_refs",
+      "validation_commands",
+      "source_commit",
+      "probe_count",
+      "claim_blocked_count",
+      "stale_result",
+      "failure_signature"
+    ]
+  }
+}
