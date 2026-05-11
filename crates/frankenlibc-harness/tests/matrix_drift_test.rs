@@ -27,9 +27,16 @@ fn load_matrix() -> serde_json::Value {
     serde_json::from_str(&content).expect("verification_matrix.json should be valid JSON")
 }
 
+fn beads_path() -> PathBuf {
+    std::env::var_os("FRANKENLIBC_VERIFICATION_MATRIX_BEADS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace_root().join(".beads/issues.jsonl"))
+}
+
 fn load_beads() -> Vec<serde_json::Value> {
-    let path = workspace_root().join(".beads/issues.jsonl");
-    let content = std::fs::read_to_string(&path).expect(".beads/issues.jsonl should exist");
+    let path = beads_path();
+    let content = std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("beads JSONL should exist at {}: {err}", path.display()));
     content
         .lines()
         .filter(|l| !l.trim().is_empty())

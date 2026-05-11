@@ -21,6 +21,12 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn beads_path(root: &Path) -> PathBuf {
+    std::env::var_os("FRANKENLIBC_VERIFICATION_MATRIX_BEADS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join(".beads/issues.jsonl"))
+}
+
 #[test]
 fn matrix_exists_and_valid_json() {
     let root = workspace_root();
@@ -259,7 +265,13 @@ fn all_critique_beads_have_rows() {
         std::fs::read_to_string(root.join("tests/conformance/verification_matrix.json")).unwrap();
     let matrix: serde_json::Value = serde_json::from_str(&matrix_content).unwrap();
 
-    let beads_content = std::fs::read_to_string(root.join(".beads/issues.jsonl")).unwrap();
+    let beads_path = beads_path(&root);
+    let beads_content = std::fs::read_to_string(&beads_path).unwrap_or_else(|err| {
+        panic!(
+            "beads JSONL should exist at {}: {err}",
+            beads_path.display()
+        )
+    });
 
     let matrix_ids: std::collections::HashSet<String> = matrix["entries"]
         .as_array()

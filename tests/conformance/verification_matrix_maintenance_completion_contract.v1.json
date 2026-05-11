@@ -1,0 +1,239 @@
+{
+  "schema_version": "verification_matrix_maintenance_completion_contract.v1",
+  "manifest_id": "bd-1o4k.1-verification-matrix-maintenance-completion-contract",
+  "original_bead": "bd-1o4k",
+  "completion_debt_bead": "bd-1o4k.1",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-1o4k/scorecard.md",
+  "source_artifacts": {
+    "verification_matrix": "tests/conformance/verification_matrix.json",
+    "sync_helper": "scripts/sync_verification_matrix.py",
+    "verification_matrix_gate": "scripts/check_verification_matrix.sh",
+    "matrix_drift_gate": "scripts/check_matrix_drift.sh",
+    "dashboard_export": "scripts/export_matrix_dashboard.sh",
+    "verification_matrix_harness": "crates/frankenlibc-harness/tests/verification_matrix_test.rs",
+    "matrix_drift_harness": "crates/frankenlibc-harness/tests/matrix_drift_test.rs",
+    "backfill_index": "tests/conformance/verification_matrix_backfill_index.v1.json",
+    "backfill_index_harness": "crates/frankenlibc-harness/tests/verification_matrix_backfill_index_test.rs",
+    "completion_checker": "scripts/check_verification_matrix_maintenance_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/verification_matrix_maintenance_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "missing_items_closed": [
+      "tests.integration.primary",
+      "tests.conformance.primary"
+    ],
+    "integration_primary": {
+      "missing_item_id": "tests.integration.primary",
+      "description": "Integration evidence binds the sync helper, verification matrix gate, matrix drift gate, dashboard consistency checks, and harness tests that prove no open/in_progress critique bead is missing a matrix row.",
+      "required_scripts": [
+        "scripts/sync_verification_matrix.py",
+        "scripts/check_verification_matrix.sh",
+        "scripts/check_matrix_drift.sh",
+        "scripts/check_verification_matrix_maintenance_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {
+          "source": "verification_matrix_harness",
+          "name": "all_critique_beads_have_rows"
+        },
+        {
+          "source": "verification_matrix_harness",
+          "name": "entry_coverage_counts_consistent"
+        },
+        {
+          "source": "verification_matrix_harness",
+          "name": "dashboard_stats_consistent_with_entries"
+        },
+        {
+          "source": "verification_matrix_harness",
+          "name": "entries_have_non_empty_backfill_rows"
+        },
+        {
+          "source": "matrix_drift_harness",
+          "name": "drift_guard_script_exists_and_executable"
+        },
+        {
+          "source": "matrix_drift_harness",
+          "name": "all_open_critique_beads_have_matrix_rows"
+        },
+        {
+          "source": "matrix_drift_harness",
+          "name": "dashboard_total_matches_entries"
+        },
+        {
+          "source": "matrix_drift_harness",
+          "name": "dashboard_coverage_stats_consistent"
+        },
+        {
+          "source": "matrix_drift_harness",
+          "name": "no_duplicate_bead_entries"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_sync_and_matrix_gates"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_local_cargo_command"
+        }
+      ],
+      "required_commands": [
+        "python3 scripts/sync_verification_matrix.py --check",
+        "bash scripts/check_verification_matrix.sh",
+        "bash scripts/check_matrix_drift.sh",
+        "bash scripts/check_verification_matrix_maintenance_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test verification_matrix_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test matrix_drift_test -- --nocapture"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "description": "Conformance evidence pins verification_matrix.json as the canonical telemetry artifact, binds dashboard/count invariants, and validates the backfill index that names the matrix artifact and its primary e2e tests.",
+      "required_artifacts": [
+        "tests/conformance/verification_matrix.json",
+        "tests/conformance/verification_matrix_backfill_index.v1.json"
+      ],
+      "required_test_refs": [
+        {
+          "source": "verification_matrix_harness",
+          "name": "matrix_exists_and_valid_json"
+        },
+        {
+          "source": "verification_matrix_harness",
+          "name": "schema_defines_required_types"
+        },
+        {
+          "source": "verification_matrix_harness",
+          "name": "schema_has_row_contract_and_stream_examples"
+        },
+        {
+          "source": "verification_matrix_harness",
+          "name": "entries_have_valid_coverage_statuses"
+        },
+        {
+          "source": "verification_matrix_harness",
+          "name": "no_empty_bead_ids"
+        },
+        {
+          "source": "backfill_index_harness",
+          "name": "verification_matrix_artifact_is_present_and_well_formed"
+        },
+        {
+          "source": "backfill_index_harness",
+          "name": "primary_e2e_test_file_carries_named_functions"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_verification_matrix_maintenance_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_validates_matrix_maintenance_contract_and_emits_report_log"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_matrix_count_drift"
+        }
+      ],
+      "required_commands": [
+        "jq empty tests/conformance/verification_matrix_maintenance_completion_contract.v1.json",
+        "bash scripts/check_verification_matrix_maintenance_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test verification_matrix_maintenance_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test verification_matrix_backfill_index_test -- --nocapture"
+      ]
+    }
+  },
+  "required_matrix_contract": {
+    "matrix_version": 1,
+    "row_schema_version": "v1",
+    "entry_count": 118,
+    "total_critique_beads": 118,
+    "coverage_counts": {
+      "complete": 41,
+      "partial": 1,
+      "missing": 76
+    },
+    "priority_counts": {
+      "P0": 34,
+      "P1": 43,
+      "P2": 41
+    },
+    "required_dashboard_keys": [
+      "total_critique_beads",
+      "total_entries",
+      "by_coverage_status",
+      "by_priority",
+      "by_obligation_type",
+      "by_stream"
+    ],
+    "required_source_text": {
+      "sync_helper": [
+        "Ensures every open/in_progress critique bead has a matrix entry.",
+        "Auto-backfills missing entries with a deterministic, placeholder row contract.",
+        "by_obligation_type",
+        "--check",
+        "--write"
+      ],
+      "verification_matrix_gate": [
+        "check_verification_matrix: PASS",
+        "by_obligation_type",
+        "All open/in_progress critique beads have verification rows",
+        "Dashboard must have summary stats"
+      ],
+      "matrix_drift_gate": [
+        "check_matrix_drift: PASS",
+        "Missing rows: ${missing_count}",
+        "Stale rows are informational warnings, not failures"
+      ],
+      "dashboard_export": [
+        "verification_matrix.json",
+        "'by_priority': {}",
+        "'rows': rows"
+      ]
+    },
+    "backfill_index": {
+      "manifest_id": "verification-matrix-backfill-index",
+      "verification_matrix_artifact": "tests/conformance/verification_matrix.json",
+      "primary_e2e_test_file": "crates/frankenlibc-harness/tests/verification_matrix_test.rs"
+    }
+  },
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "matrix_summary",
+      "gate_results",
+      "integration_bindings",
+      "conformance_bindings",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "source_bead",
+      "completion_debt_bead",
+      "source_commit",
+      "status",
+      "outcome",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ],
+    "required_events": [
+      "verification_matrix_maintenance_integration_bindings_verified",
+      "verification_matrix_maintenance_conformance_bindings_verified",
+      "verification_matrix_maintenance_gates_replayed",
+      "verification_matrix_maintenance_contract_verified",
+      "verification_matrix_maintenance_completion_contract_pass"
+    ],
+    "forbidden_pass_events": [
+      "verification_matrix_maintenance_completion_contract_fail"
+    ]
+  }
+}

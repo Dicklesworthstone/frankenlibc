@@ -12,7 +12,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MATRIX="${ROOT}/tests/conformance/verification_matrix.json"
-BEADS="${ROOT}/.beads/issues.jsonl"
+BEADS="${FRANKENLIBC_VERIFICATION_MATRIX_BEADS:-${ROOT}/.beads/issues.jsonl}"
 
 failures=0
 

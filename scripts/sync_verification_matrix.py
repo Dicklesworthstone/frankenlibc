@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,7 +31,20 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 MATRIX_PATH = WORKSPACE_ROOT / "tests/conformance/verification_matrix.json"
-BEADS_PATH = WORKSPACE_ROOT / ".beads/issues.jsonl"
+
+
+def _repo_path_from_env(name: str, default: Path) -> Path:
+    value = os.environ.get(name)
+    if not value:
+        return default
+    path = Path(value)
+    return path if path.is_absolute() else WORKSPACE_ROOT / path
+
+
+BEADS_PATH = _repo_path_from_env(
+    "FRANKENLIBC_VERIFICATION_MATRIX_BEADS",
+    WORKSPACE_ROOT / ".beads/issues.jsonl",
+)
 
 OBLIGATION_TYPES = [
     "unit_tests",
@@ -415,4 +429,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
