@@ -1,0 +1,368 @@
+{
+  "schema_version": "pthread_lifecycle_unit_completion_contract.v1",
+  "bead": "bd-xxd9",
+  "completion_debt_bead": "bd-xxd9.2",
+  "manifest_id": "bd-xxd9-pthread-lifecycle-unit-completion-contract",
+  "purpose": "Bind the existing pthread/futex lifecycle unit and stress-test pack evidence to the bd-xxd9.2 unit completion-debt obligation.",
+  "source_artifacts": {
+    "mutex_core_test": "crates/frankenlibc-abi/tests/pthread_mutex_core_test.rs",
+    "cond_core_test": "crates/frankenlibc-abi/tests/pthread_cond_core_test.rs",
+    "rwlock_core_test": "crates/frankenlibc-abi/tests/pthread_rwlock_core_test.rs",
+    "rwlock_trylock_test": "crates/frankenlibc-abi/tests/pthread_rwlock_trylock_test.rs",
+    "once_test": "crates/frankenlibc-abi/tests/pthread_once_test.rs",
+    "tsd_test": "crates/frankenlibc-abi/tests/pthread_tsd_test.rs",
+    "thread_lifecycle_test": "crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs",
+    "mutex_contract_matrix_test": "crates/frankenlibc-core/tests/pthread_mutex_contract_matrix_test.rs",
+    "thread_stress_scenarios": "tests/conformance/pthread_thread_stress_scenarios.v1.json",
+    "thread_stress_gate": "scripts/check_bd1f35_thread_stress.sh",
+    "thread_stress_artifacts_test": "crates/frankenlibc-harness/tests/bd1f35_thread_stress_artifacts_test.rs",
+    "pthread_family_completion_contract": "tests/conformance/pthread_family_completion_contract.v1.json",
+    "pthread_family_completion_checker": "scripts/check_pthread_family_completion_contract.sh",
+    "pthread_family_completion_test": "crates/frankenlibc-harness/tests/pthread_family_completion_contract_test.rs",
+    "completion_checker": "scripts/check_pthread_lifecycle_unit_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/pthread_lifecycle_unit_completion_contract_test.rs"
+  },
+  "completion_debt": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-xxd9",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-xxd9/scorecard.md",
+    "audit_score": 585,
+    "missing_items_closed": [
+      "tests.unit.primary"
+    ]
+  },
+  "pthread_lifecycle_surface": {
+    "required_families": [
+      "mutex",
+      "condvar",
+      "rwlock",
+      "rwlock_trylock",
+      "once",
+      "tsd",
+      "thread_lifecycle",
+      "mutex_contract_matrix",
+      "thread_stress_artifacts"
+    ],
+    "stress_support": {
+      "artifact": "thread_stress_scenarios",
+      "source_bead": "bd-1f35",
+      "required_scenarios": [
+        "fanout_fanin_single",
+        "create_join_churn",
+        "mixed_detach_join",
+        "c_fixture_pthread_common_adversarial"
+      ],
+      "required_modes": [
+        "strict",
+        "hardened"
+      ]
+    }
+  },
+  "completion_debt_evidence": {
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "mutex_core_test",
+          "family": "mutex",
+          "name": "futex_mutex_roundtrip_and_trylock_busy",
+          "covers": [
+            "mutex init/lock/trylock/unlock round-trip"
+          ]
+        },
+        {
+          "artifact": "mutex_core_test",
+          "family": "mutex",
+          "name": "futex_mutex_contention_increments_wait_and_wake_counters",
+          "covers": [
+            "futex contention wait/wake evidence"
+          ]
+        },
+        {
+          "artifact": "mutex_core_test",
+          "family": "mutex",
+          "name": "futex_mutex_destroy_while_locked_is_ebusy",
+          "covers": [
+            "locked destroy error contract"
+          ]
+        },
+        {
+          "artifact": "mutex_core_test",
+          "family": "mutex",
+          "name": "futex_mutex_linearizable_counter_smoke",
+          "covers": [
+            "linearizable shared counter stress"
+          ]
+        },
+        {
+          "artifact": "mutex_core_test",
+          "family": "mutex",
+          "name": "futex_mutex_init_destroy_reinit",
+          "covers": [
+            "mutex lifecycle reuse"
+          ]
+        },
+        {
+          "artifact": "mutex_core_test",
+          "family": "mutex",
+          "name": "futex_mutex_contention_two_threads_alternating",
+          "covers": [
+            "two-thread contention alternation"
+          ]
+        },
+        {
+          "artifact": "cond_core_test",
+          "family": "condvar",
+          "name": "condvar_roundtrip_signal_broadcast_destroy",
+          "covers": [
+            "condvar signal/broadcast/destroy round-trip"
+          ]
+        },
+        {
+          "artifact": "cond_core_test",
+          "family": "condvar",
+          "name": "condvar_wait_rejects_unmanaged_and_null_mutex",
+          "covers": [
+            "invalid wait mutex rejection"
+          ]
+        },
+        {
+          "artifact": "cond_core_test",
+          "family": "condvar",
+          "name": "condvar_timedwait_timeout_relocks_mutex",
+          "covers": [
+            "timedwait timeout relock contract"
+          ]
+        },
+        {
+          "artifact": "cond_core_test",
+          "family": "condvar",
+          "name": "condvar_signal_wakes_timedwait_thread",
+          "covers": [
+            "signal wakeup lifecycle"
+          ]
+        },
+        {
+          "artifact": "cond_core_test",
+          "family": "condvar",
+          "name": "condvar_broadcast_wakes_multiple_timedwait_threads",
+          "covers": [
+            "broadcast multi-waiter wakeup"
+          ]
+        },
+        {
+          "artifact": "rwlock_core_test",
+          "family": "rwlock",
+          "name": "rwlock_roundtrip_read_and_write",
+          "covers": [
+            "rwlock read/write lifecycle"
+          ]
+        },
+        {
+          "artifact": "rwlock_core_test",
+          "family": "rwlock",
+          "name": "rwlock_destroy_busy_and_validation_contract",
+          "covers": [
+            "busy destroy validation"
+          ]
+        },
+        {
+          "artifact": "rwlock_core_test",
+          "family": "rwlock",
+          "name": "rwlock_writer_blocks_reader_until_unlock",
+          "covers": [
+            "writer exclusion"
+          ]
+        },
+        {
+          "artifact": "rwlock_core_test",
+          "family": "rwlock",
+          "name": "rwlock_multiple_concurrent_readers",
+          "covers": [
+            "reader concurrency"
+          ]
+        },
+        {
+          "artifact": "rwlock_core_test",
+          "family": "rwlock",
+          "name": "rwlock_read_then_write_interleaved_cycle",
+          "covers": [
+            "read/write interleaving"
+          ]
+        },
+        {
+          "artifact": "rwlock_trylock_test",
+          "family": "rwlock_trylock",
+          "name": "tryrdlock_succeeds_when_unlocked",
+          "covers": [
+            "try-read lock open state"
+          ]
+        },
+        {
+          "artifact": "rwlock_trylock_test",
+          "family": "rwlock_trylock",
+          "name": "trywrlock_succeeds_when_unlocked",
+          "covers": [
+            "try-write lock open state"
+          ]
+        },
+        {
+          "artifact": "rwlock_trylock_test",
+          "family": "rwlock_trylock",
+          "name": "tryrdlock_trywrlock_interleaved_cycle",
+          "covers": [
+            "trylock read/write interleaving"
+          ]
+        },
+        {
+          "artifact": "once_test",
+          "family": "once",
+          "name": "once_runs_exactly_once",
+          "covers": [
+            "single-thread once execution"
+          ]
+        },
+        {
+          "artifact": "once_test",
+          "family": "once",
+          "name": "once_concurrent_threads_run_exactly_once",
+          "covers": [
+            "concurrent once execution"
+          ]
+        },
+        {
+          "artifact": "once_test",
+          "family": "once",
+          "name": "once_high_thread_count_still_runs_once",
+          "covers": [
+            "high fanout once stress"
+          ]
+        },
+        {
+          "artifact": "once_test",
+          "family": "once",
+          "name": "once_completed_with_different_routine_is_noop",
+          "covers": [
+            "completed once idempotence"
+          ]
+        },
+        {
+          "artifact": "tsd_test",
+          "family": "tsd",
+          "name": "key_create_and_delete_roundtrip",
+          "covers": [
+            "TSD key lifecycle"
+          ]
+        },
+        {
+          "artifact": "tsd_test",
+          "family": "tsd",
+          "name": "tsd_isolated_across_concurrent_threads",
+          "covers": [
+            "per-thread TSD isolation"
+          ]
+        },
+        {
+          "artifact": "tsd_test",
+          "family": "tsd",
+          "name": "tsd_destructor_runs_on_thread_exit",
+          "covers": [
+            "TSD destructor lifecycle"
+          ]
+        },
+        {
+          "artifact": "tsd_test",
+          "family": "tsd",
+          "name": "key_delete_twice_is_einval",
+          "covers": [
+            "deleted key rejection"
+          ]
+        },
+        {
+          "artifact": "thread_lifecycle_test",
+          "family": "thread_lifecycle",
+          "name": "pthread_create_join_roundtrip_uses_default_native_routing",
+          "covers": [
+            "create/join return value round-trip"
+          ]
+        },
+        {
+          "artifact": "thread_lifecycle_test",
+          "family": "thread_lifecycle",
+          "name": "pthread_join_and_detach_unknown_thread_are_esrch",
+          "covers": [
+            "unknown handle rejection"
+          ]
+        },
+        {
+          "artifact": "thread_lifecycle_test",
+          "family": "thread_lifecycle",
+          "name": "pthread_create_join_parallel_batch_stress",
+          "covers": [
+            "parallel create/join batch stress"
+          ]
+        },
+        {
+          "artifact": "thread_lifecycle_test",
+          "family": "thread_lifecycle",
+          "name": "pthread_detach_makes_subsequent_join_fail_with_esrch",
+          "covers": [
+            "detach then join rejection"
+          ]
+        },
+        {
+          "artifact": "thread_lifecycle_test",
+          "family": "thread_lifecycle",
+          "name": "pthread_join_then_reuse_handle_is_esrch",
+          "covers": [
+            "joined handle reuse rejection"
+          ]
+        },
+        {
+          "artifact": "thread_lifecycle_test",
+          "family": "thread_lifecycle",
+          "name": "pthread_self_join_is_rejected_with_edeadlk",
+          "covers": [
+            "self-join deadlock rejection"
+          ]
+        },
+        {
+          "artifact": "thread_lifecycle_test",
+          "family": "thread_lifecycle",
+          "name": "pthread_create_join_multiple_sequential",
+          "covers": [
+            "sequential create/join reuse"
+          ]
+        },
+        {
+          "artifact": "mutex_contract_matrix_test",
+          "family": "mutex_contract_matrix",
+          "name": "contract_matrix_matches_expected_and_emits_structured_logs",
+          "covers": [
+            "mutex contract matrix structured evidence"
+          ]
+        },
+        {
+          "artifact": "thread_stress_artifacts_test",
+          "family": "thread_stress_artifacts",
+          "name": "thread_stress_gate_emits_valid_bd1f35_artifacts",
+          "covers": [
+            "strict+hardened stress artifact validation"
+          ]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_mutex_core_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_cond_core_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_rwlock_core_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_rwlock_trylock_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_once_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_tsd_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_create_join_parallel_batch_stress -- --ignored --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-core --test pthread_mutex_contract_matrix_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test bd1f35_thread_stress_artifacts_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test pthread_lifecycle_unit_completion_contract_test -- --nocapture"
+      ]
+    }
+  }
+}
