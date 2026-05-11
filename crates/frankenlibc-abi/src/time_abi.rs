@@ -211,7 +211,10 @@ unsafe fn raw_gettimeofday(tv: *mut libc::timeval) -> c_int {
         }
     }
 
-    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     let rc = unsafe { raw_clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
     if rc != 0 {
         return -1;
@@ -244,11 +247,16 @@ fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
     }
     .ok()? as c_int;
     let entry_size = 2 * std::mem::size_of::<c_ulong>();
-    let mut buf = [0u8; 4096];
-    let read_result = unsafe { raw_syscall::sys_read(fd, buf.as_mut_ptr(), buf.len()) };
+    let mut buf = std::mem::MaybeUninit::<[u8; 4096]>::uninit();
+    // SAFETY: the raw syscall writes at most the provided byte count into the
+    // uninitialized stack buffer, and we only read the initialized prefix below.
+    let read_result = unsafe { raw_syscall::sys_read(fd, buf.as_mut_ptr().cast::<u8>(), 4096) };
     let _ = raw_syscall::sys_close(fd);
     let bytes = read_result.ok()? as usize;
-    for chunk in buf[..bytes].chunks_exact(entry_size) {
+    // SAFETY: read(2) initialized exactly the returned prefix, bounded by the
+    // requested 4096 bytes. The uninitialized tail is never observed.
+    let auxv = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), bytes) };
+    for chunk in auxv.chunks_exact(entry_size) {
         let at = c_ulong::from_ne_bytes(chunk[..8].try_into().ok()?);
         let av = c_ulong::from_ne_bytes(chunk[8..16].try_into().ok()?);
         if at == typ {
@@ -272,7 +280,10 @@ pub unsafe extern "C" fn time(tloc: *mut i64) -> i64 {
         return -1;
     }
 
-    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     let rc = unsafe { raw_clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
     if rc != 0 {
         unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
@@ -319,7 +330,10 @@ pub unsafe extern "C" fn clock_gettime(clock_id: c_int, tp: *mut libc::timespec)
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clock() -> i64 {
-    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     let rc = unsafe { raw_clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) };
     if rc != 0 {
         unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };

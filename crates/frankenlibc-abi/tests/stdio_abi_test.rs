@@ -413,6 +413,43 @@ fn fputc_fgetc_and_ungetc_behave_consistently() {
 }
 
 #[test]
+fn fread_drains_ungetc_and_prefetched_buffer_after_fgetc() {
+    let path = temp_path("fread_ungetc");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: `stream` is valid and writable.
+    assert_eq!(unsafe { fputs(c"abc\nxyz".as_ptr(), stream) }, 0);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    for expected in b"abc\nx" {
+        // SAFETY: `stream` is valid and readable.
+        assert_eq!(unsafe { fgetc(stream) }, *expected as i32);
+    }
+    // SAFETY: `stream` is valid and readable.
+    assert_eq!(unsafe { ungetc(b'x' as i32, stream) }, b'x' as i32);
+    // SAFETY: `stream` is valid and readable.
+    assert_eq!(unsafe { fgetc(stream) }, b'x' as i32);
+
+    let mut tail = [0u8; 2];
+    // SAFETY: destination is valid for two bytes and `stream` is readable.
+    let read = unsafe { fread(tail.as_mut_ptr().cast(), 1, tail.len(), stream) };
+    assert_eq!(read, tail.len());
+    assert_eq!(&tail, b"yz");
+
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn fwrite_then_fread_round_trip_matches_bytes() {
     let path = temp_path("rw");
     let _ = fs::remove_file(&path);

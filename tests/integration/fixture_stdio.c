@@ -287,6 +287,60 @@ static int test_fread_fwrite_zero_size_contract(void) {
     return 0;
 }
 
+static int test_fprintf_fscanf_fseek_roundtrip(void) {
+    char path[64];
+    if (make_temp_path(path) != 0) {
+        return 1;
+    }
+
+    FILE *fp = fopen(path, "w+");
+    if (fp == NULL) {
+        fprintf(stderr, "FAIL: fopen w+ for formatted roundtrip failed: %s\n", strerror(errno));
+        unlink(path);
+        return 1;
+    }
+
+    int written = fprintf(fp, "name=%s count=%d\n", "beta", 42);
+    if (written != 19) {
+        fprintf(stderr, "FAIL: fprintf formatted length expected 19 got %d\n", written);
+        fclose(fp);
+        unlink(path);
+        return 1;
+    }
+    if (fflush(fp) != 0) {
+        fprintf(stderr, "FAIL: fflush formatted roundtrip failed\n");
+        fclose(fp);
+        unlink(path);
+        return 1;
+    }
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        fprintf(stderr, "FAIL: fseek rewind formatted roundtrip failed\n");
+        fclose(fp);
+        unlink(path);
+        return 1;
+    }
+
+    char name[16] = {0};
+    int count = 0;
+    int scanned = fscanf(fp, "name=%15s count=%d", name, &count);
+    if (scanned != 2 || strcmp(name, "beta") != 0 || count != 42) {
+        fprintf(
+            stderr,
+            "FAIL: fscanf formatted roundtrip scanned=%d name='%s' count=%d\n",
+            scanned,
+            name,
+            count
+        );
+        fclose(fp);
+        unlink(path);
+        return 1;
+    }
+
+    fclose(fp);
+    unlink(path);
+    return 0;
+}
+
 int main(void) {
     int fails = 0;
     fails += test_fopen_fileno_setvbuf_setbuf();
@@ -295,11 +349,12 @@ int main(void) {
     fails += test_invalid_mode_and_ungetc_eof();
     fails += test_setvbuf_rejects_post_io_change();
     fails += test_fread_fwrite_zero_size_contract();
+    fails += test_fprintf_fscanf_fseek_roundtrip();
 
     if (fails) {
         fprintf(stderr, "fixture_stdio: %d FAILED\n", fails);
         return 1;
     }
-    printf("fixture_stdio: PASS (6 tests)\n");
+    printf("fixture_stdio: PASS (7 tests)\n");
     return 0;
 }

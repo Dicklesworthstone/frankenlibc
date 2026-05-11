@@ -24,10 +24,7 @@ ARTIFACT_INDEX="${RUN_DIR}/artifact_index.json"
 TRACE_SEQ=0
 FIXTURE_FILTER="${FIXTURE_FILTER:-fixture_*.c}"
 
-LIB_CANDIDATES=(
-  "${ROOT}/target/release/libfrankenlibc_abi.so"
-  "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
-)
+LIB_CANDIDATES=()
 # Honour caller-supplied CARGO_TARGET_DIR (bd-gilq3).
 if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
   LIB_CANDIDATES+=(
@@ -35,6 +32,10 @@ if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
     "${CARGO_TARGET_DIR}/debug/libfrankenlibc_abi.so"
   )
 fi
+LIB_CANDIDATES+=(
+  "${ROOT}/target/release/libfrankenlibc_abi.so"
+  "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
+)
 
 LIB_PATH=""
 for candidate in "${LIB_CANDIDATES[@]}"; do

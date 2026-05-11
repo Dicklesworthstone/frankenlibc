@@ -2169,6 +2169,17 @@ pub unsafe extern "C" fn fread(
     }
 
     while read_total < total {
+        let buffered = s.buffered_read(total - read_total);
+        if !buffered.is_empty() {
+            let n = buffered.len();
+            dst[read_total..read_total + n].copy_from_slice(&buffered);
+            read_total += n;
+            continue;
+        }
+        if s.is_error() {
+            break;
+        }
+
         // Prefer direct fd reads to avoid recursive memcpy interposition through
         // buffered internals under LD_PRELOAD.
         let fd = s.fd();

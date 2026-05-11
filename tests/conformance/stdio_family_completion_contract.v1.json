@@ -1,0 +1,401 @@
+{
+  "schema_version": "stdio_family_completion_contract.v1",
+  "bead": "bd-ldj.1",
+  "completion_debt_bead": "bd-ldj.1.1",
+  "manifest_id": "bd-ldj-1-stdio-family-completion-contract",
+  "purpose": "Bind the existing native stdio implementation, e2e smoke, and conformance fixture evidence to the bd-ldj.1.1 completion-debt unit, e2e, and conformance obligations.",
+  "source_artifacts": {
+    "core_stdio_file": "crates/frankenlibc-core/src/stdio/file.rs",
+    "core_printf": "crates/frankenlibc-core/src/stdio/printf.rs",
+    "core_scanf": "crates/frankenlibc-core/src/stdio/scanf.rs",
+    "abi_stdio": "crates/frankenlibc-abi/src/stdio_abi.rs",
+    "abi_stdio_test": "crates/frankenlibc-abi/tests/stdio_abi_test.rs",
+    "support_matrix": "support_matrix.json",
+    "feature_parity": "FEATURE_PARITY.md",
+    "stdio_fixture": "tests/conformance/fixtures/stdio_file_ops.json",
+    "scanf_fixture": "tests/conformance/fixtures/scanf_conformance.json",
+    "stdio_invariants": "tests/conformance/stdio_invariants.v1.json",
+    "stdio_phase_strategy": "tests/conformance/stdio_phase_strategy.v1.json",
+    "stdio_phase_checker": "scripts/check_stdio_phase_strategy.sh",
+    "conformance_executor": "crates/frankenlibc_conformance/src/lib.rs",
+    "conformance_fixture_test": "crates/frankenlibc-harness/tests/stdio_file_ops_conformance_test.rs",
+    "stdio_evidence_schema_test": "crates/frankenlibc-harness/tests/stdio_evidence_schema.rs",
+    "e2e_c_fixture_runner": "scripts/c_fixture_suite.sh",
+    "e2e_stdio_stream_fixture": "tests/integration/fixture_stdio.c",
+    "e2e_stdio_printf_fixture": "tests/integration/fixture_stdio_printf.c",
+    "completion_checker": "scripts/check_stdio_family_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/stdio_family_completion_contract_test.rs"
+  },
+  "completion_debt": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-ldj.1",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-ldj.1/scorecard.md",
+    "audit_score": 585,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary"
+    ]
+  },
+  "target_symbols": [
+    "fopen",
+    "fclose",
+    "fread",
+    "fwrite",
+    "fprintf",
+    "fscanf",
+    "fseek",
+    "fflush"
+  ],
+  "completion_debt_evidence": {
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "core_stdio_file",
+          "name": "test_parse_mode_invalid",
+          "covers": [
+            "invalid fopen mode rejection",
+            "mode parser boundary behavior"
+          ]
+        },
+        {
+          "artifact": "core_stdio_file",
+          "name": "test_stream_offset_tracks_reads_and_writes",
+          "covers": [
+            "buffered fread/fwrite offset accounting"
+          ]
+        },
+        {
+          "artifact": "core_stdio_file",
+          "name": "test_prepare_seek_flushes_pending_writes_and_clears_read_state",
+          "covers": [
+            "fseek flush-before-seek preparation",
+            "read buffer and ungetc state reset"
+          ]
+        },
+        {
+          "artifact": "core_printf",
+          "name": "test_parse_width_precision",
+          "covers": [
+            "fprintf printf-format width and precision parser"
+          ]
+        },
+        {
+          "artifact": "core_printf",
+          "name": "test_format_float_basic",
+          "covers": [
+            "fprintf numeric rendering"
+          ]
+        },
+        {
+          "artifact": "core_scanf",
+          "name": "test_scan_width_limit",
+          "covers": [
+            "fscanf shared scanner width handling"
+          ]
+        },
+        {
+          "artifact": "core_scanf",
+          "name": "test_scan_string_with_width",
+          "covers": [
+            "fscanf shared scanner string bounds"
+          ]
+        },
+        {
+          "artifact": "abi_stdio_test",
+          "name": "fopen_fputs_fflush_fclose_round_trip",
+          "covers": [
+            "ABI fopen/fclose/fflush lifecycle"
+          ]
+        },
+        {
+          "artifact": "abi_stdio_test",
+          "name": "fwrite_then_fread_round_trip_matches_bytes",
+          "covers": [
+            "ABI fread/fwrite round-trip"
+          ]
+        },
+        {
+          "artifact": "abi_stdio_test",
+          "name": "fprintf_formats_and_persists_to_stream",
+          "covers": [
+            "ABI fprintf formatted output"
+          ]
+        },
+        {
+          "artifact": "abi_stdio_test",
+          "name": "isoc99_fscanf_from_file",
+          "covers": [
+            "ABI fscanf stream scanning"
+          ]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-core stdio:: -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test stdio_abi_test fopen_fputs_fflush_fclose_round_trip -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test stdio_abi_test fwrite_then_fread_round_trip_matches_bytes -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test stdio_abi_test fprintf_formats_and_persists_to_stream -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test stdio_abi_test isoc99_fscanf_from_file -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test stdio_family_completion_contract_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "required_artifacts": [
+        {
+          "artifact": "e2e_c_fixture_runner",
+          "assertion": "runs selected C fixtures under LD_PRELOAD in strict and hardened modes with structured trace output"
+        },
+        {
+          "artifact": "e2e_stdio_stream_fixture",
+          "assertion": "exercises fopen/fclose/fread/fwrite/fprintf/fscanf/fseek/fflush through a C process"
+        },
+        {
+          "artifact": "e2e_stdio_printf_fixture",
+          "assertion": "exercises formatted stdio output under the interpose library"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> FIXTURE_FILTER=fixture_stdio.c BEAD_ID=bd-ldj.1.1 bash -lc 'cargo build -p frankenlibc-abi --release && scripts/c_fixture_suite.sh'",
+        "rch exec -- env CARGO_TARGET_DIR=<target> FIXTURE_FILTER=fixture_stdio_printf.c BEAD_ID=bd-ldj.1.1 bash -lc 'cargo build -p frankenlibc-abi --release && scripts/c_fixture_suite.sh'"
+      ],
+      "expected_report": "target/c_fixture_suite/<run_id>/artifact_index.json",
+      "expected_log": "target/c_fixture_suite/<run_id>/trace.jsonl"
+    },
+    "conformance_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "conformance_fixture_test",
+          "name": "stdio_file_ops_fixture_valid_schema",
+          "covers": [
+            "fixture schema"
+          ]
+        },
+        {
+          "artifact": "conformance_fixture_test",
+          "name": "stdio_file_ops_covers_fopen",
+          "covers": [
+            "fopen fixture coverage"
+          ]
+        },
+        {
+          "artifact": "conformance_fixture_test",
+          "name": "stdio_file_ops_covers_fclose",
+          "covers": [
+            "fclose fixture coverage"
+          ]
+        },
+        {
+          "artifact": "conformance_fixture_test",
+          "name": "stdio_file_ops_covers_fread",
+          "covers": [
+            "fread fixture coverage"
+          ]
+        },
+        {
+          "artifact": "conformance_fixture_test",
+          "name": "stdio_file_ops_covers_fwrite",
+          "covers": [
+            "fwrite fixture coverage"
+          ]
+        },
+        {
+          "artifact": "conformance_fixture_test",
+          "name": "stdio_file_ops_covers_formatted_io",
+          "covers": [
+            "fprintf fixture coverage"
+          ]
+        },
+        {
+          "artifact": "conformance_fixture_test",
+          "name": "stdio_file_ops_covers_fseek",
+          "covers": [
+            "fseek fixture coverage"
+          ]
+        },
+        {
+          "artifact": "conformance_fixture_test",
+          "name": "stdio_file_ops_covers_fflush",
+          "covers": [
+            "fflush fixture coverage"
+          ]
+        },
+        {
+          "artifact": "conformance_fixture_test",
+          "name": "stdio_file_ops_fixture_executes_via_isolated_harness",
+          "covers": [
+            "isolated harness execution",
+            "host parity"
+          ]
+        },
+        {
+          "artifact": "conformance_executor",
+          "name": "stdio_file_ops_fixture_cases_match_execute_fixture_case",
+          "covers": [
+            "frankenlibc_conformance fixture execution dispatch"
+          ]
+        },
+        {
+          "artifact": "conformance_executor",
+          "name": "scanf_conformance_fixture_cases_match_execute_fixture_case",
+          "covers": [
+            "shared scanf parser conformance used by fscanf"
+          ]
+        }
+      ],
+      "required_artifacts": [
+        {
+          "artifact": "stdio_fixture",
+          "assertion": "contains strict/hardened stdio file-op cases for fopen/fclose/fread/fwrite/fprintf/fseek/fflush"
+        },
+        {
+          "artifact": "scanf_fixture",
+          "assertion": "contains scanner conformance cases for the scanf_core path used by fscanf"
+        },
+        {
+          "artifact": "stdio_invariants",
+          "assertion": "keeps per-entrypoint C11/POSIX stdio invariants machine-readable"
+        },
+        {
+          "artifact": "stdio_phase_strategy",
+          "assertion": "keeps stdio support-matrix phase partition and replacement sequencing checked"
+        },
+        {
+          "artifact": "stdio_phase_checker",
+          "assertion": "validates the stdio support-matrix phase partition"
+        },
+        {
+          "artifact": "support_matrix",
+          "assertion": "classifies target stdio symbols as Implemented in module stdio_abi"
+        }
+      ],
+      "required_commands": [
+        "jq empty tests/conformance/fixtures/stdio_file_ops.json tests/conformance/fixtures/scanf_conformance.json tests/conformance/stdio_invariants.v1.json tests/conformance/stdio_phase_strategy.v1.json",
+        "bash scripts/check_stdio_phase_strategy.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test stdio_file_ops_conformance_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc_conformance stdio_file_ops_fixture_cases_match_execute_fixture_case -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc_conformance scanf_conformance_fixture_cases_match_execute_fixture_case -- --nocapture"
+      ],
+      "expected_report": "target/conformance/stdio_family_completion_contract.report.json",
+      "expected_log": "target/conformance/stdio_family_completion_contract.log.jsonl"
+    }
+  },
+  "required_source_contract": {
+    "support_matrix": {
+      "expected_module": "stdio_abi",
+      "expected_status": "Implemented",
+      "expected_symbols": [
+        "fopen",
+        "fclose",
+        "fread",
+        "fwrite",
+        "fprintf",
+        "fscanf",
+        "fseek",
+        "fflush"
+      ]
+    },
+    "stdio_fixture": {
+      "expected_family": "stdio_file_ops",
+      "expected_min_cases": 12,
+      "required_functions": [
+        "fopen",
+        "fclose",
+        "fread",
+        "fwrite",
+        "fprintf",
+        "fseek",
+        "fflush"
+      ],
+      "required_modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    "scanf_fixture": {
+      "expected_family": "scanf_conformance",
+      "expected_min_cases": 50,
+      "required_functions": [
+        "sscanf"
+      ]
+    },
+    "e2e_checker_markers": [
+      "LD_PRELOAD",
+      "FRANKENLIBC_MODE",
+      "FIXTURE_FILTER",
+      "fixture_result",
+      "trace.jsonl",
+      "artifact_index.json"
+    ],
+    "required_log_fields": [
+      "trace_id",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs"
+    ],
+    "source_markers": {
+      "abi_stdio": [
+        "pub unsafe extern \"C\" fn fopen",
+        "pub unsafe extern \"C\" fn fclose",
+        "pub unsafe extern \"C\" fn fflush",
+        "pub unsafe extern \"C\" fn fread",
+        "pub unsafe extern \"C\" fn fwrite",
+        "pub unsafe extern \"C\" fn fseek",
+        "pub unsafe extern \"C\" fn fprintf",
+        "pub unsafe extern \"C\" fn fscanf"
+      ],
+      "feature_parity": [
+        "stdio integration",
+        "fopen",
+        "fclose",
+        "fread",
+        "fwrite",
+        "fseek",
+        "fflush",
+        "fprintf"
+      ],
+      "stdio_invariants": [
+        "C11 7.21.5.3",
+        "C11 7.21.8.1",
+        "C11 7.21.8.2",
+        "C11 7.21.9.2",
+        "C11 7.21.5.1",
+        "C11 7.21.5.2"
+      ],
+      "stdio_phase_strategy": [
+        "fopen",
+        "fclose",
+        "fread",
+        "fwrite",
+        "fprintf",
+        "fscanf",
+        "fseek",
+        "fflush"
+      ],
+      "e2e_stdio_stream_fixture": [
+        "test_fprintf_fscanf_fseek_roundtrip",
+        "fopen",
+        "fclose",
+        "fread",
+        "fwrite",
+        "fprintf",
+        "fscanf",
+        "fseek",
+        "fflush"
+      ],
+      "e2e_stdio_printf_fixture": [
+        "test_fprintf_contracts",
+        "fixture_stdio_printf: PASS"
+      ],
+      "stdio_evidence_schema_test": [
+        "ring_buffer_persists_jsonl_and_parser_reads_all_rows",
+        "serializer_keeps_schema_prefix_stable",
+        "parser_rejects_future_schema_versions"
+      ]
+    }
+  }
+}
