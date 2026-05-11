@@ -1,0 +1,138 @@
+{
+  "schema_version": "runtime_env_inventory_completion_contract.v1",
+  "bead_id": "bd-29b.1.1",
+  "original_bead": "bd-29b.1",
+  "trace_id": "bd-29b.1.1::runtime-env-inventory::completion::v1",
+  "description": "Completion contract binding the runtime environment inventory generator, canonical inventory, gate script, and harness test to the missing unit and e2e completion-debt obligations.",
+  "source_artifacts": [
+    {
+      "id": "runtime_env_inventory",
+      "kind": "inventory",
+      "path": "tests/conformance/runtime_env_inventory.v1.json",
+      "evidence": "Canonical generated inventory with semantic metadata, access locations, and zero unknown/ambiguous runtime environment keys."
+    },
+    {
+      "id": "runtime_env_generator",
+      "kind": "implementation",
+      "path": "scripts/generate_runtime_env_inventory.py",
+      "evidence": "Deterministic source scanner, semantic metadata binder, canonical JSON renderer, and drift-check entrypoint."
+    },
+    {
+      "id": "runtime_env_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_runtime_env_inventory.sh",
+      "evidence": "Runs the generator in check mode and fails closed when unknown/ambiguous keys are present."
+    },
+    {
+      "id": "runtime_env_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/runtime_env_inventory_test.rs",
+      "evidence": "Rust harness test validates inventory schema, semantic metadata, expected key set, gate executable bit, and the gate script pass path."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/runtime_env_inventory_completion_contract.v1.json",
+      "evidence": "Machine-readable completion-debt binding for unit and e2e obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_runtime_env_inventory_completion_contract.sh",
+      "evidence": "Fail-closed validator for completion source bindings, unit/e2e obligations, and inventory metadata shape."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/runtime_env_inventory_completion_contract_test.rs",
+      "evidence": "Rust integration test that validates the completion contract, checker outputs, existing base gate, and negative failure modes."
+    }
+  ],
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ],
+    "required_inventory_summary": {
+      "total_keys_min": 25,
+      "keys_with_reads_min": 1,
+      "keys_with_writes_min": 1,
+      "unknown_or_ambiguous_count": 0
+    },
+    "required_metadata_fields": [
+      "default_value",
+      "allowed_values",
+      "parse_rule",
+      "mutability",
+      "mode_impact",
+      "owner",
+      "safety_impact"
+    ],
+    "required_generator_surfaces": [
+      "scan_sources",
+      "build_inventory",
+      "canonical_json",
+      "SEMANTICS"
+    ],
+    "required_gate_behavior": [
+      "generate_runtime_env_inventory.py --root",
+      "--check",
+      "unknown_or_ambiguous_count",
+      "PASS: runtime env inventory gate"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "scripts/generate_runtime_env_inventory.py",
+        "tests/conformance/runtime_env_inventory.v1.json",
+        "tests/conformance/runtime_env_inventory_completion_contract.v1.json",
+        "scripts/check_runtime_env_inventory_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/runtime_env_inventory_test.rs",
+        "crates/frankenlibc-harness/tests/runtime_env_inventory_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "runtime_env_inventory_completion_contract_test::contract_binds_runtime_env_inventory_unit_and_e2e_sources",
+        "runtime_env_inventory_completion_contract_test::checker_accepts_runtime_env_inventory_completion_contract"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "implementation_refs": [
+        "scripts/check_runtime_env_inventory.sh",
+        "scripts/generate_runtime_env_inventory.py",
+        "tests/conformance/runtime_env_inventory.v1.json",
+        "scripts/check_runtime_env_inventory_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/runtime_env_inventory_test.rs",
+        "crates/frankenlibc-harness/tests/runtime_env_inventory_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "scripts/check_runtime_env_inventory.sh",
+        "runtime_env_inventory_completion_contract_test::completion_contract_runs_base_inventory_gate"
+      ]
+    }
+  ],
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_runtime_env_inventory_unit_and_e2e_sources",
+      "checker_accepts_runtime_env_inventory_completion_contract",
+      "completion_contract_runs_base_inventory_gate"
+    ],
+    "negative": [
+      "checker_rejects_missing_e2e_binding",
+      "checker_rejects_incomplete_missing_item_set"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/runtime_env_inventory_completion_contract.v1.json",
+      "scripts/check_runtime_env_inventory_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/runtime_env_inventory_completion_contract_test.rs"
+    ]
+  }
+}

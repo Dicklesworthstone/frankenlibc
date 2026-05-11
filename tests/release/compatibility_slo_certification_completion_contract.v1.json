@@ -1,0 +1,148 @@
+{
+  "schema_version": "compatibility_slo_certification_completion_contract.v1",
+  "bead_id": "bd-26xb.3.1",
+  "original_bead": "bd-26xb.3",
+  "trace_id": "bd-26xb.3.1::compatibility-slo-certification::v1",
+  "generated_at_utc": "2026-05-10T15:05:00Z",
+  "purpose": "Bind the compatibility SLO and certification-pack release dossier artifacts to machine-checkable completion-debt evidence for tests.unit.primary and tests.e2e.primary.",
+  "source_artifacts": [
+    {
+      "id": "release_dossier_validator",
+      "path": "scripts/release_dossier_validator.py",
+      "role": "release certification-pack validator and report generator"
+    },
+    {
+      "id": "release_dossier_gate",
+      "path": "scripts/check_release_dossier.sh",
+      "role": "E2E release dossier gate"
+    },
+    {
+      "id": "release_dossier_report",
+      "path": "tests/release/dossier_validation_report.v1.json",
+      "role": "checked-in compatibility SLO and certification-pack report"
+    },
+    {
+      "id": "release_dossier_harness_test",
+      "path": "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+      "role": "Rust unit and E2E tests for dossier generation, integrity, policy, and release-note hooks"
+    },
+    {
+      "id": "completion_contract",
+      "path": "tests/release/compatibility_slo_certification_completion_contract.v1.json",
+      "role": "completion-debt contract for bd-26xb.3.1"
+    },
+    {
+      "id": "completion_gate",
+      "path": "scripts/check_compatibility_slo_certification_completion_contract.sh",
+      "role": "fail-closed checker for the completion-debt contract"
+    },
+    {
+      "id": "completion_harness_test",
+      "path": "crates/frankenlibc-harness/tests/compatibility_slo_certification_completion_contract_test.rs",
+      "role": "Rust positive and negative tests for the completion checker"
+    }
+  ],
+  "dossier_contract": {
+    "required_summary": {
+      "total_artifacts": 15,
+      "valid": 14,
+      "present_with_issues": 0,
+      "missing": 1,
+      "critical_missing": 0,
+      "errors": 0,
+      "warnings": 1,
+      "release_note_candidates": 8
+    },
+    "required_report_status": "pass",
+    "required_verdict": "PASS",
+    "required_artifact_count": 15,
+    "required_integrity_entries": 14,
+    "required_critical_artifacts": [
+      "support_matrix",
+      "reality_report",
+      "conformance_coverage",
+      "claim_reconciliation",
+      "closure_sweep",
+      "replacement_levels",
+      "math_governance",
+      "controller_ablation",
+      "admission_gate",
+      "production_kernel_manifest",
+      "release_gate_dag",
+      "closure_contract"
+    ],
+    "allowed_missing_artifacts": [
+      "e2e_scenario_manifest"
+    ],
+    "required_policy_fields": [
+      "format",
+      "schema_versions",
+      "integrity"
+    ],
+    "release_notes_hook": {
+      "required_limit": 8,
+      "required_selected": 8,
+      "required_invalid_rows": 0
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "spec_item": "tests.unit.primary",
+      "implementation_refs": [
+        "scripts/release_dossier_validator.py",
+        "tests/release/dossier_validation_report.v1.json",
+        "tests/release/compatibility_slo_certification_completion_contract.v1.json",
+        "scripts/check_compatibility_slo_certification_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+        "crates/frankenlibc-harness/tests/compatibility_slo_certification_completion_contract_test.rs"
+      ],
+      "required_positive_tests": [
+        "dossier_artifact_results_have_required_fields",
+        "dossier_integrity_index_consistent",
+        "dossier_compatibility_policy_present",
+        "checker_accepts_compatibility_slo_certification_contract"
+      ],
+      "required_negative_tests": [
+        "checker_rejects_missing_unit_binding",
+        "checker_rejects_missing_required_artifact_binding"
+      ],
+      "validation_commands": [
+        "bash scripts/check_compatibility_slo_certification_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test compatibility_slo_certification_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_dossier_validator_test dossier_artifact_results_have_required_fields dossier_integrity_index_consistent dossier_compatibility_policy_present -- --nocapture"
+      ]
+    },
+    {
+      "spec_item": "tests.e2e.primary",
+      "implementation_refs": [
+        "scripts/release_dossier_validator.py",
+        "scripts/check_release_dossier.sh",
+        "tests/release/dossier_validation_report.v1.json",
+        "tests/release/compatibility_slo_certification_completion_contract.v1.json",
+        "scripts/check_compatibility_slo_certification_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+        "crates/frankenlibc-harness/tests/compatibility_slo_certification_completion_contract_test.rs"
+      ],
+      "required_positive_tests": [
+        "dossier_validator_produces_valid_report",
+        "dossier_validator_release_notes_hook_tracks_closed_beads",
+        "dossier_validator_release_notes_hook_invalid_limit_falls_back_to_default",
+        "checker_accepts_compatibility_slo_certification_contract"
+      ],
+      "required_negative_tests": [
+        "checker_rejects_missing_e2e_binding",
+        "checker_rejects_missing_required_artifact_binding"
+      ],
+      "validation_commands": [
+        "bash scripts/check_release_dossier.sh",
+        "bash scripts/check_compatibility_slo_certification_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_dossier_validator_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test compatibility_slo_certification_completion_contract_test -- --nocapture"
+      ]
+    }
+  ]
+}

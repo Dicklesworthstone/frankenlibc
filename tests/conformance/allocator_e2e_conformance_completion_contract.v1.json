@@ -1,0 +1,147 @@
+{
+  "schema_version": "allocator_e2e_conformance_completion_contract.v1",
+  "bead": "bd-2x5.5.1",
+  "original_bead": "bd-2x5.5",
+  "title": "Allocator E2E and conformance completion contract",
+  "audit_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-2x5.5/scorecard.md",
+  "source_artifacts": {
+    "allocator_e2e_gate": {
+      "path": "scripts/check_allocator_e2e.sh",
+      "required_markers": [
+        "fixture_malloc_stress",
+        "strict_match",
+        "hardened_match",
+        "normalize_stdout",
+        "allocator_e2e: PASS"
+      ]
+    },
+    "fixture_spec": {
+      "path": "tests/conformance/c_fixture_spec.json",
+      "required_fixtures": [
+        "fixture_malloc",
+        "fixture_malloc_stress"
+      ],
+      "required_stress_symbols": [
+        "malloc",
+        "free",
+        "calloc",
+        "realloc",
+        "pthread_create",
+        "pthread_join"
+      ],
+      "minimum_stress_tests": 3
+    },
+    "allocator_fixture": {
+      "path": "tests/conformance/fixtures/allocator.json",
+      "required_functions": [
+        "malloc",
+        "calloc",
+        "free",
+        "realloc"
+      ],
+      "minimum_cases": 5
+    },
+    "integration_fixtures": {
+      "required_sources": [
+        {
+          "id": "fixture_malloc",
+          "path": "tests/integration/fixture_malloc.c",
+          "required_markers": [
+            "fixture_malloc: PASS",
+            "test_malloc_free",
+            "test_calloc_zeroed",
+            "test_realloc_grow",
+            "test_realloc_shrink"
+          ]
+        },
+        {
+          "id": "fixture_malloc_stress",
+          "path": "tests/integration/fixture_malloc_stress.c",
+          "required_markers": [
+            "fixture_malloc_stress: PASS",
+            "test_concurrent_alloc_free",
+            "test_fragmentation_wave",
+            "test_conformance_signature",
+            "STRESS_THREADS",
+            "STRESS_ITERS"
+          ]
+        }
+      ]
+    },
+    "source_tests": {
+      "allocator_conformance": {
+        "path": "crates/frankenlibc-harness/tests/allocator_conformance_test.rs",
+        "required_functions": [
+          "allocator_fixture_valid_schema",
+          "allocator_covers_malloc",
+          "allocator_covers_calloc",
+          "allocator_covers_free",
+          "allocator_covers_realloc",
+          "allocator_fixture_executes_via_isolated_harness"
+        ]
+      },
+      "c_fixture_suite": {
+        "path": "crates/frankenlibc-harness/tests/c_fixture_suite_test.rs",
+        "required_functions": [
+          "all_fixture_sources_exist",
+          "acceptance_symbols_covered",
+          "bd15n2_fixtures_have_traceability_and_mode_expectations",
+          "scripts_exist_and_executable"
+        ]
+      }
+    }
+  },
+  "completion_obligations": [
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "description": "Allocator strict and hardened LD_PRELOAD fixture runs match the host glibc baseline for malloc and stress fixtures.",
+      "source_refs": [
+        "scripts/check_allocator_e2e.sh",
+        "tests/integration/fixture_malloc.c",
+        "tests/integration/fixture_malloc_stress.c"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "description": "Allocator fixture JSON and C fixture suite spec bind POSIX allocation cases, stress fixture coverage, and glibc differential expectations.",
+      "source_refs": [
+        "tests/conformance/fixtures/allocator.json",
+        "tests/conformance/c_fixture_spec.json",
+        "crates/frankenlibc-harness/tests/allocator_conformance_test.rs",
+        "crates/frankenlibc-harness/tests/c_fixture_suite_test.rs"
+      ]
+    }
+  ],
+  "completion_log_contract": {
+    "required_fields": [
+      "timestamp",
+      "trace_id",
+      "bead_id",
+      "original_bead",
+      "event",
+      "outcome",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs"
+    ],
+    "required_events": [
+      "allocator_completion_source_binding",
+      "allocator_completion_conformance_binding",
+      "allocator_completion_e2e_status",
+      "allocator_completion_summary"
+    ]
+  },
+  "failure_signatures": [
+    "missing allocator e2e gate marker",
+    "allocator stress fixture missing glibc differential coverage",
+    "allocator fixture missing required POSIX function",
+    "allocator completion log missing required field"
+  ]
+}

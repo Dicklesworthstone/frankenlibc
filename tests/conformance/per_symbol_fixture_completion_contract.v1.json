@@ -1,0 +1,260 @@
+{
+  "schema_version": "per_symbol_fixture_completion_contract.v1",
+  "manifest_id": "bd-ldj.5.1-per-symbol-fixture-completion-contract",
+  "generated_utc": "2026-05-10T18:12:00Z",
+  "description": "Completion-debt evidence binding for bd-ldj.5 per-symbol conformance fixtures. This contract binds the current symbol-to-fixture matrix, whole-corpus fixture schema validation, and deterministic golden fixture protocol without claiming that uncovered symbols are closed.",
+  "original_bead": "bd-ldj.5",
+  "completion_debt_bead": "bd-ldj.5.1",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-ldj.5/scorecard.md",
+  "source_artifacts": {
+    "symbol_fixture_coverage_matrix": "tests/conformance/symbol_fixture_coverage.v1.json",
+    "symbol_fixture_coverage_completion_contract": "tests/conformance/symbol_fixture_coverage_completion_contract.v1.json",
+    "symbol_fixture_coverage_gate": "scripts/check_symbol_fixture_coverage.sh",
+    "symbol_fixture_coverage_harness": "crates/frankenlibc-harness/tests/symbol_fixture_coverage_test.rs",
+    "fixture_schema_validation_manifest": "tests/conformance/fixture_schema_validation.v1.json",
+    "fixture_schema_validation_gate": "scripts/check_fixture_schema_validation.sh",
+    "fixture_schema_validation_harness": "crates/frankenlibc-harness/tests/fixture_schema_validation_test.rs",
+    "fixture_expected_output_policy": "tests/conformance/fixture_expected_output_schema_policy.v1.json",
+    "golden_fixture_protocol": "tests/conformance/golden_fixture_protocol.v1.json",
+    "golden_fixture_protocol_completion_contract": "tests/conformance/golden_fixture_protocol_completion_contract.v1.json",
+    "golden_fixture_protocol_completion_gate": "scripts/check_golden_fixture_protocol_completion_contract.sh",
+    "golden_fixture_protocol_harness": "crates/frankenlibc-harness/tests/golden_fixture_protocol_completion_contract_test.rs",
+    "completion_checker": "scripts/check_per_symbol_fixture_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/per_symbol_fixture_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "missing_item_bindings": [
+      {
+        "id": "tests.unit.primary",
+        "kind": "unit",
+        "source_gate": "symbol_fixture_coverage_harness",
+        "required_test_refs": [
+          "artifact_exists_and_valid",
+          "summary_counts_consistent",
+          "manifest_binds_unit_golden_and_conformance_items",
+          "checker_runs_source_gates_and_emits_completion_evidence"
+        ]
+      },
+      {
+        "id": "tests.golden.primary",
+        "kind": "golden",
+        "source_gate": "golden_fixture_protocol_completion_gate",
+        "required_test_refs": [
+          "checker_validates_golden_fixture_protocol_contract",
+          "checker_rejects_missing_golden_artifact_binding",
+          "manifest_binds_unit_golden_and_conformance_items"
+        ]
+      },
+      {
+        "id": "tests.conformance.primary",
+        "kind": "conformance",
+        "source_gate": "fixture_schema_validation_gate",
+        "required_test_refs": [
+          "uncovered_and_weak_lists_consistent",
+          "checker_passes_for_current_fixture_corpus",
+          "checker_rejects_understated_fixture_inventory",
+          "completion_logs_validate_against_structured_schema"
+        ]
+      }
+    ],
+    "implementation_refs": [
+      {
+        "id": "symbol-coverage-matrix-is-per-symbol-and-fixture-aware",
+        "path": "tests/conformance/symbol_fixture_coverage.v1.json",
+        "required_text": [
+          "\"total_exported_symbols\": 4119",
+          "\"covered_exported_symbols\": 405",
+          "\"target_uncovered_symbols\": 3714",
+          "\"fixture_json_cases\": 1284",
+          "\"fixture_json_unique_functions\": 420",
+          "\"symbol\"",
+          "\"fixture_case_count\"",
+          "\"fixture_files\""
+        ]
+      },
+      {
+        "id": "fixture-schema-gate-enforces-input-output-errno-contract",
+        "path": "tests/conformance/fixture_schema_validation.v1.json",
+        "required_text": [
+          "\"schema_version\": \"fixture_schema_validation.v1\"",
+          "\"fixture_file_count\": 58",
+          "\"standard_case_count\": 1284",
+          "\"expected_errno_required_cases\": 1242",
+          "\"primary_expectation_tags\"",
+          "\"expected_output\"",
+          "\"expected_return+expected_values\""
+        ]
+      },
+      {
+        "id": "expected-output-policy-records-adapter-normalized-boundary",
+        "path": "tests/conformance/fixture_expected_output_schema_policy.v1.json",
+        "required_text": [
+          "\"schema_version\": \"fixture_expected_output_schema_policy.v1\"",
+          "\"canonical_command\": \"scripts/check_fixture_expected_output_schema_policy.sh --validate-only\"",
+          "\"primary_adapter_source\": \"crates/frankenlibc-harness/src/fixtures.rs\"",
+          "\"expected_output_from_raw_case\"",
+          "\"normalize_expected_output_value\"",
+          "\"format_return_and_values\""
+        ]
+      },
+      {
+        "id": "golden-protocol-pins-deterministic-capture-and-verification",
+        "path": "tests/conformance/golden_fixture_protocol.v1.json",
+        "required_text": [
+          "\"bead\": \"bd-15n.3\"",
+          "\"command\": \"scripts/update_conformance_golden.sh\"",
+          "\"fixed_timestamp\": \"1970-01-01T00:00:00Z\"",
+          "\"command\": \"scripts/conformance_golden_gate.sh\"",
+          "\"command\": \"scripts/check_conformance_coverage.sh\"",
+          "\"No fixture file may be removed without approval\""
+        ]
+      },
+      {
+        "id": "completion-checker-runs-source-gates-and-emits-telemetry",
+        "path": "scripts/check_per_symbol_fixture_completion_contract.sh",
+        "required_text": [
+          "per_symbol_fixture_completion_contract.v1",
+          "scripts/check_symbol_fixture_coverage.sh",
+          "scripts/check_fixture_schema_validation.sh",
+          "scripts/check_golden_fixture_protocol_completion_contract.sh",
+          "per_symbol_fixture_completion_summary",
+          "per_symbol_fixture_completion_contract_pass"
+        ]
+      }
+    ],
+    "test_sources": {
+      "symbol_fixture_coverage_harness": {
+        "path": "crates/frankenlibc-harness/tests/symbol_fixture_coverage_test.rs",
+        "required_test_refs": [
+          "artifact_exists_and_valid",
+          "summary_counts_consistent",
+          "uncovered_and_weak_lists_consistent",
+          "drift_gate_script_passes"
+        ]
+      },
+      "fixture_schema_validation_harness": {
+        "path": "crates/frankenlibc-harness/tests/fixture_schema_validation_test.rs",
+        "required_test_refs": [
+          "contract_declares_full_fixture_schema_gate",
+          "checker_passes_for_current_fixture_corpus",
+          "checker_rejects_missing_expected_errno_where_required",
+          "checker_rejects_invalid_expected_output_shape",
+          "checker_rejects_unsupported_scenario_without_expected_outcome",
+          "checker_rejects_unclassified_fixture_file"
+        ]
+      },
+      "golden_fixture_protocol_harness": {
+        "path": "crates/frankenlibc-harness/tests/golden_fixture_protocol_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_all_completion_debt_evidence_classes",
+          "checker_validates_golden_fixture_protocol_contract",
+          "checker_emits_completion_report_and_jsonl",
+          "checker_rejects_missing_golden_artifact_binding"
+        ]
+      },
+      "completion_harness": {
+        "path": "crates/frankenlibc-harness/tests/per_symbol_fixture_completion_contract_test.rs",
+        "required_test_refs": [
+          "manifest_binds_unit_golden_and_conformance_items",
+          "checker_runs_source_gates_and_emits_completion_evidence",
+          "completion_logs_validate_against_structured_schema",
+          "checker_rejects_missing_golden_binding",
+          "checker_rejects_understated_fixture_inventory",
+          "checker_rejects_missing_source_test_ref"
+        ]
+      }
+    },
+    "required_per_symbol_contract": {
+      "minimum_total_exported_symbols": 4000,
+      "minimum_covered_exported_symbols": 405,
+      "minimum_fixture_json_files": 58,
+      "minimum_fixture_json_cases": 1284,
+      "minimum_fixture_json_unique_functions": 420,
+      "minimum_fixture_schema_standard_cases": 1284,
+      "minimum_expected_errno_required_cases": 1242,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "required_source_gates": [
+        "scripts/check_symbol_fixture_coverage.sh",
+        "scripts/check_fixture_schema_validation.sh --validate-only",
+        "scripts/check_golden_fixture_protocol_completion_contract.sh"
+      ],
+      "required_matrix_top_level_keys": [
+        "schema_version",
+        "bead",
+        "summary",
+        "fixture_inventory",
+        "families",
+        "symbols",
+        "uncovered_target_families",
+        "weak_target_families"
+      ],
+      "required_symbol_fields": [
+        "symbol",
+        "module",
+        "status",
+        "covered",
+        "fixture_case_count",
+        "c_fixture_mentions",
+        "fixture_sources",
+        "fixture_files",
+        "fixture_ids",
+        "fixture_families",
+        "fixture_modes"
+      ],
+      "coverage_gaps_are_explicit": true
+    }
+  },
+  "telemetry_contract": {
+    "report_schema_version": "per_symbol_fixture_completion_contract.report.v1",
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_commit",
+      "summary",
+      "source_artifacts",
+      "source_gate_results",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "stream",
+      "gate",
+      "scenario_id",
+      "mode",
+      "api_family",
+      "symbol",
+      "oracle_kind",
+      "expected",
+      "actual",
+      "decision_path",
+      "outcome",
+      "errno",
+      "latency_ns",
+      "source_commit",
+      "failure_signature",
+      "artifact_refs",
+      "details"
+    ],
+    "required_events": [
+      "per_symbol_fixture_completion_summary",
+      "per_symbol_fixture_unit_bindings",
+      "per_symbol_fixture_golden_bindings",
+      "per_symbol_fixture_conformance_bindings",
+      "per_symbol_fixture_completion_contract_pass"
+    ],
+    "forbidden_pass_events": [
+      "per_symbol_fixture_completion_contract_fail"
+    ]
+  }
+}
