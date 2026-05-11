@@ -1,0 +1,227 @@
+{
+  "schema_version": "fpg_proof_core_safety_completion_contract.v1",
+  "bead": "bd-bp8fl.3.8",
+  "completion_debt_bead": "bd-bp8fl.3.8.1",
+  "manifest_id": "bd-bp8fl-3-8-fpg-proof-core-safety-completion-contract",
+  "purpose": "Bind the existing fpg proof-core-safety evidence gate to the bd-bp8fl.3.8.1 completion-debt unit and conformance obligations.",
+  "source_artifacts": {
+    "source_gate": "tests/conformance/fpg_proof_core_safety_gate.v1.json",
+    "source_checker": "scripts/check_fpg_proof_core_safety_gate.sh",
+    "source_test": "crates/frankenlibc-harness/tests/fpg_proof_core_safety_gate_test.rs",
+    "feature_parity": "FEATURE_PARITY.md",
+    "gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "proof_obligations_binder": "tests/conformance/proof_obligations_binder.v1.json",
+    "proof_binder_validation": "tests/conformance/proof_binder_validation.v1.json",
+    "mode_contract_lock": "tests/conformance/mode_contract_lock.v1.json",
+    "completion_checker": "scripts/check_fpg_proof_core_safety_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/fpg_proof_core_safety_completion_contract_test.rs"
+  },
+  "completion_debt": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-bp8fl.3.8",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.3.8/scorecard.md",
+    "audit_score": 585,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.conformance.primary"
+    ]
+  },
+  "completion_debt_evidence": {
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "source_test",
+          "name": "gate_artifact_is_well_formed",
+          "covers": [
+            "gate schema",
+            "required inputs",
+            "source commit field",
+            "required log fields",
+            "claim policy"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "gate_rows_cover_all_seven_fpg_proof_core_safety_gaps",
+          "covers": [
+            "seven proof-core-safety gap IDs",
+            "gap ledger status",
+            "proof_math section binding"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "gate_rows_resolve_at_cited_feature_parity_lines",
+          "covers": [
+            "FEATURE_PARITY line binding",
+            "primary key binding",
+            "claimed status binding",
+            "DONE promotion block"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "gate_blocks_done_status_without_proof_witness",
+          "covers": [
+            "DONE is not an allowed status",
+            "prose-only rejection",
+            "tracker-closure-only rejection",
+            "binder-invalid rejection"
+          ]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_proof_core_safety_gate_test gate_artifact_is_well_formed",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_proof_core_safety_completion_contract_test -- --nocapture"
+      ]
+    },
+    "conformance_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "source_test",
+          "name": "gate_evidence_anchors_resolve_in_cited_artifacts",
+          "covers": [
+            "proof obligation anchors",
+            "proof binder validation anchors",
+            "mode contract anchors",
+            "gap ledger anchors"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "owner_family_groups_md_cites_this_gate",
+          "covers": [
+            "owner-family group binding",
+            "source bead binding",
+            "proof_binder_and_mode_contract gate kind"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "proof_binder_validation_remains_green_for_all_cited_obligations",
+          "covers": [
+            "binder_valid true",
+            "total_violations zero",
+            "all cited obligations valid"
+          ]
+        }
+      ],
+      "required_artifacts": [
+        {
+          "artifact": "source_gate",
+          "assertion": "contains the seven fpg-proof-core-safety gap IDs and evidence anchors"
+        },
+        {
+          "artifact": "source_checker",
+          "assertion": "validates the source gate against FEATURE_PARITY.md, the gap ledger, owner-family groups, proof obligations, proof binder validation, and the mode contract lock"
+        },
+        {
+          "artifact": "gap_ledger",
+          "assertion": "contains every proof_math gap row referenced by the source gate"
+        },
+        {
+          "artifact": "owner_family_groups",
+          "assertion": "binds the owner-family group to bd-bp8fl.3.8"
+        },
+        {
+          "artifact": "proof_obligations_binder",
+          "assertion": "contains the cited PO-01, PO-02, PO-03, PO-07, and PO-08 proof obligations"
+        },
+        {
+          "artifact": "proof_binder_validation",
+          "assertion": "reports binder_valid=true and total_violations=0 for the cited obligations"
+        },
+        {
+          "artifact": "mode_contract_lock",
+          "assertion": "locks strict and hardened mode contracts used by the source gate"
+        }
+      ],
+      "required_commands": [
+        "jq empty tests/conformance/fpg_proof_core_safety_gate.v1.json",
+        "bash scripts/check_fpg_proof_core_safety_gate.sh --validate-only",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_proof_core_safety_gate_test -- --nocapture"
+      ],
+      "expected_report": "target/conformance/fpg_proof_core_safety_completion_contract.report.json",
+      "expected_log": "target/conformance/fpg_proof_core_safety_completion_contract.log.jsonl"
+    }
+  },
+  "required_source_gate_contract": {
+    "schema_version": "v1",
+    "source_bead": "bd-bp8fl.3.8",
+    "completion_debt_bead": "bd-bp8fl.3.8.1",
+    "owner_family_group": "fpg-proof-core-safety",
+    "expected_manifest_id": "fpg-proof-core-safety-gate",
+    "expected_gap_count": 7,
+    "expected_required_log_field_count": 20,
+    "expected_input_artifact_count": 6,
+    "expected_gap_ids": [
+      "fp-proof-math-b821b415a5d6",
+      "fp-proof-math-f3e03ea48a96",
+      "fp-proof-math-0dbb786935af",
+      "fp-proof-math-8c76410adba7",
+      "fp-proof-math-2a49b40113a6",
+      "fp-proof-math-f4c99678233a",
+      "fp-proof-math-498e3ada4658"
+    ],
+    "source_commit_freshness_policy": {
+      "recorded_source_commit_field": "source_commit",
+      "comparison_target": "current git HEAD",
+      "stale_result": "block_proof_core_safety_gate_evidence",
+      "proof_core_safety_evidence_allowed_when_stale": false,
+      "rejected_evidence_kind": "stale_source_commit"
+    },
+    "claim_policy": {
+      "default_decision": "block_until_proof_witness_current",
+      "allow_status": [
+        "IN_PROGRESS",
+        "PLANNED"
+      ],
+      "block_status_without_evidence": [
+        "DONE"
+      ],
+      "block_replacement_levels_without_evidence": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "rejected_evidence_kinds": [
+        "prose_only",
+        "tracker_closure_only",
+        "stale_obligation",
+        "stale_source_commit",
+        "missing_obligation",
+        "binder_invalid",
+        "missing_mode_contract"
+      ]
+    },
+    "required_source_markers": {
+      "source_checker": [
+        "EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY",
+        "required_log_fields",
+        "expected_gap_ids",
+        "proof_binder_validation",
+        "block_until_proof_witness_current",
+        "source_commit_is_current"
+      ],
+      "source_test": [
+        "gate_artifact_is_well_formed",
+        "gate_rows_cover_all_seven_fpg_proof_core_safety_gaps",
+        "gate_rows_resolve_at_cited_feature_parity_lines",
+        "gate_evidence_anchors_resolve_in_cited_artifacts",
+        "owner_family_groups_md_cites_this_gate",
+        "proof_binder_validation_remains_green_for_all_cited_obligations",
+        "gate_blocks_done_status_without_proof_witness"
+      ],
+      "feature_parity": [
+        "strict refinement theorem",
+        "robust-radius guarantee",
+        "conformal decision validity"
+      ],
+      "owner_family_groups": [
+        "fpg-proof-core-safety",
+        "bd-bp8fl.3.8"
+      ]
+    }
+  }
+}
