@@ -1,0 +1,250 @@
+{
+  "schema": "pressure_sensing_completion_contract.v1",
+  "original_bead": "bd-w2c3.7.1",
+  "completion_debt_bead": "bd-w2c3.7.1.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.7.1/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ],
+    "artifacts": {
+      "pressure_sensor_source": "crates/frankenlibc-membrane/src/pressure_sensor.rs",
+      "pressure_sensing_fixture": "tests/conformance/fixtures/pressure_sensing.json",
+      "pressure_sensing_scenarios": "tests/conformance/pressure_sensing_scenarios.v1.json",
+      "pressure_sensing_script": "scripts/check_pressure_sensing.sh",
+      "pressure_sensing_test": "crates/frankenlibc-harness/tests/pressure_sensing_test.rs",
+      "pressure_sensing_conformance_test": "crates/frankenlibc-harness/tests/pressure_sensing_conformance_test.rs"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/pressure_sensor.rs:67",
+      "crates/frankenlibc-membrane/src/pressure_sensor.rs:131",
+      "crates/frankenlibc-membrane/src/pressure_sensor.rs:183",
+      "crates/frankenlibc-membrane/src/pressure_sensor.rs:305",
+      "crates/frankenlibc-membrane/src/pressure_sensor.rs:320",
+      "crates/frankenlibc-membrane/src/pressure_sensor.rs:331",
+      "crates/frankenlibc-membrane/src/pressure_sensor.rs:452",
+      "crates/frankenlibc-membrane/src/pressure_sensor.rs:571",
+      "scripts/check_pressure_sensing.sh:88",
+      "scripts/check_pressure_sensing.sh:176",
+      "scripts/check_pressure_sensing.sh:244",
+      "scripts/check_pressure_sensing.sh:364",
+      "crates/frankenlibc-harness/tests/pressure_sensing_test.rs:25",
+      "crates/frankenlibc-harness/tests/pressure_sensing_test.rs:39",
+      "crates/frankenlibc-harness/tests/pressure_sensing_test.rs:60",
+      "crates/frankenlibc-harness/tests/pressure_sensing_test.rs:116",
+      "crates/frankenlibc-harness/tests/pressure_sensing_test.rs:190",
+      "crates/frankenlibc-harness/tests/pressure_sensing_conformance_test.rs:132",
+      "crates/frankenlibc-harness/tests/pressure_sensing_conformance_test.rs:175",
+      "crates/frankenlibc-harness/tests/pressure_sensing_conformance_test.rs:264"
+    ],
+    "pressure_state_machine": {
+      "fixture_family": "pressure_sensing",
+      "fixture_version": "v1",
+      "scenario_schema_version": "v1",
+      "scenario_bead": "bd-w2c3.7.1",
+      "minimum_fixture_cases": 9,
+      "minimum_scenario_count": 5,
+      "required_modes": [
+        "strict",
+        "hardened"
+      ],
+      "required_regimes": [
+        "Nominal",
+        "Pressured",
+        "Overloaded",
+        "Recovery"
+      ],
+      "required_scenario_ids": [
+        "steady_state_nominal",
+        "escalation_calm_to_overloaded",
+        "full_cycle_nominal_overloaded_recovery_nominal",
+        "hysteresis_oscillation",
+        "recovery_spike"
+      ],
+      "required_case_names": [
+        "nominal_under_calm_strict",
+        "escalate_to_pressured_strict",
+        "escalate_to_overloaded_strict",
+        "recovery_hold_before_nominal_strict",
+        "hysteresis_prevents_flapping_strict",
+        "deterministic_replay_strict",
+        "nominal_under_calm_hardened",
+        "degradation_active_in_overloaded_hardened",
+        "recovery_re_escalation_hardened"
+      ],
+      "required_properties": [
+        "steady-state stability",
+        "monotonic escalation",
+        "full lifecycle traversal",
+        "hysteresis flap prevention",
+        "recovery re-escalation"
+      ],
+      "thresholds": {
+        "pressured_enter": 60.0,
+        "pressured_exit": 45.0,
+        "overloaded_enter": 85.0,
+        "overloaded_exit": 70.0,
+        "cooldown_epochs": 3,
+        "recovery_hold_epochs": 5
+      },
+      "source_snippets": [
+        "pub enum SystemRegime",
+        "pub struct RegimeThresholds",
+        "pub struct PressureSensor",
+        "matches!(self, Self::Overloaded)",
+        "fn observe(&mut self, signals: &PressureSignals)"
+      ]
+    },
+    "gate_contract": {
+      "script_path": "scripts/check_pressure_sensing.sh",
+      "report_path": "target/conformance/pressure_sensing.report.json",
+      "log_path": "target/conformance/pressure_sensing.log.jsonl",
+      "report_required_keys": [
+        "schema_version",
+        "bead",
+        "status",
+        "summary",
+        "thresholds",
+        "scenarios",
+        "findings",
+        "artifacts_consumed",
+        "artifacts_emitted",
+        "tooling_contract"
+      ],
+      "log_required_fields": [
+        "trace_id",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "artifact_refs"
+      ],
+      "required_event": "pressure_sensing_scenario",
+      "required_api_family": "pressure_sensing",
+      "tooling_contract_fields": [
+        "has_asupersync_dependency",
+        "asupersync_feature_present",
+        "default_enables_asupersync_tooling",
+        "frankentui_feature_present",
+        "frankentui_dependency_set_complete"
+      ],
+      "script_snippets": [
+        "pressure_sensing_scenario",
+        "tooling_contract",
+        "has_asupersync_dependency",
+        "frankentui_dependency_set_complete",
+        "structured_log"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "source": "pressure_sensing_test",
+          "name": "pressure_sensor_module_compiles"
+        },
+        {
+          "source": "pressure_sensing_test",
+          "name": "pressure_sensor_unit_tests_pass"
+        },
+        {
+          "source": "pressure_sensing_test",
+          "name": "pressure_sensing_fixture_well_formed"
+        },
+        {
+          "source": "pressure_sensing_test",
+          "name": "pressure_sensing_scenario_invariants"
+        },
+        {
+          "source": "pressure_sensing_conformance_test",
+          "name": "pressure_sensing_covers_overloaded_regime"
+        },
+        {
+          "source": "pressure_sensing_conformance_test",
+          "name": "pressure_sensing_fixture_executes_via_harness"
+        },
+        {
+          "source": "completion_contract_test",
+          "name": "contract_binds_pressure_unit_and_e2e_evidence"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane pressure_sensor:: -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test pressure_sensing_conformance_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test pressure_sensing_completion_contract_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_test_refs": [
+        {
+          "source": "pressure_sensing_test",
+          "name": "pressure_sensing_gate_emits_structured_artifacts"
+        },
+        {
+          "source": "completion_contract_test",
+          "name": "checker_emits_pressure_completion_report_and_jsonl"
+        },
+        {
+          "source": "completion_contract_test",
+          "name": "checker_rejects_local_pressure_script_command"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test pressure_sensing_test -- --nocapture",
+        "bash scripts/check_pressure_sensing_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test pressure_sensing_completion_contract_test -- --nocapture"
+      ],
+      "required_scripts": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> bash scripts/check_pressure_sensing.sh",
+        "bash scripts/check_pressure_sensing_completion_contract.sh"
+      ]
+    },
+    "telemetry_contract": {
+      "report_schema": "pressure_sensing_completion_contract.report.v1",
+      "required_events": [
+        "pressure_sensing_completion_sources_validated",
+        "pressure_sensing_completion_unit_bindings_validated",
+        "pressure_sensing_completion_e2e_bindings_validated",
+        "pressure_sensing_completion_contract_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "status",
+        "completion_debt_bead",
+        "original_bead",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "overload_state",
+        "degradation_active",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "representative_failure_signatures": [
+        "pressure threshold ordering invalid",
+        "scenario regime coverage drift",
+        "fixture strict/hardened coverage drift",
+        "structured log field missing",
+        "pressure sensing script command not routed through rch"
+      ]
+    },
+    "test_sources": {
+      "pressure_sensing_test": "crates/frankenlibc-harness/tests/pressure_sensing_test.rs",
+      "pressure_sensing_conformance_test": "crates/frankenlibc-harness/tests/pressure_sensing_conformance_test.rs",
+      "completion_contract_test": "crates/frankenlibc-harness/tests/pressure_sensing_completion_contract_test.rs"
+    }
+  }
+}
