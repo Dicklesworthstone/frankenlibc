@@ -1,0 +1,190 @@
+{
+  "schema_version": "fpg_ported_surface_completion_contract.v1",
+  "bead": "bd-bp8fl.3.13",
+  "completion_debt_bead": "bd-bp8fl.3.13.1",
+  "manifest_id": "bd-bp8fl-3-13-fpg-ported-surface-completion-contract",
+  "purpose": "Bind the existing fpg ported-surface evidence gate to the bd-bp8fl.3.13.1 completion-debt unit, integration, and conformance obligations.",
+  "source_artifacts": {
+    "source_gate": "tests/conformance/fpg_ported_surface_gate.v1.json",
+    "source_checker": "scripts/check_fpg_ported_surface_gate.sh",
+    "source_test": "crates/frankenlibc-harness/tests/fpg_ported_surface_gate_test.rs",
+    "feature_parity": "FEATURE_PARITY.md",
+    "gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+    "owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "completion_checker": "scripts/check_fpg_ported_surface_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/fpg_ported_surface_completion_contract_test.rs"
+  },
+  "completion_debt": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-bp8fl.3.13",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.3.13/scorecard.md",
+    "audit_score": 585,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.integration.primary",
+      "tests.conformance.primary"
+    ]
+  },
+  "completion_debt_evidence": {
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "source_test",
+          "name": "gate_artifact_covers_ported_surface_rows",
+          "covers": [
+            "gate schema",
+            "ported-surface row IDs",
+            "source commit freshness policy",
+            "input artifact paths",
+            "structured log field contract"
+          ]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_ported_surface_gate_test gate_artifact_covers_ported_surface_rows",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_ported_surface_completion_contract_test -- --nocapture"
+      ]
+    },
+    "integration_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "source_test",
+          "name": "gate_script_passes_and_emits_structured_artifacts",
+          "covers": [
+            "gate script execution",
+            "report emission",
+            "structured JSONL emission"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "gate_rejects_missing_ported_surface_anchor",
+          "covers": [
+            "missing evidence anchor fail-closed behavior"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "gate_rejects_premature_done_claim",
+          "covers": [
+            "premature DONE claim fail-closed behavior"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "gate_rejects_stale_gate_source_commit",
+          "covers": [
+            "stale source commit fail-closed behavior"
+          ]
+        },
+        {
+          "artifact": "source_test",
+          "name": "gate_rejects_stale_feature_parity_binding",
+          "covers": [
+            "stale FEATURE_PARITY line binding fail-closed behavior"
+          ]
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_fpg_ported_surface_gate.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_ported_surface_gate_test -- --nocapture"
+      ]
+    },
+    "conformance_primary": {
+      "required_artifacts": [
+        {
+          "artifact": "source_gate",
+          "assertion": "contains all ten fpg-gap-summary-ported-surface-evidence gap IDs and evidence anchors"
+        },
+        {
+          "artifact": "source_checker",
+          "assertion": "validates source gate against FEATURE_PARITY.md, gap ledger, owner-family groups, and evidence anchor artifacts"
+        },
+        {
+          "artifact": "gap_ledger",
+          "assertion": "contains every ported-surface gap row referenced by the source gate"
+        },
+        {
+          "artifact": "gap_groups",
+          "assertion": "binds fpg-gap-summary-ported-surface-evidence to the ten expected gap IDs"
+        },
+        {
+          "artifact": "owner_family_groups",
+          "assertion": "binds the owner-family group to bd-bp8fl.3.13"
+        }
+      ],
+      "required_commands": [
+        "jq empty tests/conformance/fpg_ported_surface_gate.v1.json",
+        "bash scripts/check_fpg_ported_surface_gate.sh"
+      ],
+      "expected_report": "target/conformance/fpg_ported_surface_gate.report.json",
+      "expected_log": "target/conformance/fpg_ported_surface_gate.log.jsonl"
+    }
+  },
+  "required_source_gate_contract": {
+    "schema_version": "v1",
+    "source_bead": "bd-bp8fl.3.13",
+    "completion_debt_bead": "bd-bp8fl.3.13.1",
+    "owner_family_group": "fpg-gap-summary-ported-surface-evidence",
+    "expected_manifest_id": "fpg-ported-surface-gate",
+    "expected_gap_count": 10,
+    "expected_required_log_field_count": 16,
+    "expected_input_artifact_count": 9,
+    "expected_gap_ids": [
+      "fp-gap-summary-0398e27f075e",
+      "fp-gap-summary-793c83cceb16",
+      "fp-gap-summary-5cbb74613755",
+      "fp-gap-summary-5da3dc1c8d50",
+      "fp-gap-summary-267b493369f9",
+      "fp-gap-summary-17c934647652",
+      "fp-gap-summary-a51012652c16",
+      "fp-gap-summary-17d24896af61",
+      "fp-gap-summary-161e06bc3a3d",
+      "fp-gap-summary-7bd4926c4439"
+    ],
+    "source_commit_freshness_policy": {
+      "recorded_source_commit_field": "source_commit",
+      "comparison_target": "current git HEAD",
+      "stale_result": "block_ported_surface_gate_evidence",
+      "ported_surface_evidence_allowed_when_stale": false,
+      "rejected_evidence_kind": "stale_source_commit"
+    },
+    "claim_policy": {
+      "default_decision": "block_done_until_ported_surface_evidence_current",
+      "blocked_done_status": "DONE",
+      "blocked_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "missing_or_stale_result": "claim_blocked"
+    },
+    "required_source_markers": {
+      "source_checker": [
+        "EXPECTED_GAP_IDS",
+        "REQUIRED_LOG_FIELDS",
+        "EXPECTED_SOURCE_COMMIT_FRESHNESS_POLICY",
+        "block_done_until_ported_surface_evidence_current",
+        "feature_parity_binding",
+        "evidence_anchors"
+      ],
+      "source_test": [
+        "gate_artifact_covers_ported_surface_rows",
+        "gate_script_passes_and_emits_structured_artifacts",
+        "gate_rejects_missing_ported_surface_anchor",
+        "gate_rejects_premature_done_claim",
+        "gate_rejects_stale_gate_source_commit",
+        "gate_rejects_stale_feature_parity_binding"
+      ],
+      "feature_parity": [
+        "Core allocator subsystem",
+        "HTM fast path live"
+      ],
+      "owner_family_groups": [
+        "fpg-gap-summary-ported-surface-evidence",
+        "bd-bp8fl.3.13"
+      ]
+    }
+  }
+}
