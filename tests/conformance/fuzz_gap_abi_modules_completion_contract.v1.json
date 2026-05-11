@@ -1,0 +1,370 @@
+{
+  "schema_version": "fuzz_gap_abi_modules_completion_contract.v1",
+  "manifest_id": "bd-dvr22.1-fuzz-gap-abi-modules-completion",
+  "original_bead": "bd-dvr22",
+  "completion_debt_bead": "bd-dvr22.1",
+  "source_artifacts": {
+    "fuzz_cargo_manifest": "crates/frankenlibc-fuzz/Cargo.toml",
+    "fuzz_architecture_report": "tests/conformance/fuzz_harness_architecture.v1.json",
+    "fuzz_architecture_checker": "scripts/check_fuzz_harness_architecture.sh",
+    "fuzz_architecture_test": "crates/frankenlibc-harness/tests/fuzz_harness_architecture_test.rs",
+    "completion_checker": "scripts/check_fuzz_gap_abi_modules_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/fuzz_gap_abi_modules_completion_contract_test.rs"
+  },
+  "required_module_fuzz_coverage": [
+    {
+      "module_id": "signal",
+      "risk_surface": "POSIX signal mask/action/delivery ABI",
+      "required_symbols": [
+        "sigemptyset",
+        "sigfillset",
+        "sigaddset",
+        "sigdelset",
+        "sigismember",
+        "sigprocmask",
+        "pthread_sigmask",
+        "sigpending",
+        "sigaction",
+        "sigaltstack",
+        "raise",
+        "kill",
+        "killpg"
+      ],
+      "targets": [
+        {
+          "name": "fuzz_signal",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_signal.rs",
+          "required_text": [
+            "Fuzz target for FrankenLibC's POSIX signal surface",
+            "Mask round-trip",
+            "Syscall differential",
+            "Bead: bd-dvr22"
+          ]
+        }
+      ]
+    },
+    {
+      "module_id": "socket",
+      "risk_surface": "AF_UNIX socket lifecycle and sockaddr/msghdr ABI",
+      "required_symbols": [
+        "socket",
+        "socketpair",
+        "bind",
+        "listen",
+        "accept",
+        "connect",
+        "send",
+        "recv",
+        "sendto",
+        "recvfrom",
+        "setsockopt",
+        "getsockopt",
+        "shutdown"
+      ],
+      "targets": [
+        {
+          "name": "fuzz_socket",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_socket.rs",
+          "required_text": [
+            "Stateful fuzz target for FrankenLibC's POSIX socket surface",
+            "stale-fd invariant",
+            "AF_UNIX",
+            "Bead: bd-dvr22"
+          ]
+        }
+      ]
+    },
+    {
+      "module_id": "fortify",
+      "risk_surface": "FORTIFY_SOURCE checked string/memory wrappers",
+      "required_symbols": [
+        "__memcpy_chk",
+        "__memmove_chk",
+        "__memset_chk",
+        "__explicit_bzero_chk",
+        "__strcpy_chk",
+        "__strncpy_chk",
+        "__strcat_chk",
+        "__strncat_chk",
+        "__stpcpy_chk",
+        "__stpncpy_chk",
+        "__snprintf_chk"
+      ],
+      "targets": [
+        {
+          "name": "fuzz_fortify",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_fortify.rs",
+          "required_text": [
+            "FORTIFY_SOURCE",
+            "GUARD_BYTES",
+            "safe path",
+            "Bead: bd-dvr22"
+          ]
+        }
+      ]
+    },
+    {
+      "module_id": "setjmp",
+      "risk_surface": "setjmp/longjmp control-flow transfer ABI",
+      "required_symbols": [
+        "setjmp",
+        "_setjmp",
+        "sigsetjmp",
+        "longjmp",
+        "_longjmp",
+        "siglongjmp"
+      ],
+      "targets": [
+        {
+          "name": "fuzz_setjmp",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_setjmp.rs",
+          "required_text": [
+            "control-flow integrity surface",
+            "expected_longjmp_return",
+            "SetjmpRoundTrip",
+            "Bead: bd-dvr22"
+          ]
+        }
+      ]
+    },
+    {
+      "module_id": "mmap",
+      "risk_surface": "virtual-memory mapping lifecycle and stale-range ABI",
+      "required_symbols": [
+        "mmap",
+        "munmap",
+        "mprotect",
+        "msync",
+        "madvise",
+        "mremap"
+      ],
+      "targets": [
+        {
+          "name": "fuzz_mmap",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_mmap.rs",
+          "required_text": [
+            "Stateful fuzz target for FrankenLibC's virtual-memory surface",
+            "Lifecycle",
+            "Guard sentinel",
+            "MMAP_LOCK"
+          ]
+        }
+      ]
+    },
+    {
+      "module_id": "dlfcn",
+      "risk_surface": "dynamic-loader handle/symbol lifecycle ABI",
+      "required_symbols": [
+        "dlopen",
+        "dlsym",
+        "dlclose",
+        "dlerror",
+        "dladdr"
+      ],
+      "targets": [
+        {
+          "name": "fuzz_dlfcn",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_dlfcn.rs",
+          "required_text": [
+            "dynamic-linking attack surface",
+            "ALLOWLIST",
+            "Lifecycle",
+            "Bead: bd-dvr22"
+          ]
+        }
+      ]
+    },
+    {
+      "module_id": "pthread",
+      "risk_surface": "pthread mutex/cond/key/rwlock/barrier/spin/once ABI",
+      "required_symbols": [
+        "pthread_mutex_init",
+        "pthread_mutex_lock",
+        "pthread_cond_init",
+        "pthread_cond_timedwait",
+        "pthread_key_create",
+        "pthread_setspecific",
+        "pthread_rwlock_init",
+        "pthread_rwlock_tryrdlock",
+        "pthread_barrier_init",
+        "pthread_spin_init",
+        "pthread_once"
+      ],
+      "targets": [
+        {
+          "name": "fuzz_pthread_mutex",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pthread_mutex.rs",
+          "required_text": [
+            "pthread mutex + mutexattr",
+            "Attribute round-trip",
+            "Lifecycle",
+            "Bead: bd-dvr22"
+          ]
+        },
+        {
+          "name": "fuzz_pthread_cond",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pthread_cond.rs",
+          "required_text": [
+            "pthread condvar surface",
+            "attribute round-trip",
+            "TimedwaitShortTimeout",
+            "Bead: bd-dvr22"
+          ]
+        },
+        {
+          "name": "fuzz_pthread_keys",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pthread_keys.rs",
+          "required_text": [
+            "pthread TSD / key surface",
+            "Destructor invocation under thread exit",
+            "bd-9hq64",
+            "Bead: bd-dvr22"
+          ]
+        },
+        {
+          "name": "fuzz_pthread_rwlock",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pthread_rwlock.rs",
+          "required_text": [
+            "pthread rwlock surface",
+            "Reader-reader compat",
+            "Writer-writer exclusion",
+            "Bead: bd-dvr22"
+          ]
+        },
+        {
+          "name": "fuzz_pthread_sync_misc",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pthread_sync_misc.rs",
+          "required_text": [
+            "remaining pthread sync primitives",
+            "Barrier with count=1",
+            "Spinlock",
+            "Bead: bd-dvr22"
+          ]
+        }
+      ]
+    },
+    {
+      "module_id": "c11threads",
+      "risk_surface": "C11 threads aliases over pthread backend ABI",
+      "required_symbols": [
+        "mtx_init",
+        "mtx_lock",
+        "mtx_unlock",
+        "cnd_init",
+        "cnd_timedwait",
+        "tss_create",
+        "tss_set",
+        "call_once",
+        "thrd_create",
+        "thrd_join",
+        "thrd_sleep"
+      ],
+      "targets": [
+        {
+          "name": "fuzz_c11threads",
+          "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_c11threads.rs",
+          "required_text": [
+            "C11 threads surface",
+            "call_once exactly-once invariant",
+            "thrd_create + thrd_join",
+            "Bead: bd-dvr22"
+          ]
+        }
+      ]
+    }
+  ],
+  "completion_tests": {
+    "completion_harness_test": {
+      "path": "crates/frankenlibc-harness/tests/fuzz_gap_abi_modules_completion_contract_test.rs",
+      "required_test_refs": [
+        "manifest_binds_required_fuzz_gap_modules",
+        "checker_emits_fuzz_gap_completion_report_and_jsonl",
+        "checker_rejects_missing_required_fuzz_target",
+        "checker_rejects_missing_source_anchor",
+        "checker_rejects_unimplemented_telemetry_event"
+      ]
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.fuzz.primary",
+      "kind": "fuzz",
+      "required_artifacts": [
+        "crates/frankenlibc-fuzz/Cargo.toml",
+        "tests/conformance/fuzz_harness_architecture.v1.json"
+      ],
+      "required_targets": [
+        "fuzz_signal",
+        "fuzz_socket",
+        "fuzz_fortify",
+        "fuzz_setjmp",
+        "fuzz_mmap",
+        "fuzz_dlfcn",
+        "fuzz_pthread_mutex",
+        "fuzz_pthread_cond",
+        "fuzz_pthread_keys",
+        "fuzz_pthread_rwlock",
+        "fuzz_pthread_sync_misc",
+        "fuzz_c11threads"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "required_artifacts": [
+        "scripts/check_fuzz_gap_abi_modules_completion_contract.sh",
+        "crates/frankenlibc-harness/tests/fuzz_gap_abi_modules_completion_contract_test.rs"
+      ],
+      "required_events": [
+        "fuzz_gap_abi_modules_target_inventory",
+        "fuzz_gap_abi_modules_source_anchors",
+        "fuzz_gap_abi_modules_corpus_dictionary",
+        "fuzz_gap_abi_modules_telemetry_summary",
+        "fuzz_gap_abi_modules_completion_contract_pass",
+        "fuzz_gap_abi_modules_completion_contract_fail"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "original_bead",
+      "completion_debt_bead",
+      "status",
+      "source_commit",
+      "summary",
+      "modules",
+      "target_refs",
+      "source_artifacts",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "bead_id",
+      "original_bead",
+      "completion_debt_bead",
+      "status",
+      "outcome",
+      "source_commit",
+      "schema_version",
+      "module_count",
+      "target_count",
+      "artifact_refs",
+      "target_refs",
+      "telemetry_refs",
+      "failure_signature"
+    ],
+    "required_events": [
+      "fuzz_gap_abi_modules_target_inventory",
+      "fuzz_gap_abi_modules_source_anchors",
+      "fuzz_gap_abi_modules_corpus_dictionary",
+      "fuzz_gap_abi_modules_telemetry_summary",
+      "fuzz_gap_abi_modules_completion_contract_pass",
+      "fuzz_gap_abi_modules_completion_contract_fail"
+    ]
+  }
+}
