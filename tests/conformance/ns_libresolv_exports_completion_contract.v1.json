@@ -1,0 +1,216 @@
+{
+  "schema_version": "ns_libresolv_exports_completion_contract.v1",
+  "bead": "bd-0j2ha.1",
+  "original_bead": "bd-0j2ha",
+  "title": "Completion proof for exported libresolv ns_* helpers",
+  "trace_id": "bd-0j2ha.1::ns-libresolv-exports-completion::v1",
+  "source_artifacts": [
+    {
+      "id": "version_script",
+      "path": "crates/frankenlibc-abi/version_scripts/libc.map",
+      "role": "GNU version-script export surface"
+    },
+    {
+      "id": "resolv_abi_impl",
+      "path": "crates/frankenlibc-abi/src/resolv_abi.rs",
+      "role": "native libresolv ns_* ABI implementations"
+    },
+    {
+      "id": "resolv_abi_unit_tests",
+      "path": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+      "role": "unit coverage for the ns_* helper families"
+    },
+    {
+      "id": "arpa_inet_diff",
+      "path": "crates/frankenlibc-abi/tests/conformance_diff_arpa_inet.rs",
+      "role": "resolver family conformance-diff coverage cited by the source closeout"
+    },
+    {
+      "id": "symbol_universe_test",
+      "path": "crates/frankenlibc-harness/tests/symbol_universe_normalization_test.rs",
+      "role": "symbol-universe generator and telemetry regression coverage"
+    },
+    {
+      "id": "completion_checker",
+      "path": "scripts/check_ns_libresolv_exports_completion_contract.sh",
+      "role": "bd-0j2ha.1 completion checker"
+    },
+    {
+      "id": "completion_harness_test",
+      "path": "crates/frankenlibc-harness/tests/ns_libresolv_exports_completion_contract_test.rs",
+      "role": "bd-0j2ha.1 completion harness proof"
+    }
+  ],
+  "completion_debt_evidence": {
+    "missing_item_bindings": [
+      {
+        "spec_item": "tests.unit.primary",
+        "description": "Unit evidence binds the exported ns_* helpers to native resolv_abi implementations and focused Rust tests for byte-order helpers, domain predicates, TTL/date parsing, DNS message parsing, and RR formatting.",
+        "implementation_refs": [
+          "crates/frankenlibc-abi/src/resolv_abi.rs",
+          "crates/frankenlibc-abi/version_scripts/libc.map"
+        ],
+        "test_refs": [
+          "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+          "crates/frankenlibc-harness/tests/ns_libresolv_exports_completion_contract_test.rs"
+        ],
+        "required_positive_tests": [
+          "ns_get16_reads_big_endian",
+          "ns_parse_ttl_handles_units",
+          "ns_initparse_parses_synthetic_response",
+          "ns_sprintrr_wraps_sprintrrf_via_handle_and_rr",
+          "checker_validates_ns_libresolv_exports_completion_contract"
+        ],
+        "required_negative_tests": [
+          "checker_rejects_missing_unit_binding",
+          "checker_rejects_missing_required_symbol"
+        ],
+        "required_commands": [
+          "bash scripts/check_ns_libresolv_exports_completion_contract.sh",
+          "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test resolv_abi_test ns_ -- --nocapture",
+          "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test ns_libresolv_exports_completion_contract_test -- --nocapture"
+        ]
+      },
+      {
+        "spec_item": "tests.conformance.primary",
+        "description": "Conformance evidence binds the bd-0j2ha export block to direct version-script/source validation, resolver-family conformance diff, and symbol-universe normalization telemetry coverage.",
+        "implementation_refs": [
+          "crates/frankenlibc-abi/version_scripts/libc.map",
+          "crates/frankenlibc-abi/src/resolv_abi.rs"
+        ],
+        "test_refs": [
+          "crates/frankenlibc-abi/tests/conformance_diff_arpa_inet.rs",
+          "crates/frankenlibc-harness/tests/symbol_universe_normalization_test.rs",
+          "crates/frankenlibc-harness/tests/ns_libresolv_exports_completion_contract_test.rs"
+        ],
+        "required_positive_tests": [
+          "diff_inet_pton_v4_cases",
+          "arpa_inet_diff_coverage_report",
+          "normalization_report_generates_successfully",
+          "normalization_telemetry_log_covers_every_symbol",
+          "checker_validates_ns_libresolv_exports_completion_contract"
+        ],
+        "required_negative_tests": [
+          "checker_rejects_missing_required_symbol",
+          "checker_rejects_conformance_binding_drift"
+        ],
+        "required_commands": [
+          "bash scripts/check_ns_libresolv_exports_completion_contract.sh",
+          "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test conformance_diff_arpa_inet -- --nocapture",
+          "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test symbol_universe_normalization_test -- --nocapture"
+        ]
+      }
+    ]
+  },
+  "ns_libresolv_export_contract": {
+    "version_script_path": "crates/frankenlibc-abi/version_scripts/libc.map",
+    "implementation_path": "crates/frankenlibc-abi/src/resolv_abi.rs",
+    "source_closeout_bead": "bd-0j2ha",
+    "version_script_anchor": "libresolv ns_* helpers implemented in resolv_abi.rs (bd-0j2ha)",
+    "required_symbols": [
+      "ns_datetosecs",
+      "ns_format_ttl",
+      "ns_get16",
+      "ns_get32",
+      "ns_initparse",
+      "ns_makecanon",
+      "ns_msg_getflag",
+      "ns_name_ntol",
+      "ns_name_rollback",
+      "ns_parse_ttl",
+      "ns_parserr",
+      "ns_put16",
+      "ns_put32",
+      "ns_samedomain",
+      "ns_samename",
+      "ns_skiprr",
+      "ns_sprintrr",
+      "ns_sprintrrf",
+      "ns_subdomain"
+    ],
+    "required_unit_tests": [
+      "ns_get16_reads_big_endian",
+      "ns_get32_reads_big_endian",
+      "ns_put16_writes_big_endian",
+      "ns_put32_writes_big_endian",
+      "ns_samename_case_insensitive_with_optional_dot",
+      "ns_samedomain_root_and_subdomains",
+      "ns_subdomain_only_for_proper_subdomains",
+      "ns_makecanon_appends_trailing_dot",
+      "ns_parse_ttl_handles_units",
+      "ns_format_ttl_round_trips_via_parse",
+      "ns_datetosecs_parses_valid_utc_strings",
+      "ns_name_ntol_lowercases_labels",
+      "ns_name_rollback_clears_ptrs_at_or_past_threshold",
+      "ns_initparse_parses_synthetic_response",
+      "ns_msg_getflag_reads_header_bits",
+      "ns_parserr_reads_question_section",
+      "ns_skiprr_advances_past_question_and_answer",
+      "ns_sprintrrf_formats_a_record",
+      "ns_sprintrr_wraps_sprintrrf_via_handle_and_rr"
+    ],
+    "required_conformance_tests": [
+      {
+        "path": "crates/frankenlibc-abi/tests/conformance_diff_arpa_inet.rs",
+        "tests": [
+          "diff_byte_order_conversions",
+          "diff_inet_pton_v4_cases",
+          "diff_inet_pton_v6_cases",
+          "arpa_inet_diff_coverage_report"
+        ],
+        "required_terms": [
+          "divergences",
+          "reference"
+        ]
+      },
+      {
+        "path": "crates/frankenlibc-harness/tests/symbol_universe_normalization_test.rs",
+        "tests": [
+          "normalization_report_generates_successfully",
+          "normalization_schema_complete",
+          "normalization_telemetry_log_covers_every_symbol"
+        ],
+        "required_terms": [
+          "symbol_universe_normalization.log.v1",
+          "symbol_universe_classification"
+        ]
+      }
+    ]
+  },
+  "completion_output_contract": {
+    "report_path": "target/conformance/ns_libresolv_exports_completion_contract.report.json",
+    "log_path": "target/conformance/ns_libresolv_exports_completion_contract.log.jsonl",
+    "required_report_fields": [
+      "schema_version",
+      "bead_id",
+      "original_bead",
+      "trace_id",
+      "source_commit",
+      "status",
+      "summary",
+      "source_artifacts",
+      "missing_item_bindings",
+      "artifact_refs",
+      "errors"
+    ],
+    "required_events": [
+      "source_artifacts_validated",
+      "completion_bindings_validated",
+      "export_map_validated",
+      "unit_test_bindings_validated",
+      "conformance_test_bindings_validated",
+      "ns_libresolv_exports_completion_contract_pass"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "event",
+      "status",
+      "bead_id",
+      "trace_id",
+      "source_commit",
+      "expected",
+      "observed",
+      "artifact_refs"
+    ]
+  }
+}
