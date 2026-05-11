@@ -61,7 +61,7 @@
       "family": "StringMemory",
       "api_family_enum": "StringMemory",
       "module": "string_abi",
-      "heals_call_sites": 40,
+      "heals_call_sites": 37,
       "symbols": [
         "memcpy",
         "memmove",
@@ -100,7 +100,7 @@
       "family": "WideChar",
       "api_family_enum": "StringMemory",
       "module": "wchar_abi",
-      "heals_call_sites": 25,
+      "heals_call_sites": 23,
       "symbols": [
         "wcslen",
         "wcscpy",
@@ -164,7 +164,7 @@
       "family": "Stdlib",
       "api_family_enum": "Stdlib",
       "module": "stdlib_abi",
-      "heals_call_sites": 13,
+      "heals_call_sites": 8,
       "symbols": [
         "atoi",
         "atol",
@@ -232,7 +232,7 @@
       "family": "Threading",
       "api_family_enum": "Threading",
       "module": "pthread_abi",
-      "heals_call_sites": 0,
+      "heals_call_sites": 1,
       "symbols": [
         "pthread_create",
         "pthread_join",
@@ -416,7 +416,7 @@
       "family": "Loader",
       "api_family_enum": "Loader",
       "module": "dlfcn_abi",
-      "heals_call_sites": 5,
+      "heals_call_sites": 4,
       "symbols": [
         "dlopen",
         "dlclose",
@@ -572,8 +572,8 @@
   ],
   "summary": {
     "total_families": 20,
-    "families_with_healing": 18,
-    "total_heals_call_sites": 149,
+    "families_with_healing": 19,
+    "total_heals_call_sites": 139,
     "healing_actions": [
       "ClampSize",
       "TruncateWithNull",

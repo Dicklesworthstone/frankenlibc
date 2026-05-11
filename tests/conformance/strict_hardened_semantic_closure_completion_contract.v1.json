@@ -1,0 +1,633 @@
+{
+  "schema_version": "strict_hardened_semantic_closure_completion_contract.v1",
+  "manifest_id": "bd-w2c3.3.4-strict-hardened-semantic-closure-completion",
+  "original_bead": "bd-w2c3.3",
+  "completion_debt_bead": "bd-w2c3.3.4",
+  "audit": {
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.3/scorecard.md",
+    "audit_score": 570,
+    "next_audit_score_threshold": 800,
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "purpose": "Bind Track 2 strict/hardened semantic closure to explicit unit, e2e, and structured telemetry evidence so the closed parent track is not relying on a prose closeout alone.",
+  "source_artifacts": {
+    "mode_semantics_matrix": "tests/conformance/mode_semantics_matrix.json",
+    "mode_semantics_checker": "scripts/check_mode_semantics.sh",
+    "mode_semantics_test": "crates/frankenlibc-harness/tests/mode_semantics_test.rs",
+    "hardened_repair_deny_matrix": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+    "hardened_repair_deny_checker": "scripts/check_hardened_repair_deny_matrix.sh",
+    "hardened_repair_deny_test": "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs",
+    "mode_contract_lock": "tests/conformance/mode_contract_lock.v1.json",
+    "mode_contract_lock_checker": "scripts/check_mode_contract_lock.sh",
+    "mode_contract_lock_test": "crates/frankenlibc-harness/tests/mode_contract_lock_test.rs",
+    "runtime_mode_config": "crates/frankenlibc-membrane/src/config.rs",
+    "runtime_mode_evidence_logging": "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+    "runtime_mode_evidence_logging_checker": "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+    "runtime_mode_evidence_logging_test": "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs",
+    "strict_hardened_evidence_e2e": "tests/conformance/strict_hardened_evidence_e2e.v1.json",
+    "strict_hardened_evidence_e2e_checker": "scripts/check_strict_hardened_evidence_e2e.sh",
+    "strict_hardened_evidence_e2e_test": "crates/frankenlibc-harness/tests/strict_hardened_evidence_e2e_test.rs",
+    "semantic_contract_inventory": "tests/conformance/semantic_contract_inventory.v1.json",
+    "semantic_contract_inventory_checker": "scripts/check_semantic_contract_inventory.sh",
+    "semantic_contract_inventory_test": "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs",
+    "semantic_contract_drift_scan": "tests/conformance/semantic_contract_drift_scan.v1.json",
+    "semantic_contract_drift_checker": "scripts/check_semantic_contract_drift.sh",
+    "semantic_contract_drift_test": "crates/frankenlibc-harness/tests/semantic_contract_drift_scan_test.rs",
+    "strict_mode_refinement_test": "crates/frankenlibc-abi/tests/strict_mode_refinement_test.rs",
+    "hardened_mode_safety_test": "crates/frankenlibc-abi/tests/hardened_mode_safety_test.rs",
+    "completion_contract": "tests/conformance/strict_hardened_semantic_closure_completion_contract.v1.json",
+    "completion_checker": "scripts/check_strict_hardened_semantic_closure_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/strict_hardened_semantic_closure_completion_contract_test.rs"
+  },
+  "required_source_truth": {
+    "mode_semantics": {
+      "schema_version_min": 1,
+      "required_modes": [
+        "strict",
+        "hardened"
+      ],
+      "total_families": 20,
+      "families_with_healing": 19,
+      "total_heals_call_sites": 139
+    },
+    "hardened_repair_deny_matrix": {
+      "schema_version": "v1",
+      "entry_count": 15,
+      "covered_invalid_input_classes": 15,
+      "repair_entries": 9,
+      "deny_entries": 6,
+      "min_claimed_api_families": 10,
+      "required_healing_actions": [
+        "ClampSize",
+        "TruncateWithNull",
+        "ReturnSafeDefault",
+        "None"
+      ]
+    },
+    "mode_contract_lock": {
+      "env_key": "FRANKENLIBC_MODE",
+      "allowed_values": [
+        "strict",
+        "hardened"
+      ],
+      "default_value": "strict",
+      "unknown_value_behavior": "fallback_to_strict",
+      "mutability_fragment": "immutable",
+      "required_provenance_fields": [
+        "trace_id",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "artifact_refs",
+        "resolved_mode",
+        "mode_source",
+        "mode_cache_state"
+      ],
+      "startup_reentrant_anchor_count": 3
+    },
+    "strict_hardened_e2e": {
+      "schema_version": "v1",
+      "required_modes": [
+        "strict",
+        "hardened"
+      ],
+      "required_api_families": [
+        "string",
+        "malloc",
+        "stdio",
+        "pthread",
+        "resolver"
+      ],
+      "scenario_count": 10,
+      "negative_case_count": 6,
+      "structured_log_rows": 16,
+      "required_log_fields": [
+        "trace_id",
+        "bead_id",
+        "scenario_id",
+        "api_family",
+        "symbol",
+        "runtime_mode",
+        "validation_profile",
+        "expected_decision",
+        "actual_decision",
+        "healing_action",
+        "denied",
+        "target_dir",
+        "source_commit",
+        "artifact_refs",
+        "safety_signature",
+        "failure_signature"
+      ]
+    },
+    "runtime_mode_evidence_logging": {
+      "schema_version": "runtime_mode_evidence_logging_coverage.v1",
+      "canonical_command": "scripts/check_runtime_mode_evidence_logging_coverage.sh --validate-only",
+      "coverage_rows": 7,
+      "startup_evidence_rows": 7,
+      "allowed_modes": [
+        "strict",
+        "hardened"
+      ],
+      "ambient_tz_dependency_allowed": false,
+      "subprocess_rows_must_override_inherited_mode": true
+    },
+    "semantic_contract_inventory": {
+      "schema_version": "v1",
+      "entry_count": 18,
+      "seed_overlay_covered": 10,
+      "required_semantic_classes": [
+        "compat_noop",
+        "deterministic_fallback",
+        "limited_bootstrap",
+        "unsupported_platform_contract",
+        "abort_only"
+      ],
+      "blocked_claim_fragment": "not evidence of full semantic replacement readiness"
+    },
+    "semantic_contract_drift": {
+      "schema_version": "v1",
+      "tracked_inventory_entries": 18,
+      "untracked_contract_annotation_count": 0,
+      "newly_found_drift_count": 0,
+      "required_blocked_claims": [
+        "support_matrix_stub_zero_full_replacement_claim",
+        "README_full_libc_replacement_without_semantic_overlay",
+        "FEATURE_PARITY_full_replacement_without_semantic_overlay"
+      ]
+    }
+  },
+  "implementation_refs": [
+    {
+      "kind": "mode_semantics_schema",
+      "path": "tests/conformance/mode_semantics_matrix.json",
+      "line": 5,
+      "anchor": "Per-API-family behavior table"
+    },
+    {
+      "kind": "mode_semantics_modes",
+      "path": "tests/conformance/mode_semantics_matrix.json",
+      "line": 5,
+      "anchor": "\"strict\""
+    },
+    {
+      "kind": "mode_semantics_families",
+      "path": "tests/conformance/mode_semantics_matrix.json",
+      "line": 27,
+      "anchor": "\"families\""
+    },
+    {
+      "kind": "mode_semantics_summary",
+      "path": "tests/conformance/mode_semantics_matrix.json",
+      "line": 573,
+      "anchor": "\"total_heals_call_sites\": 139"
+    },
+    {
+      "kind": "mode_semantics_gate_shape",
+      "path": "scripts/check_mode_semantics.sh",
+      "line": 22,
+      "anchor": "Mode Semantics Gate"
+    },
+    {
+      "kind": "mode_semantics_gate_pass",
+      "path": "scripts/check_mode_semantics.sh",
+      "line": 264,
+      "anchor": "check_mode_semantics: PASS"
+    },
+    {
+      "kind": "mode_semantics_unit_shape",
+      "path": "crates/frankenlibc-harness/tests/mode_semantics_test.rs",
+      "line": 32,
+      "anchor": "matrix_exists_and_valid"
+    },
+    {
+      "kind": "mode_semantics_unit_summary",
+      "path": "crates/frankenlibc-harness/tests/mode_semantics_test.rs",
+      "line": 150,
+      "anchor": "summary_consistent_with_entries"
+    },
+    {
+      "kind": "hardened_matrix_schema",
+      "path": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+      "line": 4,
+      "anchor": "Deterministic hardened invalid-input action matrix"
+    },
+    {
+      "kind": "hardened_matrix_families",
+      "path": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+      "line": 16,
+      "anchor": "\"claimed_api_families\""
+    },
+    {
+      "kind": "hardened_matrix_policy_ids",
+      "path": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+      "line": 132,
+      "anchor": "tsm.repair.stringmemory.memcpy_overflow.v1"
+    },
+    {
+      "kind": "hardened_matrix_summary",
+      "path": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+      "line": 307,
+      "anchor": "\"total_invalid_input_classes\": 15"
+    },
+    {
+      "kind": "hardened_matrix_checker_shape",
+      "path": "scripts/check_hardened_repair_deny_matrix.sh",
+      "line": 43,
+      "anchor": "schema_version must be v1"
+    },
+    {
+      "kind": "hardened_matrix_checker_pass",
+      "path": "scripts/check_hardened_repair_deny_matrix.sh",
+      "line": 294,
+      "anchor": "PASS: hardened repair/deny matrix validated"
+    },
+    {
+      "kind": "hardened_matrix_unit_summary",
+      "path": "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs",
+      "line": 87,
+      "anchor": "matrix_exists_and_summary_is_consistent"
+    },
+    {
+      "kind": "hardened_matrix_unit_policy_hash",
+      "path": "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs",
+      "line": 342,
+      "anchor": "policy_mapping_is_deterministic_across_reloads"
+    },
+    {
+      "kind": "mode_contract_env",
+      "path": "tests/conformance/mode_contract_lock.v1.json",
+      "line": 6,
+      "anchor": "\"env_contract\""
+    },
+    {
+      "kind": "mode_contract_provenance",
+      "path": "tests/conformance/mode_contract_lock.v1.json",
+      "line": 15,
+      "anchor": "\"required_provenance_fields\""
+    },
+    {
+      "kind": "mode_contract_startup",
+      "path": "tests/conformance/mode_contract_lock.v1.json",
+      "line": 29,
+      "anchor": "\"startup_reentrant_test_anchors\""
+    },
+    {
+      "kind": "mode_contract_checker_env",
+      "path": "scripts/check_mode_contract_lock.sh",
+      "line": 42,
+      "anchor": "FRANKENLIBC_MODE"
+    },
+    {
+      "kind": "mode_contract_checker_pass",
+      "path": "scripts/check_mode_contract_lock.sh",
+      "line": 198,
+      "anchor": "PASS: mode contract lock validated"
+    },
+    {
+      "kind": "mode_contract_unit_shape",
+      "path": "crates/frankenlibc-harness/tests/mode_contract_lock_test.rs",
+      "line": 31,
+      "anchor": "artifact_contract_shape_is_valid"
+    },
+    {
+      "kind": "mode_contract_runtime_parser",
+      "path": "crates/frankenlibc-membrane/src/config.rs",
+      "line": 133,
+      "anchor": "FRANKENLIBC_MODE"
+    },
+    {
+      "kind": "strict_hardened_e2e_required_families",
+      "path": "tests/conformance/strict_hardened_evidence_e2e.v1.json",
+      "line": 19,
+      "anchor": "\"required_api_families\""
+    },
+    {
+      "kind": "strict_hardened_e2e_required_modes",
+      "path": "tests/conformance/strict_hardened_evidence_e2e.v1.json",
+      "line": 26,
+      "anchor": "\"required_modes\""
+    },
+    {
+      "kind": "strict_hardened_e2e_scenarios",
+      "path": "tests/conformance/strict_hardened_evidence_e2e.v1.json",
+      "line": 104,
+      "anchor": "\"scenarios\""
+    },
+    {
+      "kind": "strict_hardened_e2e_negative_cases",
+      "path": "tests/conformance/strict_hardened_evidence_e2e.v1.json",
+      "line": 566,
+      "anchor": "\"negative_scenario_cases\""
+    },
+    {
+      "kind": "strict_hardened_e2e_checker_required",
+      "path": "scripts/check_strict_hardened_evidence_e2e.sh",
+      "line": 327,
+      "anchor": "required_api_families"
+    },
+    {
+      "kind": "strict_hardened_e2e_checker_pass",
+      "path": "scripts/check_strict_hardened_evidence_e2e.sh",
+      "line": 452,
+      "anchor": "strict/hardened evidence e2e gate passed"
+    },
+    {
+      "kind": "strict_hardened_e2e_unit_contract",
+      "path": "crates/frankenlibc-harness/tests/strict_hardened_evidence_e2e_test.rs",
+      "line": 221,
+      "anchor": "e2e_artifact_covers_strict_hardened_runtime_evidence_contract"
+    },
+    {
+      "kind": "runtime_mode_evidence_policy",
+      "path": "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+      "line": 9,
+      "anchor": "coverage_policy"
+    },
+    {
+      "kind": "runtime_mode_evidence_checker",
+      "path": "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+      "line": 43,
+      "anchor": "runtime_mode_evidence_logging_coverage.v1"
+    },
+    {
+      "kind": "runtime_mode_evidence_unit",
+      "path": "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs",
+      "line": 56,
+      "anchor": "runtime_mode_coverage_gate_passes_current_contract"
+    },
+    {
+      "kind": "semantic_inventory_summary",
+      "path": "tests/conformance/semantic_contract_inventory.v1.json",
+      "line": 1,
+      "anchor": "\"entry_count\": 18"
+    },
+    {
+      "kind": "semantic_inventory_gate",
+      "path": "scripts/check_semantic_contract_inventory.sh",
+      "line": 4,
+      "anchor": "report/log artifacts"
+    },
+    {
+      "kind": "semantic_inventory_unit",
+      "path": "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs",
+      "line": 73,
+      "anchor": "artifact_exists_and_has_required_shape"
+    },
+    {
+      "kind": "semantic_drift_gate",
+      "path": "scripts/check_semantic_contract_drift.sh",
+      "line": 3,
+      "anchor": "semantic contract annotations"
+    },
+    {
+      "kind": "semantic_drift_unit",
+      "path": "crates/frankenlibc-harness/tests/semantic_contract_drift_scan_test.rs",
+      "line": 87,
+      "anchor": "artifact_declares_inputs_rules_replays_and_log_contract"
+    },
+    {
+      "kind": "strict_refinement_unit",
+      "path": "crates/frankenlibc-abi/tests/strict_mode_refinement_test.rs",
+      "line": 26,
+      "anchor": "refinement_strlen_matches_specification"
+    },
+    {
+      "kind": "hardened_safety_unit",
+      "path": "crates/frankenlibc-abi/tests/hardened_mode_safety_test.rs",
+      "line": 25,
+      "anchor": "totality_healing_action_is_heal_correct"
+    }
+  ],
+  "test_sources": {
+    "mode_semantics_test": {
+      "path": "crates/frankenlibc-harness/tests/mode_semantics_test.rs",
+      "required_test_refs": [
+        "matrix_exists_and_valid",
+        "all_families_have_required_fields",
+        "family_modules_exist_in_abi_source",
+        "summary_consistent_with_entries",
+        "no_duplicate_families"
+      ]
+    },
+    "hardened_repair_deny_matrix_test": {
+      "path": "crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs",
+      "required_test_refs": [
+        "matrix_exists_and_summary_is_consistent",
+        "known_healing_actions_match_live_healing_action_enum",
+        "fixture_refs_exist_and_are_hardened_cases",
+        "gate_script_is_executable_and_passes",
+        "policy_mapping_is_deterministic_across_reloads"
+      ]
+    },
+    "mode_contract_lock_test": {
+      "path": "crates/frankenlibc-harness/tests/mode_contract_lock_test.rs",
+      "required_test_refs": [
+        "artifact_contract_shape_is_valid",
+        "startup_reentrant_anchors_are_declared",
+        "gate_script_passes_and_emits_provenance_artifacts"
+      ]
+    },
+    "runtime_mode_evidence_logging_coverage_test": {
+      "path": "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs",
+      "required_test_refs": [
+        "runtime_mode_coverage_gate_passes_current_contract",
+        "runtime_mode_coverage_gate_fails_when_startup_evidence_is_removed",
+        "isolated_conformance_child_overrides_ambient_mode_and_logs_startup"
+      ]
+    },
+    "strict_hardened_evidence_e2e_test": {
+      "path": "crates/frankenlibc-harness/tests/strict_hardened_evidence_e2e_test.rs",
+      "required_test_refs": [
+        "e2e_artifact_covers_strict_hardened_runtime_evidence_contract",
+        "e2e_gate_script_passes_and_emits_report_and_jsonl_log",
+        "e2e_gate_fails_closed_when_required_family_is_missing",
+        "e2e_gate_fails_closed_when_required_mode_is_missing",
+        "e2e_gate_fails_closed_for_missing_hardened_healing_action",
+        "e2e_gate_fails_closed_for_strict_mode_repair_attempt"
+      ]
+    },
+    "semantic_contract_inventory_test": {
+      "path": "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs",
+      "required_test_refs": [
+        "artifact_exists_and_has_required_shape",
+        "seed_overlay_entries_are_all_covered",
+        "summary_counts_match_entries_and_sources_are_linked",
+        "gate_script_passes_and_emits_structured_report_and_log"
+      ]
+    },
+    "semantic_contract_drift_scan_test": {
+      "path": "crates/frankenlibc-harness/tests/semantic_contract_drift_scan_test.rs",
+      "required_test_refs": [
+        "artifact_declares_inputs_rules_replays_and_log_contract",
+        "gate_passes_clean_tree_and_emits_report_and_required_log_fields",
+        "stale_inventory_marker_fails_with_stable_signature",
+        "explicit_symbol_allowlist_turns_false_positive_into_allowed_drift"
+      ]
+    },
+    "strict_mode_refinement_test": {
+      "path": "crates/frankenlibc-abi/tests/strict_mode_refinement_test.rs",
+      "required_test_refs": [
+        "refinement_strlen_matches_specification",
+        "refinement_memcpy_preserves_exact_bytes",
+        "tsm_transparency_deterministic_outputs",
+        "tsm_transparency_no_spurious_denials_under_stress"
+      ]
+    },
+    "hardened_mode_safety_test": {
+      "path": "crates/frankenlibc-abi/tests/hardened_mode_safety_test.rs",
+      "required_test_refs": [
+        "totality_healing_action_is_heal_correct",
+        "determinism_across_threads",
+        "posix_compatibility_clamp_size_produces_valid_bounds",
+        "safety_healing_policy_counters_monotonic",
+        "valid_inputs_pass_through_without_healing"
+      ]
+    }
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "description": "Unit coverage binds strict-mode refinement, hardened-mode safety, mode semantics matrix shape, repair/deny matrix determinism, immutable FRANKENLIBC_MODE parsing, semantic inventory shape, and fail-closed completion-manifest validation.",
+      "implementation_refs": [
+        "mode_semantics_schema",
+        "mode_semantics_summary",
+        "hardened_matrix_summary",
+        "mode_contract_env",
+        "mode_contract_runtime_parser",
+        "strict_refinement_unit",
+        "hardened_safety_unit"
+      ],
+      "test_refs": [
+        {
+          "source": "mode_semantics_test",
+          "name": "matrix_exists_and_valid"
+        },
+        {
+          "source": "hardened_repair_deny_matrix_test",
+          "name": "matrix_exists_and_summary_is_consistent"
+        },
+        {
+          "source": "mode_contract_lock_test",
+          "name": "artifact_contract_shape_is_valid"
+        },
+        {
+          "source": "strict_mode_refinement_test",
+          "name": "tsm_transparency_deterministic_outputs"
+        },
+        {
+          "source": "hardened_mode_safety_test",
+          "name": "totality_healing_action_is_heal_correct"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_track2_unit_and_e2e_items"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_non_rch_cargo_validation_command"
+        }
+      ],
+      "validation_commands": [
+        "jq empty tests/conformance/strict_hardened_semantic_closure_completion_contract.v1.json",
+        "bash -n scripts/check_strict_hardened_semantic_closure_completion_contract.sh",
+        "bash scripts/check_strict_hardened_semantic_closure_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-strict-hardened-semantic-completion-test cargo test -p frankenlibc-harness --test strict_hardened_semantic_closure_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-strict-hardened-semantic-abi-test cargo test -p frankenlibc-abi --test strict_mode_refinement_test --test hardened_mode_safety_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "description": "E2E coverage replays mode semantics, hardened repair/deny, mode contract lock, runtime-mode evidence logging, strict/hardened evidence scenarios, semantic inventory, and semantic drift gates into structured reports/logs.",
+      "implementation_refs": [
+        "mode_semantics_gate_pass",
+        "hardened_matrix_checker_pass",
+        "mode_contract_checker_pass",
+        "strict_hardened_e2e_checker_pass",
+        "runtime_mode_evidence_checker",
+        "semantic_inventory_gate",
+        "semantic_drift_gate"
+      ],
+      "test_refs": [
+        {
+          "source": "strict_hardened_evidence_e2e_test",
+          "name": "e2e_gate_script_passes_and_emits_report_and_jsonl_log"
+        },
+        {
+          "source": "runtime_mode_evidence_logging_coverage_test",
+          "name": "isolated_conformance_child_overrides_ambient_mode_and_logs_startup"
+        },
+        {
+          "source": "semantic_contract_inventory_test",
+          "name": "gate_script_passes_and_emits_structured_report_and_log"
+        },
+        {
+          "source": "semantic_contract_drift_scan_test",
+          "name": "gate_passes_clean_tree_and_emits_report_and_required_log_fields"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_track2_source_gates_and_emits_report"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_hardened_matrix_count_drift"
+        }
+      ],
+      "validation_commands": [
+        "bash scripts/check_mode_semantics.sh",
+        "bash scripts/check_hardened_repair_deny_matrix.sh",
+        "bash scripts/check_mode_contract_lock.sh",
+        "bash scripts/check_runtime_mode_evidence_logging_coverage.sh --validate-only",
+        "bash scripts/check_strict_hardened_evidence_e2e.sh",
+        "bash scripts/check_semantic_contract_inventory.sh",
+        "bash scripts/check_semantic_contract_drift.sh",
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-strict-hardened-semantic-source-tests cargo test -p frankenlibc-harness --test mode_semantics_test --test hardened_repair_deny_matrix_test --test mode_contract_lock_test --test runtime_mode_evidence_logging_coverage_test --test strict_hardened_evidence_e2e_test --test semantic_contract_inventory_test --test semantic_contract_drift_scan_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-strict-hardened-semantic-completion-clippy cargo clippy -p frankenlibc-harness --test strict_hardened_semantic_closure_completion_contract_test -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_commit",
+      "summary",
+      "source_gate_outputs",
+      "events",
+      "errors"
+    ],
+    "required_events": [
+      "strict_hardened_contract_validated",
+      "strict_hardened_source_truth_validated",
+      "strict_hardened_source_gates_replayed",
+      "strict_hardened_completion_summary"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ],
+    "forbidden_pass_events": [
+      "strict_hardened_completion_failed"
+    ]
+  }
+}
