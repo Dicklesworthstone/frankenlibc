@@ -1,0 +1,229 @@
+{
+  "schema_version": "runtime_mode_evidence_logging_coverage_completion_contract.v1",
+  "bead": "bd-0agsk.11.1",
+  "original_bead": "bd-0agsk.11",
+  "trace_id": "bd-0agsk.11.1::runtime-mode-evidence-logging::v1",
+  "generated_at_utc": "2026-05-11T18:07:00Z",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-0agsk.11/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "purpose": "Bind the bd-0agsk.11 runtime-mode evidence logging coverage gate to explicit conformance and telemetry completion evidence.",
+  "source_artifacts": [
+    {
+      "id": "source_contract",
+      "path": "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+      "role": "runtime-mode evidence coverage source contract"
+    },
+    {
+      "id": "source_checker",
+      "path": "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+      "role": "source gate that validates runtime-mode coverage and emits report/log telemetry"
+    },
+    {
+      "id": "source_harness_test",
+      "path": "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs",
+      "role": "source Rust tests for conformance child mode override, gate pass, and negative startup evidence"
+    },
+    {
+      "id": "harness_bin",
+      "path": "crates/frankenlibc-harness/src/bin/harness.rs",
+      "role": "runtime-mode startup evidence and subprocess mode override implementation"
+    },
+    {
+      "id": "kernel_regression_report",
+      "path": "crates/frankenlibc-harness/src/kernel_regression_report.rs",
+      "role": "strict/hardened kernel metrics mode mismatch enforcement"
+    },
+    {
+      "id": "shadow_run",
+      "path": "crates/frankenlibc-harness/src/shadow_run.rs",
+      "role": "candidate replay environment override for FRANKENLIBC_MODE"
+    },
+    {
+      "id": "completion_checker",
+      "path": "scripts/check_runtime_mode_evidence_logging_coverage_completion_contract.sh",
+      "role": "bd-0agsk.11.1 completion checker"
+    },
+    {
+      "id": "completion_harness_test",
+      "path": "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_completion_contract_test.rs",
+      "role": "bd-0agsk.11.1 completion harness proof"
+    }
+  ],
+  "completion_debt_evidence": {
+    "missing_item_bindings": [
+      {
+        "spec_item": "tests.conformance.primary",
+        "description": "Conformance evidence replays the runtime-mode coverage source gate, verifies the isolated conformance child overrides ambient FRANKENLIBC_MODE, and locks strict/hardened startup evidence rows.",
+        "implementation_refs": [
+          "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+          "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+          "crates/frankenlibc-harness/src/bin/harness.rs",
+          "crates/frankenlibc-harness/src/kernel_regression_report.rs",
+          "crates/frankenlibc-harness/src/shadow_run.rs"
+        ],
+        "test_refs": [
+          "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs",
+          "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_completion_contract_test.rs"
+        ],
+        "required_positive_tests": [
+          "runtime_mode_coverage_gate_passes_current_contract",
+          "isolated_conformance_child_overrides_ambient_mode_and_logs_startup",
+          "manifest_binds_runtime_mode_evidence_completion_items",
+          "checker_validates_runtime_mode_evidence_completion_contract"
+        ],
+        "required_negative_tests": [
+          "runtime_mode_coverage_gate_fails_when_startup_evidence_is_removed",
+          "checker_rejects_missing_telemetry_binding",
+          "checker_rejects_source_summary_drift",
+          "checker_rejects_missing_source_test_binding"
+        ],
+        "required_commands": [
+          "bash scripts/check_runtime_mode_evidence_logging_coverage.sh --validate-only",
+          "bash scripts/check_runtime_mode_evidence_logging_coverage_completion_contract.sh",
+          "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_mode_evidence_logging_coverage_test -- --nocapture",
+          "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_mode_evidence_logging_coverage_completion_contract_test -- --nocapture"
+        ]
+      },
+      {
+        "spec_item": "telemetry.primary",
+        "description": "Telemetry evidence locks the source gate report/log contract: pass outcome, coverage row counts, startup evidence row counts, validated event, failure signatures, and traceable source commit.",
+        "implementation_refs": [
+          "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+          "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+          "scripts/check_runtime_mode_evidence_logging_coverage_completion_contract.sh"
+        ],
+        "test_refs": [
+          "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs",
+          "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_completion_contract_test.rs"
+        ],
+        "required_positive_tests": [
+          "runtime_mode_coverage_gate_passes_current_contract",
+          "checker_validates_runtime_mode_evidence_completion_contract"
+        ],
+        "required_negative_tests": [
+          "runtime_mode_coverage_gate_fails_when_startup_evidence_is_removed",
+          "checker_rejects_source_summary_drift"
+        ],
+        "required_commands": [
+          "bash scripts/check_runtime_mode_evidence_logging_coverage.sh --validate-only",
+          "bash scripts/check_runtime_mode_evidence_logging_coverage_completion_contract.sh"
+        ]
+      }
+    ]
+  },
+  "runtime_mode_evidence_contract": {
+    "source_contract_path": "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+    "source_checker_path": "scripts/check_runtime_mode_evidence_logging_coverage.sh",
+    "source_checker_command": "bash scripts/check_runtime_mode_evidence_logging_coverage.sh --validate-only",
+    "source_test_path": "crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs",
+    "expected_schema": "runtime_mode_evidence_logging_coverage.v1",
+    "expected_generated_by_bead": "bd-0agsk.11",
+    "expected_summary": {
+      "coverage_row_count": 7,
+      "subprocess_row_count": 7,
+      "startup_evidence_row_count": 7,
+      "ambient_tz_dependent_row_count": 0,
+      "mismatch_behavior_row_count": 7
+    },
+    "required_campaign_ids": [
+      "harness_conformance_matrix_isolated",
+      "harness_kernel_regression_report",
+      "shadow_run_candidate_replay",
+      "standalone_link_run_smoke",
+      "c_fixture_suite",
+      "ld_preload_smoke",
+      "e2e_suite"
+    ],
+    "required_policy": {
+      "env_key": "FRANKENLIBC_MODE",
+      "allowed_modes": [
+        "strict",
+        "hardened"
+      ],
+      "process_immutable_after_startup": true,
+      "subprocess_rows_must_override_inherited_mode": true,
+      "startup_evidence_required": true,
+      "trace_id_required": true,
+      "ambient_tz_dependency_allowed": false,
+      "mismatch_behavior_required": true
+    },
+    "required_source_tests": [
+      "runtime_mode_coverage_gate_passes_current_contract",
+      "runtime_mode_coverage_gate_fails_when_startup_evidence_is_removed",
+      "isolated_conformance_child_overrides_ambient_mode_and_logs_startup"
+    ],
+    "required_source_test_terms": [
+      "FRANKENLIBC_MODE",
+      "conformance.runtime_mode_startup",
+      "runtime_mode_startup_mismatch",
+      "ambient_tz_dependency",
+      "startup_evidence_missing"
+    ],
+    "expected_source_report": {
+      "schema_version": "runtime_mode_evidence_logging_coverage.report.v1",
+      "bead": "bd-0agsk.11",
+      "outcome": "pass",
+      "failure_signature": "none",
+      "coverage_rows": 7,
+      "startup_evidence_rows": 7
+    },
+    "expected_source_log_event": "runtime_mode_evidence_logging_coverage_validated",
+    "required_failure_signatures": [
+      "startup_evidence_missing",
+      "ambient_tz_dependency",
+      "source_token_missing"
+    ]
+  },
+  "completion_output_contract": {
+    "report_path": "target/conformance/runtime_mode_evidence_logging_coverage_completion_contract.report.json",
+    "log_path": "target/conformance/runtime_mode_evidence_logging_coverage_completion_contract.log.jsonl",
+    "required_report_fields": [
+      "schema_version",
+      "bead_id",
+      "original_bead",
+      "trace_id",
+      "source_commit",
+      "status",
+      "summary",
+      "source_artifacts",
+      "missing_item_bindings",
+      "runtime_mode_evidence",
+      "artifact_refs",
+      "errors"
+    ],
+    "required_events": [
+      "source_artifacts_validated",
+      "completion_bindings_validated",
+      "source_contract_validated",
+      "source_checker_replayed",
+      "telemetry_output_validated",
+      "conformance_test_bindings_validated",
+      "runtime_mode_evidence_logging_coverage_completion_contract_pass"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "bead_id",
+      "original_bead",
+      "scenario_id",
+      "event",
+      "status",
+      "expected",
+      "actual",
+      "artifact_refs",
+      "source_commit",
+      "failure_signature"
+    ],
+    "failure_signatures": [
+      "malformed_contract",
+      "missing_source_artifact",
+      "missing_completion_binding",
+      "source_contract_drift",
+      "source_checker_failed",
+      "telemetry_output_drift",
+      "conformance_binding_drift",
+      "completion_output_contract_failed"
+    ]
+  }
+}
