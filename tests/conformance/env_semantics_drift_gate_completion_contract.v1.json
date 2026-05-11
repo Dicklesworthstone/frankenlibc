@@ -1,0 +1,199 @@
+{
+  "schema_version": "env_semantics_drift_gate_completion_contract.v1",
+  "bead_id": "bd-29b.3.1",
+  "original_bead": "bd-29b.3",
+  "trace_id": "bd-29b.3.1::env-semantics-drift-gate::completion::v1",
+  "description": "Completion contract binding docs/code env reconciliation, CI drift gate behavior, mode semantics matrix coverage, and strict/hardened runtime mode config tests to the missing unit and e2e completion-debt obligations.",
+  "source_artifacts": [
+    {
+      "id": "docs_mismatch_report",
+      "kind": "classification_report",
+      "path": "tests/conformance/env_docs_code_mismatch_report.v1.json",
+      "evidence": "Canonical report proving docs/code env mismatch counts are reconciled to zero."
+    },
+    {
+      "id": "docs_env_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_docs_env_mismatch.sh",
+      "evidence": "CI drift gate that regenerates docs env artifacts, dry-runs outputs, and fails on any non-zero docs/code mismatch count."
+    },
+    {
+      "id": "docs_env_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
+      "evidence": "Harness tests for zero mismatch counts, empty unresolved ambiguity, governance surfaces, trace rows, and base drift-gate execution."
+    },
+    {
+      "id": "mode_semantics_matrix",
+      "kind": "mode_semantics_artifact",
+      "path": "tests/conformance/mode_semantics_matrix.json",
+      "evidence": "Strict/hardened mode semantics matrix covering API families, ABI modules, healing call-site counts, and summary consistency."
+    },
+    {
+      "id": "mode_semantics_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_mode_semantics.sh",
+      "evidence": "CI gate validating mode semantics matrix shape, ABI module cross-references, heals_enabled call-site counts, and summary consistency."
+    },
+    {
+      "id": "mode_semantics_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/mode_semantics_test.rs",
+      "evidence": "Harness tests for strict/hardened behavior entries, ABI modules, source call-site counts, duplicate families, and gate executable presence."
+    },
+    {
+      "id": "mode_contract_lock",
+      "kind": "mode_contract_artifact",
+      "path": "tests/conformance/mode_contract_lock.v1.json",
+      "evidence": "Runtime mode contract artifact locking FRANKENLIBC_MODE to strict/hardened values, strict default, process immutability, and provenance fields."
+    },
+    {
+      "id": "mode_contract_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_mode_contract_lock.sh",
+      "evidence": "CI gate validating runtime/docs inventory alignment, strict/hardened parser contract, startup/reentrant config anchors, and structured provenance output."
+    },
+    {
+      "id": "mode_contract_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/mode_contract_lock_test.rs",
+      "evidence": "Harness tests for mode contract shape, startup/reentrant anchors, and deterministic report/log emission from the mode contract gate."
+    },
+    {
+      "id": "runtime_config",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-membrane/src/config.rs",
+      "evidence": "Runtime mode parser/cache implementation and unit tests for strict/hardened env parsing, process-sticky cache behavior, and resolving-state fallback."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/env_semantics_drift_gate_completion_contract.v1.json",
+      "evidence": "Machine-readable completion-debt binding for the missing unit and e2e proof obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_env_semantics_drift_gate_completion_contract.sh",
+      "evidence": "Fail-closed validator for env reconciliation, mode semantics, mode contract lock, base gate replay, and missing-item bindings."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/env_semantics_drift_gate_completion_contract_test.rs",
+      "evidence": "Rust integration test validating the completion contract, checker report/logs, existing base gates, and negative failure modes."
+    }
+  ],
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ],
+    "required_drift_summary": {
+      "missing_in_docs_count": 0,
+      "missing_in_code_count": 0,
+      "semantic_drift_count": 0,
+      "unresolved_ambiguous_count": 0
+    },
+    "required_mode_semantics": {
+      "total_families": 20,
+      "families_with_healing_min": 19,
+      "total_heals_call_sites_min": 100,
+      "required_modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    "required_mode_contract": {
+      "env_key": "FRANKENLIBC_MODE",
+      "allowed_values": [
+        "strict",
+        "hardened"
+      ],
+      "default_value": "strict",
+      "mutability_contains": "immutable",
+      "required_anchors": [
+        "runtime_mode_parser_is_strict_or_hardened_only",
+        "cached_mode_is_process_sticky_until_cache_reset",
+        "resolving_state_returns_strict_safe_default"
+      ]
+    },
+    "required_gate_markers": {
+      "docs_env_gate": [
+        "PASS: docs/code mismatch report reconciled",
+        "PASS: docs source-of-truth map validated"
+      ],
+      "mode_semantics_gate": [
+        "check_mode_semantics: PASS"
+      ],
+      "mode_contract_gate": [
+        "PASS: mode contract lock validated",
+        "PASS: wrote structured provenance log"
+      ]
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "crates/frankenlibc-membrane/src/config.rs",
+        "tests/conformance/mode_semantics_matrix.json",
+        "tests/conformance/mode_contract_lock.v1.json",
+        "tests/conformance/env_docs_code_mismatch_report.v1.json",
+        "scripts/check_env_semantics_drift_gate_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/mode_semantics_test.rs",
+        "crates/frankenlibc-harness/tests/mode_contract_lock_test.rs",
+        "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
+        "crates/frankenlibc-harness/tests/env_semantics_drift_gate_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "mode_semantics_test::heals_call_sites_match_source",
+        "mode_contract_lock_test::startup_reentrant_anchors_are_declared",
+        "env_semantics_drift_gate_completion_contract_test::contract_binds_env_semantics_unit_and_e2e_sources",
+        "env_semantics_drift_gate_completion_contract_test::checker_accepts_env_semantics_completion_contract"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "implementation_refs": [
+        "scripts/check_docs_env_mismatch.sh",
+        "scripts/check_mode_semantics.sh",
+        "scripts/check_mode_contract_lock.sh",
+        "scripts/check_env_semantics_drift_gate_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
+        "crates/frankenlibc-harness/tests/mode_semantics_test.rs",
+        "crates/frankenlibc-harness/tests/mode_contract_lock_test.rs",
+        "crates/frankenlibc-harness/tests/env_semantics_drift_gate_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "scripts/check_docs_env_mismatch.sh",
+        "scripts/check_mode_semantics.sh",
+        "scripts/check_mode_contract_lock.sh",
+        "env_semantics_drift_gate_completion_contract_test::completion_contract_runs_base_env_semantics_gates"
+      ]
+    }
+  ],
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_env_semantics_unit_and_e2e_sources",
+      "checker_accepts_env_semantics_completion_contract",
+      "completion_contract_runs_base_env_semantics_gates"
+    ],
+    "negative": [
+      "checker_rejects_missing_e2e_binding",
+      "checker_rejects_mode_contract_allowed_value_drift",
+      "checker_rejects_mode_semantics_family_drift"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/env_semantics_drift_gate_completion_contract.v1.json",
+      "scripts/check_env_semantics_drift_gate_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/env_semantics_drift_gate_completion_contract_test.rs"
+    ]
+  }
+}
