@@ -1,17 +1,17 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.1",
-  "generated_at": "2026-04-27T03:55:58Z",
+  "generated_at": "2026-05-11T08:37:54Z",
   "summary": {
-    "total_fixture_files": 56,
-    "total_fixture_cases": 1244,
-    "unique_symbols_in_fixtures": 384,
+    "total_fixture_files": 58,
+    "total_fixture_cases": 1289,
+    "unique_symbols_in_fixtures": 421,
     "implemented_symbols": 4119,
-    "symbols_with_fixtures": 366,
+    "symbols_with_fixtures": 403,
     "symbols_at_threshold": 8,
     "symbols_below_threshold": 4111,
-    "symbols_with_zero_fixtures": 3753,
-    "coverage_pct": 8.9,
+    "symbols_with_zero_fixtures": 3716,
+    "coverage_pct": 9.8,
     "min_coverage_pct": 5.0,
     "threshold_pct": 0.2,
     "min_cases_threshold": 10,
@@ -21,10 +21,10 @@
     {
       "module": "c11threads_abi",
       "total_symbols": 25,
-      "covered_symbols": 0,
+      "covered_symbols": 23,
       "at_threshold": 0,
-      "total_cases": 0,
-      "coverage_pct": 0.0,
+      "total_cases": 23,
+      "coverage_pct": 92.0,
       "threshold_pct": 0.0
     },
     {
@@ -50,7 +50,7 @@
       "total_symbols": 7,
       "covered_symbols": 5,
       "at_threshold": 0,
-      "total_cases": 13,
+      "total_cases": 15,
       "coverage_pct": 71.4,
       "threshold_pct": 0.0
     },
@@ -284,7 +284,7 @@
       "total_symbols": 28,
       "covered_symbols": 9,
       "at_threshold": 1,
-      "total_cases": 31,
+      "total_cases": 32,
       "coverage_pct": 32.1,
       "threshold_pct": 3.6
     },
@@ -336,10 +336,10 @@
     {
       "module": "string_abi",
       "total_symbols": 146,
-      "covered_symbols": 25,
+      "covered_symbols": 37,
       "at_threshold": 2,
-      "total_cases": 94,
-      "coverage_pct": 17.1,
+      "total_cases": 107,
+      "coverage_pct": 25.3,
       "threshold_pct": 1.4
     },
     {
@@ -363,10 +363,10 @@
     {
       "module": "unistd_abi",
       "total_symbols": 742,
-      "covered_symbols": 31,
+      "covered_symbols": 33,
       "at_threshold": 0,
-      "total_cases": 60,
-      "coverage_pct": 4.2,
+      "total_cases": 66,
+      "coverage_pct": 4.4,
       "threshold_pct": 0.0
     },
     {
@@ -4328,9 +4328,9 @@
       "symbol": "__memcmpeq",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "__memcpy_chk",
@@ -4352,9 +4352,9 @@
       "symbol": "__mempcpy",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "__mempcpy_chk",
@@ -5128,9 +5128,9 @@
       "symbol": "__rawmemchr",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "__rcmd_errstr",
@@ -5880,9 +5880,9 @@
       "symbol": "__stpcpy",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "__stpcpy_chk",
@@ -5896,17 +5896,17 @@
       "symbol": "__stpcpy_small",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "__stpncpy",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "__stpncpy_chk",
@@ -5920,25 +5920,25 @@
       "symbol": "__strcasecmp",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "__strcasecmp_l",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "__strcasestr",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "__strcat_chk",
@@ -5952,9 +5952,9 @@
       "symbol": "__strcoll_l",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "__strcpy_chk",
@@ -5968,17 +5968,17 @@
       "symbol": "__strcpy_small",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "__strcspn_c1",
       "module": "string_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "__strcspn_c2",
@@ -9104,9 +9104,9 @@
       "symbol": "call_once",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "calloc",
@@ -10448,41 +10448,41 @@
       "symbol": "cnd_broadcast",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "cnd_destroy",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "cnd_init",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "cnd_signal",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "cnd_timedwait",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "cnd_wait",
@@ -11704,9 +11704,9 @@
       "symbol": "dlclose",
       "module": "dlfcn_abi",
       "status": "Implemented",
-      "fixture_cases": 2,
+      "fixture_cases": 4,
       "meets_threshold": false,
-      "gap": 8
+      "gap": 6
     },
     {
       "symbol": "dlerror",
@@ -16704,9 +16704,9 @@
       "symbol": "getmntent_r",
       "module": "unistd_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 3,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 7
     },
     {
       "symbol": "getmsg",
@@ -17696,9 +17696,9 @@
       "symbol": "hasmntopt",
       "module": "unistd_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 3,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 7
     },
     {
       "symbol": "hcreate",
@@ -19240,9 +19240,9 @@
       "symbol": "kill",
       "module": "signal_abi",
       "status": "RawSyscall",
-      "fixture_cases": 3,
+      "fixture_cases": 4,
       "meets_threshold": false,
-      "gap": 7
+      "gap": 6
     },
     {
       "symbol": "killpg",
@@ -21456,49 +21456,49 @@
       "symbol": "mtx_destroy",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "mtx_init",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "mtx_lock",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "mtx_timedlock",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "mtx_trylock",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "mtx_unlock",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "munlock",
@@ -30160,33 +30160,33 @@
       "symbol": "thrd_create",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "thrd_current",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "thrd_detach",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "thrd_equal",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "thrd_exit",
@@ -30200,25 +30200,25 @@
       "symbol": "thrd_join",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "thrd_sleep",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "thrd_yield",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "time",
@@ -30712,33 +30712,33 @@
       "symbol": "tss_create",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "tss_delete",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "tss_get",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "tss_set",
       "module": "c11threads_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "ttyname",
@@ -33360,6 +33360,38 @@
       "issues": []
     },
     {
+      "file": "c11threads_ops.json",
+      "total_cases": 23,
+      "symbols_covered": 23,
+      "symbols": {
+        "thrd_create": 1,
+        "thrd_join": 1,
+        "thrd_detach": 1,
+        "thrd_current": 1,
+        "thrd_equal": 1,
+        "thrd_sleep": 1,
+        "thrd_yield": 1,
+        "mtx_init": 1,
+        "mtx_lock": 1,
+        "mtx_trylock": 1,
+        "mtx_timedlock": 1,
+        "mtx_unlock": 1,
+        "mtx_destroy": 1,
+        "cnd_init": 1,
+        "cnd_signal": 1,
+        "cnd_broadcast": 1,
+        "cnd_timedwait": 1,
+        "cnd_destroy": 1,
+        "tss_create": 1,
+        "tss_set": 1,
+        "tss_get": 1,
+        "tss_delete": 1,
+        "call_once": 1
+      },
+      "valid": true,
+      "issues": []
+    },
+    {
       "file": "ctype_ops.json",
       "total_cases": 37,
       "symbols_covered": 11,
@@ -33397,11 +33429,12 @@
     },
     {
       "file": "dlfcn_ops.json",
-      "total_cases": 7,
-      "symbols_covered": 3,
+      "total_cases": 9,
+      "symbols_covered": 4,
       "symbols": {
         "dlopen": 3,
         "dlsym": 3,
+        "dlclose": 2,
         "dlerror": 1
       },
       "valid": true,
@@ -33607,6 +33640,17 @@
         "memset": 2,
         "memcmp": 3,
         "memchr": 2
+      },
+      "valid": true,
+      "issues": []
+    },
+    {
+      "file": "mntent_ops.json",
+      "total_cases": 6,
+      "symbols_covered": 2,
+      "symbols": {
+        "getmntent_r": 3,
+        "hasmntopt": 3
       },
       "valid": true,
       "issues": []
@@ -33850,11 +33894,11 @@
     },
     {
       "file": "signal_ops.json",
-      "total_cases": 48,
+      "total_cases": 49,
       "symbols_covered": 11,
       "symbols": {
         "raise": 2,
-        "kill": 3,
+        "kill": 4,
         "signal": 11,
         "sigaction": 1,
         "ssignal": 9,
@@ -34082,8 +34126,8 @@
     },
     {
       "file": "string_ops.json",
-      "total_cases": 19,
-      "symbols_covered": 14,
+      "total_cases": 32,
+      "symbols_covered": 26,
       "symbols": {
         "memmove": 1,
         "memset": 1,
@@ -34098,7 +34142,19 @@
         "strcmp": 1,
         "strchr": 1,
         "strrchr": 1,
-        "strstr": 1
+        "strstr": 1,
+        "__memcmpeq": 1,
+        "__mempcpy": 2,
+        "__rawmemchr": 1,
+        "__stpcpy": 1,
+        "__stpcpy_small": 1,
+        "__stpncpy": 1,
+        "__strcasecmp": 1,
+        "__strcasecmp_l": 1,
+        "__strcasestr": 1,
+        "__strcoll_l": 1,
+        "__strcpy_small": 1,
+        "__strcspn_c1": 1
       },
       "valid": true,
       "issues": []

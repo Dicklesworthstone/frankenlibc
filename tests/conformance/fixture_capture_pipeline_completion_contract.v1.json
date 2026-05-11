@@ -1,0 +1,291 @@
+{
+  "schema_version": "fixture_capture_pipeline_completion_contract.v1",
+  "bead_id": "bd-2hh.1.1",
+  "original_bead": "bd-2hh.1",
+  "trace_id": "bd-2hh.1.1::fixture-capture-pipeline::completion::v1",
+  "description": "Completion contract binding the fixture capture pipeline, fixture corpus, unit/schema gates, representative golden execution, and conformance fixture reports to the missing unit, e2e, golden, and conformance completion-debt obligations.",
+  "source_artifacts": [
+    {
+      "id": "capture_impl",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-harness/src/capture.rs",
+      "evidence": "Host glibc fixture capture implementation, including family filtering and recapture behavior."
+    },
+    {
+      "id": "fixture_loader_impl",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-harness/src/fixtures.rs",
+      "evidence": "Fixture loading and schema adaptation for standard and structured fixture JSON files."
+    },
+    {
+      "id": "fixture_runner_impl",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-harness/src/runner.rs",
+      "evidence": "Harness runner that executes fixture sets and compares implementation output against captured expectations."
+    },
+    {
+      "id": "fixture_exec_boundary",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-fixture-exec/src/lib.rs",
+      "evidence": "Stable fixture execution boundary consumed by harness tests and golden execution proofs."
+    },
+    {
+      "id": "fixture_pipeline_report",
+      "kind": "conformance_report",
+      "path": "tests/conformance/fixture_pipeline.v1.json",
+      "evidence": "Canonical fixture pipeline report refreshed against the current fixture corpus and support-matrix symbol universe."
+    },
+    {
+      "id": "fixture_pipeline_generator",
+      "kind": "generator",
+      "path": "scripts/generate_conformance_fixture_pipeline.py",
+      "evidence": "Deterministic generator for fixture file counts, case counts, symbol coverage, module coverage, and format issue inventory."
+    },
+    {
+      "id": "fixture_pipeline_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_conformance_fixture_pipeline.sh",
+      "evidence": "CI-facing fixture pipeline gate for report generation, format validation, case count floor, module coverage, and coverage floor checks."
+    },
+    {
+      "id": "fixture_pipeline_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/conformance_fixture_pipeline_test.rs",
+      "evidence": "Harness tests for pipeline report generation, schema completeness, valid fixture format, fixture case floor, and module coverage."
+    },
+    {
+      "id": "fixture_unit_report",
+      "kind": "unit_report",
+      "path": "tests/conformance/fixture_unit_tests.v1.json",
+      "evidence": "Canonical fixture unit-test inventory with fixture hashes, deterministic parsing, regression baseline, and clean status."
+    },
+    {
+      "id": "fixture_unit_generator",
+      "kind": "generator",
+      "path": "scripts/generate_conformance_fixture_unit_tests.py",
+      "evidence": "Deterministic generator for per-fixture unit validation, content hashes, regression detection, and JSONL telemetry."
+    },
+    {
+      "id": "fixture_unit_gate",
+      "kind": "unit_gate",
+      "path": "scripts/check_conformance_fixture_unit_tests.sh",
+      "evidence": "Fixture unit validation gate for valid files, deterministic parsing, total cases, regression baseline, and fixture hashes."
+    },
+    {
+      "id": "fixture_unit_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/conformance_fixture_unit_tests_test.rs",
+      "evidence": "Harness tests for fixture unit report generation, schema completeness, regression baseline, deterministic parsing, and log emission."
+    },
+    {
+      "id": "fixture_schema_contract",
+      "kind": "schema_contract",
+      "path": "tests/conformance/fixture_schema_validation.v1.json",
+      "evidence": "Schema contract for all fixture files, expectation tags, errno policy, inventory counts, and failure signatures."
+    },
+    {
+      "id": "fixture_schema_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_fixture_schema_validation.sh",
+      "evidence": "Fail-closed schema validator for every fixture JSON file and structured scenario file."
+    },
+    {
+      "id": "fixture_schema_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/fixture_schema_validation_test.rs",
+      "evidence": "Harness tests for current corpus schema pass and negative malformed fixture cases."
+    },
+    {
+      "id": "fixture_executor_golden_contract",
+      "kind": "golden_contract",
+      "path": "tests/conformance/fixture_executor_ownership_and_golden.v1.json",
+      "evidence": "Golden manifest locking fixture executor ownership and representative execute_fixture_case output hashes."
+    },
+    {
+      "id": "fixture_executor_golden_gate",
+      "kind": "golden_gate",
+      "path": "scripts/check_fixture_executor_ownership_and_golden.sh",
+      "evidence": "Gate validating fixture-exec ownership, harness dependency boundaries, golden case count, hashes, and fixture case presence."
+    },
+    {
+      "id": "fixture_executor_golden_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/fixture_executor_ownership_and_golden_test.rs",
+      "evidence": "Harness tests for ownership boundaries, checker output, current execute_fixture_case golden hashes, and negative drift cases."
+    },
+    {
+      "id": "fixture_verify_golden_suite",
+      "kind": "golden_output",
+      "path": "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json",
+      "evidence": "Strict/hardened fixture verification suite showing all fixture verification results pass."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/fixture_capture_pipeline_completion_contract.v1.json",
+      "evidence": "Machine-readable completion-debt binding for unit, e2e, golden, and conformance proof obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_fixture_capture_pipeline_completion_contract.sh",
+      "evidence": "Fail-closed validator for fixture pipeline, unit inventory, schema, golden, base gates, and missing-item bindings."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/fixture_capture_pipeline_completion_contract_test.rs",
+      "evidence": "Rust integration test validating the completion contract, report/log output, probe generation, and negative failure modes."
+    }
+  ],
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.golden.primary",
+      "tests.conformance.primary"
+    ],
+    "required_fixture_pipeline": {
+      "total_fixture_files": 58,
+      "total_fixture_cases_min": 1289,
+      "unique_symbols_in_fixtures_min": 421,
+      "symbols_with_fixtures_min": 403,
+      "fixture_format_issues": 0,
+      "coverage_pct_min": 5.0
+    },
+    "required_fixture_unit": {
+      "total_fixture_files": 58,
+      "valid_fixture_files": 58,
+      "invalid_fixture_files": 0,
+      "total_cases_min": 1294,
+      "total_issues": 0,
+      "total_warnings": 0,
+      "unique_families_min": 57,
+      "unique_symbols_min": 421,
+      "determinism_verified": true,
+      "regression_status": "clean",
+      "baseline_digest_length": 64
+    },
+    "required_schema_inventory": {
+      "fixture_file_count": 58,
+      "standard_fixture_files": 57,
+      "structured_fixture_files": 1,
+      "standard_case_count": 1284,
+      "structured_program_scenarios": 2,
+      "structured_unsupported_scenarios": 3,
+      "expected_errno_required_cases": 1242,
+      "expected_errno_optional_cases": 42
+    },
+    "required_golden": {
+      "executor_case_count": 7,
+      "verify_suite_total": 1817,
+      "verify_suite_passed": 1817,
+      "verify_suite_failed": 0,
+      "verify_suite_skipped": 0
+    },
+    "required_gate_markers": {
+      "fixture_schema_gate": [
+        "PASS: fixture schema validation files=58 cases=1284 structured=1"
+      ],
+      "fixture_executor_golden_gate": [
+        "PASS: fixture executor ownership and golden manifest validated cases=7"
+      ]
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "crates/frankenlibc-harness/src/capture.rs",
+        "crates/frankenlibc-harness/src/fixtures.rs",
+        "scripts/generate_conformance_fixture_unit_tests.py",
+        "tests/conformance/fixture_unit_tests.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/conformance_fixture_unit_tests_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_schema_validation_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_capture_pipeline_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "conformance_fixture_unit_tests_test::fixture_unit_determinism_verified",
+        "conformance_fixture_unit_tests_test::fixture_unit_regression_baseline_populated",
+        "fixture_schema_validation_test::checker_passes_for_current_fixture_corpus",
+        "fixture_capture_pipeline_completion_contract_test::contract_binds_fixture_capture_completion_items"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "implementation_refs": [
+        "scripts/check_conformance_fixture_pipeline.sh",
+        "scripts/check_fixture_schema_validation.sh",
+        "scripts/check_fixture_executor_ownership_and_golden.sh",
+        "scripts/check_fixture_capture_pipeline_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/conformance_fixture_pipeline_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_executor_ownership_and_golden_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_capture_pipeline_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "scripts/check_fixture_schema_validation.sh --validate-only",
+        "scripts/check_fixture_executor_ownership_and_golden.sh --validate-only",
+        "fixture_capture_pipeline_completion_contract_test::completion_contract_generates_pipeline_and_unit_probes"
+      ]
+    },
+    {
+      "missing_item_id": "tests.golden.primary",
+      "implementation_refs": [
+        "tests/conformance/fixture_executor_ownership_and_golden.v1.json",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json",
+        "crates/frankenlibc-fixture-exec/src/lib.rs"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/fixture_executor_ownership_and_golden_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_capture_pipeline_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "fixture_executor_ownership_and_golden_test::golden_manifest_matches_current_execute_fixture_case_outputs",
+        "fixture_capture_pipeline_completion_contract_test::checker_rejects_golden_suite_failure_drift"
+      ]
+    },
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "implementation_refs": [
+        "tests/conformance/fixtures",
+        "tests/conformance/fixture_pipeline.v1.json",
+        "tests/conformance/fixture_schema_validation.v1.json",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/conformance_fixture_pipeline_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_schema_validation_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_capture_pipeline_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "conformance_fixture_pipeline_test::pipeline_fixtures_have_valid_format",
+        "conformance_fixture_pipeline_test::pipeline_sufficient_cases",
+        "fixture_capture_pipeline_completion_contract_test::checker_accepts_fixture_capture_completion_contract"
+      ]
+    }
+  ],
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_fixture_capture_completion_items",
+      "checker_accepts_fixture_capture_completion_contract",
+      "completion_contract_generates_pipeline_and_unit_probes"
+    ],
+    "negative": [
+      "checker_rejects_missing_golden_binding",
+      "checker_rejects_fixture_pipeline_count_drift",
+      "checker_rejects_golden_suite_failure_drift"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/fixture_capture_pipeline_completion_contract.v1.json",
+      "tests/conformance/fixture_pipeline.v1.json",
+      "scripts/check_fixture_capture_pipeline_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/fixture_capture_pipeline_completion_contract_test.rs"
+    ]
+  }
+}
