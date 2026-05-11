@@ -8,7 +8,7 @@ Full symbol-universe normalization and support classification pipeline:
   4. Unknown/unverified — flag symbols with ambiguous or missing state.
   5. Report — produce reproducible, diff-friendly classification dataset.
 
-Generates a JSON report to stdout (or --output).
+Generates a JSON report to stdout (or --output) plus optional JSONL telemetry.
 """
 import argparse
 import hashlib
@@ -37,14 +37,21 @@ def load_json_file(path):
 
 # Canonical module-to-family mapping
 MODULE_TO_FAMILY = {
+    "c11threads_abi": "c11threads",
     "ctype_abi": "ctype",
     "dirent_abi": "dirent",
     "dlfcn_abi": "dlfcn",
+    "err_abi": "err",
     "errno_abi": "errno",
+    "fenv_abi": "fenv",
+    "fortify_abi": "fortify",
+    "glibc_internal_abi": "glibc_internal",
     "grp_abi": "grp",
     "iconv_abi": "iconv",
     "inet_abi": "inet",
     "io_abi": "io",
+    "io_internal_abi": "io_internal",
+    "isoc_abi": "isoc",
     "locale_abi": "locale",
     "malloc_abi": "malloc",
     "math_abi": "math",
@@ -55,10 +62,15 @@ MODULE_TO_FAMILY = {
     "pwd_abi": "pwd",
     "resolv_abi": "resolv",
     "resource_abi": "resource",
+    "rpc_abi": "rpc",
+    "runtime_policy": "runtime_policy",
+    "search_abi": "search",
+    "setjmp_abi": "setjmp",
     "signal_abi": "signal",
     "socket_abi": "socket",
     "startup_abi": "startup",
     "stdio_abi": "stdio",
+    "stdbit_abi": "stdbit",
     "stdlib_abi": "stdlib",
     "string_abi": "string",
     "termios_abi": "termios",
@@ -101,11 +113,24 @@ CONFIDENCE_BY_STATUS = {
     "Stub": "low",
 }
 
+CLASSIFICATION_BY_STATUS = {
+    "Implemented": "native",
+    "RawSyscall": "syscall-passthrough",
+    "WrapsHostLibc": "host-wrapped",
+    "GlibcCallThrough": "host-delegated",
+    "Stub": "stub",
+}
+
 # Replacement complexity by module
 MODULE_COMPLEXITY = {
     "string_abi": "low",
     "ctype_abi": "low",
+    "c11threads_abi": "medium",
     "errno_abi": "low",
+    "err_abi": "low",
+    "fenv_abi": "low",
+    "fortify_abi": "medium",
+    "glibc_internal_abi": "high",
     "malloc_abi": "medium",
     "math_abi": "medium",
     "stdlib_abi": "medium",
@@ -120,8 +145,15 @@ MODULE_COMPLEXITY = {
     "locale_abi": "medium",
     "inet_abi": "medium",
     "grp_abi": "medium",
+    "io_internal_abi": "medium",
+    "isoc_abi": "low",
     "pwd_abi": "medium",
     "process_abi": "medium",
+    "rpc_abi": "high",
+    "runtime_policy": "medium",
+    "search_abi": "low",
+    "setjmp_abi": "medium",
+    "stdbit_abi": "low",
     "unistd_abi": "medium",
     "mmap_abi": "medium",
     "poll_abi": "low",
@@ -134,6 +166,16 @@ MODULE_COMPLEXITY = {
 }
 
 COMPLEXITY_WEIGHTS = {"low": 1, "medium": 2, "high": 3}
+
+
+def stable_trace_id(symbol, module, status):
+    """Return a stable trace ID for per-symbol audit rows."""
+    payload = f"bd-2vv.9:{symbol}:{module}:{status}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def file_sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def normalize_symbol(sym_entry):
@@ -149,6 +191,8 @@ def normalize_symbol(sym_entry):
         issues.append(f"unknown status: {status}")
 
     module = sym_entry.get("module", "")
+    if not module:
+        issues.append("missing module")
     family = MODULE_TO_FAMILY.get(module, "unknown")
     if family == "unknown" and module:
         issues.append(f"unmapped module: {module}")
@@ -171,20 +215,10 @@ def normalize_symbol(sym_entry):
     priority_score = impact * 100 - complexity * 10
 
     # Support classification
-    if status == "Implemented":
-        classification = "native"
-    elif status == "RawSyscall":
-        classification = "syscall-passthrough"
-    elif status == "WrapsHostLibc":
-        classification = "host-wrapped"
-    elif status == "GlibcCallThrough":
-        classification = "host-delegated"
-    elif status == "Stub":
-        classification = "stub"
-    else:
-        classification = "unknown"
+    classification = CLASSIFICATION_BY_STATUS.get(status, "unknown")
 
     return {
+        "trace_id": stable_trace_id(symbol, module, status),
         "symbol": symbol,
         "module": module,
         "family": family,
@@ -212,10 +246,35 @@ def compute_universe_hash(normalized_symbols):
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
+def write_symbol_log(path, normalized_symbols):
+    """Write one deterministic JSONL event per normalized symbol."""
+    rows = []
+    for symbol in normalized_symbols:
+        rows.append({
+            "schema_version": "symbol_universe_normalization.log.v1",
+            "event": "symbol_universe_classification",
+            "bead": "bd-2vv.9",
+            "trace_id": symbol["trace_id"],
+            "symbol": symbol["symbol"],
+            "family": symbol["family"],
+            "module": symbol["module"],
+            "classification": symbol["classification"],
+            "confidence": symbol["confidence"],
+            "support_status": symbol["status"],
+            "perf_class": symbol["perf_class"],
+        })
+
+    output = "".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(output, encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Symbol universe normalization and classification pipeline")
     parser.add_argument("-o", "--output", help="Output file path")
+    parser.add_argument("--log", help="Write per-symbol classification telemetry JSONL")
     args = parser.parse_args()
 
     root = find_repo_root()
@@ -293,6 +352,11 @@ def main():
         "bead": "bd-2vv.9",
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "universe_hash": universe_hash,
+        "source_artifacts": {
+            "support_matrix": "support_matrix.json",
+            "support_matrix_sha256": file_sha256(matrix_path),
+            "support_matrix_total_exported": matrix.get("total_exported"),
+        },
         "summary": {
             "total_symbols": len(normalized),
             "unique_symbols": len(seen_names),
@@ -318,7 +382,9 @@ def main():
         "classification_rules": {
             "native": "Implemented in safe Rust (status=Implemented)",
             "syscall-passthrough": "Direct syscall forwarding (status=RawSyscall)",
+            "host-wrapped": "Native wrapper that still calls host libc internally (status=WrapsHostLibc)",
             "host-delegated": "Delegates to host glibc (status=GlibcCallThrough)",
+            "stub": "Deterministic fallback/error contract (status=Stub)",
             "unknown": "Classification could not be determined",
         },
         "confidence_rules": {
@@ -326,6 +392,17 @@ def main():
             "medium": "Syscall passthrough with known ABI contract",
             "low": "Host-delegated, verification depends on host glibc version",
             "unknown": "Could not determine confidence level",
+        },
+        "telemetry": {
+            "log_schema_version": "symbol_universe_normalization.log.v1",
+            "default_log_path": "target/conformance/symbol_universe_normalization.log.jsonl",
+            "required_fields": [
+                "trace_id",
+                "symbol",
+                "family",
+                "classification",
+                "confidence",
+            ],
         },
     }
 
@@ -336,6 +413,10 @@ def main():
         print(f"Report written to {args.output}", file=sys.stderr)
     else:
         print(output)
+
+    if args.log:
+        write_symbol_log(args.log, normalized)
+        print(f"Log written to {args.log}", file=sys.stderr)
 
 
 if __name__ == "__main__":
