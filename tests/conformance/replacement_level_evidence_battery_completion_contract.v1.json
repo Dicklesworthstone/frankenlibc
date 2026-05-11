@@ -1,0 +1,430 @@
+{
+  "schema_version": "replacement_level_evidence_battery_completion_contract.v1",
+  "bead": "bd-w2c3.2.3",
+  "completion_debt_bead": "bd-w2c3.2.3.1",
+  "description": "Completion-debt evidence binding for the replacement-level L1/L2/L3 evidence battery, claim-control reports, and stale blocker prevention.",
+  "next_audit_score_threshold": 800,
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.2.3/scorecard.md",
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "source_paths": {
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "replacement_levels_gate": "scripts/check_replacement_levels.sh",
+    "replacement_levels_harness": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+    "support_matrix": "support_matrix.json",
+    "l1_crt_matrix": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+    "replacement_level_dashboard": "tests/conformance/replacement_level_dashboard.v1.json",
+    "callthrough_census": "tests/conformance/callthrough_census.v1.json",
+    "residual_callthrough_blockers": "tests/conformance/residual_replacement_callthrough_blockers.v1.json",
+    "readme": "README.md",
+    "completion_contract": "tests/conformance/replacement_level_evidence_battery_completion_contract.v1.json",
+    "completion_checker": "scripts/check_replacement_level_evidence_battery_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/replacement_level_evidence_battery_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    {
+      "kind": "levels_manifest",
+      "path": "tests/conformance/replacement_levels.json",
+      "line": 5,
+      "anchor": "\"levels\""
+    },
+    {
+      "kind": "l1_objective_gate",
+      "path": "tests/conformance/replacement_levels.json",
+      "line": 50,
+      "anchor": "\"objective_gate\""
+    },
+    {
+      "kind": "l1_objective_obligations",
+      "path": "tests/conformance/replacement_levels.json",
+      "line": 66,
+      "anchor": "\"obligations\""
+    },
+    {
+      "kind": "l1_evidence_bundle",
+      "path": "tests/conformance/replacement_levels.json",
+      "line": 183,
+      "anchor": "\"evidence_bundle\""
+    },
+    {
+      "kind": "l1_blockers",
+      "path": "tests/conformance/replacement_levels.json",
+      "line": 200,
+      "anchor": "\"blockers\""
+    },
+    {
+      "kind": "l2_standalone_blocker_refreshed",
+      "path": "tests/conformance/replacement_levels.json",
+      "line": 227,
+      "anchor": "Standalone artifact packaging/deployment proof remains pending"
+    },
+    {
+      "kind": "l3_full_replacement_level",
+      "path": "tests/conformance/replacement_levels.json",
+      "line": 234,
+      "anchor": "\"level\": \"L3\""
+    },
+    {
+      "kind": "current_level_l0",
+      "path": "tests/conformance/replacement_levels.json",
+      "line": 266,
+      "anchor": "\"current_level\": \"L0\""
+    },
+    {
+      "kind": "current_assessment_zero_residual",
+      "path": "tests/conformance/replacement_levels.json",
+      "line": 267,
+      "anchor": "\"current_assessment\""
+    },
+    {
+      "kind": "release_tag_policy",
+      "path": "tests/conformance/replacement_levels.json",
+      "line": 280,
+      "anchor": "\"release_tag_policy\""
+    },
+    {
+      "kind": "transition_requirements",
+      "path": "tests/conformance/replacement_levels.json",
+      "line": 292,
+      "anchor": "\"transition_requirements\""
+    },
+    {
+      "kind": "levels_gate_header",
+      "path": "scripts/check_replacement_levels.sh",
+      "line": 1,
+      "anchor": "check_replacement_levels.sh"
+    },
+    {
+      "kind": "levels_gate_json_validation",
+      "path": "scripts/check_replacement_levels.sh",
+      "line": 43,
+      "anchor": "valid_check"
+    },
+    {
+      "kind": "levels_gate_assessment_check",
+      "path": "scripts/check_replacement_levels.sh",
+      "line": 132,
+      "anchor": "assessment_check"
+    },
+    {
+      "kind": "levels_gate_status_check",
+      "path": "scripts/check_replacement_levels.sh",
+      "line": 209,
+      "anchor": "status_check"
+    },
+    {
+      "kind": "levels_gate_monotonicity_check",
+      "path": "scripts/check_replacement_levels.sh",
+      "line": 262,
+      "anchor": "mono_check"
+    },
+    {
+      "kind": "levels_gate_claim_drift_check",
+      "path": "scripts/check_replacement_levels.sh",
+      "line": 313,
+      "anchor": "claim_check"
+    },
+    {
+      "kind": "levels_gate_l1_crt_check",
+      "path": "scripts/check_replacement_levels.sh",
+      "line": 419,
+      "anchor": "l1_crt_check"
+    },
+    {
+      "kind": "levels_gate_artifact_report",
+      "path": "scripts/check_replacement_levels.sh",
+      "line": 623,
+      "anchor": "artifact_output"
+    },
+    {
+      "kind": "levels_gate_report_schema",
+      "path": "scripts/check_replacement_levels.sh",
+      "line": 1160,
+      "anchor": "\"gate_id\": \"replacement_levels_l1_gate\""
+    },
+    {
+      "kind": "levels_gate_log_rows",
+      "path": "scripts/check_replacement_levels.sh",
+      "line": 1197,
+      "anchor": "log_rows"
+    },
+    {
+      "kind": "levels_gate_pass_summary",
+      "path": "scripts/check_replacement_levels.sh",
+      "line": 1271,
+      "anchor": "Structured L1 objective gate artifacts refreshed"
+    },
+    {
+      "kind": "levels_harness_manifest_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+      "line": 436,
+      "anchor": "fn levels_exists_and_valid"
+    },
+    {
+      "kind": "levels_harness_assessment_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+      "line": 494,
+      "anchor": "fn assessment_matches_support_matrix"
+    },
+    {
+      "kind": "levels_harness_status_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+      "line": 561,
+      "anchor": "fn status_progression_consistent"
+    },
+    {
+      "kind": "levels_harness_monotonicity_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+      "line": 617,
+      "anchor": "fn gate_criteria_monotonically_tighten"
+    },
+    {
+      "kind": "levels_harness_claim_drift_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+      "line": 731,
+      "anchor": "fn claim_drift_guard_consistent_with_readme_and_release_policy"
+    },
+    {
+      "kind": "levels_harness_stale_blocker_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+      "line": 843,
+      "anchor": "fn blocker_text_does_not_reference_resolved_numeric_counts"
+    },
+    {
+      "kind": "levels_harness_l1_matrix_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+      "line": 907,
+      "anchor": "fn l1_crt_startup_tls_proof_matrix_validates_required_rows"
+    },
+    {
+      "kind": "levels_harness_gate_artifact_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+      "line": 1090,
+      "anchor": "fn gate_script_refreshes_l1_objective_gate_artifacts"
+    },
+    {
+      "kind": "callthrough_census_zero",
+      "path": "tests/conformance/callthrough_census.v1.json",
+      "line": 29,
+      "anchor": "\"summary\""
+    },
+    {
+      "kind": "residual_truth_zero",
+      "path": "tests/conformance/residual_replacement_callthrough_blockers.v1.json",
+      "line": 10,
+      "anchor": "\"current_truth\""
+    },
+    {
+      "kind": "dashboard_claim_blocked",
+      "path": "tests/conformance/replacement_level_dashboard.v1.json",
+      "line": 8,
+      "anchor": "\"summary\""
+    },
+    {
+      "kind": "completion_checker",
+      "path": "scripts/check_replacement_level_evidence_battery_completion_contract.sh",
+      "line": 1,
+      "anchor": "bd-w2c3.2.3.1"
+    },
+    {
+      "kind": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/replacement_level_evidence_battery_completion_contract_test.rs",
+      "line": 1,
+      "anchor": "bd-w2c3.2.3.1"
+    }
+  ],
+  "source_anchors": {
+    "replacement_levels": [
+      "\"current_level\": \"L0\"",
+      "\"current_release_level\": \"L0\"",
+      "\"status\": \"in_progress\"",
+      "\"status\": \"planned\"",
+      "\"status\": \"roadmap\"",
+      "Standalone artifact packaging/deployment proof remains pending",
+      "\"L0_to_L1\"",
+      "\"L1_to_L2\"",
+      "\"L2_to_L3\""
+    ],
+    "replacement_levels_gate": [
+      "assessment_check",
+      "status_check",
+      "mono_check",
+      "claim_check",
+      "l1_crt_check",
+      "replacement_levels_l1_gate",
+      "check_replacement_levels: PASS"
+    ],
+    "replacement_levels_harness": [
+      "fn levels_exists_and_valid",
+      "fn assessment_matches_support_matrix",
+      "fn status_progression_consistent",
+      "fn gate_criteria_monotonically_tighten",
+      "fn gate_script_refreshes_l1_objective_gate_artifacts"
+    ]
+  },
+  "policy_requirements": {
+    "replacement_levels": {
+      "expected_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "current_level": "L0",
+      "current_release_level": "L0",
+      "expected_status_by_level": {
+        "L0": "achieved",
+        "L1": "in_progress",
+        "L2": "planned",
+        "L3": "roadmap"
+      },
+      "expected_zero_counts": {
+        "callthrough": 0,
+        "stub": 0
+      },
+      "l1_objective_gate_status": "blocked",
+      "l1_required_objective_outcomes": [
+        "pass",
+        "blocked"
+      ],
+      "l2_required_blocker_substring": "Standalone artifact packaging/deployment proof remains pending",
+      "stale_blocker_forbidden_substrings": [
+        "Standalone dependency policy gate (bd-w2c3.2.2) remains incomplete"
+      ],
+      "l3_host_glibc_required": false
+    },
+    "replacement_level_gate_report": {
+      "schema_version": 1,
+      "bead_id": "bd-gtf.4",
+      "gate_id": "replacement_levels_l1_gate",
+      "status": "pass",
+      "current_level": "L0",
+      "objective_gate_status": "blocked",
+      "script_check_count": 7,
+      "script_failure_count": 0,
+      "min_l1_crt_proof_rows": 11
+    },
+    "support_matrix": {
+      "total_symbols": 4119,
+      "callthrough": 0,
+      "stub": 0
+    },
+    "callthrough_census": {
+      "module_count": 0,
+      "symbol_count": 0,
+      "wave_count": 0
+    },
+    "residual_callthrough_blockers": {
+      "residual_forbidden_count": 0,
+      "claim_status": "replacement_callthrough_blockers_cleared"
+    },
+    "replacement_level_dashboard": {
+      "replacement_level": "L0",
+      "claim_status": "claim_blocked",
+      "first_failing_blocker": "standalone_artifact_missing"
+    }
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "description": "Unit coverage binds the four-level schema, support-matrix assessment, monotonic gate thresholds, claim drift policy, stale blocker prevention, and L1 CRT proof matrix shape.",
+      "implementation_refs": [
+        "levels_manifest",
+        "current_assessment_zero_residual",
+        "release_tag_policy",
+        "transition_requirements",
+        "l2_standalone_blocker_refreshed",
+        "levels_gate_assessment_check",
+        "levels_gate_status_check",
+        "levels_gate_monotonicity_check"
+      ],
+      "test_refs": [
+        {
+          "source": "replacement_levels_harness",
+          "name": "levels_exists_and_valid"
+        },
+        {
+          "source": "replacement_levels_harness",
+          "name": "assessment_matches_support_matrix"
+        },
+        {
+          "source": "replacement_levels_harness",
+          "name": "status_progression_consistent"
+        },
+        {
+          "source": "replacement_levels_harness",
+          "name": "gate_criteria_monotonically_tighten"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_replacement_level_unit_and_e2e_items"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_matches_replacement_level_sources"
+        }
+      ],
+      "validation_commands": [
+        "jq empty tests/conformance/replacement_level_evidence_battery_completion_contract.v1.json",
+        "bash -n scripts/check_replacement_level_evidence_battery_completion_contract.sh",
+        "bash scripts/check_replacement_level_evidence_battery_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-replacement-level-completion-test cargo test -p frankenlibc-harness --test replacement_level_evidence_battery_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "description": "E2E coverage replays the replacement-level gate into deterministic target reports/logs and proves current L0 claim-control blocks L1/L2/L3 overclaim paths.",
+      "implementation_refs": [
+        "l1_objective_gate",
+        "l1_objective_obligations",
+        "l1_evidence_bundle",
+        "levels_gate_claim_drift_check",
+        "levels_gate_l1_crt_check",
+        "levels_gate_artifact_report",
+        "levels_gate_report_schema",
+        "levels_gate_log_rows",
+        "levels_gate_pass_summary"
+      ],
+      "test_refs": [
+        {
+          "source": "replacement_levels_harness",
+          "name": "claim_drift_guard_consistent_with_readme_and_release_policy"
+        },
+        {
+          "source": "replacement_levels_harness",
+          "name": "l1_crt_startup_tls_proof_matrix_validates_required_rows"
+        },
+        {
+          "source": "replacement_levels_harness",
+          "name": "gate_script_refreshes_l1_objective_gate_artifacts"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_replacement_level_gate_and_emits_report"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_stale_standalone_policy_blocker"
+        }
+      ],
+      "validation_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-replacement-level-existing-test cargo test -p frankenlibc-harness --test replacement_levels_test gate_script_refreshes_l1_objective_gate_artifacts -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-replacement-level-existing-suite cargo test -p frankenlibc-harness --test replacement_levels_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=target/rch-replacement-level-completion-clippy cargo clippy -p frankenlibc-harness --test replacement_level_evidence_battery_completion_contract_test -- -D warnings"
+      ]
+    }
+  ],
+  "expected_events": [
+    "replacement_level_contract_validated",
+    "replacement_level_sources_validated",
+    "replacement_level_gate_replayed",
+    "replacement_level_completion_summary"
+  ]
+}

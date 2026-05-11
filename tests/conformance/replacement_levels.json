@@ -224,7 +224,7 @@
         ]
       },
       "blockers": [
-        "Standalone dependency policy gate (bd-w2c3.2.2) remains incomplete",
+        "Standalone artifact packaging/deployment proof remains pending after standalone policy enforcement completion",
         "C fixture suite (bd-3jh) not yet built",
         "Perf benchmarks (bd-2r0) not yet enforced"
       ],
