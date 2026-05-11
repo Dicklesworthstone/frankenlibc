@@ -228,10 +228,10 @@
     ]
   },
   "dashboard": {
-    "total_critique_beads": 118,
-    "total_entries": 118,
+    "total_critique_beads": 119,
+    "total_entries": 119,
     "by_coverage_status": {
-      "complete": 41,
+      "complete": 42,
       "partial": 1,
       "missing": 76
     },
@@ -243,8 +243,8 @@
         "missing": 18
       },
       "P1": {
-        "total": 43,
-        "complete": 22,
+        "total": 44,
+        "complete": 23,
         "partial": 0,
         "missing": 21
       },
@@ -257,20 +257,20 @@
     },
     "by_obligation_type": {
       "unit_tests": {
-        "required": 118,
-        "complete": 42,
+        "required": 119,
+        "complete": 43,
         "partial": 0,
         "missing": 76
       },
       "e2e_scripts": {
-        "required": 58,
-        "complete": 17,
+        "required": 59,
+        "complete": 18,
         "partial": 0,
         "missing": 41
       },
       "structured_logs": {
-        "required": 115,
-        "complete": 39,
+        "required": 116,
+        "complete": 40,
         "partial": 0,
         "missing": 76
       },
@@ -287,8 +287,8 @@
         "missing": 32
       },
       "golden_artifacts": {
-        "required": 115,
-        "complete": 38,
+        "required": 116,
+        "complete": 39,
         "partial": 0,
         "missing": 77
       }
@@ -301,8 +301,8 @@
         "missing": 19
       },
       "e2e": {
-        "total": 15,
-        "complete": 6,
+        "total": 16,
+        "complete": 7,
         "partial": 1,
         "missing": 8
       },
@@ -1424,6 +1424,109 @@
           "missing_fixtures"
         ],
         "notes": "Auto-backfilled row for bd-18qq; refine commands/artifacts as implementation evidence lands."
+      }
+    },
+    {
+      "bead_id": "bd-18qq.1",
+      "title": "Fault injection: adversarial pointer patterns",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "CopperCliff",
+      "labels": [
+        "critique",
+        "e2e",
+        "frankenlibc",
+        "logging",
+        "testing",
+        "verification"
+      ],
+      "dependencies": [
+        "bd-18qq"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "adversarial pointer fault matrix assertions"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "strict and hardened fault-injection runs"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "JSONL fault-injection trace rows"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "deterministic strict and hardened matrix artifacts"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "rch cargo test strict+hardened adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "target/fault_injection/bd-18qq.1_fault_injection_trace_strict.jsonl; target/fault_injection/bd-18qq.1_fault_injection_trace_hardened.jsonl"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "target/fault_injection/bd-18qq.1_fault_injection_matrix_strict.json; target/fault_injection/bd-18qq.1_fault_injection_matrix_hardened.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-18qq.1",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-membrane --test allocator_membrane_invariants_sequences_test adversarial_pointer_fault_injection_matrix_has_zero_false_negatives -- --nocapture"
+        ],
+        "e2e_cmds": [
+          "FRANKENLIBC_MODE=hardened cargo test -p frankenlibc-membrane --test allocator_membrane_invariants_sequences_test adversarial_pointer_fault_injection_matrix_has_zero_false_negatives -- --nocapture"
+        ],
+        "expected_assertions": [
+          "six adversarial pointer pattern classes have >=3 variants",
+          "strict and hardened matrix runs report zero false negatives",
+          "fault-injection matrix and trace artifacts are emitted deterministically"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "target/fault_injection/bd-18qq.1_fault_injection_matrix_strict.json",
+          "target/fault_injection/bd-18qq.1_fault_injection_trace_strict.jsonl",
+          "target/fault_injection/bd-18qq.1_fault_injection_matrix_hardened.json",
+          "target/fault_injection/bd-18qq.1_fault_injection_trace_hardened.jsonl"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Backfilled from bd-18qq.1 closure evidence; required because remote matrix validation still sees this critique bead in its issue source."
       }
     },
     {
