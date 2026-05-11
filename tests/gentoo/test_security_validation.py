@@ -19,6 +19,7 @@ from security_analyzer import (
     HealingLogParser,
     SecurityAnalyzer,
 )
+from generate_security_report import generate_aggregate_report
 
 
 class TestCVEDatabase(unittest.TestCase):
@@ -306,6 +307,59 @@ class TestSecurityValidationIntegration(unittest.TestCase):
 
         double_free_actions = [a for a in actions if a.action == "IgnoreDoubleFree"]
         self.assertEqual(len(double_free_actions), 1)
+
+    def test_aggregate_report_deduplicates_overlapping_log_globs(self) -> None:
+        """Verify aggregate reports do not double-count the same package log."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            log_dir = root / "logs"
+            package_dir = log_dir / "dev-libs__openssl"
+            package_dir.mkdir(parents=True)
+            (package_dir / "healing.jsonl").write_text(
+                '{"timestamp":"2026-02-13T00:00:00Z","action":"ClampSize","call":"memcpy"}\n'
+                '{"timestamp":"2026-02-13T00:00:01Z","action":"ClampSize","call":"memmove"}\n',
+                encoding="utf-8",
+            )
+            db_path = root / "cve_database.json"
+            db_path.write_text(
+                json.dumps(
+                    {
+                        "packages": {
+                            "dev-libs/openssl": {
+                                "cves": [
+                                    {
+                                        "id": "CVE-2014-0160",
+                                        "class": "buffer_over_read",
+                                        "severity": "critical",
+                                        "cvss": 7.5,
+                                        "description": "Heartbleed",
+                                        "expected_prevention": True,
+                                        "prevention_mechanism": "ClampSize",
+                                    },
+                                    {
+                                        "id": "CVE-2016-2108",
+                                        "class": "buffer_overflow",
+                                        "severity": "critical",
+                                        "cvss": 9.8,
+                                        "description": "ASN.1 overflow",
+                                        "expected_prevention": True,
+                                        "prevention_mechanism": "ClampSize",
+                                    },
+                                ]
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = generate_aggregate_report(log_dir, db_path, packages=["dev-libs/openssl"])
+
+        self.assertEqual(report.total_healing_actions, 2)
+        self.assertEqual(report.prevented_cves, 2)
+        self.assertEqual(report.not_prevented_cves, 0)
+        self.assertEqual(report.healing_by_class["buffer_over_read"], 2)
+        self.assertEqual(report.healing_by_class["buffer_overflow"], 2)
 
 
 if __name__ == "__main__":

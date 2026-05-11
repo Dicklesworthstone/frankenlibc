@@ -63,8 +63,13 @@ def generate_aggregate_report(
 
         # Find logs for this package
         actions = []
+        seen_log_files: set[Path] = set()
         for pattern in [f"{pkg_safe}/**/*.jsonl", f"**/{pkg_safe}/*.jsonl", f"{pkg_safe}*.jsonl"]:
             for log_file in log_dir.glob(pattern):
+                resolved = log_file.resolve()
+                if resolved in seen_log_files:
+                    continue
+                seen_log_files.add(resolved)
                 actions.extend(parser.parse_file(log_file))
 
         analysis = analyzer.analyze_package(package, actions)
