@@ -1,0 +1,370 @@
+{
+  "schema_version": "runtime_math_in_progress_closure_completion_contract.v1",
+  "manifest_id": "bd-w2c3.5.4-runtime-math-in-progress-closure",
+  "original_bead": "bd-w2c3.5",
+  "runtime_math_epic_bead": "bd-5vr",
+  "completion_debt_bead": "bd-w2c3.5.4",
+  "audit": {
+    "scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.5/scorecard.md",
+    "audit_score": 570,
+    "next_audit_score_threshold": 800,
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "purpose": "Bind Track 4 runtime-math closure evidence to explicit unit and e2e completion proof for the audit-debt bead.",
+  "source_artifacts": {
+    "risk_pareto_artifact": "tests/runtime_math/risk_pareto_calibration.v1.json",
+    "risk_pareto_checker": "scripts/check_runtime_math_risk_pareto_calibration.sh",
+    "risk_pareto_harness": "crates/frankenlibc-harness/tests/runtime_math_risk_pareto_calibration_test.rs",
+    "cohomology_checker": "scripts/check_runtime_math_cohomology_cross_family.sh",
+    "cohomology_harness": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs",
+    "admission_checker": "scripts/check_runtime_math_admission.sh",
+    "admission_report": "tests/runtime_math/admission_gate_report.v1.json",
+    "admission_harness": "crates/frankenlibc-harness/tests/runtime_math_admission_gate_test.rs",
+    "retirement_checker": "scripts/check_math_retirement.sh",
+    "retirement_policy": "tests/conformance/math_retirement_policy.json",
+    "retirement_harness": "crates/frankenlibc-harness/tests/math_retirement_test.rs",
+    "epic_closure_checker": "scripts/check_runtime_math_epic_closure.sh",
+    "epic_closure_harness": "crates/frankenlibc-harness/tests/runtime_math_epic_closure_test.rs",
+    "completion_contract": "tests/conformance/runtime_math_in_progress_closure_completion_contract.v1.json",
+    "completion_checker": "scripts/check_runtime_math_in_progress_closure_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/runtime_math_in_progress_closure_completion_contract_test.rs"
+  },
+  "required_source_truth": {
+    "track_children": [
+      {
+        "bead": "bd-w2c3.5.1",
+        "title": "T4.1 Risk + Pareto Calibration and Regret-Cap Completion",
+        "gate": "scripts/check_runtime_math_risk_pareto_calibration.sh",
+        "harness": "crates/frankenlibc-harness/tests/runtime_math_risk_pareto_calibration_test.rs",
+        "required_modes": [
+          "strict",
+          "hardened"
+        ],
+        "required_report_keys": [
+          "schema_version",
+          "bead",
+          "checks",
+          "results",
+          "summary"
+        ],
+        "required_log_event": "runtime_math_risk_pareto_calibration_gate"
+      },
+      {
+        "bead": "bd-w2c3.5.2",
+        "title": "T4.2 Cohomology + Cross-Family Integration Completion",
+        "gate": "scripts/check_runtime_math_cohomology_cross_family.sh",
+        "harness": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs",
+        "required_modes": [
+          "strict",
+          "hardened"
+        ],
+        "required_report_checks": [
+          "strict_cross_family_consistency",
+          "strict_corruption_replay_detection",
+          "hardened_cross_family_consistency",
+          "hardened_corruption_replay_detection"
+        ],
+        "required_log_event": "runtime_math_cohomology_cross_family"
+      },
+      {
+        "bead": "bd-w2c3.5.3",
+        "title": "T4.3 Production Admission/Retirement with Value Proofs",
+        "gate": "scripts/check_runtime_math_admission.sh",
+        "retirement_gate": "scripts/check_math_retirement.sh",
+        "harness": "crates/frankenlibc-harness/tests/runtime_math_admission_gate_test.rs",
+        "retirement_harness": "crates/frankenlibc-harness/tests/math_retirement_test.rs",
+        "required_tooling_true": [
+          "has_asupersync_dependency",
+          "asupersync_feature_present",
+          "default_enables_asupersync_tooling",
+          "frankentui_feature_present",
+          "frankentui_dependency_set_complete"
+        ],
+        "required_summary_fields": [
+          "total_modules",
+          "admitted",
+          "retired",
+          "blocked"
+        ]
+      }
+    ],
+    "epic_closure": {
+      "source_bead": "bd-5vr",
+      "aggregate_gate": "scripts/check_runtime_math_epic_closure.sh",
+      "aggregate_harness": "crates/frankenlibc-harness/tests/runtime_math_epic_closure_test.rs",
+      "minimum_checks": 9,
+      "required_checks": [
+        "manifest",
+        "linkage",
+        "linkage_proofs",
+        "admission",
+        "ablation",
+        "governance",
+        "classification_matrix",
+        "value_proof",
+        "reverse_round_contracts"
+      ],
+      "required_log_events": [
+        "runtime_math.epic_closure.check",
+        "runtime_math.epic_closure.summary"
+      ],
+      "required_summary_fields": [
+        "total_checks",
+        "failed_checks",
+        "total_modules",
+        "production_modules",
+        "research_only_modules",
+        "admission_blocked",
+        "ablation_blocked",
+        "all_rounds_diverse",
+        "all_checks_passed"
+      ]
+    }
+  },
+  "implementation_refs": [
+    {
+      "kind": "risk_pareto_artifact_bead",
+      "path": "tests/runtime_math/risk_pareto_calibration.v1.json",
+      "line": 2,
+      "anchor": "\"bead\": \"bd-w2c3.5.1\""
+    },
+    {
+      "kind": "risk_pareto_strict_mode",
+      "path": "tests/runtime_math/risk_pareto_calibration.v1.json",
+      "line": 242,
+      "anchor": "\"strict\""
+    },
+    {
+      "kind": "risk_pareto_hardened_mode",
+      "path": "tests/runtime_math/risk_pareto_calibration.v1.json",
+      "line": 12,
+      "anchor": "\"hardened\""
+    },
+    {
+      "kind": "risk_pareto_gate_checks",
+      "path": "scripts/check_runtime_math_risk_pareto_calibration.sh",
+      "line": 47,
+      "anchor": "checks = ["
+    },
+    {
+      "kind": "risk_pareto_gate_log",
+      "path": "scripts/check_runtime_math_risk_pareto_calibration.sh",
+      "line": 125,
+      "anchor": "log_event = {"
+    },
+    {
+      "kind": "risk_pareto_unit_harness",
+      "path": "crates/frankenlibc-harness/tests/runtime_math_risk_pareto_calibration_test.rs",
+      "line": 38,
+      "anchor": "calibration_artifact_shape_is_valid"
+    },
+    {
+      "kind": "cohomology_gate_modes",
+      "path": "scripts/check_runtime_math_cohomology_cross_family.sh",
+      "line": 56,
+      "anchor": "\"strict_consistency\""
+    },
+    {
+      "kind": "cohomology_gate_report",
+      "path": "scripts/check_runtime_math_cohomology_cross_family.sh",
+      "line": 121,
+      "anchor": "cat >\"${REPORT_PATH}\""
+    },
+    {
+      "kind": "cohomology_e2e_harness",
+      "path": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs",
+      "line": 54,
+      "anchor": "gate_script_passes_and_emits_expected_artifacts"
+    },
+    {
+      "kind": "admission_tooling_contract",
+      "path": "scripts/check_runtime_math_admission.sh",
+      "line": 45,
+      "anchor": "required_tooling_true"
+    },
+    {
+      "kind": "admission_artifact_integrity",
+      "path": "scripts/check_runtime_math_admission.sh",
+      "line": 88,
+      "anchor": "artifact_integrity"
+    },
+    {
+      "kind": "admission_harness_tooling",
+      "path": "crates/frankenlibc-harness/tests/runtime_math_admission_gate_test.rs",
+      "line": 115,
+      "anchor": "tooling_contract"
+    },
+    {
+      "kind": "retirement_policy_shape",
+      "path": "crates/frankenlibc-harness/tests/math_retirement_test.rs",
+      "line": 47,
+      "anchor": "policy_exists_and_valid"
+    },
+    {
+      "kind": "retirement_rc1_match",
+      "path": "crates/frankenlibc-harness/tests/math_retirement_test.rs",
+      "line": 136,
+      "anchor": "rc1_candidates_match_governance_vs_manifest"
+    },
+    {
+      "kind": "epic_aggregate_gate",
+      "path": "scripts/check_runtime_math_epic_closure.sh",
+      "line": 130,
+      "anchor": "append_check"
+    },
+    {
+      "kind": "epic_aggregate_report",
+      "path": "scripts/check_runtime_math_epic_closure.sh",
+      "line": 198,
+      "anchor": "jq -s"
+    },
+    {
+      "kind": "epic_aggregate_harness",
+      "path": "crates/frankenlibc-harness/tests/runtime_math_epic_closure_test.rs",
+      "line": 45,
+      "anchor": "gate_script_emits_valid_report_and_log"
+    }
+  ],
+  "test_sources": {
+    "risk_pareto_harness": {
+      "path": "crates/frankenlibc-harness/tests/runtime_math_risk_pareto_calibration_test.rs",
+      "required_test_refs": [
+        "calibration_artifact_shape_is_valid",
+        "generator_check_passes",
+        "gate_script_emits_report_and_log",
+        "gate_script_fails_when_artifact_is_tampered"
+      ]
+    },
+    "cohomology_harness": {
+      "path": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs",
+      "required_test_refs": [
+        "gate_script_passes_and_emits_expected_artifacts",
+        "sheaf_global_consistency_artifact_declares_complete_open_cover",
+        "sheaf_global_consistency_triples_have_trivial_cocycles"
+      ]
+    },
+    "admission_harness": {
+      "path": "crates/frankenlibc-harness/tests/runtime_math_admission_gate_test.rs",
+      "required_test_refs": [
+        "admission_gate_passes",
+        "admission_ledger_completeness",
+        "retirement_lockout_invariants",
+        "controller_manifest_artifact_is_complete",
+        "admission_gate_emits_structured_log_with_required_fields"
+      ]
+    },
+    "retirement_harness": {
+      "path": "crates/frankenlibc-harness/tests/math_retirement_test.rs",
+      "required_test_refs": [
+        "policy_exists_and_valid",
+        "retirement_criteria_complete",
+        "rc1_candidates_match_governance_vs_manifest",
+        "production_compliant_match_governance",
+        "waivers_cover_all_rc1",
+        "migration_waves_cover_all_rc1",
+        "summary_consistent",
+        "gate_script_exists_and_executable"
+      ]
+    },
+    "epic_closure_harness": {
+      "path": "crates/frankenlibc-harness/tests/runtime_math_epic_closure_test.rs",
+      "required_test_refs": [
+        "gate_script_exists_and_is_executable",
+        "gate_script_emits_valid_report_and_log"
+      ]
+    },
+    "completion_harness": {
+      "path": "crates/frankenlibc-harness/tests/runtime_math_in_progress_closure_completion_contract_test.rs",
+      "required_test_refs": [
+        "manifest_binds_runtime_math_unit_and_e2e_closure",
+        "checker_emits_report_log_and_validates_source_gates",
+        "checker_rejects_missing_epic_gate_binding",
+        "checker_rejects_non_rch_cargo_validation_command"
+      ]
+    }
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/runtime_math_risk_pareto_calibration_test.rs::calibration_artifact_shape_is_valid",
+        "crates/frankenlibc-harness/tests/runtime_math_admission_gate_test.rs::admission_ledger_completeness",
+        "crates/frankenlibc-harness/tests/runtime_math_admission_gate_test.rs::retirement_lockout_invariants",
+        "crates/frankenlibc-harness/tests/math_retirement_test.rs::rc1_candidates_match_governance_vs_manifest",
+        "crates/frankenlibc-harness/tests/runtime_math_in_progress_closure_completion_contract_test.rs::manifest_binds_runtime_math_unit_and_e2e_closure"
+      ],
+      "validation_commands": [
+        "jq empty tests/conformance/runtime_math_in_progress_closure_completion_contract.v1.json",
+        "bash -n scripts/check_runtime_math_in_progress_closure_completion_contract.sh",
+        "bash scripts/check_runtime_math_in_progress_closure_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_in_progress_closure_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_risk_pareto_calibration_test calibration_artifact_shape_is_valid -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_admission_gate_test admission_ledger_completeness -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test math_retirement_test rc1_candidates_match_governance_vs_manifest -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "test_refs": [
+        "scripts/check_runtime_math_risk_pareto_calibration.sh",
+        "scripts/check_runtime_math_cohomology_cross_family.sh",
+        "scripts/check_runtime_math_admission.sh",
+        "scripts/check_math_retirement.sh",
+        "scripts/check_runtime_math_epic_closure.sh",
+        "crates/frankenlibc-harness/tests/runtime_math_risk_pareto_calibration_test.rs::gate_script_emits_report_and_log",
+        "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs::gate_script_passes_and_emits_expected_artifacts",
+        "crates/frankenlibc-harness/tests/runtime_math_epic_closure_test.rs::gate_script_emits_valid_report_and_log",
+        "crates/frankenlibc-harness/tests/runtime_math_in_progress_closure_completion_contract_test.rs::checker_emits_report_log_and_validates_source_gates"
+      ],
+      "validation_commands": [
+        "bash scripts/check_runtime_math_in_progress_closure_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_in_progress_closure_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_epic_closure_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_cohomology_cross_family_test gate_script_passes_and_emits_expected_artifacts -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo clippy -p frankenlibc-harness --test runtime_math_in_progress_closure_completion_contract_test -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_events": [
+      "runtime_math_in_progress_closure_contract_validated",
+      "runtime_math_track4_source_gates_bound",
+      "runtime_math_track4_unit_e2e_bound",
+      "runtime_math_in_progress_closure_completion_summary"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "original_bead",
+      "completion_debt_bead",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs",
+      "status",
+      "failure_signature"
+    ],
+    "report_path": "target/conformance/runtime_math_in_progress_closure_completion_contract/runtime_math_in_progress_closure_completion_contract.report.json",
+    "log_path": "target/conformance/runtime_math_in_progress_closure_completion_contract/runtime_math_in_progress_closure_completion_contract.log.jsonl"
+  },
+  "expected_failure_signatures": [
+    "schema_version mismatch",
+    "source_artifacts missing file",
+    "implementation_refs missing required kinds",
+    "required_source_truth.epic_closure.required_checks missing",
+    "test_sources missing required test ref",
+    "cargo validation must be rch-backed"
+  ]
+}
