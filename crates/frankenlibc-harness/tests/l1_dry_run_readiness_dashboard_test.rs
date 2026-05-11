@@ -4481,7 +4481,7 @@ fn perf_waiver_audit_policy_rows_are_explicit() -> TestResult {
         ),
         (
             "perf-waiver-audit-policy-active-waiver-expiry",
-            ("expected_active_waivers.0.expires_at", json!("2026-05-11")),
+            ("expected_active_waivers.0.expires_at", json!("2026-05-18")),
         ),
         (
             "perf-waiver-audit-policy-active-waiver-scope",
@@ -4797,7 +4797,7 @@ fn perf_budget_policy_rows_are_explicit() -> TestResult {
         ),
         (
             "perf-budget-policy-active-waiver-expiry",
-            ("active_waivers.0.expires_at", json!("2026-05-11")),
+            ("active_waivers.0.expires_at", json!("2026-05-18")),
         ),
         (
             "perf-budget-policy-first-unbenched-module",

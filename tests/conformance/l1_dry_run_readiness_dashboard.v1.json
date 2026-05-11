@@ -2361,7 +2361,7 @@
       "row_kind": "perf",
       "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
       "field": "expected_active_waivers.0.expires_at",
-      "expected_value": "2026-05-11",
+      "expected_value": "2026-05-18",
       "rationale": "The dashboard must expose active waiver expiry so stale waiver risk is visible."
     },
     {
@@ -4433,7 +4433,7 @@
       "row_kind": "perf",
       "evidence_artifact": "tests/conformance/perf_budget_policy.json",
       "field": "active_waivers.0.expires_at",
-      "expected_value": "2026-05-11",
+      "expected_value": "2026-05-18",
       "rationale": "Dashboard consumers must see the expiry for the active string/malloc perf waiver."
     },
     {

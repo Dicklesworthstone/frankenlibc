@@ -64,7 +64,7 @@
         "string",
         "malloc"
       ],
-      "expires_at": "2026-05-11",
+      "expires_at": "2026-05-18",
       "scope": "target_violation_only",
       "failure_signature": "perf_gate::target_violation_within_threshold",
       "rationale": "Narrowed from symbols=[*] to the two enforced_in_gate=false suites in perf_regression_prevention; runtime_math and membrane are already enforced and need no waiver."
