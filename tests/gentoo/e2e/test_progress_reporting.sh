@@ -185,7 +185,7 @@ Completed: ${completed}
 Duration: ${total_duration}s
 
 Events Timeline:
-$(jq -r '.[] | "\(.timestamp) \(.event) \(.package // "")"' "${progress_file}" | sed 's/^/  /')
+$(jq -r '"\(.timestamp) \(.event) \(.package // "")"' "${progress_file}" | sed 's/^/  /')
 
 Summary:
 $(jq -r '.summary | to_entries | .[] | "  \(.key): \(.value)"' "${webhook_payload}")
