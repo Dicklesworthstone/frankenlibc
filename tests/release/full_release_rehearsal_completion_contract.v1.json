@@ -1,0 +1,298 @@
+{
+  "schema_version": "full_release_rehearsal_completion_contract.v1",
+  "manifest_id": "bd-226.1-full-release-rehearsal-completion-contract",
+  "original_bead": "bd-226",
+  "completion_debt_bead": "bd-226.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-226/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "description": "Completion-debt evidence binding for the full release rehearsal closeout: canonical CI gate order, deterministic release dry-run replay, release dossier integrity, replacement-level gate, and checked LD_PRELOAD smoke evidence.",
+  "source_artifacts": {
+    "ci_script": "scripts/ci.sh",
+    "release_gate_dag": "tests/conformance/release_gate_dag.v1.json",
+    "release_dry_run_runner": "scripts/release_dry_run.sh",
+    "release_dry_run_checker": "scripts/check_release_dry_run.sh",
+    "release_dossier_validator": "scripts/release_dossier_validator.py",
+    "release_dossier_checker": "scripts/check_release_dossier.sh",
+    "release_dossier_report": "tests/release/dossier_validation_report.v1.json",
+    "replacement_levels_checker": "scripts/check_replacement_levels.sh",
+    "replacement_levels_report": "tests/conformance/replacement_levels.json",
+    "ld_preload_smoke_runner": "scripts/ld_preload_smoke.sh",
+    "ld_preload_smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "release_dry_run_test": "crates/frankenlibc-harness/tests/release_dry_run_test.rs",
+    "release_gate_dag_test": "crates/frankenlibc-harness/tests/release_gate_dag_test.rs",
+    "release_dossier_validator_test": "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+    "completion_checker": "scripts/check_full_release_rehearsal_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/full_release_rehearsal_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    "scripts/ci.sh:20",
+    "scripts/ci.sh:30",
+    "scripts/ci.sh:35",
+    "scripts/ci.sh:40",
+    "scripts/ci.sh:45",
+    "scripts/ci.sh:275",
+    "scripts/ci.sh:295",
+    "scripts/ci.sh:300",
+    "tests/conformance/release_gate_dag.v1.json:11",
+    "tests/conformance/release_gate_dag.v1.json:95",
+    "tests/conformance/release_gate_dag.v1.json:127",
+    "tests/conformance/release_gate_dag.v1.json:145",
+    "scripts/release_dry_run.sh:52",
+    "scripts/release_dry_run.sh:109",
+    "scripts/release_dry_run.sh:143",
+    "scripts/release_dry_run.sh:284",
+    "scripts/release_dry_run.sh:337",
+    "scripts/release_dry_run.sh:361",
+    "scripts/release_dossier_validator.py:36",
+    "scripts/release_dossier_validator.py:480",
+    "tests/release/dossier_validation_report.v1.json:1",
+    "tests/release/dossier_validation_report.v1.json:23",
+    "tests/release/dossier_validation_report.v1.json:210",
+    "tests/release/dossier_validation_report.v1.json:282",
+    "scripts/ld_preload_smoke.sh:47",
+    "scripts/ld_preload_smoke.sh:633",
+    "scripts/ld_preload_smoke.sh:721",
+    "tests/conformance/ld_preload_smoke_summary.v1.json:1",
+    "tests/conformance/ld_preload_smoke_summary.v1.json:11",
+    "tests/conformance/ld_preload_smoke_summary.v1.json:21"
+  ],
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "description": "Unit evidence pins the release DAG schema, CI gate script markers, checked dossier schema, smoke summary contract, and this completion binder.",
+      "required_test_refs": [
+        {
+          "source": "release_dry_run_test",
+          "name": "release_dag_schema_valid"
+        },
+        {
+          "source": "release_gate_dag_test",
+          "name": "dag_exists_and_valid"
+        },
+        {
+          "source": "release_gate_dag_test",
+          "name": "dependencies_are_topological_in_declared_order"
+        },
+        {
+          "source": "release_dossier_validator_test",
+          "name": "dossier_artifact_results_have_required_fields"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "manifest_binds_full_release_rehearsal_completion_items"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_dry_run_test release_dag_schema_valid -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_gate_dag_test dag_exists_and_valid dependencies_are_topological_in_declared_order -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test full_release_rehearsal_completion_contract_test manifest_binds_full_release_rehearsal_completion_items -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "description": "E2E evidence replays the full release dry-run gate, validates generated dossier/state/log artifacts, and verifies fail-fast resume semantics.",
+      "required_test_refs": [
+        {
+          "source": "release_dry_run_test",
+          "name": "release_dry_run_produces_valid_dossier"
+        },
+        {
+          "source": "release_dry_run_test",
+          "name": "release_dry_run_fail_fast_produces_resume_state"
+        },
+        {
+          "source": "release_gate_dag_test",
+          "name": "dry_run_passes_and_emits_artifacts"
+        },
+        {
+          "source": "release_gate_dag_test",
+          "name": "fail_fast_then_resume_is_deterministic"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_emits_release_rehearsal_report_and_log"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_release_dry_run.sh <dossier-path>",
+        "bash scripts/check_full_release_rehearsal_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_dry_run_test release_dry_run_produces_valid_dossier release_dry_run_fail_fast_produces_resume_state -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test release_gate_dag_test dry_run_passes_and_emits_artifacts fail_fast_then_resume_is_deterministic -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test full_release_rehearsal_completion_contract_test checker_emits_release_rehearsal_report_and_log -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "description": "Conformance evidence binds the release artifact dossier, replacement-level gate, release DAG report-artifact contracts, and strict+hardened LD_PRELOAD smoke summary.",
+      "required_test_refs": [
+        {
+          "source": "release_dossier_validator_test",
+          "name": "dossier_integrity_index_consistent"
+        },
+        {
+          "source": "release_dossier_validator_test",
+          "name": "dossier_compatibility_policy_present"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_smoke_pass_count"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_dossier_artifact_floor_drift"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_completion_binding"
+        }
+      ],
+      "required_commands": [
+        "jq empty tests/release/full_release_rehearsal_completion_contract.v1.json",
+        "jq empty tests/release/dossier_validation_report.v1.json",
+        "jq empty tests/conformance/ld_preload_smoke_summary.v1.json",
+        "bash -n scripts/check_full_release_rehearsal_completion_contract.sh",
+        "bash scripts/check_replacement_levels.sh",
+        "bash scripts/check_full_release_rehearsal_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test full_release_rehearsal_completion_contract_test -- --nocapture"
+      ]
+    }
+  ],
+  "required_rehearsal_contract": {
+    "ci_script_markers": [
+      "cargo fmt --check",
+      "cargo check --workspace --all-targets",
+      "cargo clippy --workspace --all-targets -- -D warnings",
+      "cargo test --workspace --all-targets",
+      "cargo build -p frankenlibc-abi --release",
+      "FRANKENLIBC_EXTENDED_GATES",
+      "scripts/check_closure_gate.sh",
+      "scripts/release_dry_run.sh --mode dry-run",
+      "scripts/check_replacement_levels.sh"
+    ],
+    "release_gate_sequence": [
+      "lint",
+      "unit",
+      "conformance",
+      "conformance_coverage",
+      "claim_reconciliation",
+      "e2e",
+      "perf",
+      "docs_reports",
+      "release_dossier"
+    ],
+    "release_gate_required_fields": [
+      "gate_name",
+      "depends_on",
+      "command",
+      "inputs",
+      "outputs",
+      "report_artifact",
+      "critical"
+    ],
+    "release_gate_command_markers": [
+      "scripts/conformance_golden_gate.sh",
+      "scripts/check_conformance_coverage.sh",
+      "scripts/check_claim_reconciliation.sh",
+      "scripts/check_e2e_suite.sh",
+      "scripts/perf_gate.sh",
+      "scripts/check_replacement_levels.sh",
+      "scripts/check_closure_gate.sh"
+    ],
+    "dry_run": {
+      "expected_schema_version": 2,
+      "expected_gate_count": 9,
+      "fail_fast_gate": "e2e",
+      "expected_resume_skipped_status": "resume_skip",
+      "required_log_fields": [
+        "trace_id",
+        "gate_name",
+        "prereq_hash",
+        "status",
+        "duration_ms",
+        "resume_token",
+        "gate_index",
+        "depends_on",
+        "detail",
+        "exit_code",
+        "artifact_path",
+        "critical",
+        "rationale"
+      ]
+    },
+    "dossier": {
+      "required_status": "pass",
+      "required_verdict": "PASS",
+      "min_total_artifacts": 15,
+      "min_valid_artifacts": 14,
+      "required_critical_missing": 0,
+      "required_errors": 0,
+      "required_integrity_ids": [
+        "support_matrix",
+        "reality_report",
+        "conformance_coverage",
+        "claim_reconciliation",
+        "closure_sweep",
+        "replacement_levels",
+        "math_governance",
+        "controller_ablation",
+        "admission_gate",
+        "production_kernel_manifest",
+        "release_gate_dag",
+        "symbol_fixture_coverage",
+        "closure_contract"
+      ],
+      "required_release_notes_fields": [
+        "source_path",
+        "selection_policy",
+        "entries",
+        "release_notes_markdown",
+        "summary"
+      ]
+    },
+    "ld_preload_smoke": {
+      "expected_total_cases": 64,
+      "expected_passes": 58,
+      "expected_fails": 0,
+      "expected_skips": 6,
+      "required_modes": [
+        "strict",
+        "hardened"
+      ],
+      "expected_mode_status": "green",
+      "expected_mode_total_cases": 32,
+      "expected_mode_passes": 29,
+      "expected_mode_fails": 0,
+      "expected_mode_skips": 3,
+      "expected_optional_skip_binaries": [
+        "sqlite3",
+        "redis-cli",
+        "nginx"
+      ]
+    }
+  },
+  "telemetry_contract": {
+    "report_schema": "full_release_rehearsal_completion_contract.report.v1",
+    "required_events": [
+      "full_release_rehearsal_sources_bound",
+      "full_release_rehearsal_dag_replayed",
+      "full_release_rehearsal_dossier_bound",
+      "full_release_rehearsal_smoke_bound",
+      "full_release_rehearsal_completion_contract_pass"
+    ],
+    "required_fields": [
+      "event",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature"
+    ],
+    "representative_failure_signatures": [
+      "missing completion binding",
+      "smoke summary fails drift",
+      "dossier artifact floor drift",
+      "release DAG sequence mismatch"
+    ]
+  }
+}
