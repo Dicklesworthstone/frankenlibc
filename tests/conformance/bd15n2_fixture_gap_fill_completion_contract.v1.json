@@ -1,0 +1,151 @@
+{
+  "schema_version": "bd15n2_fixture_gap_fill_completion_contract.v1",
+  "bead": "bd-15n.2",
+  "completion_debt_bead": "bd-15n.2.1",
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-15n.2/scorecard.md",
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ],
+    "closed_reason_original": "Fixture gap-fill wave validated: strict+hardened artifacts pass after socket invalid-fd errno fix; traceability + mode expectations are deterministic and green."
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-15n.2.1",
+    "original_bead": "bd-15n.2",
+    "next_audit_score_threshold": 800,
+    "gate": "scripts/check_bd15n2_fixture_gap_fill_completion_contract.sh",
+    "required_fixtures": [
+      "fixture_ctype",
+      "fixture_math",
+      "fixture_socket"
+    ],
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_trace_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "stream",
+      "gate",
+      "mode",
+      "fixture_id",
+      "api_family",
+      "symbol",
+      "spec_ref",
+      "outcome",
+      "errno",
+      "latency_ns",
+      "details",
+      "artifact_refs"
+    ],
+    "source_artifacts": {
+      "fixture_spec": "tests/conformance/c_fixture_spec.json",
+      "gap_fill_report": "tests/cve_arena/results/bd-15n.2/report.json",
+      "gap_fill_trace": "tests/cve_arena/results/bd-15n.2/trace.jsonl",
+      "gap_fill_artifact_index": "tests/cve_arena/results/bd-15n.2/artifact_index.json"
+    },
+    "test_sources": {
+      "c_fixture_suite_test": "crates/frankenlibc-harness/tests/c_fixture_suite_test.rs",
+      "gap_fill_artifacts_test": "crates/frankenlibc-harness/tests/bd15n2_fixture_gap_fill_artifacts_test.rs",
+      "c_fixture_suite_gate": "scripts/check_c_fixture_suite.sh",
+      "gap_fill_gate": "scripts/check_bd15n2_fixture_gap_fill.sh",
+      "gap_fill_runner": "scripts/bd15n2_fixture_gap_fill_run.sh",
+      "contract_test": "crates/frankenlibc-harness/tests/bd15n2_fixture_gap_fill_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "tests/conformance/c_fixture_spec.json:115",
+      "tests/conformance/c_fixture_spec.json:134",
+      "tests/conformance/c_fixture_spec.json:153",
+      "scripts/check_c_fixture_suite.sh:276",
+      "scripts/check_bd15n2_fixture_gap_fill.sh:44",
+      "scripts/bd15n2_fixture_gap_fill_run.sh:101",
+      "scripts/bd15n2_fixture_gap_fill_run.sh:324",
+      "scripts/bd15n2_fixture_gap_fill_run.sh:330",
+      "crates/frankenlibc-harness/tests/c_fixture_suite_test.rs:94",
+      "crates/frankenlibc-harness/tests/bd15n2_fixture_gap_fill_artifacts_test.rs:22"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_refs": [
+        {
+          "source": "c_fixture_suite_test",
+          "kind": "rust_test",
+          "name": "bd15n2_fixtures_have_traceability_and_mode_expectations"
+        },
+        {
+          "source": "c_fixture_suite_gate",
+          "kind": "script_tokens",
+          "required_tokens": [
+            "bd-15n.2 metadata",
+            "spec_traceability",
+            "mode_expectations",
+            "check_c_fixture_suite: PASS"
+          ]
+        }
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_refs": [
+        {
+          "source": "gap_fill_artifacts_test",
+          "kind": "rust_test",
+          "name": "fixture_gap_fill_gate_emits_valid_bd15n2_artifacts"
+        },
+        {
+          "source": "gap_fill_gate",
+          "kind": "script_tokens",
+          "required_tokens": [
+            "required_result_fields",
+            "required_fixtures",
+            "strict+hardened",
+            "PASS: bd-15n.2 fixture gap-fill artifacts valid"
+          ]
+        },
+        {
+          "source": "gap_fill_runner",
+          "kind": "script_tokens",
+          "required_tokens": [
+            "FIXTURES=(",
+            "for mode in strict hardened",
+            "mode_profiles",
+            "artifact_index"
+          ]
+        }
+      ]
+    },
+    "validation_commands": [
+      "rch exec -- env CARGO_TARGET_DIR=target/rch-bd15n2-fixture-gap-completion-check cargo check -p frankenlibc-harness --test bd15n2_fixture_gap_fill_completion_contract_test",
+      "rch exec -- env CARGO_TARGET_DIR=target/rch-bd15n2-fixture-gap-completion-test cargo test -p frankenlibc-harness --test bd15n2_fixture_gap_fill_completion_contract_test -- --nocapture",
+      "rch exec -- env CARGO_TARGET_DIR=target/rch-bd15n2-c-fixture-suite-unit cargo test -p frankenlibc-harness --test c_fixture_suite_test bd15n2_fixtures_have_traceability_and_mode_expectations -- --nocapture"
+    ],
+    "telemetry_contract": {
+      "required_events": [
+        "bd15n2_fixture_gap_fill_completion_contract_validated",
+        "bd15n2_fixture_gap_fill_completion_contract_failed"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "missing_item_ids",
+        "fixture_ids",
+        "modes",
+        "unit_refs",
+        "e2e_refs",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    }
+  }
+}
