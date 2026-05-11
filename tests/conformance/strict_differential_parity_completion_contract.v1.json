@@ -1,0 +1,325 @@
+{
+  "schema_version": "strict_differential_parity_completion_contract.v1",
+  "manifest_id": "bd-w2c3.3.1.1-strict-differential-parity-completion",
+  "original_bead": "bd-w2c3.3.1",
+  "completion_debt_bead": "bd-w2c3.3.1.1",
+  "audit": {
+    "scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.3.1/scorecard.md",
+    "audit_score": 570,
+    "next_audit_score_threshold": 800,
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ]
+  },
+  "purpose": "Bind the original strict differential parity closure to explicit unit and e2e evidence for the claimed wide-pointer and iconv UTF-32 surface, without broadening the claim to unrelated later strict or hardened matrix drift.",
+  "source_artifacts": {
+    "conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+    "wide_string_ops_fixture": "tests/conformance/fixtures/wide_string_ops.json",
+    "wide_string_ops_test": "crates/frankenlibc-harness/tests/wide_string_ops_conformance_test.rs",
+    "wide_memory_fixture": "tests/conformance/fixtures/wide_memory.json",
+    "wide_memory_test": "crates/frankenlibc-harness/tests/wide_memory_conformance_test.rs",
+    "iconv_phase1_fixture": "tests/conformance/fixtures/iconv_phase1.json",
+    "iconv_phase1_test": "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+    "conformance_executor": "crates/frankenlibc_conformance/src/lib.rs",
+    "core_iconv": "crates/frankenlibc-core/src/iconv/mod.rs",
+    "abi_iconv_test": "crates/frankenlibc-abi/tests/iconv_abi_test.rs",
+    "iconv_scope_ledger": "tests/conformance/iconv_codec_scope_ledger.v1.json",
+    "iconv_scope_checker": "scripts/check_iconv_codec_scope_ledger.sh",
+    "completion_contract": "tests/conformance/strict_differential_parity_completion_contract.v1.json",
+    "completion_checker": "scripts/check_strict_differential_parity_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/strict_differential_parity_completion_contract_test.rs"
+  },
+  "claimed_surface": {
+    "scope_name": "strict wide-pointer and iconv UTF-32 parity closure",
+    "strict_required_cases": [
+      {
+        "fixture": "wide_string_ops",
+        "fixture_path": "tests/conformance/fixtures/wide_string_ops.json",
+        "case_name": "strict_wcschr_found",
+        "function": "wcschr",
+        "mode": "strict",
+        "expected_output": "Some(1)",
+        "matrix_trace_id": "franken_shadow::string/wide::wcschr::strict::strict_wcschr_found"
+      },
+      {
+        "fixture": "wide_string_ops",
+        "fixture_path": "tests/conformance/fixtures/wide_string_ops.json",
+        "case_name": "strict_wcsstr_found",
+        "function": "wcsstr",
+        "mode": "strict",
+        "expected_output": "Some(1)",
+        "matrix_trace_id": "franken_shadow::string/wide::wcsstr::strict::strict_wcsstr_found"
+      },
+      {
+        "fixture": "wide_memory",
+        "fixture_path": "tests/conformance/fixtures/wide_memory.json",
+        "case_name": "wmemchr_found",
+        "function": "wmemchr",
+        "mode": "strict",
+        "expected_output": "Some(2)",
+        "matrix_trace_id": "franken_shadow::string/wide_memory::wmemchr::strict::wmemchr_found"
+      },
+      {
+        "fixture": "iconv_phase1",
+        "fixture_path": "tests/conformance/fixtures/iconv_phase1.json",
+        "case_name": "strict_utf8_to_utf32_with_bom",
+        "function": "iconv",
+        "mode": "strict",
+        "expected_output": "ok nonrev=0 in_left=0 out_left=0 out=[255, 254, 0, 0, 65, 0, 0, 0]",
+        "matrix_trace_id": "franken_shadow::iconv/phase1::iconv::strict::strict_utf8_to_utf32_with_bom"
+      }
+    ],
+    "strict_claimed_surface_mismatch_count_max": 0
+  },
+  "required_source_truth": {
+    "conformance_matrix": {
+      "schema_version": "v1",
+      "bead": "bd-l93x.2",
+      "min_total_cases": 1700,
+      "expected_failed": 0,
+      "expected_errors": 0,
+      "expected_pass_rate_percent": 100.0
+    },
+    "iconv_scope": {
+      "included_codec_count": 4,
+      "required_codec": "UTF-32",
+      "required_checker_tokens": [
+        "ICONV_PHASE1_INCLUDED_CODECS",
+        "support_matrix_semantic_alignment",
+        "PASS: iconv codec scope ledger gate"
+      ]
+    },
+    "structured_log_fields": []
+  },
+  "implementation_refs": [
+    {
+      "kind": "matrix_summary_total",
+      "path": "tests/conformance/conformance_matrix.v1.json",
+      "line": 9,
+      "anchor": "\"total_cases\": 1733"
+    },
+    {
+      "kind": "matrix_iconv_utf32_case",
+      "path": "tests/conformance/conformance_matrix.v1.json",
+      "line": 9715,
+      "anchor": "franken_shadow::iconv/phase1::iconv::strict::strict_utf8_to_utf32_with_bom"
+    },
+    {
+      "kind": "matrix_wcschr_case",
+      "path": "tests/conformance/conformance_matrix.v1.json",
+      "line": 35878,
+      "anchor": "franken_shadow::string/wide::wcschr::strict::strict_wcschr_found"
+    },
+    {
+      "kind": "matrix_wcsstr_case",
+      "path": "tests/conformance/conformance_matrix.v1.json",
+      "line": 37246,
+      "anchor": "franken_shadow::string/wide::wcsstr::strict::strict_wcsstr_found"
+    },
+    {
+      "kind": "matrix_wmemchr_case",
+      "path": "tests/conformance/conformance_matrix.v1.json",
+      "line": 37816,
+      "anchor": "franken_shadow::string/wide_memory::wmemchr::strict::wmemchr_found"
+    },
+    {
+      "kind": "wide_string_wcschr_fixture",
+      "path": "tests/conformance/fixtures/wide_string_ops.json",
+      "line": 88,
+      "anchor": "strict_wcschr_found"
+    },
+    {
+      "kind": "wide_string_wcsstr_fixture",
+      "path": "tests/conformance/fixtures/wide_string_ops.json",
+      "line": 106,
+      "anchor": "strict_wcsstr_found"
+    },
+    {
+      "kind": "wide_memory_wmemchr_fixture",
+      "path": "tests/conformance/fixtures/wide_memory.json",
+      "line": 52,
+      "anchor": "wmemchr_found"
+    },
+    {
+      "kind": "iconv_utf32_fixture",
+      "path": "tests/conformance/fixtures/iconv_phase1.json",
+      "line": 79,
+      "anchor": "strict_utf8_to_utf32_with_bom"
+    },
+    {
+      "kind": "conformance_wcschr_unit",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "line": 19017,
+      "anchor": "execute_wcschr_case_reports_wchar_index_for_host_diff"
+    },
+    {
+      "kind": "conformance_wcsstr_unit",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "line": 19030,
+      "anchor": "execute_wcsstr_case_reports_wchar_index_for_host_diff"
+    },
+    {
+      "kind": "conformance_wmemchr_unit",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "line": 19043,
+      "anchor": "execute_wmemchr_case_reports_wchar_index_for_host_diff"
+    },
+    {
+      "kind": "conformance_iconv_utf32_unit",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "line": 18431,
+      "anchor": "execute_iconv_case_utf32_conversion_matches_host_shape"
+    },
+    {
+      "kind": "core_iconv_utf32_codec",
+      "path": "crates/frankenlibc-core/src/iconv/mod.rs",
+      "line": 151,
+      "anchor": "ICONV_PHASE1_INCLUDED_CODECS"
+    },
+    {
+      "kind": "core_iconv_utf32_bom_unit",
+      "path": "crates/frankenlibc-core/src/iconv/mod.rs",
+      "line": 759,
+      "anchor": "utf8_to_utf32_first_conversion_emits_bom"
+    },
+    {
+      "kind": "abi_iconv_utf32_unit",
+      "path": "crates/frankenlibc-abi/tests/iconv_abi_test.rs",
+      "line": 193,
+      "anchor": "iconv_utf8_to_utf32"
+    },
+    {
+      "kind": "wide_string_ops_harness_e2e",
+      "path": "crates/frankenlibc-harness/tests/wide_string_ops_conformance_test.rs",
+      "line": 321,
+      "anchor": "wide_string_ops_fixture_executes_with_host_parity_via_harness_matrix"
+    },
+    {
+      "kind": "wide_memory_harness_e2e",
+      "path": "crates/frankenlibc-harness/tests/wide_memory_conformance_test.rs",
+      "line": 296,
+      "anchor": "wide_memory_fixture_executes_with_host_parity_via_harness_matrix"
+    },
+    {
+      "kind": "iconv_harness_e2e",
+      "path": "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+      "line": 299,
+      "anchor": "iconv_phase1_fixture_executes_via_isolated_harness"
+    },
+    {
+      "kind": "iconv_scope_checker_alignment",
+      "path": "scripts/check_iconv_codec_scope_ledger.sh",
+      "line": 206,
+      "anchor": "support_matrix_semantic_alignment"
+    }
+  ],
+  "test_sources": {
+    "conformance_executor": {
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "required_test_refs": [
+        "execute_iconv_case_utf32_conversion_matches_host_shape",
+        "execute_wcschr_case_reports_wchar_index_for_host_diff",
+        "execute_wcsstr_case_reports_wchar_index_for_host_diff",
+        "execute_wmemchr_case_reports_wchar_index_for_host_diff"
+      ]
+    },
+    "core_iconv": {
+      "path": "crates/frankenlibc-core/src/iconv/mod.rs",
+      "required_test_refs": [
+        "iconv_open_recognizes_phase1_encodings",
+        "utf8_to_utf32_first_conversion_emits_bom",
+        "utf8_to_utf32_e2big_before_bom"
+      ]
+    },
+    "abi_iconv": {
+      "path": "crates/frankenlibc-abi/tests/iconv_abi_test.rs",
+      "required_test_refs": [
+        "iconv_open_utf8_to_utf32",
+        "iconv_utf8_to_utf32"
+      ]
+    },
+    "wide_string_ops_harness": {
+      "path": "crates/frankenlibc-harness/tests/wide_string_ops_conformance_test.rs",
+      "required_test_refs": [
+        "wide_string_ops_fixture_cases_match_execute_fixture_case",
+        "wide_string_ops_fixture_executes_with_host_parity_via_harness_matrix"
+      ]
+    },
+    "wide_memory_harness": {
+      "path": "crates/frankenlibc-harness/tests/wide_memory_conformance_test.rs",
+      "required_test_refs": [
+        "wide_memory_fixture_cases_match_execute_fixture_case",
+        "wide_memory_fixture_executes_with_host_parity_via_harness_matrix"
+      ]
+    },
+    "iconv_phase1_harness": {
+      "path": "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+      "required_test_refs": [
+        "iconv_phase1_fixture_executes_via_isolated_harness"
+      ]
+    }
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "test_refs": [
+        "crates/frankenlibc_conformance/src/lib.rs::execute_iconv_case_utf32_conversion_matches_host_shape",
+        "crates/frankenlibc_conformance/src/lib.rs::execute_wcschr_case_reports_wchar_index_for_host_diff",
+        "crates/frankenlibc_conformance/src/lib.rs::execute_wcsstr_case_reports_wchar_index_for_host_diff",
+        "crates/frankenlibc_conformance/src/lib.rs::execute_wmemchr_case_reports_wchar_index_for_host_diff",
+        "crates/frankenlibc-core/src/iconv/mod.rs::utf8_to_utf32_first_conversion_emits_bom",
+        "crates/frankenlibc-abi/tests/iconv_abi_test.rs::iconv_utf8_to_utf32",
+        "crates/frankenlibc-harness/tests/strict_differential_parity_completion_contract_test.rs::manifest_binds_strict_differential_unit_and_e2e_items"
+      ],
+      "validation_commands": [
+        "jq empty tests/conformance/strict_differential_parity_completion_contract.v1.json",
+        "bash -n scripts/check_strict_differential_parity_completion_contract.sh",
+        "bash scripts/check_strict_differential_parity_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc_conformance execute_iconv_case_utf32_conversion_matches_host_shape -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc_conformance wchar_index_for_host_diff -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-core iconv --lib -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test iconv_abi_test iconv_utf8_to_utf32 -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test strict_differential_parity_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/wide_string_ops_conformance_test.rs::wide_string_ops_fixture_executes_with_host_parity_via_harness_matrix",
+        "crates/frankenlibc-harness/tests/wide_memory_conformance_test.rs::wide_memory_fixture_executes_with_host_parity_via_harness_matrix",
+        "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs::iconv_phase1_fixture_executes_via_isolated_harness",
+        "crates/frankenlibc-harness/tests/strict_differential_parity_completion_contract_test.rs::checker_validates_claimed_surface_and_emits_report_log"
+      ],
+      "validation_commands": [
+        "bash scripts/check_strict_differential_parity_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test wide_string_ops_conformance_test wide_string_ops_fixture_executes_with_host_parity_via_harness_matrix -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test wide_memory_conformance_test wide_memory_fixture_executes_with_host_parity_via_harness_matrix -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test strict_differential_parity_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo clippy -p frankenlibc-harness --test strict_differential_parity_completion_contract_test -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_events": [
+      "strict_differential_contract_validated",
+      "strict_differential_claimed_surface_validated",
+      "strict_differential_source_bindings_validated",
+      "strict_differential_completion_summary"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ]
+  }
+}
