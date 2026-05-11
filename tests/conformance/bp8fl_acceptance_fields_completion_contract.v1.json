@@ -1,0 +1,284 @@
+{
+  "schema_version": "bp8fl_acceptance_fields_completion_contract.v1",
+  "bead": "bd-bp8fl.2.5",
+  "completion_debt_bead": "bd-bp8fl.2.5.1",
+  "manifest_id": "bd-bp8fl-2-5-acceptance-fields-completion-contract",
+  "purpose": "Bind the tracker acceptance-field repair evidence for bd-bp8fl.2.5 to deterministic unit and e2e completion-debt proof.",
+  "source_artifacts": {
+    "issues_jsonl": ".beads/issues.jsonl",
+    "parent_acceptance_replay_contract": "tests/conformance/bp8fl_parent_acceptance_replay.v1.json",
+    "parent_acceptance_replay_checker": "scripts/check_bp8fl_parent_acceptance_replay.sh",
+    "parent_acceptance_replay_test": "crates/frankenlibc-harness/tests/bp8fl_parent_acceptance_replay_test.rs",
+    "reality_bridge_import_contract": "tests/conformance/reality_bridge_import_reconciliation.v1.json",
+    "reality_bridge_import_generator": "scripts/generate_reality_bridge_import_reconciliation.py",
+    "reality_bridge_import_checker": "scripts/check_reality_bridge_import_reconciliation.sh",
+    "reality_bridge_import_test": "crates/frankenlibc-harness/tests/reality_bridge_import_reconciliation_test.rs",
+    "ambition_graph_lint_contract": "tests/conformance/ambition_graph_readiness_lint.v1.json",
+    "ambition_graph_lint_checker": "scripts/check_ambition_graph_readiness_lint.sh",
+    "ambition_graph_lint_test": "crates/frankenlibc-harness/tests/ambition_graph_readiness_lint_test.rs",
+    "completion_checker": "scripts/check_bp8fl_acceptance_fields_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/bp8fl_acceptance_fields_completion_contract_test.rs"
+  },
+  "completion_debt": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-bp8fl.2.5",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.2.5/scorecard.md",
+    "audit_score": 590,
+    "next_audit_score_threshold": 700,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary"
+    ],
+    "original_close_reason": "Attached first-class acceptance criteria to the 11 bd-bp8fl rows that were missing the field, preserving bead-specific scope while adding evidence, test, logging, artifact, and exact-closure requirements; verified all 89 bd-bp8fl rows now have acceptance criteria and no dependency cycles."
+  },
+  "historical_scope": {
+    "id_prefix": "bd-bp8fl",
+    "created_before": "2026-05-04T00:00:00",
+    "expected_rows": 89,
+    "expected_missing_acceptance": 0,
+    "out_of_scope_note": "Rows created on or after 2026-05-04T00:00:00 are outside the bd-bp8fl.2.5 closeout population and are reported separately rather than failing this completion-debt gate."
+  },
+  "acceptance_field_contract": {
+    "required_aggregate_terms": [
+      {
+        "term_id": "preserve_existing_scope",
+        "any_of": [
+          [
+            "preserve"
+          ]
+        ]
+      },
+      {
+        "term_id": "unit_test_obligations",
+        "any_of": [
+          [
+            "unit tests"
+          ],
+          [
+            "unit test"
+          ]
+        ]
+      },
+      {
+        "term_id": "deterministic_e2e_or_harness",
+        "any_of": [
+          [
+            "deterministic e2e"
+          ],
+          [
+            "deterministic scripts"
+          ],
+          [
+            "harness"
+          ]
+        ]
+      },
+      {
+        "term_id": "structured_logs",
+        "any_of": [
+          [
+            "structured logs"
+          ],
+          [
+            "trace_id",
+            "failure_signature"
+          ]
+        ]
+      },
+      {
+        "term_id": "artifact_references",
+        "any_of": [
+          [
+            "artifact"
+          ],
+          [
+            "artifacts"
+          ]
+        ]
+      },
+      {
+        "term_id": "source_commit_freshness",
+        "any_of": [
+          [
+            "source_commit"
+          ],
+          [
+            "source-of-truth freshness"
+          ]
+        ]
+      },
+      {
+        "term_id": "exact_closure_commands",
+        "any_of": [
+          [
+            "exact commands"
+          ],
+          [
+            "closure commands"
+          ]
+        ]
+      },
+      {
+        "term_id": "claim_gates",
+        "any_of": [
+          [
+            "claim gates"
+          ],
+          [
+            "claim"
+          ]
+        ]
+      },
+      {
+        "term_id": "no_feature_loss",
+        "any_of": [
+          [
+            "no-feature-loss"
+          ],
+          [
+            "no existing feature"
+          ],
+          [
+            "do not narrow"
+          ]
+        ]
+      },
+      {
+        "term_id": "br_bv_validation",
+        "any_of": [
+          [
+            "br dep cycles"
+          ],
+          [
+            "bv robot"
+          ],
+          [
+            "bv --robot"
+          ]
+        ]
+      }
+    ],
+    "required_tracker_checks": [
+      "historical bd-bp8fl rows created before 2026-05-04T00:00:00 are counted from .beads/issues.jsonl",
+      "historical missing acceptance_criteria count is zero",
+      "current post-scope missing acceptance_criteria IDs are reported separately",
+      "br dep cycles --no-db --json remains the tracker-cycle proof"
+    ]
+  },
+  "completion_debt_evidence": {
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "artifact": "parent_acceptance_replay_test",
+          "name": "artifact_defines_aixvz_completion_debt_contract",
+          "covers": [
+            "parent acceptance replay schema and required fields"
+          ]
+        },
+        {
+          "artifact": "parent_acceptance_replay_test",
+          "name": "fixture_replay_proves_missing_duplicate_and_weak_rows_fail_closed",
+          "covers": [
+            "missing, duplicate, and weak acceptance rows fail closed"
+          ]
+        },
+        {
+          "artifact": "parent_acceptance_replay_test",
+          "name": "valid_parent_fixture_rows_pass_acceptance_replay",
+          "covers": [
+            "valid parent acceptance rows pass replay"
+          ]
+        },
+        {
+          "artifact": "parent_acceptance_replay_test",
+          "name": "checker_script_is_read_only_and_names_tool_probe_contract",
+          "covers": [
+            "read-only checker and no-db tool probe contract"
+          ]
+        },
+        {
+          "artifact": "reality_bridge_import_test",
+          "name": "artifact_defines_import_mapping_contract",
+          "covers": [
+            "reality bridge import contract shape"
+          ]
+        },
+        {
+          "artifact": "reality_bridge_import_test",
+          "name": "backlog_and_feature_gap_rows_are_preserved_without_rejections",
+          "covers": [
+            "zero missing acceptance targets in imported backlog and feature-gap rows"
+          ]
+        },
+        {
+          "artifact": "reality_bridge_import_test",
+          "name": "fixture_replay_emits_report_logs_and_negative_cases",
+          "covers": [
+            "missing_acceptance negative case plus report/log replay"
+          ]
+        },
+        {
+          "artifact": "ambition_graph_lint_test",
+          "name": "artifact_defines_graph_readiness_contract",
+          "covers": [
+            "acceptance-contract lint schema"
+          ]
+        },
+        {
+          "artifact": "ambition_graph_lint_test",
+          "name": "fixture_replay_emits_actionable_findings",
+          "covers": [
+            "weak acceptance findings emit structured diagnostics"
+          ]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test bp8fl_acceptance_fields_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test bp8fl_parent_acceptance_replay_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test reality_bridge_import_reconciliation_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test ambition_graph_readiness_lint_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "required_commands": [
+        "bash scripts/check_bp8fl_acceptance_fields_completion_contract.sh",
+        "bash scripts/check_bp8fl_parent_acceptance_replay.sh --validate-current",
+        "bash scripts/check_reality_bridge_import_reconciliation.sh --validate-only",
+        "bash scripts/check_ambition_graph_readiness_lint.sh --fixture-replay",
+        "br dep cycles --no-db --json",
+        "bv --robot-triage",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo check -p frankenlibc-harness --test bp8fl_acceptance_fields_completion_contract_test",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo clippy -p frankenlibc-harness --test bp8fl_acceptance_fields_completion_contract_test -- -D warnings"
+      ],
+      "required_report_fields": [
+        "schema_version",
+        "status",
+        "bead",
+        "completion_debt_bead",
+        "source_bead",
+        "source_commit",
+        "historical_row_count",
+        "historical_missing_acceptance_ids",
+        "current_row_count",
+        "current_missing_acceptance_ids",
+        "unit_bindings",
+        "e2e_commands",
+        "source_artifacts",
+        "errors"
+      ],
+      "required_log_fields": [
+        "schema_version",
+        "trace_id",
+        "bead_id",
+        "source_bead",
+        "event",
+        "outcome",
+        "expected",
+        "actual",
+        "artifact_refs",
+        "source_commit",
+        "failure_signature"
+      ]
+    }
+  }
+}
