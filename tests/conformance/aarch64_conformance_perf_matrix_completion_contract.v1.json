@@ -1,0 +1,315 @@
+{
+  "schema_version": "aarch64_conformance_perf_matrix_completion_contract.v1",
+  "original_bead": "bd-1gg.4",
+  "completion_debt_bead": "bd-1gg.4.1",
+  "generated_at_utc": "2026-05-12T04:32:00Z",
+  "purpose": "Close the bd-1gg.4.1 completion-debt audit items by binding the existing aarch64 cross-compile gate, architecture/environment matrix, conformance matrix, fuzz architecture ledger, perf regression prevention artifact, and completion telemetry to explicit unit/e2e/fuzz/conformance/telemetry proof surfaces.",
+  "audit_source": {
+    "missing_items": [
+      {
+        "id": "tests.unit.primary",
+        "kind": "unit",
+        "description": "unit tests for architecture matrix shape and fail-closed mutation behavior"
+      },
+      {
+        "id": "tests.e2e.primary",
+        "kind": "e2e",
+        "description": "aarch64 cross-compile gate wiring plus architecture environment gate execution contract"
+      },
+      {
+        "id": "tests.fuzz.primary",
+        "kind": "fuzz",
+        "description": "fuzz harness architecture ledger coverage for the syscall/threading bring-up surface"
+      },
+      {
+        "id": "tests.conformance.primary",
+        "kind": "conformance",
+        "description": "global conformance matrix and aarch64 environment rows that block unsupported support claims"
+      },
+      {
+        "id": "telemetry.primary",
+        "kind": "telemetry",
+        "description": "structured report/log emitted by this completion gate"
+      }
+    ]
+  },
+  "source_artifacts": {
+    "aarch64_crosscompile_gate": "scripts/check_aarch64_crosscompile.sh",
+    "user_environment_matrix": "tests/conformance/user_environment_coverage_matrix.v1.json",
+    "user_environment_gate": "scripts/check_user_environment_coverage_matrix.sh",
+    "user_environment_harness": "crates/frankenlibc-harness/tests/user_environment_coverage_matrix_test.rs",
+    "conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+    "conformance_matrix_gate": "scripts/check_conformance_matrix.sh",
+    "conformance_matrix_harness": "crates/frankenlibc-harness/tests/conformance_matrix_test.rs",
+    "perf_regression_prevention": "tests/conformance/perf_regression_prevention.v1.json",
+    "perf_regression_gate": "scripts/check_perf_regression_prevention.sh",
+    "perf_regression_harness": "crates/frankenlibc-harness/tests/perf_regression_prevention_test.rs",
+    "perf_budget_policy": "tests/conformance/perf_budget_policy.json",
+    "fuzz_harness_architecture": "tests/conformance/fuzz_harness_architecture.v1.json",
+    "fuzz_harness_gate": "scripts/check_fuzz_harness_architecture.sh",
+    "fuzz_harness_test": "crates/frankenlibc-harness/tests/fuzz_harness_architecture_test.rs",
+    "raw_syscall_tls_contract": "tests/conformance/aarch64_raw_syscall_tls_completion_contract.v1.json",
+    "completion_contract": "tests/conformance/aarch64_conformance_perf_matrix_completion_contract.v1.json",
+    "completion_gate": "scripts/check_aarch64_conformance_perf_matrix_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/aarch64_conformance_perf_matrix_completion_contract_test.rs"
+  },
+  "source_anchors": {
+    "aarch64_crosscompile_gate": [
+      "TARGET=\"aarch64-unknown-linux-gnu\"",
+      "cargo check --target \"${TARGET}\" -p frankenlibc-core",
+      "cargo check --target \"${TARGET}\" -p frankenlibc-abi",
+      "target/conformance/aarch64_crosscompile.report.json",
+      "check_aarch64_crosscompile: PASS"
+    ],
+    "user_environment_matrix": [
+      "\"architectures\":",
+      "\"aarch64\"",
+      "\"aarch64_blocked_or_bringup\"",
+      "\"aarch64_bringup_missing\"",
+      "\"env-aarch64-l0-strict-shell-coreutils\"",
+      "\"support_claim_allowed\": false"
+    ],
+    "user_environment_gate": [
+      "USER_ENVIRONMENT_COVERAGE_MATRIX",
+      "environment_matrix_missing_architecture_coverage",
+      "environment_matrix_bad_support_merge"
+    ],
+    "user_environment_harness": [
+      "fn matrix_schema_covers_required_dimensions()",
+      "fn gate_rejects_missing_architecture_coverage()",
+      "fn gate_rejects_blocked_row_promoted_to_supported()"
+    ],
+    "conformance_matrix": [
+      "\"schema_version\": \"v1\"",
+      "\"summary\"",
+      "\"failed\": 0",
+      "\"errors\": 0",
+      "\"pass_rate_percent\": 100.0"
+    ],
+    "conformance_matrix_gate": [
+      "BASELINE=\"${ROOT}/tests/conformance/conformance_matrix.v1.json\"",
+      "conformance_matrix",
+      "pass_rate"
+    ],
+    "conformance_matrix_harness": [
+      "conformance_matrix",
+      "summary_counts_match_case_rows"
+    ],
+    "perf_regression_prevention": [
+      "\"total_suites_in_spec\": 5",
+      "\"suites_with_full_baselines\": 5",
+      "\"baseline_slot_fill_pct\": 100.0",
+      "\"total_issues\": 0",
+      "\"total_warnings\": 0",
+      "\"event_logging\": true"
+    ],
+    "perf_regression_gate": [
+      "perf_regression_prevention",
+      "Gate wiring (perf_gate.sh)",
+      "check_perf_regression_prevention"
+    ],
+    "perf_regression_harness": [
+      "perf_regression_prevention",
+      "regression"
+    ],
+    "perf_budget_policy": [
+      "\"strict_mode_ns\": 20",
+      "\"hardened_mode_ns\": 200",
+      "\"max_regression_pct\": 15",
+      "\"required_log_fields\""
+    ],
+    "fuzz_harness_architecture": [
+      "\"total_targets\": 55",
+      "\"functional_targets\": 55",
+      "\"stub_targets\": 0",
+      "\"quality_score_pct\": 100.0",
+      "\"total_seed_corpus\": 22779"
+    ],
+    "fuzz_harness_gate": [
+      "fuzz_harness_architecture",
+      "Fuzz targets:",
+      "corpus"
+    ],
+    "fuzz_harness_test": [
+      "fuzz_harness_architecture",
+      "quality"
+    ],
+    "raw_syscall_tls_contract": [
+      "\"completion_debt_bead\": \"bd-1gg.3.1\"",
+      "\"required_arch\": \"aarch64\"",
+      "\"required_syscall_arity\""
+    ],
+    "completion_gate": [
+      "aarch64_conformance_perf_matrix_completion.unit_binding",
+      "aarch64_conformance_perf_matrix_completion.e2e_binding",
+      "aarch64_conformance_perf_matrix_completion.fuzz_binding",
+      "aarch64_conformance_perf_matrix_completion.conformance_binding",
+      "aarch64_conformance_perf_matrix_completion.telemetry_contract",
+      "aarch64_conformance_perf_matrix_completion.validated"
+    ],
+    "completion_harness": [
+      "fn manifest_binds_all_completion_items()",
+      "fn checker_emits_report_and_jsonl()",
+      "fn checker_rejects_missing_aarch64_environment_coverage()"
+    ]
+  },
+  "aarch64_conformance_perf_matrix_contract": {
+    "required_target": "aarch64-unknown-linux-gnu",
+    "required_crosscompile_checks": [
+      "frankenlibc-core",
+      "frankenlibc-abi"
+    ],
+    "required_architectures": [
+      "x86_64",
+      "aarch64"
+    ],
+    "required_aarch64_reason_code": "aarch64_bringup_missing",
+    "required_support_claim_allowed": false,
+    "required_conformance_summary": {
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    "required_perf_summary": {
+      "total_suites_in_spec": 5,
+      "suites_with_full_baselines": 5,
+      "baseline_slot_fill_pct": 100.0,
+      "total_issues": 0,
+      "total_warnings": 0
+    },
+    "required_perf_gate_features": [
+      "load_guard",
+      "attribution_policy",
+      "event_logging",
+      "injection_support"
+    ],
+    "required_fuzz_summary": {
+      "total_targets": 55,
+      "functional_targets": 55,
+      "stub_targets": 0,
+      "quality_score_pct": 100.0
+    },
+    "next_audit_threshold": 900
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "tests/conformance/user_environment_coverage_matrix.v1.json:130",
+        "tests/conformance/user_environment_coverage_matrix.v1.json:286",
+        "tests/conformance/perf_regression_prevention.v1.json:5",
+        "tests/conformance/fuzz_harness_architecture.v1.json:5"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/user_environment_coverage_matrix_test.rs:151",
+        "crates/frankenlibc-harness/tests/user_environment_coverage_matrix_test.rs:331",
+        "crates/frankenlibc-harness/tests/aarch64_conformance_perf_matrix_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_aarch64_conformance_perf_matrix_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test aarch64_conformance_perf_matrix_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_aarch64_crosscompile.sh:10",
+        "scripts/check_aarch64_crosscompile.sh:42",
+        "scripts/check_aarch64_crosscompile.sh:51",
+        "tests/conformance/user_environment_coverage_matrix.v1.json:286"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/user_environment_coverage_matrix_test.rs:300",
+        "crates/frankenlibc-harness/tests/user_environment_coverage_matrix_test.rs:331",
+        "crates/frankenlibc-harness/tests/aarch64_conformance_perf_matrix_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_aarch64_conformance_perf_matrix_completion_contract.sh",
+        "rch exec -- bash scripts/check_aarch64_crosscompile.sh"
+      ]
+    },
+    {
+      "id": "tests.fuzz.primary",
+      "kind": "fuzz",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "tests/conformance/fuzz_harness_architecture.v1.json:5",
+        "tests/conformance/fuzz_harness_architecture.v1.json:75",
+        "scripts/check_fuzz_harness_architecture.sh:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/fuzz_harness_architecture_test.rs:1",
+        "crates/frankenlibc-harness/tests/aarch64_conformance_perf_matrix_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_aarch64_conformance_perf_matrix_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test fuzz_harness_architecture_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "tests/conformance/conformance_matrix.v1.json:1",
+        "tests/conformance/conformance_matrix.v1.json:5",
+        "tests/conformance/user_environment_coverage_matrix.v1.json:286",
+        "tests/conformance/aarch64_raw_syscall_tls_completion_contract.v1.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/conformance_matrix_test.rs:1",
+        "crates/frankenlibc-harness/tests/user_environment_coverage_matrix_test.rs:151",
+        "crates/frankenlibc-harness/tests/aarch64_conformance_perf_matrix_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_aarch64_conformance_perf_matrix_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test conformance_matrix_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_aarch64_conformance_perf_matrix_completion_contract.sh:1",
+        "tests/conformance/aarch64_conformance_perf_matrix_completion_contract.v1.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/aarch64_conformance_perf_matrix_completion_contract_test.rs:1"
+      ],
+      "telemetry_refs": [
+        "scripts/check_aarch64_conformance_perf_matrix_completion_contract.sh:1",
+        "tests/conformance/aarch64_conformance_perf_matrix_completion_contract.v1.json:1"
+      ],
+      "required_events": [
+        "aarch64_conformance_perf_matrix_completion.unit_binding",
+        "aarch64_conformance_perf_matrix_completion.e2e_binding",
+        "aarch64_conformance_perf_matrix_completion.fuzz_binding",
+        "aarch64_conformance_perf_matrix_completion.conformance_binding",
+        "aarch64_conformance_perf_matrix_completion.telemetry_contract",
+        "aarch64_conformance_perf_matrix_completion.validated"
+      ],
+      "required_commands": [
+        "bash scripts/check_aarch64_conformance_perf_matrix_completion_contract.sh",
+        "rch exec -- cargo clippy -p frankenlibc-harness --test aarch64_conformance_perf_matrix_completion_contract_test --no-deps -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "default_report_path": "target/conformance/aarch64_conformance_perf_matrix_completion_contract.report.json",
+    "default_log_path": "target/conformance/aarch64_conformance_perf_matrix_completion_contract.log.jsonl",
+    "pass_events": [
+      "aarch64_conformance_perf_matrix_completion.unit_binding",
+      "aarch64_conformance_perf_matrix_completion.e2e_binding",
+      "aarch64_conformance_perf_matrix_completion.fuzz_binding",
+      "aarch64_conformance_perf_matrix_completion.conformance_binding",
+      "aarch64_conformance_perf_matrix_completion.telemetry_contract",
+      "aarch64_conformance_perf_matrix_completion.validated"
+    ],
+    "fail_event": "aarch64_conformance_perf_matrix_completion.failed"
+  }
+}
