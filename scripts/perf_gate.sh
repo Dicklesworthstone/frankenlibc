@@ -17,6 +17,7 @@ ALLOW_TARGET_VIOLATION="${FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION:-1}"
 SKIP_OVERLOADED="${FRANKENLIBC_PERF_SKIP_OVERLOADED:-1}"
 MAX_LOAD_FACTOR="${FRANKENLIBC_PERF_MAX_LOAD_FACTOR:-0.85}"
 ENABLE_KERNEL_SUITE="${FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE:-0}"
+USE_RCH_BENCH="${FRANKENLIBC_PERF_USE_RCH_BENCH:-0}"
 FORCE_LOAD1="${FRANKENLIBC_PERF_FORCE_LOAD1:-}"
 FORCE_CPUS="${FRANKENLIBC_PERF_FORCE_CPUS:-}"
 FORCE_TOP_PROCESSES="${FRANKENLIBC_PERF_FORCE_TOP_PROCESSES:-}"
@@ -55,6 +56,35 @@ fi
 
 mkdir -p "$(dirname "${EVENT_LOG_PATH}")" "$(dirname "${REPORT_PATH}")"
 : >"${EVENT_LOG_PATH}"
+
+capture_bench_lines() {
+    local mode="$1"
+    local bench_name="$2"
+    local output_prefix="$3"
+    local mode_env="$4"
+    local -a mode_env_args=(FRANKENLIBC_BENCH_PIN=1)
+    local -a cmd
+
+    if [[ "${mode_env}" == "FRANKENLIBC_ERRNO_BENCH_MODE" ]]; then
+        mode_env_args+=(FRANKENLIBC_ERRNO_BENCH_MODE="${mode}")
+    else
+        mode_env_args+=(FRANKENLIBC_MODE="${mode}")
+    fi
+
+    cmd=(env "${mode_env_args[@]}" cargo bench -p frankenlibc-bench --bench "${bench_name}")
+
+    if [[ "${USE_RCH_BENCH}" == "1" ]]; then
+        if ! command -v rch >/dev/null 2>&1; then
+            echo "perf_gate: rch is required when FRANKENLIBC_PERF_USE_RCH_BENCH=1" >&2
+            exit 2
+        fi
+        cmd=(rch exec -- "${cmd[@]}")
+        "${cmd[@]}" 2>&1 | rg "^${output_prefix} " || true
+        return 0
+    fi
+
+    "${cmd[@]}" 2>/dev/null | rg "^${output_prefix} " || true
+}
 
 capture_top_processes() {
     if [[ -n "${FORCE_TOP_PROCESSES}" ]]; then
@@ -472,30 +502,12 @@ run_mode() {
         out_errno=""
         out_kernels=""
     else
-        out_rt="$(
-            FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE="${mode}" \
-                cargo bench -p frankenlibc-bench --bench runtime_math_bench 2>/dev/null \
-                | rg '^RUNTIME_MATH_BENCH ' || true
-        )"
-
-        out_mem="$(
-            FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE="${mode}" \
-                cargo bench -p frankenlibc-bench --bench membrane_bench 2>/dev/null \
-                | rg '^MEMBRANE_BENCH ' || true
-        )"
-
-        out_errno="$(
-            FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_ERRNO_BENCH_MODE="${mode}" \
-                cargo bench -p frankenlibc-bench --bench errno_bench 2>/dev/null \
-                | rg '^ERRNO_BENCH ' || true
-        )"
+        out_rt="$(capture_bench_lines "${mode}" "runtime_math_bench" "RUNTIME_MATH_BENCH" "FRANKENLIBC_MODE")"
+        out_mem="$(capture_bench_lines "${mode}" "membrane_bench" "MEMBRANE_BENCH" "FRANKENLIBC_MODE")"
+        out_errno="$(capture_bench_lines "${mode}" "errno_bench" "ERRNO_BENCH" "FRANKENLIBC_ERRNO_BENCH_MODE")"
 
         if [[ "${ENABLE_KERNEL_SUITE}" == "1" ]]; then
-            out_kernels="$(
-                FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE="${mode}" \
-                    cargo bench -p frankenlibc-bench --bench runtime_math_kernels_bench 2>/dev/null \
-                    | rg '^RUNTIME_MATH_KERNEL_BENCH ' || true
-            )"
+            out_kernels="$(capture_bench_lines "${mode}" "runtime_math_kernels_bench" "RUNTIME_MATH_KERNEL_BENCH" "FRANKENLIBC_MODE")"
         else
             out_kernels=""
         fi
@@ -668,6 +680,7 @@ echo "max_regression_pct=${MAX_REGRESSION_PCT}"
 echo "allow_target_violation=${ALLOW_TARGET_VIOLATION}"
 echo "skip_overloaded=${SKIP_OVERLOADED} max_load_factor=${MAX_LOAD_FACTOR}"
 echo "enable_kernel_suite=${ENABLE_KERNEL_SUITE}"
+echo "use_rch_bench=${USE_RCH_BENCH}"
 echo "inject_results=${INJECT_RESULTS_FILE:-<none>}"
 echo "attribution_policy=${ATTRIBUTION_POLICY_FILE}"
 echo "event_log=${EVENT_LOG_PATH}"

@@ -157,6 +157,7 @@ python3 - <<'PY' \
     "${SYMBOL_LATENCY_TRACE_ID}" \
     "${ALLOW_WAIVED_TARGET_VIOLATIONS}" || exit 1
 import datetime as dt
+import fnmatch
 import json
 import sys
 from pathlib import Path
@@ -195,6 +196,16 @@ for row in policy.get("active_waivers", []):
         continue
     waivers.append(row)
 
+benchmark_coverage = (
+    policy.get("current_assessment", {})
+    .get("benchmark_coverage", {})
+)
+not_yet_benched_modules = {
+    module
+    for module in benchmark_coverage.get("not_yet_benched", [])
+    if isinstance(module, str)
+}
+
 
 def lookup_budget(perf_class: str, mode: str):
     entry = policy.get("budgets", {}).get(perf_class)
@@ -203,13 +214,37 @@ def lookup_budget(perf_class: str, mode: str):
     return entry.get(budget_key[mode])
 
 
-def matching_waiver(symbol: str):
+def suite_id_for_module(module: str) -> str:
+    if module.endswith("_abi"):
+        return module.removesuffix("_abi")
+    return module
+
+
+def module_budget_status(module: str) -> str:
+    if module in not_yet_benched_modules:
+        return "not_yet_benched"
+    return "policy_enforced"
+
+
+def waiver_symbol_matches(pattern: object, symbol: str, module: str) -> bool:
+    if not isinstance(pattern, str):
+        return False
+    suite_id = suite_id_for_module(module)
+    candidates = [
+        symbol,
+        f"{suite_id}::{symbol}",
+        f"{module}::{symbol}",
+    ]
+    return any(fnmatch.fnmatchcase(candidate, pattern) for candidate in candidates)
+
+
+def matching_waiver(symbol: str, module: str):
     matches = []
     for waiver in waivers:
         symbols = waiver.get("symbols", [])
         if not isinstance(symbols, list):
             continue
-        if "*" in symbols or symbol in symbols:
+        if any(waiver_symbol_matches(pattern, symbol, module) for pattern in symbols):
             matches.append(waiver)
     return matches
 
@@ -265,22 +300,25 @@ for row in artifact.get("symbols", []):
     summary["measured_symbol_count"] += 1
     strict_overhead = float(strict_p99) - float(raw_p99)
     hardened_overhead = float(hardened_p99) - float(raw_p99)
+    coverage_status = module_budget_status(module)
+    budgets_applicable = coverage_status == "policy_enforced"
     row_result = {
         "symbol": symbol,
         "module": module,
         "perf_class": perf_class,
+        "benchmark_coverage_status": coverage_status,
         "raw_p99_ns": raw_p99,
         "strict_p99_ns": strict_p99,
         "hardened_p99_ns": hardened_p99,
         "strict_overhead_ns": strict_overhead,
         "hardened_overhead_ns": hardened_overhead,
-        "strict_budget_ns": lookup_budget(perf_class, "strict"),
-        "hardened_budget_ns": lookup_budget(perf_class, "hardened"),
+        "strict_budget_ns": lookup_budget(perf_class, "strict") if budgets_applicable else None,
+        "hardened_budget_ns": lookup_budget(perf_class, "hardened") if budgets_applicable else None,
         "strict_status": "not_applicable",
         "hardened_status": "not_applicable",
         "waiver_beads": [],
     }
-    row_waivers = matching_waiver(symbol)
+    row_waivers = matching_waiver(symbol, module)
     row_result["waiver_beads"] = [w.get("bead_id", "") for w in row_waivers if w.get("bead_id")]
     symbol_has_applicable_budget = False
 

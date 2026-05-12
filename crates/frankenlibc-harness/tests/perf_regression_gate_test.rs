@@ -542,6 +542,10 @@ printf '%s\n' "$@" >"${RCH_LOG}"
         "rch call should forward kernel-suite toggle"
     );
     assert!(
+        logged.contains("FRANKENLIBC_PERF_USE_RCH_BENCH=1"),
+        "rch call should request rch-backed cargo bench execution"
+    );
+    assert!(
         logged.contains("FRANKENLIBC_PERF_REPORT=target/conformance/perf_gate.wrapper.report.json"),
         "rch call should forward perf report path"
     );
