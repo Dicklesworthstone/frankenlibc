@@ -1,0 +1,97 @@
+{
+  "schema_version": "regex_glob_free_completion_contract.v1",
+  "manifest_id": "bd-qerp.1-regex-glob-free-completion-contract",
+  "generated_utc": "2026-05-12T16:56:00Z",
+  "bead_id": "bd-qerp.1",
+  "original_bead": "bd-qerp",
+  "trace_id": "bd-qerp.1::regex-glob-free::completion::v1",
+  "description": "Completion-debt evidence binding for the regex/glob conformance crash fix. This contract proves regex/glob fixture cleanup uses FrankenLibC's ABI deallocation path instead of host libc cleanup that can trip free(): invalid pointer during verification.",
+  "source_artifacts": {
+    "conformance_executor": "crates/frankenlibc_conformance/src/lib.rs",
+    "regex_glob_fixture": "tests/conformance/fixtures/regex_glob_ops.json",
+    "regex_glob_harness_test": "crates/frankenlibc-harness/tests/regex_glob_ops_conformance_test.rs",
+    "completion_checker": "scripts/check_regex_glob_free_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/regex_glob_free_completion_contract_test.rs"
+  },
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.conformance.primary"
+    ],
+    "implementation_markers": {
+      "conformance_executor": [
+        "fn execute_regcomp_case(",
+        "fn execute_regexec_case(",
+        "fn execute_glob_case(",
+        "frankenlibc_abi::string_abi::regfree(&mut preg as *mut _ as *mut c_void)",
+        "frankenlibc_abi::string_abi::globfree(&mut pglob as *mut _ as *mut c_void)"
+      ],
+      "regex_glob_fixture": [
+        "\"family\": \"regex_glob_ops\"",
+        "\"name\": \"regcomp_basic_strict\"",
+        "\"name\": \"regexec_match_strict\"",
+        "\"name\": \"glob_star_strict\"",
+        "\"name\": \"glob_star_hardened\"",
+        "\"mode\": \"both\""
+      ],
+      "regex_glob_harness_test": [
+        "fn regex_glob_ops_fixture_executes_with_host_parity_in_both_modes()",
+        "execute_case_via_harness(&case.function, &case.inputs, mode)",
+        ".arg(\"conformance-matrix-case\")",
+        "result.host_parity"
+      ]
+    },
+    "test_contract": {
+      "minimum_fixture_case_count": 11,
+      "required_functions": [
+        "regcomp",
+        "regexec",
+        "fnmatch",
+        "glob",
+        "wordexp"
+      ],
+      "required_modes": [
+        "strict",
+        "hardened",
+        "both"
+      ],
+      "required_remote_commands": [
+        "cargo test -p frankenlibc-harness --test regex_glob_free_completion_contract_test -- --nocapture",
+        "cargo clippy -p frankenlibc-harness --test regex_glob_free_completion_contract_test -- -D warnings",
+        "cargo test -p frankenlibc-harness --test regex_glob_ops_conformance_test -- --nocapture",
+        "cargo test -p frankenlibc_conformance regex_glob_ops_fixture_cases_match_execute_fixture_case --lib -- --nocapture"
+      ]
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "implementation_refs": [
+        "crates/frankenlibc_conformance/src/lib.rs"
+      ],
+      "test_refs": [
+        "tests/conformance/fixtures/regex_glob_ops.json",
+        "crates/frankenlibc-harness/tests/regex_glob_ops_conformance_test.rs",
+        "crates/frankenlibc-harness/tests/regex_glob_free_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "regex_glob_ops_conformance_test::regex_glob_ops_fixture_executes_with_host_parity_in_both_modes",
+        "frankenlibc_conformance::tests::regex_glob_ops_fixture_cases_match_execute_fixture_case",
+        "regex_glob_free_completion_contract_test::checker_accepts_regex_glob_free_completion_contract"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "report_schema_version": "regex_glob_free_completion_contract.report.v1",
+    "required_events": [
+      "regex_glob_free.sources_validated",
+      "regex_glob_free.implementation_markers_validated",
+      "regex_glob_free.fixture_surface_validated",
+      "regex_glob_free.bindings_validated",
+      "regex_glob_free.completion_contract_pass"
+    ],
+    "forbidden_pass_events": [
+      "regex_glob_free.completion_contract_fail"
+    ]
+  }
+}
