@@ -1,0 +1,241 @@
+{
+  "schema_version": "tsm_logging_completion_contract.v1",
+  "original_bead": "bd-32e.7",
+  "completion_debt_bead": "bd-32e.7.1",
+  "trace_id": "bd-32e-7-1-tsm-logging-completion-v1",
+  "description": "Completion-debt evidence binding for the TSM logging specification: structured validation traces, bounded labels, security context verdicts, and machine-checkable evidence emission.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-32e.7/scorecard.md",
+    "score_before": 470,
+    "score_threshold": 800
+  },
+  "source_artifacts": {
+    "ptr_validator": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+    "tsm_pipeline_e2e": "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
+    "validation_stage_contract": "tests/conformance/validation_pipeline_stage_coverage_contract.v1.json",
+    "validation_stage_checker": "scripts/check_validation_pipeline_stage_coverage_contract.sh",
+    "validation_stage_harness": "crates/frankenlibc-harness/tests/validation_pipeline_stage_coverage_contract_test.rs",
+    "contract_harness": "crates/frankenlibc-harness/tests/tsm_logging_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:34",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:38",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:43",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:72",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:80",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:105",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:249",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:251",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:253",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:345",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:351",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:357",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:386",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:427",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:485",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:547",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:567",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:722",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:841",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:2177",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:2369",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:2426",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:2446",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs:2484",
+    "tests/conformance/validation_pipeline_stage_coverage_contract.v1.json:1",
+    "scripts/check_validation_pipeline_stage_coverage_contract.sh:1",
+    "crates/frankenlibc-harness/tests/validation_pipeline_stage_coverage_contract_test.rs:1",
+    "scripts/check_tsm_logging_completion_contract.sh:1",
+    "crates/frankenlibc-harness/tests/tsm_logging_completion_contract_test.rs:1"
+  ],
+  "logging_contract": {
+    "required_public_controls": [
+      "set_validation_logging_enabled",
+      "clear_validation_logs",
+      "export_validation_log_jsonl"
+    ],
+    "required_structs": [
+      "ValidationLogRow",
+      "ValidationLogInputs",
+      "ValidationTraceContext"
+    ],
+    "required_runtime_events": [
+      "validation_stage",
+      "validation_transition",
+      "validation_order_rewrite",
+      "validation_budget_overrun"
+    ],
+    "required_checker_events": [
+      "tsm_logging_completion_contract_validated",
+      "tsm_logging_completion_contract_failed"
+    ],
+    "required_levels": [
+      "trace",
+      "debug",
+      "info",
+      "warn",
+      "error"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "span_id",
+      "parent_span_id",
+      "decision_id",
+      "schema_version",
+      "level",
+      "event",
+      "controller_id",
+      "decision_path",
+      "decision_action",
+      "outcome",
+      "mode",
+      "api_family",
+      "symbol",
+      "stage",
+      "security_context",
+      "capability_scope",
+      "security_verdict",
+      "latency_ns",
+      "policy_id",
+      "risk_upper_bound_ppm",
+      "evidence_seqno",
+      "stage_inputs",
+      "artifact_refs"
+    ],
+    "required_stage_input_fields": [
+      "aligned",
+      "recent_page",
+      "bloom_negative",
+      "cache_hit"
+    ],
+    "required_security_verdicts": [
+      "allow",
+      "deny"
+    ],
+    "bounded_cardinality": {
+      "log_capacity": 2048,
+      "max_level_label_cardinality": 5,
+      "max_stage_label_cardinality": 16
+    },
+    "evidence_summary": "The pointer validator exposes explicit logging controls, emits JSON rows with scoped trace/decision identifiers, records security context verdicts, and bounds log buffer and label cardinality."
+  },
+  "unit_primary": {
+    "missing_item_id": "tests.unit.primary",
+    "description": "Inline unit tests bind log enable/disable behavior, trace and decision IDs, fail-closed security context denial, level coverage, and bounded label cardinality.",
+    "required_test_refs": [
+      {
+        "source": "ptr_validator",
+        "name": "default_cache_hit_fast_path_matches_logged_pipeline_hit"
+      },
+      {
+        "source": "ptr_validator",
+        "name": "validation_log_export_includes_trace_and_decision_ids"
+      },
+      {
+        "source": "ptr_validator",
+        "name": "security_context_default_deny_is_fail_closed"
+      },
+      {
+        "source": "ptr_validator",
+        "name": "validation_logging_level_mapping_covers_spec_levels"
+      },
+      {
+        "source": "ptr_validator",
+        "name": "validation_logging_cardinality_budget_is_bounded"
+      }
+    ],
+    "required_commands": [
+      "rch exec -- cargo test -p frankenlibc-membrane validation_logging --lib -- --nocapture --test-threads=1",
+      "rch exec -- cargo test -p frankenlibc-membrane validation_log_export_includes_trace_and_decision_ids --lib -- --exact --nocapture --test-threads=1",
+      "rch exec -- cargo test -p frankenlibc-membrane security_context_default_deny_is_fail_closed --lib -- --exact --nocapture --test-threads=1"
+    ]
+  },
+  "e2e_primary": {
+    "missing_item_id": "tests.e2e.primary",
+    "description": "The TSM e2e suite and stage-coverage gate exercise validation lifecycle paths and validate that structured stage evidence remains present.",
+    "required_test_refs": [
+      {
+        "source": "tsm_pipeline_e2e",
+        "name": "alloc_validate_free_lifecycle"
+      },
+      {
+        "source": "tsm_pipeline_e2e",
+        "name": "tls_cache_hits_on_repeated_validation"
+      },
+      {
+        "source": "tsm_pipeline_e2e",
+        "name": "pipeline_metrics_after_workload"
+      },
+      {
+        "source": "validation_stage_harness",
+        "name": "checker_emits_report_and_jsonl"
+      },
+      {
+        "source": "validation_stage_harness",
+        "name": "checker_rejects_missing_bounds_stage_binding"
+      }
+    ],
+    "required_commands": [
+      "rch exec -- cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test tls_cache_hits_on_repeated_validation -- --exact --nocapture --test-threads=1",
+      "rch exec -- cargo test -p frankenlibc-harness --test validation_pipeline_stage_coverage_contract_test -- --nocapture"
+    ]
+  },
+  "telemetry_primary": {
+    "missing_item_id": "telemetry.primary",
+    "description": "TSM logging telemetry is validated by source-field checks, fail-closed drift signatures, report JSON, and one JSONL evidence row per checker run.",
+    "default_report_path": "target/conformance/tsm_logging_completion_contract.report.json",
+    "default_log_path": "target/conformance/tsm_logging_completion_contract.log.jsonl",
+    "required_test_refs": [
+      {
+        "source": "ptr_validator",
+        "name": "validation_log_export_includes_trace_and_decision_ids"
+      },
+      {
+        "source": "ptr_validator",
+        "name": "validation_logging_cardinality_budget_is_bounded"
+      },
+      {
+        "source": "ptr_validator",
+        "name": "validation_logging_level_mapping_covers_spec_levels"
+      },
+      {
+        "source": "contract_harness",
+        "name": "checker_emits_report_and_jsonl"
+      },
+      {
+        "source": "contract_harness",
+        "name": "checker_rejects_missing_budget_overrun_event"
+      }
+    ],
+    "required_events": [
+      "validation_stage",
+      "validation_transition",
+      "validation_order_rewrite",
+      "validation_budget_overrun",
+      "tsm_logging_completion_contract_validated",
+      "tsm_logging_completion_contract_failed"
+    ],
+    "required_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "level",
+      "completion_debt_bead",
+      "original_bead",
+      "source_commit",
+      "status",
+      "missing_items_bound",
+      "test_refs",
+      "required_runtime_events",
+      "required_checker_events",
+      "required_levels",
+      "required_log_fields",
+      "required_stage_input_fields",
+      "required_security_verdicts",
+      "artifact_refs",
+      "failure_signature"
+    ]
+  }
+}
