@@ -1,0 +1,120 @@
+{
+  "bead": "bd-2ste.2",
+  "certificate_expectations": {
+    "barrier_budget_milli": 900000,
+    "certificate": "thread_safety",
+    "dimension": 5,
+    "gram_rows": 5,
+    "minimum_diagonal": 350,
+    "monomial_degree": 2,
+    "path": "crates/frankenlibc-membrane/artifacts/sos/thread_safety_certificate.task"
+  },
+  "completion_debt_bead": "bd-2ste.2.1",
+  "completion_debt_evidence": {
+    "bead": "bd-2ste.2.1",
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-membrane --test sos_barrier_arch_independence_test thread_safety -- --nocapture"
+      ],
+      "required_test_names": [
+        "thread_safety_barrier_golden_values_arch_independent",
+        "overflow_saturation_is_arch_independent",
+        "no_arch_specific_compilation_in_sos_barrier"
+      ],
+      "source": "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs"
+    },
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "original_bead": "bd-2ste.2",
+    "telemetry_primary": {
+      "log_path": "target/conformance/thread_safety_sos_completion_contract.log.jsonl",
+      "missing_item_id": "telemetry.primary",
+      "report_path": "target/conformance/thread_safety_sos_completion_contract.report.json",
+      "required_events": [
+        "thread_safety_sos_source",
+        "thread_safety_sos_certificate",
+        "thread_safety_sos_tests",
+        "thread_safety_sos_summary"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "status",
+        "bead",
+        "completion_debt_bead",
+        "artifact_refs"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-membrane thread_safety -- --nocapture"
+      ],
+      "required_test_names": [
+        "certificate_hash_matches_static_thread_safety_artifact",
+        "thread_safety_certificate_tamper_is_detected",
+        "thread_safety_gram_matrix_is_positive_semidefinite",
+        "thread_safety_barrier_safe_nominal_profile",
+        "thread_safety_barrier_violates_on_conflicting_writers",
+        "thread_safety_barrier_monotone_in_writer_pressure",
+        "controller_thread_safety_violation_tracking",
+        "proof_thread_safety_quadratic_form_nonnegative_exhaustive",
+        "proof_cholesky_stability_thread_safety",
+        "proof_barrier_separation_thread_safety"
+      ],
+      "source": "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs"
+    }
+  },
+  "manifest_id": "thread-safety-sos-completion-contract",
+  "next_audit_score_threshold": 900,
+  "schema_version": "thread_safety_sos_completion_contract.v1",
+  "source_artifacts": [
+    {
+      "artifact_id": "runtime_sos_barrier",
+      "path": "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs",
+      "required_needles": [
+        "pub fn evaluate_thread_safety_barrier(",
+        "pub fn evaluate_thread_safety(",
+        "thread_safety_violations",
+        "thread_safety_hash_valid",
+        "THREAD_SAFETY_CERTIFICATE.verify_integrity()"
+      ]
+    },
+    {
+      "artifact_id": "thread_safety_task",
+      "path": "crates/frankenlibc-membrane/artifacts/sos/thread_safety_certificate.task",
+      "required_needles": [
+        "certificate: thread_safety",
+        "dimension: 5",
+        "monomial_degree: 2",
+        "barrier_budget_milli: 900000",
+        "gram_matrix:"
+      ]
+    },
+    {
+      "artifact_id": "sos_build_generator",
+      "path": "crates/frankenlibc-membrane/build.rs",
+      "required_needles": [
+        "THREAD_SAFETY_TASK_PATH",
+        "GENERATED_THREAD_SAFETY_RS_PATH",
+        "verify_psd_cholesky",
+        "verify_polynomial_identity",
+        "write_soundness_report"
+      ]
+    },
+    {
+      "artifact_id": "arch_independence_tests",
+      "path": "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs",
+      "required_needles": [
+        "thread_safety_barrier_golden_values_arch_independent",
+        "overflow_saturation_is_arch_independent",
+        "no_arch_specific_compilation_in_sos_barrier"
+      ]
+    }
+  ]
+}
