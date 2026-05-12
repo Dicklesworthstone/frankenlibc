@@ -1,0 +1,80 @@
+{
+  "schema_version": "aio_suspend_timespec_invalid_inputs.golden.v1",
+  "bead_id": "bd-4rdz8.1",
+  "original_bead": "bd-4rdz8",
+  "description": "Golden invalid-input contract for aio_suspend timespec validation. All cases must return -1, set errno=EINVAL, and avoid panic or process abort.",
+  "cases": [
+    {
+      "id": "negative_tv_sec",
+      "input": {
+        "list_shape": "single_null_aiocb_pointer",
+        "nent": 1,
+        "timeout": {
+          "tv_sec": -1,
+          "tv_nsec": 0
+        }
+      },
+      "expected": {
+        "return_value": -1,
+        "errno": "EINVAL",
+        "errno_value": 22,
+        "no_panic": true
+      }
+    },
+    {
+      "id": "negative_tv_nsec",
+      "input": {
+        "list_shape": "single_null_aiocb_pointer",
+        "nent": 1,
+        "timeout": {
+          "tv_sec": 0,
+          "tv_nsec": -1
+        }
+      },
+      "expected": {
+        "return_value": -1,
+        "errno": "EINVAL",
+        "errno_value": 22,
+        "no_panic": true
+      }
+    },
+    {
+      "id": "oversize_tv_nsec",
+      "input": {
+        "list_shape": "single_null_aiocb_pointer",
+        "nent": 1,
+        "timeout": {
+          "tv_sec": 0,
+          "tv_nsec": 1000000000
+        }
+      },
+      "expected": {
+        "return_value": -1,
+        "errno": "EINVAL",
+        "errno_value": 22,
+        "no_panic": true
+      }
+    },
+    {
+      "id": "empty_list_precedes_timeout",
+      "input": {
+        "list_shape": "null",
+        "nent": 0,
+        "timeout": null
+      },
+      "expected": {
+        "return_value": -1,
+        "errno": "EINVAL",
+        "errno_value": 22,
+        "no_panic": true
+      }
+    }
+  ],
+  "invariants": [
+    "aio_suspend rejects tv_sec < 0 with EINVAL before constructing Duration",
+    "aio_suspend rejects tv_nsec < 0 with EINVAL before constructing Duration",
+    "aio_suspend rejects tv_nsec >= 1000000000 with EINVAL before constructing Duration",
+    "aio_suspend rejects null/empty lists with EINVAL before consulting timeout",
+    "aio_suspend64 delegates to aio_suspend and inherits the validation contract"
+  ]
+}

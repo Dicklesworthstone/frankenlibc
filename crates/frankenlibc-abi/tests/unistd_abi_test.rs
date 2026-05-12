@@ -6794,8 +6794,10 @@ fn aio_suspend_rejects_negative_tv_sec_without_panic() {
         tv_sec: -1,
         tv_nsec: 0,
     };
+    clear_errno();
     let rc = unsafe { aio_suspend(list.as_ptr(), 1, &ts) };
     assert_eq!(rc, -1, "aio_suspend with tv_sec<0 must return -1 (EINVAL)");
+    assert_eq!(errno_value(), libc::EINVAL);
 }
 
 #[test]
@@ -6806,8 +6808,10 @@ fn aio_suspend_rejects_negative_tv_nsec() {
         tv_sec: 0,
         tv_nsec: -1,
     };
+    clear_errno();
     let rc = unsafe { aio_suspend(list.as_ptr(), 1, &ts) };
     assert_eq!(rc, -1, "aio_suspend with tv_nsec<0 must return -1 (EINVAL)");
+    assert_eq!(errno_value(), libc::EINVAL);
 }
 
 #[test]
@@ -6818,19 +6822,23 @@ fn aio_suspend_rejects_oversize_tv_nsec() {
         tv_sec: 0,
         tv_nsec: 1_000_000_000,
     };
+    clear_errno();
     let rc = unsafe { aio_suspend(list.as_ptr(), 1, &ts) };
     assert_eq!(
         rc, -1,
         "aio_suspend with tv_nsec >= 1_000_000_000 must return -1 (EINVAL)"
     );
+    assert_eq!(errno_value(), libc::EINVAL);
 }
 
 #[test]
 fn aio_suspend_rejects_empty_list_before_timeout() {
     // nent <= 0 is its own EINVAL path that must trigger before we ever
     // look at the timespec — adversarial timestamps should not affect it.
+    clear_errno();
     let rc = unsafe { aio_suspend(std::ptr::null(), 0, std::ptr::null()) };
     assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EINVAL);
 }
 
 #[test]
