@@ -97,11 +97,11 @@
       "module_family": "unistd_abi",
       "track": "unistd/syscall",
       "title": "unistd/process/filesystem syscall fixture wave",
-      "current_coverage_pct": 4.45,
-      "expected_coverage_after_first_wave_pct": 6.06,
+      "current_coverage_pct": 4.72,
+      "expected_coverage_after_first_wave_pct": 6.33,
       "target_total": 742,
-      "target_covered": 33,
-      "target_uncovered": 709,
+      "target_covered": 35,
+      "target_uncovered": 707,
       "candidate_status_counts": {
         "Implemented": 10,
         "RawSyscall": 2
