@@ -1,0 +1,190 @@
+{
+  "schema_version": "standalone_link_run_smoke_dashboard_completion_contract.v1",
+  "manifest_id": "bd-zyck1.113.1-standalone-link-run-smoke-dashboard-completion-contract",
+  "generated_utc": "2026-05-12T14:38:30Z",
+  "bead_id": "bd-zyck1.113.1",
+  "original_bead": "bd-zyck1.113",
+  "trace_id": "bd-zyck1.113.1::standalone-link-run-smoke-dashboard::completion::v1",
+  "description": "Completion-debt evidence binding for the L1 dashboard rows that expose standalone link-run smoke details. This contract proves the dashboard rows, underlying standalone smoke manifest, source gates, and telemetry are replayable without promoting standalone readiness.",
+  "source_artifacts": {
+    "l1_dashboard": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+    "l1_dashboard_harness": "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
+    "standalone_smoke_manifest": "tests/conformance/standalone_link_run_smoke.v1.json",
+    "standalone_smoke_gate": "scripts/check_standalone_link_run_smoke.sh",
+    "standalone_smoke_harness": "crates/frankenlibc-harness/tests/standalone_link_run_smoke_test.rs",
+    "standalone_smoke_completion_contract": "tests/conformance/standalone_link_run_smoke_completion_contract.v1.json",
+    "standalone_smoke_completion_gate": "scripts/check_standalone_link_run_smoke_completion_contract.sh",
+    "standalone_smoke_completion_harness": "crates/frankenlibc-harness/tests/standalone_link_run_smoke_completion_contract_test.rs",
+    "completion_checker": "scripts/check_standalone_link_run_smoke_dashboard_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/standalone_link_run_smoke_dashboard_completion_contract_test.rs"
+  },
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "required_dashboard": {
+      "schema_version": "v1",
+      "total_rows_min": 619,
+      "standalone_smoke_row_prefix": "standalone-link-run-smoke",
+      "standalone_smoke_row_count": 35,
+      "required_row_kind": "smoke",
+      "required_evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "required_row_ids": [
+        "standalone-link-run-smoke-claim-blocked-policy",
+        "standalone-link-run-smoke-missing-stale-claim-blocked",
+        "standalone-link-run-smoke-row-count",
+        "standalone-link-run-smoke-positive-row-count",
+        "standalone-link-run-smoke-negative-row-count",
+        "standalone-link-run-smoke-ld-preload-substitute-rejected",
+        "standalone-link-run-smoke-current-level-still-l0",
+        "standalone-link-run-smoke-evidence-starts-at-l2",
+        "standalone-link-run-smoke-no-ld-preload-evidence",
+        "standalone-link-run-smoke-host-dependency-claim-blocked",
+        "standalone-link-run-smoke-positive-policy",
+        "standalone-link-run-smoke-negative-policy",
+        "standalone-link-run-smoke-library-env",
+        "standalone-link-run-smoke-target-dir-env",
+        "standalone-link-run-smoke-required-artifact",
+        "standalone-link-run-smoke-stale-if-older-than-head",
+        "standalone-link-run-smoke-first-required-artifact",
+        "standalone-link-run-smoke-last-required-artifact",
+        "standalone-link-run-smoke-required-log-trace",
+        "standalone-link-run-smoke-required-log-failure-signature",
+        "standalone-link-run-smoke-missing-artifact-signature",
+        "standalone-link-run-smoke-host-dependency-signature",
+        "standalone-link-run-smoke-loader-startup-fails",
+        "standalone-link-run-smoke-owner-family-batch",
+        "standalone-link-run-smoke-owner-family-first-gap",
+        "standalone-link-run-smoke-owner-family-first-positive",
+        "standalone-link-run-smoke-owner-family-negative",
+        "standalone-link-run-smoke-first-smoke-id",
+        "standalone-link-run-smoke-first-symbol-requirement",
+        "standalone-link-run-smoke-stdio-symbol-requirement",
+        "standalone-link-run-smoke-pthread-extra-flag",
+        "standalone-link-run-smoke-first-negative-obligation",
+        "standalone-link-run-smoke-loader-bootstrap-stdout",
+        "standalone-link-run-smoke-loader-process-negative-obligation",
+        "standalone-link-run-smoke-loader-process-negative-claim-blocked"
+      ],
+      "required_expectations": {
+        "standalone-link-run-smoke-claim-blocked-policy": {
+          "field": "summary.standalone_claim_status",
+          "expected_value": "blocked_until_current_artifact_and_obligations_pass"
+        },
+        "standalone-link-run-smoke-row-count": {
+          "field": "summary.row_count",
+          "expected_value": 10
+        },
+        "standalone-link-run-smoke-positive-row-count": {
+          "field": "summary.positive_row_count",
+          "expected_value": 8
+        },
+        "standalone-link-run-smoke-negative-row-count": {
+          "field": "summary.negative_row_count",
+          "expected_value": 2
+        },
+        "standalone-link-run-smoke-current-level-still-l0": {
+          "field": "current_claim_policy.current_level_must_remain",
+          "expected_value": "L0"
+        },
+        "standalone-link-run-smoke-no-ld-preload-evidence": {
+          "field": "current_claim_policy.ld_preload_evidence_accepted",
+          "expected_value": false
+        },
+        "standalone-link-run-smoke-required-log-trace": {
+          "field": "required_log_fields.0",
+          "expected_value": "trace_id"
+        },
+        "standalone-link-run-smoke-required-log-failure-signature": {
+          "field": "required_log_fields.13",
+          "expected_value": "failure_signature"
+        },
+        "standalone-link-run-smoke-first-smoke-id": {
+          "field": "smoke_rows.0.smoke_id",
+          "expected_value": "standalone.minimal_exit"
+        },
+        "standalone-link-run-smoke-loader-process-negative-claim-blocked": {
+          "field": "smoke_rows.9.expected_output.candidate_status_when_artifact_current",
+          "expected_value": "claim_blocked"
+        }
+      }
+    },
+    "required_source_gate_markers": {
+      "standalone_smoke_dry_run": "\"claim_status\": \"claim_blocked\"",
+      "standalone_smoke_completion_gate": "PASS: standalone link-run smoke completion contract"
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "implementation_refs": [
+        "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+        "tests/conformance/standalone_link_run_smoke.v1.json",
+        "tests/conformance/standalone_link_run_smoke_completion_contract.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
+        "crates/frankenlibc-harness/tests/standalone_link_run_smoke_test.rs",
+        "crates/frankenlibc-harness/tests/standalone_link_run_smoke_dashboard_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "l1_dry_run_readiness_dashboard_test::standalone_link_run_smoke_rows_are_explicit",
+        "standalone_link_run_smoke_test::dry_run_blocks_l2_claim_without_candidate_artifact",
+        "standalone_link_run_smoke_dashboard_completion_contract_test::checker_accepts_dashboard_completion_contract"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "implementation_refs": [
+        "scripts/check_standalone_link_run_smoke_dashboard_completion_contract.sh",
+        "scripts/check_standalone_link_run_smoke.sh",
+        "scripts/check_standalone_link_run_smoke_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/standalone_link_run_smoke_completion_contract_test.rs",
+        "crates/frankenlibc-harness/tests/standalone_link_run_smoke_dashboard_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "standalone_link_run_smoke_dashboard_completion_contract_test::checker_accepts_dashboard_completion_contract",
+        "standalone_link_run_smoke_dashboard_completion_contract_test::checker_replays_standalone_smoke_source_gates",
+        "standalone_link_run_smoke_dashboard_completion_contract_test::checker_rejects_missing_telemetry_binding"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "report_schema_version": "standalone_link_run_smoke_dashboard_completion_contract.report.v1",
+    "required_events": [
+      "standalone_smoke_dashboard_sources_validated",
+      "standalone_smoke_dashboard_rows_validated",
+      "standalone_smoke_dashboard_bindings_validated",
+      "standalone_smoke_dashboard_source_gates_replayed",
+      "standalone_smoke_dashboard_completion_contract_pass"
+    ],
+    "forbidden_pass_events": [
+      "standalone_smoke_dashboard_completion_contract_fail"
+    ]
+  },
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_dashboard_conformance_and_telemetry",
+      "checker_accepts_dashboard_completion_contract",
+      "checker_replays_standalone_smoke_source_gates"
+    ],
+    "negative": [
+      "checker_rejects_missing_dashboard_row",
+      "checker_rejects_missing_telemetry_binding",
+      "checker_rejects_dashboard_row_count_drift"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/standalone_link_run_smoke_dashboard_completion_contract.v1.json",
+      "scripts/check_standalone_link_run_smoke_dashboard_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/standalone_link_run_smoke_dashboard_completion_contract_test.rs",
+      "tests/conformance/l1_dry_run_readiness_dashboard.v1.json"
+    ]
+  }
+}
