@@ -1,0 +1,255 @@
+{
+  "schema_version": "unistd_fixture_wave_completion_contract.v1",
+  "bead_id": "bd-qce2t.3",
+  "epic_id": "bd-qce2t",
+  "trace_id": "bd-qce2t.3::unistd-fixture-wave::completion::v1",
+  "description": "Completion contract binding the unistd process/filesystem first-wave fixtures, coverage-prioritizer truth guard, structured telemetry, and rch validation commands.",
+  "source_artifacts": [
+    {
+      "id": "beads_ledger",
+      "kind": "tracker",
+      "path": ".beads/issues.jsonl",
+      "evidence": "Tracker rows for bd-qce2t.1, bd-qce2t.2, and bd-qce2t.3 when tracker closeout is available."
+    },
+    {
+      "id": "fixture_coverage_prioritizer",
+      "kind": "campaign_source",
+      "path": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+      "evidence": "Campaign fcq-unistd-process-filesystem coverage counts and next first-wave symbols after the completed fixture slice."
+    },
+    {
+      "id": "top_blocker_wave_plan",
+      "kind": "campaign_source",
+      "path": "tests/conformance/top_blocker_symbol_coverage_wave_plan.v1.json",
+      "evidence": "Top-blocker wave row for fcq-unistd-process-filesystem, including refreshed covered/uncovered accounting and fixture-file bindings."
+    },
+    {
+      "id": "symbol_fixture_coverage",
+      "kind": "coverage_accounting",
+      "path": "tests/conformance/symbol_fixture_coverage.v1.json",
+      "evidence": "Per-symbol fixture coverage rows linking the completed unistd symbols to unistd_process_filesystem.json."
+    },
+    {
+      "id": "per_symbol_fixture_tests",
+      "kind": "coverage_accounting",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "evidence": "Strict/hardened per-symbol fixture accounting for the completed unistd first-wave symbols."
+    },
+    {
+      "id": "conformance_coverage_snapshot",
+      "kind": "coverage_accounting",
+      "path": "tests/conformance/conformance_coverage_snapshot.v1.json",
+      "evidence": "Repository-wide fixture file and case totals after the unistd first-wave fixture lands."
+    },
+    {
+      "id": "unistd_fixture",
+      "kind": "fixture",
+      "path": "tests/conformance/fixtures/unistd_process_filesystem.json",
+      "evidence": "Strict and hardened deterministic process/filesystem fixtures for the 12 completed first-wave symbols."
+    },
+    {
+      "id": "fixture_executor",
+      "kind": "implementation",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "evidence": "execute_fixture_case dispatch and deterministic unistd process/filesystem fixture executor."
+    },
+    {
+      "id": "unistd_fixture_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/unistd_process_filesystem_conformance_test.rs",
+      "evidence": "Harness tests for fixture shape, both-mode first-wave coverage, structured output fields, ambient-state rejection, and isolated execution."
+    },
+    {
+      "id": "prioritizer_gate",
+      "kind": "coverage_guard",
+      "path": "scripts/check_fixture_coverage_prioritizer.sh",
+      "evidence": "Fail-closed completed_unistd_first_wave_guard for stale first-wave completion claims."
+    },
+    {
+      "id": "prioritizer_guard_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs",
+      "evidence": "Rust guard for completed unistd first-wave fixture and harness evidence."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/unistd_fixture_wave_completion_contract.v1.json",
+      "evidence": "Machine-readable binding for bd-qce2t.3 completion obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_unistd_fixture_wave_completion_contract.sh",
+      "evidence": "Fail-closed validator for source artifacts, dependency proof, fixture evidence, coverage accounting, telemetry, and rch validation commands."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/unistd_fixture_wave_completion_contract_test.rs",
+      "evidence": "Rust harness tests for the unistd fixture wave completion contract and negative drift signatures."
+    }
+  ],
+  "completion_contract": {
+    "required_dependency_proofs": [
+      {
+        "bead_id": "bd-qce2t.1",
+        "proof_state": "tracker_closed",
+        "commit": "f5832a47",
+        "evidence": "First-wave unistd fixture proof commit closed bd-qce2t.1 and validated 12 symbols across strict and hardened modes.",
+        "evidence_paths": [
+          "tests/conformance/fixtures/unistd_process_filesystem.json",
+          "crates/frankenlibc_conformance/src/lib.rs",
+          "crates/frankenlibc-harness/tests/unistd_process_filesystem_conformance_test.rs"
+        ]
+      },
+      {
+        "bead_id": "bd-qce2t.2",
+        "proof_state": "proof_committed",
+        "commit": "df45a47b",
+        "evidence": "Coverage/prioritizer truth proof commit refreshed canonical coverage artifacts and added completed_unistd_first_wave_guard while tracker closeout was blocked by a shared .beads reservation.",
+        "evidence_paths": [
+          "tests/conformance/fixture_coverage_prioritizer.v1.json",
+          "tests/conformance/top_blocker_symbol_coverage_wave_plan.v1.json",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs"
+        ]
+      }
+    ],
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "fixture_file": "tests/conformance/fixtures/unistd_process_filesystem.json",
+    "harness_test": "crates/frankenlibc-harness/tests/unistd_process_filesystem_conformance_test.rs",
+    "required_first_wave_symbols": [
+      "_Exit",
+      "_Fork",
+      "__cxa_atexit",
+      "__cxa_finalize",
+      "__fxstat",
+      "__fxstat64",
+      "__fxstatat",
+      "__fxstatat64",
+      "__gmtime_r",
+      "__lxstat",
+      "__lxstat64",
+      "__progname"
+    ],
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_structured_log_fields": [
+      "symbol",
+      "mode",
+      "expected",
+      "actual",
+      "failure_signature"
+    ],
+    "forbidden_ambient_output_tokens": [
+      "/dev/null",
+      "pid=",
+      "inode",
+      "st_dev",
+      "cwd="
+    ],
+    "coverage_accounting": {
+      "campaign_target_covered_min": 47,
+      "campaign_target_uncovered_max": 695,
+      "campaign_current_coverage_pct_min": 6.33,
+      "campaign_expected_after_first_wave_pct_min": 7.95,
+      "symbol_fixture_covered_min": 429,
+      "per_symbol_fixture_linked_min": 427,
+      "conformance_total_fixture_files_min": 60,
+      "conformance_total_fixture_cases_min": 1333,
+      "completed_symbols_must_not_be_next_wave": true
+    },
+    "required_coverage_guard_needles": [
+      "completed_unistd_first_wave_guard",
+      "COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIRST_WAVE",
+      "tests/conformance/fixtures/unistd_process_filesystem.json",
+      "crates/frankenlibc-harness/tests/unistd_process_filesystem_conformance_test.rs"
+    ],
+    "required_telemetry_events": [
+      "source_artifacts_validated",
+      "dependency_proofs_validated",
+      "unistd_fixture_validated",
+      "coverage_accounting_validated",
+      "validation_commands_validated",
+      "test_surfaces_validated",
+      "telemetry_contract_validated",
+      "unistd_fixture_wave_completion_contract_validated"
+    ],
+    "runtime_validation": [
+      "jq empty tests/conformance/unistd_fixture_wave_completion_contract.v1.json",
+      "bash -n scripts/check_unistd_fixture_wave_completion_contract.sh",
+      "bash scripts/check_unistd_fixture_wave_completion_contract.sh",
+      "bash scripts/check_fixture_coverage_prioritizer.sh --validate-only",
+      "AGENT_NAME=WildForest br dep cycles --no-db --json",
+      "rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_wildforest_unistd_completion_test cargo test -p frankenlibc-harness --test unistd_fixture_wave_completion_contract_test -- --nocapture",
+      "rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_wildforest_unistd_completion_check cargo check -p frankenlibc-harness --test unistd_fixture_wave_completion_contract_test",
+      "rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_wildforest_unistd_completion_clippy cargo clippy -p frankenlibc-harness --test unistd_fixture_wave_completion_contract_test -- -D warnings"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "scripts/check_unistd_fixture_wave_completion_contract.sh",
+        "tests/conformance/unistd_fixture_wave_completion_contract.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/unistd_fixture_wave_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_wildforest_unistd_completion_test cargo test -p frankenlibc-harness --test unistd_fixture_wave_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "implementation_refs": [
+        "scripts/check_unistd_fixture_wave_completion_contract.sh",
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "tests/conformance/fixtures/unistd_process_filesystem.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/unistd_process_filesystem_conformance_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_unistd_fixture_wave_completion_contract.sh",
+        "bash scripts/check_fixture_coverage_prioritizer.sh --validate-only"
+      ]
+    },
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "implementation_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem.json",
+        "crates/frankenlibc_conformance/src/lib.rs"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/unistd_process_filesystem_conformance_test.rs"
+      ],
+      "runtime_validation": [
+        "rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_frostydune_unistd_process cargo test -p frankenlibc-harness --test unistd_process_filesystem_conformance_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "telemetry.primary",
+      "implementation_refs": [
+        "tests/conformance/unistd_fixture_wave_completion_contract.v1.json",
+        "scripts/check_unistd_fixture_wave_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/unistd_fixture_wave_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_unistd_fixture_wave_completion_contract.sh"
+      ]
+    }
+  ]
+}
