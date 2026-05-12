@@ -25,7 +25,6 @@ fn fallback_errno_slot_for_current_thread() -> *mut c_int {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-#[inline]
 pub unsafe extern "C" fn __errno_location() -> *mut c_int {
     match ERRNO.try_with(|cell| cell.get()) {
         Ok(ptr) => ptr,

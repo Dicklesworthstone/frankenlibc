@@ -953,6 +953,8 @@ pub static mut IO_2_1_STDERR: *mut c_void = STDERR_SENTINEL as *mut c_void;
 
 static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 static HOST_LIBIO_EXIT_PATCHED: AtomicBool = AtomicBool::new(false);
+#[cfg(not(debug_assertions))]
+static HOST_STDIO_COPY_RELOCATIONS_SYNCED: AtomicBool = AtomicBool::new(false);
 
 fn ensure_host_libio_exit_safe() {
     if HOST_LIBIO_EXIT_PATCHED.load(Ordering::Acquire) {
@@ -1017,10 +1019,15 @@ unsafe fn sync_copy_relocated_stdio_symbol(
 
 /// Publish FrankenLibC-owned stdio globals and mark host stdio delegation ready.
 pub(crate) fn init_host_stdio_streams() {
+    if HOST_STDIO_BOOTSTRAPPED.load(Ordering::Acquire) {
+        return;
+    }
+
     ensure_host_libio_exit_safe();
 
     #[cfg(not(debug_assertions))]
-    let can_sync_copy_relocations = runtime_policy::is_runtime_ready();
+    let can_sync_copy_relocations = runtime_policy::is_runtime_ready()
+        && !HOST_STDIO_COPY_RELOCATIONS_SYNCED.load(Ordering::Acquire);
     let stdin_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
     let stdout_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO);
     let stderr_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO);
@@ -1053,6 +1060,7 @@ pub(crate) fn init_host_stdio_streams() {
                         core::ptr::addr_of_mut!(stderr),
                         stderr_ptr,
                     );
+                    HOST_STDIO_COPY_RELOCATIONS_SYNCED.store(true, Ordering::Release);
                 }
             }
         }

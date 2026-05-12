@@ -1,6 +1,7 @@
 #![feature(c_variadic)]
 #![feature(rtm_target_feature)]
 #![feature(stdarch_x86_rtm)]
+#![feature(thread_local)]
 #![allow(unused_features)]
 // All extern "C" ABI exports accept raw pointers from C callers; the membrane
 // validates at runtime, so per-function safety docs would be redundant boilerplate.

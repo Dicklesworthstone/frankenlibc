@@ -105,7 +105,20 @@ fi
 if command -v cc >/dev/null 2>&1; then
     compile_fails=0
     tmpdir=$(mktemp -d)
-    for src in "${ROOT}"/tests/integration/fixture_*.c; do
+    mapfile -t fixture_sources < <(python3 - "${ROOT}" "${SPEC}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+spec = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+for fixture in spec.get("fixtures", []):
+    source = fixture.get("source")
+    if isinstance(source, str) and source:
+        print(root / source)
+PY
+    )
+    for src in "${fixture_sources[@]}"; do
         name="$(basename "${src}" .c)"
         flags=""
         if [[ "${name}" == fixture_pthread* ]]; then

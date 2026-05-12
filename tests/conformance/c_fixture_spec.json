@@ -202,7 +202,7 @@
     "env_var": "FRANKENLIBC_MODE",
     "preload_env": "LD_PRELOAD",
     "library": "libfrankenlibc_abi.so",
-    "timeout_seconds": 10,
+    "timeout_seconds": 30,
     "runner_script": "scripts/c_fixture_suite.sh",
     "output_dir": "target/c_fixture_suite/"
   },

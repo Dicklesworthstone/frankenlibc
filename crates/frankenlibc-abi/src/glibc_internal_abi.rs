@@ -9485,8 +9485,11 @@ pub unsafe extern "C" fn __libc_fatal(message: *const c_char) -> ! {
 // in this crate. The four below close the remaining gap.
 
 /// `__libc_dlerror_result` — TLS slot holding the per-thread last
-/// dlerror() result struct. NULL until a dl* call has populated it.
+/// dlerror() result struct. This must be a TLS export: host glibc's
+/// `__libc_dlerror_result_free` accesses it through the thread pointer, and a
+/// plain object export corrupts that offset under LD_PRELOAD interposition.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[thread_local]
 pub static mut __libc_dlerror_result: *mut c_void = std::ptr::null_mut();
 
 /// `_itoa_lower_digits` — 17-byte (16 hex chars + NUL) lookup table

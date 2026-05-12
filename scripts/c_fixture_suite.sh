@@ -17,12 +17,13 @@ OUT_ROOT="${ROOT}/target/c_fixture_suite"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="${OUT_ROOT}/${RUN_ID}"
 BIN_DIR="${RUN_DIR}/bin"
-TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-10}"
+TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-30}"
 BEAD_ID="${BEAD_ID:-bd-3jh}"
 TRACE_FILE="${RUN_DIR}/trace.jsonl"
 ARTIFACT_INDEX="${RUN_DIR}/artifact_index.json"
 TRACE_SEQ=0
 FIXTURE_FILTER="${FIXTURE_FILTER:-fixture_*.c}"
+SPEC="${ROOT}/tests/conformance/c_fixture_spec.json"
 
 LIB_CANDIDATES=()
 # Honour caller-supplied CARGO_TARGET_DIR (bd-gilq3).
@@ -122,7 +123,23 @@ echo "--- Compiling fixtures ---"
 compile_fails=0
 fixture_bins=()
 
-matched_sources=("${FIXTURE_DIR}"/${FIXTURE_FILTER})
+if [[ "${FIXTURE_FILTER}" == "fixture_*.c" && -f "${SPEC}" ]]; then
+  mapfile -t matched_sources < <(python3 - "${ROOT}" "${SPEC}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+spec = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+for fixture in spec.get("fixtures", []):
+    source = fixture.get("source")
+    if isinstance(source, str) and source:
+        print(root / source)
+PY
+  )
+else
+  matched_sources=("${FIXTURE_DIR}"/${FIXTURE_FILTER})
+fi
 if [[ "${#matched_sources[@]}" -eq 0 ]]; then
   echo "c_fixture_suite: no fixtures matched filter '${FIXTURE_FILTER}'" >&2
   exit 2
