@@ -1,0 +1,218 @@
+{
+  "schema_version": "pthread_mutex_callthrough_eradication_completion_contract.v1",
+  "original_bead": "bd-1uc",
+  "completion_debt_bead": "bd-1uc.1",
+  "generated_at_utc": "2026-05-12T03:39:22Z",
+  "purpose": "Close the bd-1uc.1 completion-debt audit items by binding pthread_mutex_* replacement routing to native pthread_abi implementations, fixture-backed conformance coverage, zero-call-through replacement/interpose scans, and structured telemetry artifacts.",
+  "audit_source": {
+    "missing_items": [
+      {
+        "id": "tests.conformance.primary",
+        "kind": "conformance",
+        "description": "primary conformance evidence for pthread_mutex_* replacement paths"
+      },
+      {
+        "id": "telemetry.primary",
+        "kind": "telemetry",
+        "description": "primary telemetry evidence for zero host call-through residuals"
+      }
+    ]
+  },
+  "source_artifacts": {
+    "replacement_profile": "tests/conformance/replacement_profile.json",
+    "replacement_guard": "scripts/check_replacement_guard.sh",
+    "replacement_guard_harness": "crates/frankenlibc-harness/tests/replacement_guard_test.rs",
+    "residual_contract": "tests/conformance/residual_replacement_callthrough_blockers.v1.json",
+    "residual_gate": "scripts/check_residual_replacement_callthrough_blockers.sh",
+    "residual_harness": "crates/frankenlibc-harness/tests/residual_replacement_callthrough_blockers_test.rs",
+    "support_matrix": "support_matrix.json",
+    "abi_mutex": "crates/frankenlibc-abi/src/pthread_abi.rs",
+    "fixture": "tests/conformance/fixtures/pthread_mutex.json",
+    "conformance_harness": "crates/frankenlibc-harness/tests/pthread_mutex_conformance_test.rs",
+    "completion_contract": "tests/conformance/pthread_mutex_callthrough_eradication_completion_contract.v1.json",
+    "completion_gate": "scripts/check_pthread_mutex_callthrough_eradication_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/pthread_mutex_callthrough_eradication_completion_contract_test.rs"
+  },
+  "source_anchors": {
+    "replacement_profile": [
+      "\"replacement_forbidden\"",
+      "\"pthread_mutex_init\"",
+      "\"pthread_mutex_destroy\"",
+      "\"pthread_mutex_lock\"",
+      "\"pthread_mutex_trylock\"",
+      "\"pthread_mutex_unlock\"",
+      "\"scripts/check_replacement_guard.sh\""
+    ],
+    "replacement_guard": [
+      "mutex_forbidden_count",
+      "FAIL: ${mutex_forbidden_count} forbidden pthread_mutex_* call-through(s) detected:",
+      "PASS: No forbidden pthread_mutex_* call-throughs detected"
+    ],
+    "replacement_guard_harness": [
+      "fn no_pthread_mutex_call_throughs_in_replacement_paths()"
+    ],
+    "residual_contract": [
+      "\"mutex_forbidden_count\": 0",
+      "\"residual_forbidden_count\": 0",
+      "\"replacement_callthrough_blockers_cleared\""
+    ],
+    "residual_gate": [
+      "run_replacement_guard(\"replacement\"",
+      "run_replacement_guard(\"interpose\"",
+      "residual_replacement_callthrough_blockers_validated"
+    ],
+    "residual_harness": [
+      "fn checker_passes_with_live_replacement_guard_reports()"
+    ],
+    "support_matrix": [
+      "\"symbol\": \"pthread_mutex_init\"",
+      "\"symbol\": \"pthread_mutex_destroy\"",
+      "\"symbol\": \"pthread_mutex_lock\"",
+      "\"symbol\": \"pthread_mutex_trylock\"",
+      "\"symbol\": \"pthread_mutex_unlock\"",
+      "\"status\": \"Implemented\"",
+      "\"module\": \"pthread_abi\""
+    ],
+    "abi_mutex": [
+      "pub unsafe extern \"C\" fn pthread_mutex_init(",
+      "pub unsafe extern \"C\" fn pthread_mutex_destroy(",
+      "pub unsafe extern \"C\" fn pthread_mutex_lock(",
+      "pub unsafe extern \"C\" fn pthread_mutex_trylock(",
+      "pub unsafe extern \"C\" fn pthread_mutex_unlock("
+    ],
+    "fixture": [
+      "\"function\": \"pthread_mutex_init\"",
+      "\"function\": \"pthread_mutex_lock\"",
+      "\"function\": \"pthread_mutex_trylock\"",
+      "\"function\": \"pthread_mutex_unlock\"",
+      "\"function\": \"pthread_mutex_destroy\"",
+      "\"function\": \"__pthread_mutex_trylock\"",
+      "\"function\": \"__pthread_mutex_unlock\""
+    ],
+    "conformance_harness": [
+      "fn pthread_mutex_fixture_executes_via_isolated_harness()",
+      "fn pthread_mutex_function_distribution()",
+      "fn pthread_mutex_covers_alias_symbols()"
+    ],
+    "completion_gate": [
+      "pthread_mutex_callthrough_eradication.conformance_binding",
+      "pthread_mutex_callthrough_eradication.telemetry_contract",
+      "pthread_mutex_callthrough_eradication.completion_contract_validated"
+    ],
+    "completion_harness": [
+      "fn manifest_binds_conformance_and_telemetry_items()",
+      "fn checker_emits_report_and_jsonl()",
+      "fn checker_rejects_missing_mutex_symbol_binding()"
+    ]
+  },
+  "pthread_mutex_callthrough_eradication_contract": {
+    "required_mutex_symbols": [
+      "pthread_mutex_destroy",
+      "pthread_mutex_init",
+      "pthread_mutex_lock",
+      "pthread_mutex_trylock",
+      "pthread_mutex_unlock"
+    ],
+    "guard_modes": [
+      "replacement",
+      "interpose"
+    ],
+    "support_matrix_required_status": "Implemented",
+    "support_matrix_required_module": "pthread_abi",
+    "replacement_guard_required_zero_fields": [
+      "total_call_throughs",
+      "modules_with_call_throughs",
+      "violations",
+      "mutex_forbidden_count"
+    ],
+    "residual_required_zero_fields": [
+      "summary.residual_forbidden_count",
+      "summary.replacement_total_call_throughs",
+      "summary.interpose_total_call_throughs"
+    ],
+    "fixture_required_case_count_min": 8,
+    "next_audit_threshold": 900
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "support_matrix.json:10171",
+        "support_matrix.json:10180",
+        "support_matrix.json:10189",
+        "support_matrix.json:10207",
+        "support_matrix.json:10216",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2257",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2317",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2357",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2428",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2498"
+      ],
+      "test_refs": [
+        "tests/conformance/fixtures/pthread_mutex.json:10",
+        "tests/conformance/fixtures/pthread_mutex.json:19",
+        "tests/conformance/fixtures/pthread_mutex.json:28",
+        "tests/conformance/fixtures/pthread_mutex.json:46",
+        "tests/conformance/fixtures/pthread_mutex.json:73",
+        "crates/frankenlibc-harness/tests/pthread_mutex_conformance_test.rs:410",
+        "crates/frankenlibc-harness/tests/replacement_guard_test.rs:345",
+        "crates/frankenlibc-harness/tests/residual_replacement_callthrough_blockers_test.rs:131",
+        "crates/frankenlibc-harness/tests/pthread_mutex_callthrough_eradication_completion_contract_test.rs:85"
+      ],
+      "required_commands": [
+        "bash scripts/check_pthread_mutex_callthrough_eradication_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test pthread_mutex_callthrough_eradication_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "tests/conformance/replacement_profile.json:146",
+        "scripts/check_replacement_guard.sh:414",
+        "scripts/check_replacement_guard.sh:418",
+        "scripts/check_residual_replacement_callthrough_blockers.sh:220",
+        "scripts/check_residual_replacement_callthrough_blockers.sh:221",
+        "scripts/check_residual_replacement_callthrough_blockers.sh:265"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/replacement_guard_test.rs:345",
+        "crates/frankenlibc-harness/tests/residual_replacement_callthrough_blockers_test.rs:131",
+        "crates/frankenlibc-harness/tests/pthread_mutex_callthrough_eradication_completion_contract_test.rs:114"
+      ],
+      "telemetry_refs": [
+        "tests/conformance/residual_replacement_callthrough_blockers.v1.json:19",
+        "tests/conformance/residual_replacement_callthrough_blockers.v1.json:29",
+        "tests/conformance/residual_replacement_callthrough_blockers.v1.json:33"
+      ],
+      "required_events": [
+        "pthread_mutex_callthrough_eradication.conformance_binding",
+        "pthread_mutex_callthrough_eradication.telemetry_contract",
+        "pthread_mutex_callthrough_eradication.completion_contract_validated"
+      ],
+      "required_commands": [
+        "bash scripts/check_residual_replacement_callthrough_blockers.sh --validate-only",
+        "bash scripts/check_pthread_mutex_callthrough_eradication_completion_contract.sh",
+        "rch exec -- cargo clippy -p frankenlibc-harness --test pthread_mutex_callthrough_eradication_completion_contract_test -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "default_report_path": "target/conformance/pthread_mutex_callthrough_eradication_completion_contract.report.json",
+    "default_log_path": "target/conformance/pthread_mutex_callthrough_eradication_completion_contract.log.jsonl",
+    "consumed_reports": [
+      "target/conformance/residual_replacement_callthrough_blockers.report.json",
+      "target/conformance/replacement_guard.replacement.report.json",
+      "target/conformance/replacement_guard.interpose.report.json"
+    ],
+    "pass_events": [
+      "pthread_mutex_callthrough_eradication.conformance_binding",
+      "pthread_mutex_callthrough_eradication.telemetry_contract",
+      "pthread_mutex_callthrough_eradication.completion_contract_validated"
+    ],
+    "fail_event": "pthread_mutex_callthrough_eradication.completion_contract_failed"
+  }
+}
