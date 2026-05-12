@@ -790,6 +790,40 @@ mod tests {
     }
 
     #[test]
+    fn fallback_tls_destructor_runs_on_unregistered_teardown() {
+        let _g = lock_and_reset();
+        static DTOR_COUNT: AtomicU32 = AtomicU32::new(0);
+        static DTOR_VALUE: AtomicU64 = AtomicU64::new(0);
+        DTOR_COUNT.store(0, AtomicOrdering::SeqCst);
+        DTOR_VALUE.store(0, AtomicOrdering::SeqCst);
+
+        unsafe extern "C" fn dtor(val: *mut c_void) {
+            DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst);
+            DTOR_VALUE.store(val as u64, AtomicOrdering::SeqCst);
+        }
+
+        let key = create_key(Some(dtor));
+        let tid = current_tid();
+        assert!(
+            table_lookup(tid).is_null(),
+            "test starts on fallback TLS path"
+        );
+
+        assert_eq!(pthread_setspecific(key, 0xBEEF), 0);
+        assert_eq!(pthread_getspecific(key), 0xBEEF);
+
+        teardown_thread_tls(tid);
+
+        assert_eq!(DTOR_COUNT.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(DTOR_VALUE.load(AtomicOrdering::SeqCst), 0xBEEF);
+        assert_eq!(
+            pthread_getspecific(key),
+            0,
+            "fallback TLS value should be cleared before teardown returns"
+        );
+    }
+
+    #[test]
     fn destructor_iterates_when_value_reset() {
         let _g = lock_and_reset();
         static ITER_COUNT: AtomicU32 = AtomicU32::new(0);

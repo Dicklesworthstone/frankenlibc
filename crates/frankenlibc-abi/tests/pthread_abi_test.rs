@@ -69,6 +69,12 @@ unsafe extern "C" fn managed_exit_with_tls_destructor(arg: *mut c_void) -> *mut 
     unsafe { pthread_exit(0x55usize as *mut c_void) }
 }
 
+unsafe extern "C" fn managed_return_with_tls_destructor(arg: *mut c_void) -> *mut c_void {
+    let ctx = unsafe { &*(arg as *const ExitDestructorCtx) };
+    assert_eq!(unsafe { pthread_setspecific(ctx.key, arg) }, 0);
+    0x66usize as *mut c_void
+}
+
 unsafe extern "C" fn getattr_self_stacksize(_arg: *mut c_void) -> *mut c_void {
     let self_id = unsafe { pthread_self() };
     let mut attr: libc::pthread_attr_t = unsafe { std::mem::zeroed() };
@@ -319,6 +325,37 @@ fn thread_managed_pthread_exit_runs_tls_destructors() {
         let mut retval: *mut c_void = ptr::null_mut();
         assert_eq!(pthread_join(thr, &mut retval), 0);
         assert_eq!(retval as usize, 0x55);
+        assert_eq!(ctx.ran.load(Ordering::SeqCst), 1);
+        assert_eq!(pthread_key_delete(ctx.key), 0);
+    }
+}
+
+#[test]
+fn thread_return_runs_tls_destructors() {
+    unsafe {
+        let _guard = ThreadingForceNativeGuard {
+            previous: pthread_threading_swap_force_native_for_tests(),
+        };
+        let mut ctx = Box::new(ExitDestructorCtx {
+            key: 0,
+            ran: AtomicI32::new(0),
+        });
+        assert_eq!(pthread_key_create(&mut ctx.key, Some(exit_destructor)), 0);
+
+        let mut thr: libc::pthread_t = 0;
+        assert_eq!(
+            pthread_create(
+                &mut thr,
+                ptr::null(),
+                Some(managed_return_with_tls_destructor),
+                (&mut *ctx as *mut ExitDestructorCtx).cast::<c_void>(),
+            ),
+            0
+        );
+
+        let mut retval: *mut c_void = ptr::null_mut();
+        assert_eq!(pthread_join(thr, &mut retval), 0);
+        assert_eq!(retval as usize, 0x66);
         assert_eq!(ctx.ran.load(Ordering::SeqCst), 1);
         assert_eq!(pthread_key_delete(ctx.key), 0);
     }
