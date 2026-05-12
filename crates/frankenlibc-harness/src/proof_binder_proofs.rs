@@ -166,9 +166,9 @@ pub fn run_and_write(
             })),
     )?;
     if !validator.ok {
-        return Err(std::io::Error::other(format!(
-            "proof binder validator failed with exit code {}",
-            validator.exit_code
+        return Err(std::io::Error::other(command_failure_context(
+            "proof binder validator",
+            &validator,
         ))
         .into());
     }
@@ -176,19 +176,13 @@ pub fn run_and_write(
     let python_tests = run_command(
         workspace_root,
         "python3",
-        &[
-            "-m",
-            "pytest",
-            python_test_path.to_string_lossy().as_ref(),
-            "-q",
-            "--tb=short",
-        ],
+        &[python_test_path.to_string_lossy().as_ref()],
     )?;
     emitter.emit_entry(
         LogEntry::new("", LogLevel::Info, "proof_binder.python_tests")
             .with_stream(StreamKind::Unit)
             .with_gate(GATE)
-            .with_api("proof_binder", "pytest")
+            .with_api("proof_binder", "python_tests")
             .with_outcome(if python_tests.ok {
                 Outcome::Pass
             } else {
@@ -204,9 +198,9 @@ pub fn run_and_write(
             })),
     )?;
     if !python_tests.ok {
-        return Err(std::io::Error::other(format!(
-            "proof binder python tests failed with exit code {}",
-            python_tests.exit_code
+        return Err(std::io::Error::other(command_failure_context(
+            "proof binder python tests",
+            &python_tests,
         ))
         .into());
     }
@@ -481,6 +475,13 @@ fn trim_output_tail(output: &str) -> String {
         joined = truncated.into_iter().rev().collect::<String>();
     }
     joined
+}
+
+fn command_failure_context(label: &str, command: &ProofBinderCommandReport) -> String {
+    format!(
+        "{label} failed with exit code {}\nstdout_tail:\n{}\nstderr_tail:\n{}",
+        command.exit_code, command.stdout_tail, command.stderr_tail
+    )
 }
 
 fn rel_path(workspace_root: &Path, path: &Path) -> String {
