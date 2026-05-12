@@ -1,0 +1,398 @@
+{
+  "schema_version": "reality_check_ambition_completion_contract.v1",
+  "manifest_id": "bd-bp8fl.17-reality-check-ambition-completion-contract",
+  "original_bead": "bd-bp8fl",
+  "completion_debt_bead": "bd-bp8fl.17",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "audit_score": 645,
+  "next_audit_score_threshold": 800,
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl/scorecard.md",
+  "description": "Completion-debt evidence binding for the reality-check ambition closure program: parent closure, sixteen closed child workstreams, existing child gates, conformance artifacts, deterministic commands, and structured telemetry.",
+  "source_artifacts": {
+    "issues_jsonl": ".beads/issues.jsonl",
+    "support_matrix": "support_matrix.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "parent_acceptance_replay_contract": "tests/conformance/bp8fl_parent_acceptance_replay.v1.json",
+    "parent_acceptance_replay_checker": "scripts/check_bp8fl_parent_acceptance_replay.sh",
+    "parent_acceptance_replay_test": "crates/frankenlibc-harness/tests/bp8fl_parent_acceptance_replay_test.rs",
+    "acceptance_fields_contract": "tests/conformance/bp8fl_acceptance_fields_completion_contract.v1.json",
+    "acceptance_fields_checker": "scripts/check_bp8fl_acceptance_fields_completion_contract.sh",
+    "acceptance_fields_test": "crates/frankenlibc-harness/tests/bp8fl_acceptance_fields_completion_contract_test.rs",
+    "reality_bridge_contract": "tests/conformance/reality_bridge_import_reconciliation.v1.json",
+    "reality_bridge_checker": "scripts/check_reality_bridge_import_reconciliation.sh",
+    "reality_bridge_test": "crates/frankenlibc-harness/tests/reality_bridge_import_reconciliation_test.rs",
+    "ambition_graph_lint_contract": "tests/conformance/ambition_graph_readiness_lint.v1.json",
+    "ambition_graph_lint_checker": "scripts/check_ambition_graph_readiness_lint.sh",
+    "ambition_graph_lint_test": "crates/frankenlibc-harness/tests/ambition_graph_readiness_lint_test.rs",
+    "feature_parity_contract": "tests/conformance/feature_parity_done_evidence_completion_contract.v1.json",
+    "feature_parity_checker": "scripts/check_feature_parity_done_evidence_completion_contract.sh",
+    "feature_parity_test": "crates/frankenlibc-harness/tests/feature_parity_done_evidence_completion_contract_test.rs",
+    "fixture_coverage_contract": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "fixture_coverage_checker": "scripts/check_fixture_coverage_prioritizer.sh",
+    "fixture_coverage_test": "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs",
+    "hard_parts_contract": "tests/conformance/hard_parts_replay_wiring_completion_contract.v1.json",
+    "hard_parts_checker": "scripts/check_hard_parts_replay_wiring_completion_contract.sh",
+    "hard_parts_test": "crates/frankenlibc-harness/tests/hard_parts_replay_wiring_completion_contract_test.rs",
+    "replacement_contract": "tests/conformance/replacement_level_evidence_battery_completion_contract.v1.json",
+    "replacement_checker": "scripts/check_replacement_level_evidence_battery_completion_contract.sh",
+    "replacement_test": "crates/frankenlibc-harness/tests/replacement_level_evidence_battery_completion_contract_test.rs",
+    "workspace_contract": "tests/conformance/workspace_validation_dashboard.v1.json",
+    "workspace_checker": "scripts/check_workspace_validation_dashboard.sh",
+    "workspace_test": "crates/frankenlibc-harness/tests/workspace_validation_dashboard_test.rs",
+    "perf_contract": "tests/conformance/perf_regression_prevention_completion_contract.v1.json",
+    "perf_checker": "scripts/check_perf_regression_prevention_completion_contract.sh",
+    "perf_test": "crates/frankenlibc-harness/tests/perf_regression_prevention_completion_contract_test.rs",
+    "runtime_evidence_contract": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+    "runtime_evidence_checker": "scripts/check_runtime_evidence_replay_gate.sh",
+    "runtime_evidence_test": "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_test.rs",
+    "workload_handoff_contract": "tests/conformance/workload_evidence_loop_handoff.v1.json",
+    "workload_handoff_checker": "scripts/check_workload_evidence_loop_handoff.sh",
+    "workload_handoff_test": "crates/frankenlibc-harness/tests/workload_evidence_loop_handoff_test.rs",
+    "workstream_done_contract": "tests/conformance/workstream_done_templates.v1.json",
+    "workstream_done_checker": "scripts/check_workstream_done_templates.sh",
+    "workstream_done_test": "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs",
+    "agent_handoff_contract": "tests/conformance/agent_handoff_checklist.v1.json",
+    "agent_handoff_checker": "scripts/check_agent_handoff_checklist.sh",
+    "rustfmt_quarantine_contract": "tests/conformance/workspace_rustfmt_gate_health.v1.json",
+    "rustfmt_quarantine_checker": "scripts/check_workspace_rustfmt_gate_health.sh",
+    "completion_checker": "scripts/check_reality_check_ambition_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/reality_check_ambition_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    "tests/conformance/reality_check_ambition_completion_contract.v1.json:1",
+    "scripts/check_reality_check_ambition_completion_contract.sh:1",
+    "crates/frankenlibc-harness/tests/reality_check_ambition_completion_contract_test.rs:1",
+    "tests/conformance/bp8fl_parent_acceptance_replay.v1.json:1",
+    "tests/conformance/bp8fl_acceptance_fields_completion_contract.v1.json:1",
+    "tests/conformance/reality_bridge_import_reconciliation.v1.json:1",
+    "tests/conformance/ambition_graph_readiness_lint.v1.json:1",
+    "tests/conformance/workstream_done_templates.v1.json:1",
+    "tests/conformance/workload_evidence_loop_handoff.v1.json:1"
+  ],
+  "required_child_workstreams": [
+    {
+      "id": "bd-bp8fl.1",
+      "name": "semantic contracts",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "support_matrix",
+        "feature_parity_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.2",
+      "name": "tracker recovery",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "reality_bridge_contract",
+        "acceptance_fields_contract",
+        "ambition_graph_lint_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.3",
+      "name": "feature parity evidence",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "feature_parity_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.4",
+      "name": "fixture coverage",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "fixture_coverage_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.5",
+      "name": "hard-parts parity",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "hard_parts_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.6",
+      "name": "replacement gates",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "replacement_contract",
+        "replacement_levels"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.7",
+      "name": "workspace gates",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "workspace_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.8",
+      "name": "performance",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "perf_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.9",
+      "name": "formal/runtime-math",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "runtime_evidence_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.10",
+      "name": "user workload diagnostics",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "workload_handoff_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.11",
+      "name": "done templates",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "workstream_done_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.12",
+      "name": "handoff discipline",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "agent_handoff_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.13",
+      "name": "acct rustfmt cleanup",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "rustfmt_quarantine_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.14",
+      "name": "adjtimex rustfmt cleanup",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "rustfmt_quarantine_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.15",
+      "name": "aligned_alloc rustfmt cleanup",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "rustfmt_quarantine_contract"
+      ]
+    },
+    {
+      "id": "bd-bp8fl.16",
+      "name": "bsd_signal rustfmt cleanup",
+      "required_status": "closed",
+      "evidence_artifacts": [
+        "rustfmt_quarantine_contract"
+      ]
+    }
+  ],
+  "claimed_closure_contract": {
+    "expected_parent_status": "closed",
+    "expected_child_workstream_count": 16,
+    "expected_closed_child_workstream_count": 16,
+    "required_parent_close_reason_terms": [
+      "trace_id=bd-bp8fl:reality-check-parent-closure",
+      "closed_as_parent=true",
+      "no_feature_loss=true",
+      "All 16 child workstreams are closed",
+      "br show bd-bp8fl --no-db",
+      "br --no-db dep cycles --json",
+      "bv --robot-insights",
+      "Remaining limitations are intentionally retained"
+    ],
+    "required_acceptance_terms": [
+      "Preserve the full reality-check closure program",
+      "bd-bp8fl.13 through bd-bp8fl.16",
+      "Required test classes",
+      "Required deterministic evidence",
+      "Structured logs must include trace_id",
+      "Source-of-truth freshness checks",
+      "Claim gates must include positive and negative cases",
+      "no existing feature, function, artifact, or ambition was removed"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "description": "Unit evidence binds the completion manifest parser, child-workstream status validation, existing parent-acceptance/acceptance-field tests, and fail-closed command guards.",
+      "implementation_refs": [
+        "tests/conformance/reality_check_ambition_completion_contract.v1.json:1",
+        "scripts/check_reality_check_ambition_completion_contract.sh:1",
+        "crates/frankenlibc-harness/tests/reality_check_ambition_completion_contract_test.rs:1"
+      ],
+      "required_test_refs": [
+        {
+          "source": "parent_acceptance_replay_test",
+          "name": "artifact_defines_aixvz_completion_debt_contract"
+        },
+        {
+          "source": "acceptance_fields_test",
+          "name": "manifest_binds_bp8fl_acceptance_fields_completion_items"
+        },
+        {
+          "source": "completion_test",
+          "name": "manifest_binds_reality_check_ambition_sources"
+        },
+        {
+          "source": "completion_test",
+          "name": "checker_rejects_child_status_drift"
+        },
+        {
+          "source": "completion_test",
+          "name": "checker_rejects_bare_cargo_command"
+        }
+      ],
+      "required_commands": [
+        "jq empty tests/conformance/reality_check_ambition_completion_contract.v1.json",
+        "bash -n scripts/check_reality_check_ambition_completion_contract.sh",
+        "RCH_FORCE_REMOTE=true CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test reality_check_ambition_completion_contract_test manifest_binds_reality_check_ambition_sources checker_rejects_child_status_drift checker_rejects_bare_cargo_command -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "description": "E2E evidence binds the read-only parent acceptance replay, acceptance-field completion gate, reality bridge reconciliation, graph lint, and this completion checker report/log run.",
+      "implementation_refs": [
+        "scripts/check_reality_check_ambition_completion_contract.sh:1",
+        "scripts/check_bp8fl_parent_acceptance_replay.sh:1",
+        "scripts/check_bp8fl_acceptance_fields_completion_contract.sh:1",
+        "scripts/check_reality_bridge_import_reconciliation.sh:1",
+        "scripts/check_ambition_graph_readiness_lint.sh:1"
+      ],
+      "required_test_refs": [
+        {
+          "source": "parent_acceptance_replay_test",
+          "name": "valid_parent_fixture_rows_pass_acceptance_replay"
+        },
+        {
+          "source": "acceptance_fields_test",
+          "name": "checker_validates_historical_acceptance_fields_and_emits_report_log"
+        },
+        {
+          "source": "completion_test",
+          "name": "checker_accepts_contract_and_emits_report_log"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_reality_check_ambition_completion_contract.sh",
+        "bash scripts/check_bp8fl_parent_acceptance_replay.sh --validate-current",
+        "bash scripts/check_bp8fl_acceptance_fields_completion_contract.sh",
+        "bash scripts/check_reality_bridge_import_reconciliation.sh --validate-only",
+        "bash scripts/check_ambition_graph_readiness_lint.sh --fixture-replay",
+        "br dep cycles --no-db --json",
+        "bv --robot-insights",
+        "RCH_FORCE_REMOTE=true CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test reality_check_ambition_completion_contract_test checker_accepts_contract_and_emits_report_log -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "description": "Conformance evidence binds support taxonomy, replacement levels, feature-parity, fixture coverage, hard-parts replay, replacement/readiness gates, workspace validation, performance, runtime evidence, and workload handoff artifacts.",
+      "implementation_refs": [
+        "support_matrix.json:1",
+        "tests/conformance/replacement_levels.json:1",
+        "tests/conformance/feature_parity_done_evidence_completion_contract.v1.json:1",
+        "tests/conformance/fixture_coverage_prioritizer.v1.json:1",
+        "tests/conformance/hard_parts_replay_wiring_completion_contract.v1.json:1",
+        "tests/conformance/replacement_level_evidence_battery_completion_contract.v1.json:1",
+        "tests/conformance/workspace_validation_dashboard.v1.json:1",
+        "tests/conformance/perf_regression_prevention_completion_contract.v1.json:1",
+        "tests/conformance/runtime_evidence_replay_gate.v1.json:1",
+        "tests/conformance/workload_evidence_loop_handoff.v1.json:1"
+      ],
+      "required_test_refs": [
+        {
+          "source": "reality_bridge_test",
+          "name": "backlog_and_feature_gap_rows_are_preserved_without_rejections"
+        },
+        {
+          "source": "ambition_graph_lint_test",
+          "name": "clean_tracker_fixture_validation_has_clean_hard_graph_rules"
+        },
+        {
+          "source": "workspace_test",
+          "name": "dashboard_preserves_current_failures_and_passes"
+        },
+        {
+          "source": "perf_test",
+          "name": "checker_validates_generated_perf_report"
+        },
+        {
+          "source": "replacement_test",
+          "name": "checker_replays_replacement_level_gate_and_emits_report"
+        },
+        {
+          "source": "completion_test",
+          "name": "checker_rejects_child_status_drift"
+        }
+      ],
+      "required_commands": [
+        "jq empty support_matrix.json",
+        "jq empty tests/conformance/replacement_levels.json",
+        "jq empty tests/conformance/feature_parity_done_evidence_completion_contract.v1.json",
+        "jq empty tests/conformance/fixture_coverage_prioritizer.v1.json",
+        "jq empty tests/conformance/hard_parts_replay_wiring_completion_contract.v1.json",
+        "bash scripts/check_reality_check_ambition_completion_contract.sh",
+        "RCH_FORCE_REMOTE=true CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test reality_check_ambition_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "description": "Telemetry evidence requires deterministic checker report/log artifacts for source binding, child status, closure claims, missing items, command policy, and final pass.",
+      "implementation_refs": [
+        "scripts/check_reality_check_ambition_completion_contract.sh:1",
+        "crates/frankenlibc-harness/tests/reality_check_ambition_completion_contract_test.rs:1"
+      ],
+      "required_test_refs": [
+        {
+          "source": "completion_test",
+          "name": "checker_accepts_contract_and_emits_report_log"
+        },
+        {
+          "source": "completion_test",
+          "name": "checker_rejects_missing_required_event"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_reality_check_ambition_completion_contract.sh",
+        "RCH_FORCE_REMOTE=true CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test reality_check_ambition_completion_contract_test checker_accepts_contract_and_emits_report_log checker_rejects_missing_required_event -- --nocapture"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_events": [
+      "reality_check_sources_bound",
+      "reality_check_child_workstreams_validated",
+      "reality_check_claims_validated",
+      "reality_check_missing_items_bound",
+      "reality_check_command_policy_validated",
+      "reality_check_telemetry_validated",
+      "reality_check_completion_contract_pass"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "event",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ]
+  }
+}
