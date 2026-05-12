@@ -1,0 +1,186 @@
+{
+  "schema_version": "fixture_capture_remaining_symbols_completion_contract.v1",
+  "manifest_id": "bd-l93x.1.1-fixture-capture-remaining-symbols-completion-contract",
+  "generated_utc": "2026-05-12T14:15:00Z",
+  "bead_id": "bd-l93x.1.1",
+  "original_bead": "bd-l93x.1",
+  "trace_id": "bd-l93x.1.1::fixture-capture-remaining-symbols::completion::v1",
+  "description": "Completion-debt evidence binding for the remaining-symbol fixture capture lane. This contract does not claim uncovered symbols are closed; it binds the current uncovered action queue to golden fixture protocol evidence and structured telemetry so remaining work stays explicit and replayable.",
+  "source_artifacts": {
+    "symbol_fixture_coverage_matrix": "tests/conformance/symbol_fixture_coverage.v1.json",
+    "symbol_fixture_coverage_gate": "scripts/check_symbol_fixture_coverage.sh",
+    "symbol_fixture_coverage_harness": "crates/frankenlibc-harness/tests/symbol_fixture_coverage_test.rs",
+    "per_symbol_fixture_report": "tests/conformance/per_symbol_fixture_tests.v1.json",
+    "per_symbol_fixture_generator": "scripts/generate_per_symbol_fixture_tests.py",
+    "per_symbol_fixture_gate": "scripts/check_per_symbol_fixture_tests.sh",
+    "per_symbol_fixture_harness": "crates/frankenlibc-harness/tests/per_symbol_fixture_tests_test.rs",
+    "fixture_pipeline_report": "tests/conformance/fixture_pipeline.v1.json",
+    "fixture_capture_pipeline_completion_contract": "tests/conformance/fixture_capture_pipeline_completion_contract.v1.json",
+    "fixture_capture_pipeline_completion_gate": "scripts/check_fixture_capture_pipeline_completion_contract.sh",
+    "fixture_capture_pipeline_completion_harness": "crates/frankenlibc-harness/tests/fixture_capture_pipeline_completion_contract_test.rs",
+    "golden_fixture_protocol": "tests/conformance/golden_fixture_protocol.v1.json",
+    "golden_fixture_protocol_completion_contract": "tests/conformance/golden_fixture_protocol_completion_contract.v1.json",
+    "golden_fixture_protocol_completion_gate": "scripts/check_golden_fixture_protocol_completion_contract.sh",
+    "golden_fixture_protocol_completion_harness": "crates/frankenlibc-harness/tests/golden_fixture_protocol_completion_contract_test.rs",
+    "golden_fixture_verify_suite": "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json",
+    "completion_checker": "scripts/check_fixture_capture_remaining_symbols_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/fixture_capture_remaining_symbols_completion_contract_test.rs"
+  },
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.golden.primary",
+      "telemetry.primary"
+    ],
+    "required_symbol_fixture_coverage": {
+      "minimum_total_exported_symbols": 4119,
+      "minimum_covered_exported_symbols": 405,
+      "minimum_explicit_uncovered_symbols": 3714,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "coverage_gaps_are_explicit": true
+    },
+    "required_per_symbol_fixture_report": {
+      "minimum_total_symbols": 4119,
+      "minimum_symbols_with_fixtures": 403,
+      "minimum_total_fixture_files": 58,
+      "minimum_total_cases": 1284,
+      "maximum_total_format_issues": 0,
+      "minimum_symbols_with_edge_cases": 301,
+      "minimum_symbols_with_errno_checks": 400,
+      "minimum_uncovered_action_count": 3716
+    },
+    "required_fixture_pipeline": {
+      "minimum_total_fixture_files": 58,
+      "minimum_total_fixture_cases": 1289,
+      "minimum_unique_symbols_in_fixtures": 421,
+      "minimum_symbols_with_fixtures": 403,
+      "maximum_fixture_format_issues": 0
+    },
+    "required_golden_fixture_suite": {
+      "total": 1817,
+      "passed": 1817,
+      "failed": 0,
+      "skipped": 0
+    },
+    "required_source_gate_markers": {
+      "symbol_fixture_coverage_gate": "check_symbol_fixture_coverage: PASS",
+      "fixture_capture_pipeline_completion_gate": "PASS: fixture capture pipeline completion contract",
+      "golden_fixture_protocol_completion_gate": "STATUS=pass"
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.golden.primary",
+      "kind": "golden",
+      "implementation_refs": [
+        "tests/conformance/golden_fixture_protocol.v1.json",
+        "tests/conformance/golden_fixture_protocol_completion_contract.v1.json",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json",
+        "tests/conformance/per_symbol_fixture_tests.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/golden_fixture_protocol_completion_contract_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_capture_remaining_symbols_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "golden_fixture_protocol_completion_contract_test::checker_validates_golden_fixture_protocol_contract",
+        "fixture_capture_remaining_symbols_completion_contract_test::checker_accepts_remaining_symbols_contract",
+        "fixture_capture_remaining_symbols_completion_contract_test::checker_rejects_golden_suite_failure_drift"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "implementation_refs": [
+        "scripts/check_fixture_capture_remaining_symbols_completion_contract.sh",
+        "tests/conformance/symbol_fixture_coverage.v1.json",
+        "tests/conformance/per_symbol_fixture_tests.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/symbol_fixture_coverage_test.rs",
+        "crates/frankenlibc-harness/tests/per_symbol_fixture_tests_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_capture_remaining_symbols_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "fixture_capture_remaining_symbols_completion_contract_test::checker_accepts_remaining_symbols_contract",
+        "fixture_capture_remaining_symbols_completion_contract_test::checker_generates_per_symbol_probe",
+        "fixture_capture_remaining_symbols_completion_contract_test::checker_rejects_understated_fixture_case_inventory"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "report_schema_version": "fixture_capture_remaining_symbols_completion_contract.report.v1",
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_commit",
+      "summary",
+      "source_artifacts",
+      "source_gate_results",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "stream",
+      "gate",
+      "scenario_id",
+      "mode",
+      "api_family",
+      "symbol",
+      "oracle_kind",
+      "expected",
+      "actual",
+      "decision_path",
+      "outcome",
+      "errno",
+      "latency_ns",
+      "source_commit",
+      "failure_signature",
+      "artifact_refs",
+      "details"
+    ],
+    "required_events": [
+      "fixture_remaining_symbol_sources_validated",
+      "fixture_remaining_symbol_matrix_validated",
+      "fixture_remaining_symbol_report_validated",
+      "fixture_remaining_symbol_probe_generated",
+      "fixture_remaining_symbol_golden_validated",
+      "fixture_remaining_symbol_bindings_validated",
+      "fixture_remaining_symbol_source_gates_replayed",
+      "fixture_remaining_symbol_completion_contract_pass"
+    ],
+    "forbidden_pass_events": [
+      "fixture_remaining_symbol_completion_contract_fail"
+    ]
+  },
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_golden_and_telemetry_items",
+      "checker_accepts_remaining_symbols_contract",
+      "checker_generates_per_symbol_probe"
+    ],
+    "negative": [
+      "checker_rejects_missing_telemetry_binding",
+      "checker_rejects_understated_fixture_case_inventory",
+      "checker_rejects_golden_suite_failure_drift"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/fixture_capture_remaining_symbols_completion_contract.v1.json",
+      "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "scripts/check_fixture_capture_remaining_symbols_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/fixture_capture_remaining_symbols_completion_contract_test.rs"
+    ]
+  }
+}

@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-07T12:35:55Z",
-  "report_hash": "61fee93ac0b4b8c2",
+  "generated_at": "2026-05-12T14:14:19Z",
+  "report_hash": "bf91445545ae4a6d",
   "summary": {
     "total_symbols": 4119,
     "symbols_with_fixtures": 403,
@@ -10,7 +10,7 @@
     "fixture_coverage_pct": 9.8,
     "implemented_coverage_pct": 9.3,
     "total_fixture_files": 58,
-    "total_cases": 1282,
+    "total_cases": 1284,
     "total_format_issues": 0,
     "symbols_with_edge_cases": 301,
     "symbols_with_errno_checks": 400,
@@ -62,8 +62,8 @@
       "file": "dlfcn_ops.json",
       "family": "dlfcn_ops",
       "valid": true,
-      "total_cases": 7,
-      "unique_symbols": 3,
+      "total_cases": 9,
+      "unique_symbols": 4,
       "issues": []
     },
     {
@@ -22063,8 +22063,9 @@
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
-      "case_count": 2,
+      "case_count": 4,
       "fixture_files": [
+        "dlfcn_ops.json",
         "loader_edges.json"
       ],
       "modes_tested": [
