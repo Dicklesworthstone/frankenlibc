@@ -1,0 +1,204 @@
+{
+  "schema_version": "stub_regression_guard_completion_contract.v1",
+  "original_bead": "bd-1p5v",
+  "completion_debt_bead": "bd-1p5v.1",
+  "generated_at_utc": "2026-05-12T03:51:27Z",
+  "purpose": "Close the bd-1p5v.1 completion-debt audit items by binding the existing stub regression guard, waiver policy, source census, ranking ledger, wave-plan downgrade policy, and deterministic report/log telemetry to explicit unit and telemetry proof surfaces.",
+  "audit_source": {
+    "missing_items": [
+      {
+        "id": "tests.unit.primary",
+        "kind": "unit",
+        "description": "unit test coverage for stub regression guard and waiver policy behavior"
+      },
+      {
+        "id": "telemetry.primary",
+        "kind": "telemetry",
+        "description": "structured report/log evidence from the stub regression guard"
+      }
+    ]
+  },
+  "source_artifacts": {
+    "guard_script": "scripts/check_stub_regression_guard.sh",
+    "waiver_policy": "tests/conformance/stub_regression_waiver_policy.v1.json",
+    "census": "tests/conformance/stub_todo_debt_census.v1.json",
+    "census_generator": "scripts/generate_stub_todo_debt_census.py",
+    "priority_ranking": "tests/conformance/stub_priority_ranking.json",
+    "wave_plan": "tests/conformance/workload_api_wave_plan.v1.json",
+    "guard_harness": "crates/frankenlibc-harness/tests/stub_regression_guard_test.rs",
+    "completion_contract": "tests/conformance/stub_regression_guard_completion_contract.v1.json",
+    "completion_gate": "scripts/check_stub_regression_guard_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/stub_regression_guard_completion_contract_test.rs"
+  },
+  "source_anchors": {
+    "guard_script": [
+      "Unified stub/TODO census artifact is current.",
+      "High/critical source debt cannot appear without active waiver.",
+      "Matrix Stub symbols cannot appear without explicit matrix waiver.",
+      "Emits deterministic report + structured JSONL diagnostics.",
+      "python3 \"scripts/generate_stub_todo_debt_census.py\"",
+      "\"artifact_current\": \"pass\"",
+      "\"stale_waivers_absent\": \"fail\" if summary[\"stale_waiver_count\"] else \"pass\"",
+      "\"event\": \"stub_regression_guard\"",
+      "PASS: stub regression guard validated"
+    ],
+    "waiver_policy": [
+      "\"bead\": \"bd-1p5v\"",
+      "\"forbidden_without_waiver\"",
+      "\"matrix_statuses\"",
+      "\"Stub\"",
+      "\"default_decision\": \"deny\"",
+      "\"max_total_non_implemented\": 0",
+      "\"waiver_count\": 0"
+    ],
+    "census": [
+      "\"stub_symbols\": []",
+      "\"non_implemented_exported_symbols\": []",
+      "\"risk_ranked_debt\": []",
+      "\"matrix_summary_deltas\": []",
+      "\"priority_item_count\": 0",
+      "\"nonzero_matrix_delta_count\": 0"
+    ],
+    "census_generator": [
+      "Generate unified exported stub/TODO debt census artifact",
+      "TODO_RE = re.compile",
+      "UNIMPLEMENTED_RE = re.compile",
+      "PENDING_PANIC_RE = re.compile",
+      "matrix_summary_deltas"
+    ],
+    "priority_ranking": [
+      "\"total_non_implemented\": 0",
+      "\"Stub\": 0",
+      "\"GlibcCallThrough\": 0",
+      "\"wave_plan\": []",
+      "\"symbols_unscheduled\": 0"
+    ],
+    "wave_plan": [
+      "\"downgrade_policy\"",
+      "\"default_decision\": \"deny\"",
+      "\"waived_symbols\": []",
+      "\"waived_symbol_count\": 0",
+      "\"downgrade_symbol_count\": 0"
+    ],
+    "guard_harness": [
+      "fn waiver_policy_has_required_shape()",
+      "fn guard_script_passes_with_current_policy()",
+      "fn guard_script_fails_when_stale_waiver_injected()",
+      "fn guard_script_fails_when_burn_down_threshold_is_too_strict()"
+    ],
+    "completion_gate": [
+      "stub_regression_guard_completion.unit_binding",
+      "stub_regression_guard_completion.telemetry_contract",
+      "stub_regression_guard_completion.validated"
+    ],
+    "completion_harness": [
+      "fn manifest_binds_unit_and_telemetry_items()",
+      "fn checker_emits_completion_report_and_log()",
+      "fn checker_rejects_missing_guard_check_binding()"
+    ]
+  },
+  "stub_regression_guard_completion_contract": {
+    "required_guard_checks": [
+      "artifact_current",
+      "waiver_schema_valid",
+      "symbol_coverage_valid",
+      "matrix_stub_policy_valid",
+      "stale_waivers_absent",
+      "waiver_evidence_valid",
+      "burn_down_thresholds_valid",
+      "downgrade_evidence_valid"
+    ],
+    "required_guard_event": "stub_regression_guard",
+    "required_zero_summary_fields": [
+      "active_forbidden_symbols",
+      "waiver_count",
+      "stale_waiver_count",
+      "symbol_violations",
+      "matrix_violations",
+      "waiver_evidence_violations",
+      "burn_down_threshold_violations",
+      "downgrade_evidence_violations",
+      "downgraded_symbol_count"
+    ],
+    "required_zero_burn_down_fields": [
+      "total_non_implemented",
+      "symbols_unscheduled",
+      "unscheduled_waves",
+      "unscheduled_share_pct"
+    ],
+    "next_audit_threshold": 900
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_stub_regression_guard.sh:4",
+        "scripts/check_stub_regression_guard.sh:44",
+        "scripts/check_stub_regression_guard.sh:70",
+        "tests/conformance/stub_regression_waiver_policy.v1.json:6",
+        "tests/conformance/stub_todo_debt_census.v1.json:156",
+        "tests/conformance/stub_priority_ranking.json:54",
+        "tests/conformance/workload_api_wave_plan.v1.json:74"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/stub_regression_guard_test.rs:35",
+        "crates/frankenlibc-harness/tests/stub_regression_guard_test.rs:98",
+        "crates/frankenlibc-harness/tests/stub_regression_guard_test.rs:153",
+        "crates/frankenlibc-harness/tests/stub_regression_guard_test.rs:219"
+      ],
+      "required_commands": [
+        "bash scripts/check_stub_regression_guard_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test stub_regression_guard_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_stub_regression_guard.sh:364",
+        "scripts/check_stub_regression_guard.sh:372",
+        "scripts/check_stub_regression_guard.sh:397",
+        "scripts/check_stub_regression_guard.sh:425",
+        "scripts/check_stub_regression_guard.sh:429",
+        "scripts/check_stub_regression_guard.sh:436",
+        "scripts/check_stub_regression_guard.sh:452"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/stub_regression_guard_test.rs:125",
+        "crates/frankenlibc-harness/tests/stub_regression_guard_test.rs:130",
+        "crates/frankenlibc-harness/tests/stub_regression_guard_test.rs:263"
+      ],
+      "telemetry_refs": [
+        "tests/conformance/stub_regression_waiver_policy.v1.json:30",
+        "tests/conformance/stub_todo_debt_census.v1.json:176",
+        "tests/conformance/stub_priority_ranking.json:71",
+        "tests/conformance/workload_api_wave_plan.v1.json:102"
+      ],
+      "required_events": [
+        "stub_regression_guard_completion.unit_binding",
+        "stub_regression_guard_completion.telemetry_contract",
+        "stub_regression_guard_completion.validated"
+      ],
+      "required_commands": [
+        "bash scripts/check_stub_regression_guard.sh",
+        "bash scripts/check_stub_regression_guard_completion_contract.sh",
+        "rch exec -- cargo clippy -p frankenlibc-harness --test stub_regression_guard_completion_contract_test -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "default_report_path": "target/conformance/stub_regression_guard_completion_contract.report.json",
+    "default_log_path": "target/conformance/stub_regression_guard_completion_contract.log.jsonl",
+    "consumed_report_path": "target/conformance/stub_regression_guard.report.json",
+    "consumed_log_path": "target/conformance/stub_regression_guard.log.jsonl",
+    "pass_events": [
+      "stub_regression_guard_completion.unit_binding",
+      "stub_regression_guard_completion.telemetry_contract",
+      "stub_regression_guard_completion.validated"
+    ],
+    "fail_event": "stub_regression_guard_completion.failed"
+  }
+}
