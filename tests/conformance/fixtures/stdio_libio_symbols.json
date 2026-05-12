@@ -1,0 +1,410 @@
+{
+  "version": "v1",
+  "family": "stdio_libio_symbols",
+  "captured_at": "2026-05-12T00:00:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-stdio-libio first-wave _IO stream alias, state, locking, character, peek, and padding symbols. Outputs classify behavior without recording concrete FILE addresses, file descriptors, paths, or host stream internals.",
+  "spec_reference": "GNU libc libio compatibility names plus C11 7.21 / POSIX.1-2017 stdio stream semantics",
+  "campaign": {
+    "bead": "bd-6cly1.1",
+    "campaign_id": "fcq-stdio-libio",
+    "wave_id": "wave-03-stdio-libio",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_file_address_fd_or_path_capture",
+    "first_wave_symbols": [
+      "_IO_2_1_stderr_",
+      "_IO_2_1_stdin_",
+      "_IO_2_1_stdout_",
+      "_IO_feof",
+      "_IO_ferror",
+      "_IO_flockfile",
+      "_IO_ftrylockfile",
+      "_IO_funlockfile",
+      "_IO_getc",
+      "_IO_padn",
+      "_IO_peekc_locked",
+      "_IO_putc"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "io_stderr_alias_strict",
+      "function": "_IO_2_1_stderr_",
+      "spec_section": "GNU libc _IO_2_1_stderr_ compatibility object",
+      "inputs": {
+        "symbol": "_IO_2_1_stderr_",
+        "scenario": "standard_stream_alias",
+        "expected": "STDERR_ALIAS_NON_NULL",
+        "oracle_source": "frankenlibc_native_stdio_registry",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_2_1_stderr_;mode=strict;expected=STDERR_ALIAS_NON_NULL;actual=STDERR_ALIAS_NON_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_stderr_alias_hardened",
+      "function": "_IO_2_1_stderr_",
+      "spec_section": "GNU libc _IO_2_1_stderr_ compatibility object",
+      "inputs": {
+        "symbol": "_IO_2_1_stderr_",
+        "scenario": "standard_stream_alias",
+        "expected": "STDERR_ALIAS_NON_NULL",
+        "oracle_source": "frankenlibc_native_stdio_registry",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_2_1_stderr_;mode=hardened;expected=STDERR_ALIAS_NON_NULL;actual=STDERR_ALIAS_NON_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_stdin_alias_strict",
+      "function": "_IO_2_1_stdin_",
+      "spec_section": "GNU libc _IO_2_1_stdin_ compatibility object",
+      "inputs": {
+        "symbol": "_IO_2_1_stdin_",
+        "scenario": "standard_stream_alias",
+        "expected": "STDIN_ALIAS_NON_NULL",
+        "oracle_source": "frankenlibc_native_stdio_registry",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_2_1_stdin_;mode=strict;expected=STDIN_ALIAS_NON_NULL;actual=STDIN_ALIAS_NON_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_stdin_alias_hardened",
+      "function": "_IO_2_1_stdin_",
+      "spec_section": "GNU libc _IO_2_1_stdin_ compatibility object",
+      "inputs": {
+        "symbol": "_IO_2_1_stdin_",
+        "scenario": "standard_stream_alias",
+        "expected": "STDIN_ALIAS_NON_NULL",
+        "oracle_source": "frankenlibc_native_stdio_registry",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_2_1_stdin_;mode=hardened;expected=STDIN_ALIAS_NON_NULL;actual=STDIN_ALIAS_NON_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_stdout_alias_strict",
+      "function": "_IO_2_1_stdout_",
+      "spec_section": "GNU libc _IO_2_1_stdout_ compatibility object",
+      "inputs": {
+        "symbol": "_IO_2_1_stdout_",
+        "scenario": "standard_stream_alias",
+        "expected": "STDOUT_ALIAS_NON_NULL",
+        "oracle_source": "frankenlibc_native_stdio_registry",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_2_1_stdout_;mode=strict;expected=STDOUT_ALIAS_NON_NULL;actual=STDOUT_ALIAS_NON_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_stdout_alias_hardened",
+      "function": "_IO_2_1_stdout_",
+      "spec_section": "GNU libc _IO_2_1_stdout_ compatibility object",
+      "inputs": {
+        "symbol": "_IO_2_1_stdout_",
+        "scenario": "standard_stream_alias",
+        "expected": "STDOUT_ALIAS_NON_NULL",
+        "oracle_source": "frankenlibc_native_stdio_registry",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_2_1_stdout_;mode=hardened;expected=STDOUT_ALIAS_NON_NULL;actual=STDOUT_ALIAS_NON_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_feof_after_eof_strict",
+      "function": "_IO_feof",
+      "spec_section": "C11 7.21.10.2 feof / GNU _IO_feof",
+      "inputs": {
+        "symbol": "_IO_feof",
+        "scenario": "read_past_end_sets_eof",
+        "byte": "A",
+        "expected": "EOF_SET",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_feof;mode=strict;expected=EOF_SET;actual=EOF_SET;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_feof_after_eof_hardened",
+      "function": "_IO_feof",
+      "spec_section": "C11 7.21.10.2 feof / GNU _IO_feof",
+      "inputs": {
+        "symbol": "_IO_feof",
+        "scenario": "read_past_end_sets_eof",
+        "byte": "A",
+        "expected": "EOF_SET",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_feof;mode=hardened;expected=EOF_SET;actual=EOF_SET;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_ferror_fresh_stream_strict",
+      "function": "_IO_ferror",
+      "spec_section": "C11 7.21.10.3 ferror / GNU _IO_ferror",
+      "inputs": {
+        "symbol": "_IO_ferror",
+        "scenario": "fresh_tmpfile_has_no_error",
+        "expected": "NO_ERROR",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_ferror;mode=strict;expected=NO_ERROR;actual=NO_ERROR;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_ferror_fresh_stream_hardened",
+      "function": "_IO_ferror",
+      "spec_section": "C11 7.21.10.3 ferror / GNU _IO_ferror",
+      "inputs": {
+        "symbol": "_IO_ferror",
+        "scenario": "fresh_tmpfile_has_no_error",
+        "expected": "NO_ERROR",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_ferror;mode=hardened;expected=NO_ERROR;actual=NO_ERROR;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_flockfile_unlock_strict",
+      "function": "_IO_flockfile",
+      "spec_section": "POSIX flockfile / GNU _IO_flockfile",
+      "inputs": {
+        "symbol": "_IO_flockfile",
+        "scenario": "lock_then_unlock_tmpfile",
+        "expected": "LOCK_UNLOCK_OK",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_flockfile;mode=strict;expected=LOCK_UNLOCK_OK;actual=LOCK_UNLOCK_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_flockfile_unlock_hardened",
+      "function": "_IO_flockfile",
+      "spec_section": "POSIX flockfile / GNU _IO_flockfile",
+      "inputs": {
+        "symbol": "_IO_flockfile",
+        "scenario": "lock_then_unlock_tmpfile",
+        "expected": "LOCK_UNLOCK_OK",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_flockfile;mode=hardened;expected=LOCK_UNLOCK_OK;actual=LOCK_UNLOCK_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_ftrylockfile_unlocked_strict",
+      "function": "_IO_ftrylockfile",
+      "spec_section": "POSIX ftrylockfile / GNU _IO_ftrylockfile",
+      "inputs": {
+        "symbol": "_IO_ftrylockfile",
+        "scenario": "trylock_unlocked_tmpfile",
+        "expected": "TRYLOCK_OK",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_ftrylockfile;mode=strict;expected=TRYLOCK_OK;actual=TRYLOCK_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_ftrylockfile_unlocked_hardened",
+      "function": "_IO_ftrylockfile",
+      "spec_section": "POSIX ftrylockfile / GNU _IO_ftrylockfile",
+      "inputs": {
+        "symbol": "_IO_ftrylockfile",
+        "scenario": "trylock_unlocked_tmpfile",
+        "expected": "TRYLOCK_OK",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_ftrylockfile;mode=hardened;expected=TRYLOCK_OK;actual=TRYLOCK_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_funlockfile_after_lock_strict",
+      "function": "_IO_funlockfile",
+      "spec_section": "POSIX funlockfile / GNU _IO_funlockfile",
+      "inputs": {
+        "symbol": "_IO_funlockfile",
+        "scenario": "unlock_after_lock_tmpfile",
+        "expected": "UNLOCK_OK",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_funlockfile;mode=strict;expected=UNLOCK_OK;actual=UNLOCK_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_funlockfile_after_lock_hardened",
+      "function": "_IO_funlockfile",
+      "spec_section": "POSIX funlockfile / GNU _IO_funlockfile",
+      "inputs": {
+        "symbol": "_IO_funlockfile",
+        "scenario": "unlock_after_lock_tmpfile",
+        "expected": "UNLOCK_OK",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_funlockfile;mode=hardened;expected=UNLOCK_OK;actual=UNLOCK_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_getc_roundtrip_strict",
+      "function": "_IO_getc",
+      "spec_section": "C11 7.21.7.1 fgetc / GNU _IO_getc",
+      "inputs": {
+        "symbol": "_IO_getc",
+        "scenario": "write_rewind_read_tmpfile",
+        "byte": "G",
+        "expected": "CHAR_G",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_getc;mode=strict;expected=CHAR_G;actual=CHAR_G;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_getc_roundtrip_hardened",
+      "function": "_IO_getc",
+      "spec_section": "C11 7.21.7.1 fgetc / GNU _IO_getc",
+      "inputs": {
+        "symbol": "_IO_getc",
+        "scenario": "write_rewind_read_tmpfile",
+        "byte": "G",
+        "expected": "CHAR_G",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_getc;mode=hardened;expected=CHAR_G;actual=CHAR_G;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_padn_three_spaces_strict",
+      "function": "_IO_padn",
+      "spec_section": "GNU libc _IO_padn padding helper",
+      "inputs": {
+        "symbol": "_IO_padn",
+        "scenario": "pad_tmpfile_three_spaces",
+        "pad": 32,
+        "count": 3,
+        "expected": "PADN_3",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_padn;mode=strict;expected=PADN_3;actual=PADN_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_padn_three_spaces_hardened",
+      "function": "_IO_padn",
+      "spec_section": "GNU libc _IO_padn padding helper",
+      "inputs": {
+        "symbol": "_IO_padn",
+        "scenario": "pad_tmpfile_three_spaces",
+        "pad": 32,
+        "count": 3,
+        "expected": "PADN_3",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_padn;mode=hardened;expected=PADN_3;actual=PADN_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_peekc_locked_preserves_byte_strict",
+      "function": "_IO_peekc_locked",
+      "spec_section": "GNU libc _IO_peekc_locked peek helper",
+      "inputs": {
+        "symbol": "_IO_peekc_locked",
+        "scenario": "peek_then_getc_tmpfile",
+        "byte": "Z",
+        "expected": "PEEK_Z_PRESERVED",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_peekc_locked;mode=strict;expected=PEEK_Z_PRESERVED;actual=PEEK_Z_PRESERVED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_peekc_locked_preserves_byte_hardened",
+      "function": "_IO_peekc_locked",
+      "spec_section": "GNU libc _IO_peekc_locked peek helper",
+      "inputs": {
+        "symbol": "_IO_peekc_locked",
+        "scenario": "peek_then_getc_tmpfile",
+        "byte": "Z",
+        "expected": "PEEK_Z_PRESERVED",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_peekc_locked;mode=hardened;expected=PEEK_Z_PRESERVED;actual=PEEK_Z_PRESERVED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_putc_writes_byte_strict",
+      "function": "_IO_putc",
+      "spec_section": "C11 7.21.7.3 fputc / GNU _IO_putc",
+      "inputs": {
+        "symbol": "_IO_putc",
+        "scenario": "putc_tmpfile",
+        "byte": "P",
+        "expected": "CHAR_P",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_putc;mode=strict;expected=CHAR_P;actual=CHAR_P;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_putc_writes_byte_hardened",
+      "function": "_IO_putc",
+      "spec_section": "C11 7.21.7.3 fputc / GNU _IO_putc",
+      "inputs": {
+        "symbol": "_IO_putc",
+        "scenario": "putc_tmpfile",
+        "byte": "P",
+        "expected": "CHAR_P",
+        "oracle_source": "frankenlibc_tmpfile_replay",
+        "ambient_state_policy": "forbid_file_address_fd_or_path_capture"
+      },
+      "expected_output": "symbol=_IO_putc;mode=hardened;expected=CHAR_P;actual=CHAR_P;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

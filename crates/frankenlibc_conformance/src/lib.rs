@@ -548,6 +548,11 @@ pub fn execute_fixture_case(
         "_Exit" | "_Fork" | "__cxa_atexit" | "__cxa_finalize" | "__fxstat" | "__fxstat64"
         | "__fxstatat" | "__fxstatat64" | "__gmtime_r" | "__lxstat" | "__lxstat64"
         | "__progname" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
+        | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
+        | "_IO_peekc_locked" | "_IO_putc" => {
+            execute_stdio_libio_symbols_case(function, inputs, mode)
+        }
         "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
         "compute_relocation" => execute_compute_relocation_case(inputs, mode),
         "elf_hash" => execute_elf_hash_case(inputs, mode),
@@ -14557,6 +14562,178 @@ fn progname_fixture_actual() -> Result<String, String> {
     }
     let name = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
     Ok(format!("PROGNAME_{name}"))
+}
+
+fn execute_stdio_libio_symbols_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "stdio/libio fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = stdio_libio_symbol_actual(function, inputs)?;
+
+    Ok(non_host_execution(stdio_libio_fixture_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn stdio_libio_fixture_log(symbol: &str, mode: &str, expected: &str, actual: &str) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Result<String, String> {
+    match function {
+        "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" => {
+            stdio_libio_alias_actual(function)
+        }
+        "_IO_feof" => stdio_libio_tmpfile(|stream| {
+            let ch = inputs
+                .get("byte")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|text| text.as_bytes().first().copied())
+                .unwrap_or(b'A') as c_int;
+            let _ = unsafe { frankenlibc_abi::io_internal_abi::_IO_putc(ch, stream) };
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let _ = unsafe { frankenlibc_abi::io_internal_abi::_IO_getc(stream) };
+            let _ = unsafe { frankenlibc_abi::io_internal_abi::_IO_getc(stream) };
+            let eof = unsafe { frankenlibc_abi::io_internal_abi::_IO_feof(stream) };
+            Ok(if eof != 0 {
+                String::from("EOF_SET")
+            } else {
+                String::from("EOF_CLEAR")
+            })
+        }),
+        "_IO_ferror" => stdio_libio_tmpfile(|stream| {
+            let err = unsafe { frankenlibc_abi::io_internal_abi::_IO_ferror(stream) };
+            Ok(if err == 0 {
+                String::from("NO_ERROR")
+            } else {
+                String::from("ERROR_SET")
+            })
+        }),
+        "_IO_flockfile" => stdio_libio_tmpfile(|stream| {
+            unsafe { frankenlibc_abi::stdio_abi::_IO_flockfile(stream) };
+            unsafe { frankenlibc_abi::stdio_abi::_IO_funlockfile(stream) };
+            Ok(String::from("LOCK_UNLOCK_OK"))
+        }),
+        "_IO_ftrylockfile" => stdio_libio_tmpfile(|stream| {
+            let rc = unsafe { frankenlibc_abi::stdio_abi::_IO_ftrylockfile(stream) };
+            if rc == 0 {
+                unsafe { frankenlibc_abi::stdio_abi::_IO_funlockfile(stream) };
+                Ok(String::from("TRYLOCK_OK"))
+            } else {
+                Ok(format!("TRYLOCK_RC_{rc}"))
+            }
+        }),
+        "_IO_funlockfile" => stdio_libio_tmpfile(|stream| {
+            unsafe { frankenlibc_abi::stdio_abi::_IO_flockfile(stream) };
+            unsafe { frankenlibc_abi::stdio_abi::_IO_funlockfile(stream) };
+            Ok(String::from("UNLOCK_OK"))
+        }),
+        "_IO_getc" => stdio_libio_tmpfile(|stream| {
+            let ch = inputs
+                .get("byte")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|text| text.as_bytes().first().copied())
+                .unwrap_or(b'G') as c_int;
+            let _ = unsafe { frankenlibc_abi::io_internal_abi::_IO_putc(ch, stream) };
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let got = unsafe { frankenlibc_abi::io_internal_abi::_IO_getc(stream) };
+            if got == ch {
+                Ok(format!("CHAR_{}", ch as u8 as char))
+            } else {
+                Ok(format!("CHAR_RC_{got}"))
+            }
+        }),
+        "_IO_padn" => stdio_libio_tmpfile(|stream| {
+            let pad = parse_i32(inputs, "pad").unwrap_or(i32::from(b' '));
+            let count = parse_i32(inputs, "count").unwrap_or(3) as isize;
+            let rc = unsafe { frankenlibc_abi::stdio_abi::_IO_padn(stream, pad, count) };
+            if rc == count {
+                Ok(format!("PADN_{count}"))
+            } else {
+                Ok(format!("PADN_RC_{rc}"))
+            }
+        }),
+        "_IO_peekc_locked" => stdio_libio_tmpfile(|stream| {
+            let ch = inputs
+                .get("byte")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|text| text.as_bytes().first().copied())
+                .unwrap_or(b'Z') as c_int;
+            let _ = unsafe { frankenlibc_abi::io_internal_abi::_IO_putc(ch, stream) };
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let peeked = unsafe { frankenlibc_abi::io_internal_abi::_IO_peekc_locked(stream) };
+            let next = unsafe { frankenlibc_abi::io_internal_abi::_IO_getc(stream) };
+            if peeked == ch && next == ch {
+                Ok(format!("PEEK_{}_PRESERVED", ch as u8 as char))
+            } else {
+                Ok(format!("PEEK_RC_{peeked}_NEXT_{next}"))
+            }
+        }),
+        "_IO_putc" => stdio_libio_tmpfile(|stream| {
+            let ch = inputs
+                .get("byte")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|text| text.as_bytes().first().copied())
+                .unwrap_or(b'P') as c_int;
+            let rc = unsafe { frankenlibc_abi::io_internal_abi::_IO_putc(ch, stream) };
+            if rc == ch {
+                Ok(format!("CHAR_{}", ch as u8 as char))
+            } else {
+                Ok(format!("CHAR_RC_{rc}"))
+            }
+        }),
+        other => Err(format!("unsupported stdio/libio fixture: {other}")),
+    }
+}
+
+fn stdio_libio_alias_actual(symbol: &str) -> Result<String, String> {
+    let (name, fd, public_stream) = match symbol {
+        "_IO_2_1_stderr_" => ("STDERR", libc::STDERR_FILENO, unsafe {
+            frankenlibc_abi::stdio_abi::stderr
+        }),
+        "_IO_2_1_stdin_" => ("STDIN", libc::STDIN_FILENO, unsafe {
+            frankenlibc_abi::stdio_abi::stdin
+        }),
+        "_IO_2_1_stdout_" => ("STDOUT", libc::STDOUT_FILENO, unsafe {
+            frankenlibc_abi::stdio_abi::stdout
+        }),
+        other => return Err(format!("unsupported stdio alias symbol: {other}")),
+    };
+    let native_stream = frankenlibc_abi::io_internal_abi::native_stdio_stream_ptr(fd);
+    if native_stream.is_null() || public_stream.is_null() {
+        Ok(format!("{name}_ALIAS_NULL"))
+    } else {
+        Ok(format!("{name}_ALIAS_NON_NULL"))
+    }
+}
+
+fn stdio_libio_tmpfile<F>(operation: F) -> Result<String, String>
+where
+    F: FnOnce(*mut c_void) -> Result<String, String>,
+{
+    let stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
+    if stream.is_null() {
+        return Ok(String::from("TMPFILE_FAILED"));
+    }
+    let result = operation(stream);
+    let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
+    result
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
