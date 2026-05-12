@@ -1,0 +1,261 @@
+{
+  "schema_version": "reverse_round_logging_completion_contract.v1",
+  "original_bead": "bd-2a2.6",
+  "completion_debt_bead": "bd-2a2.6.1",
+  "generated_at_utc": "2026-05-12T05:10:00Z",
+  "purpose": "Bind the reverse-round logging completion-debt audit items to executable evidence for round execution, math family selection, coverage metrics, and structured telemetry.",
+  "audit_source": {
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-2a2.6/scorecard.md",
+    "missing_items": [
+      {
+        "id": "tests.unit.primary",
+        "kind": "unit",
+        "description": "unit coverage for source anchors, line refs, required round fields, math-family selection fields, coverage metrics, and mutation rejection"
+      },
+      {
+        "id": "tests.e2e.primary",
+        "kind": "e2e",
+        "description": "replayable validation of checked-in reverse-round execution summaries, cross-round coverage, and milestone diversity metrics"
+      },
+      {
+        "id": "telemetry.primary",
+        "kind": "telemetry",
+        "description": "structured report and JSONL event stream emitted by the reverse-round logging completion checker"
+      }
+    ]
+  },
+  "source_artifacts": {
+    "parent_tracker": ".beads/issues.jsonl",
+    "reverse_round_report": "tests/conformance/reverse_round_contracts.v1.json",
+    "reverse_round_generator": "scripts/generate_reverse_round_contracts.py",
+    "reverse_round_gate": "scripts/check_reverse_round_contracts.sh",
+    "reverse_round_tests": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+    "runtime_math_logging_contract": "tests/conformance/runtime_math_logging_completion_contract.v1.json",
+    "runtime_math_logging_gate": "scripts/check_runtime_math_logging_completion_contract.sh",
+    "completion_contract": "tests/conformance/reverse_round_logging_completion_contract.v1.json",
+    "completion_gate": "scripts/check_reverse_round_logging_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/reverse_round_logging_completion_contract_test.rs"
+  },
+  "source_anchors": {
+    "parent_tracker": [
+      "\"id\":\"bd-2a2.6\"",
+      "Reverse-Round: Logging - round execution, math family selection, coverage metrics"
+    ],
+    "reverse_round_report": [
+      "\"schema_version\": \"v1\"",
+      "\"rounds_verified\": 35",
+      "\"total_math_families\": 140",
+      "\"all_rounds_diverse\": true",
+      "\"cross_round_checks_passing\": 6",
+      "\"milestones_diverse\": 4"
+    ],
+    "reverse_round_generator": [
+      "Reverse-Round per-round math-to-subsystem contract verification",
+      "round_results",
+      "branch_diversity",
+      "golden_output"
+    ],
+    "reverse_round_gate": [
+      "Reverse-Round Contract Verification Gate",
+      "reverse_round.contracts.check",
+      "round-count",
+      "module-coverage",
+      "milestone:"
+    ],
+    "reverse_round_tests": [
+      "fn contracts_schema_complete()",
+      "fn contracts_all_modules_exist()",
+      "fn contracts_branch_diversity()",
+      "fn contracts_rounds_include_problem_focus_execution_and_verification()"
+    ],
+    "runtime_math_logging_contract": [
+      "runtime_math_logging_completion_contract.v1",
+      "runtime_reverse_round_math_selection",
+      "telemetry.primary"
+    ],
+    "runtime_math_logging_gate": [
+      "runtime_math_logging_e2e_bound",
+      "runtime_math_logging_telemetry_bound",
+      "runtime_math_logging_completion_contract_validated"
+    ],
+    "completion_gate": [
+      "reverse_round_logging_completion.unit_binding",
+      "reverse_round_logging_completion.e2e_round_execution",
+      "reverse_round_logging_completion.math_family_selection",
+      "reverse_round_logging_completion.coverage_metrics",
+      "reverse_round_logging_completion.telemetry_contract",
+      "reverse_round_logging_completion.validated"
+    ],
+    "completion_harness": [
+      "fn manifest_binds_reverse_round_logging_completion_items()",
+      "fn checker_emits_round_execution_and_coverage_telemetry()",
+      "fn checker_rejects_coverage_metric_drift()",
+      "fn checker_rejects_missing_round_field()"
+    ]
+  },
+  "reverse_round_logging_contract": {
+    "required_rounds": [
+      "R7",
+      "R8",
+      "R9",
+      "R10",
+      "R11"
+    ],
+    "required_round_fields": [
+      "name",
+      "problem_focus",
+      "legacy_surfaces",
+      "failure_class",
+      "artifacts",
+      "implementation_plan",
+      "verification_strategy",
+      "supporting_files",
+      "math_families",
+      "branch_diversity"
+    ],
+    "required_math_family_fields": [
+      "module",
+      "module_path",
+      "module_exists",
+      "description",
+      "math_class",
+      "invariant",
+      "invariant_specified"
+    ],
+    "expected_summary": {
+      "rounds_verified": 35,
+      "total_math_families": 140,
+      "modules_found": 140,
+      "modules_missing": 0,
+      "invariants_total": 140,
+      "invariants_specified": 140,
+      "math_class_count": 10,
+      "cross_round_checks_total": 6,
+      "cross_round_checks_passing": 6,
+      "milestones_verified": 4,
+      "milestones_diverse": 4,
+      "all_rounds_diverse": true,
+      "all_milestones_diverse": true
+    },
+    "coverage_thresholds": {
+      "minimum_math_families_per_required_round": 4,
+      "minimum_math_classes_per_required_round": 3,
+      "minimum_verification_hooks_per_required_round": 2,
+      "minimum_supporting_files_per_required_round": 4
+    },
+    "logging_scenarios": [
+      {
+        "scenario_id": "round_execution_summary",
+        "event": "reverse_round_logging_completion.e2e_round_execution",
+        "expected_round_count": 35,
+        "required_report_paths": [
+          "summary.rounds_verified",
+          "round_results.R7.implementation_plan",
+          "round_results.R11.verification_strategy",
+          "cross_round_integrations",
+          "milestone_branch_diversity"
+        ]
+      },
+      {
+        "scenario_id": "math_family_selection",
+        "event": "reverse_round_logging_completion.math_family_selection",
+        "expected_total_math_families": 140,
+        "required_report_paths": [
+          "summary.total_math_families",
+          "summary.math_class_count",
+          "round_results.R7.math_families",
+          "round_results.R10.branch_diversity",
+          "round_results.R11.math_families"
+        ]
+      },
+      {
+        "scenario_id": "coverage_metrics",
+        "event": "reverse_round_logging_completion.coverage_metrics",
+        "expected_module_coverage_pct": 100.0,
+        "required_report_paths": [
+          "summary.modules_found",
+          "summary.modules_missing",
+          "summary.invariants_specified",
+          "summary.cross_round_checks_passing",
+          "summary.milestones_diverse"
+        ]
+      }
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_reverse_round_logging_completion_contract.sh:1",
+        "tests/conformance/reverse_round_logging_completion_contract.v1.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/reverse_round_logging_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_reverse_round_logging_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test reverse_round_logging_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "tests/conformance/reverse_round_contracts.v1.json:1",
+        "scripts/check_reverse_round_logging_completion_contract.sh:1",
+        "tests/conformance/reverse_round_logging_completion_contract.v1.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/reverse_round_logging_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_reverse_round_logging_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test reverse_round_logging_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_reverse_round_logging_completion_contract.sh:1",
+        "tests/conformance/reverse_round_logging_completion_contract.v1.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/reverse_round_logging_completion_contract_test.rs:1"
+      ],
+      "telemetry_refs": [
+        "scripts/check_reverse_round_logging_completion_contract.sh:1",
+        "tests/conformance/reverse_round_logging_completion_contract.v1.json:1"
+      ],
+      "required_events": [
+        "reverse_round_logging_completion.unit_binding",
+        "reverse_round_logging_completion.e2e_round_execution",
+        "reverse_round_logging_completion.math_family_selection",
+        "reverse_round_logging_completion.coverage_metrics",
+        "reverse_round_logging_completion.telemetry_contract",
+        "reverse_round_logging_completion.validated"
+      ],
+      "required_commands": [
+        "bash scripts/check_reverse_round_logging_completion_contract.sh",
+        "rch exec -- cargo clippy -p frankenlibc-harness --test reverse_round_logging_completion_contract_test --no-deps -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "default_report_path": "target/conformance/reverse_round_logging_completion_contract.report.json",
+    "default_log_path": "target/conformance/reverse_round_logging_completion_contract.log.jsonl",
+    "pass_events": [
+      "reverse_round_logging_completion.unit_binding",
+      "reverse_round_logging_completion.e2e_round_execution",
+      "reverse_round_logging_completion.math_family_selection",
+      "reverse_round_logging_completion.coverage_metrics",
+      "reverse_round_logging_completion.telemetry_contract",
+      "reverse_round_logging_completion.validated"
+    ],
+    "fail_event": "reverse_round_logging_completion.failed"
+  }
+}
