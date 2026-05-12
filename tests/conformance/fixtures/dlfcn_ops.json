@@ -2,8 +2,8 @@
   "version": "v1",
   "family": "dlfcn_ops",
   "captured_at": "2026-02-13T00:00:00Z",
-  "description": "Mode-specific parity fixtures for dynamic linking operations (dlopen, dlsym, dlclose, dlerror). Strict: host-glibc parity. Hardened: safety and pointer-shape parity.",
-  "spec_reference": "POSIX dlopen, dlsym, dlclose, dlerror",
+  "description": "Mode-specific parity fixtures for dynamic linking operations (dlopen, dlsym, dlvsym, dl_iterate_phdr, dlclose, dlerror). Strict: host-glibc parity. Hardened: safety and pointer-shape parity.",
+  "spec_reference": "POSIX dlopen, dlsym, dlclose, dlerror; GNU dlvsym and dl_iterate_phdr",
   "cases": [
     {
       "name": "dlopen_self_strict",
@@ -81,6 +81,46 @@
       "expected_output": "FUNC_PTR",
       "expected_errno": 0,
       "mode": "hardened"
+    },
+    {
+      "name": "dlvsym_printf_glibc_2_2_5_strict",
+      "function": "dlvsym",
+      "spec_section": "GNU dlvsym",
+      "inputs": { "handle": "RTLD_DEFAULT", "symbol": "printf", "version": "GLIBC_2.2.5" },
+      "expected_output": "FUNC_PTR",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Versioned printf lookup returns a function pointer without leaking the concrete address"
+    },
+    {
+      "name": "dlvsym_printf_glibc_2_2_5_hardened",
+      "function": "dlvsym",
+      "spec_section": "GNU dlvsym",
+      "inputs": { "handle": "RTLD_DEFAULT", "symbol": "printf", "version": "GLIBC_2.2.5" },
+      "expected_output": "FUNC_PTR",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "Hardened mode preserves normal versioned symbol lookup shape"
+    },
+    {
+      "name": "dl_iterate_phdr_count_strict",
+      "function": "dl_iterate_phdr",
+      "spec_section": "GNU dl_iterate_phdr",
+      "inputs": { "callback": "count" },
+      "expected_output": "ENTRIES_NONZERO",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Callback count is classified as nonzero to avoid address or DSO-count leakage"
+    },
+    {
+      "name": "dl_iterate_phdr_count_hardened",
+      "function": "dl_iterate_phdr",
+      "spec_section": "GNU dl_iterate_phdr",
+      "inputs": { "callback": "count" },
+      "expected_output": "ENTRIES_NONZERO",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "Hardened mode preserves loaded-object iteration shape"
     },
     {
       "name": "dlclose_self_handle_hardened",

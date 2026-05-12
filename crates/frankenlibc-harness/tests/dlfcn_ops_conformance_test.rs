@@ -1,6 +1,7 @@
 //! Dynamic linking operations conformance test suite.
 //!
-//! Validates POSIX dlfcn.h functions: dlopen, dlsym, dlclose, dlerror.
+//! Validates POSIX dlfcn.h functions and GNU loader extensions used by
+//! FrankenLibC's dlfcn replacement boundary.
 //! Run: cargo test -p frankenlibc-harness --test dlfcn_ops_conformance_test
 
 use serde::Deserialize;
@@ -192,6 +193,26 @@ fn dlfcn_ops_covers_dlsym() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Coverage validation: first-wave loader extensions
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn dlfcn_ops_covers_loader_first_wave_symbols_in_both_modes() {
+    let fixture = load_fixture("dlfcn_ops");
+    for function in ["dlvsym", "dl_iterate_phdr"] {
+        for mode in ["strict", "hardened"] {
+            assert!(
+                fixture
+                    .cases
+                    .iter()
+                    .any(|case| case.function == function && case.mode == mode),
+                "dlfcn_ops must include {mode} fixture coverage for {function}"
+            );
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Coverage validation: dlclose
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -292,7 +313,7 @@ fn dlfcn_ops_covers_both_modes() {
 fn dlfcn_ops_case_count_stable() {
     let fixture = load_fixture("dlfcn_ops");
 
-    const EXPECTED_MIN_CASES: usize = 9;
+    const EXPECTED_MIN_CASES: usize = 13;
 
     assert!(
         fixture.cases.len() >= EXPECTED_MIN_CASES,
@@ -329,8 +350,8 @@ fn dlfcn_ops_has_posix_references() {
 
     for case in &fixture.cases {
         assert!(
-            case.spec_section.contains("POSIX"),
-            "Case {} spec_section should reference POSIX: {}",
+            case.spec_section.contains("POSIX") || case.spec_section.contains("GNU"),
+            "Case {} spec_section should reference POSIX or GNU dlfcn semantics: {}",
             case.name,
             case.spec_section
         );

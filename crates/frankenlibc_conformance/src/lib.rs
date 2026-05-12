@@ -155,6 +155,14 @@ unsafe extern "C" {
     fn host_vdprintf(fd: c_int, format: *const c_char, ap: *mut c_void) -> c_int;
     #[link_name = "vasprintf"]
     fn host_vasprintf(strp: *mut *mut c_char, format: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "dlvsym"]
+    fn host_dlvsym_direct(
+        handle: *mut c_void,
+        symbol: *const c_char,
+        version: *const c_char,
+    ) -> *mut c_void;
+    #[link_name = "dl_iterate_phdr"]
+    fn host_dl_iterate_phdr(callback: Option<DlIteratePhdrCallback>, data: *mut c_void) -> c_int;
 }
 
 type SearchCompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
@@ -180,6 +188,8 @@ type LinearSearchFn = unsafe extern "C" fn(
 ) -> *mut c_void;
 type QueueInsertFn = unsafe extern "C" fn(*mut c_void, *mut c_void);
 type QueueRemoveFn = unsafe extern "C" fn(*mut c_void);
+type DlIteratePhdrCallback =
+    unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -496,6 +506,8 @@ pub fn execute_fixture_case(
         name if name.starts_with("stdc_") => execute_stdbit_case(name, inputs, mode),
         "dlopen" => execute_dlopen_case(inputs, mode),
         "dlsym" => execute_dlsym_case(inputs, mode),
+        "dlvsym" => execute_dlvsym_case(inputs, mode),
+        "dl_iterate_phdr" => execute_dl_iterate_phdr_case(inputs, mode),
         "dlclose" => execute_dlclose_case(inputs, mode),
         "dlerror" => execute_dlerror_case(mode),
         "dladdr" => execute_dladdr_case(mode),
@@ -10589,6 +10601,100 @@ fn execute_dlsym_case(
     let host_output = dlsym_output_shape(host_sym);
     let host_parity = host_output == impl_output;
     let note = (!host_parity).then(|| String::from("dlsym pointer-shape mismatch"));
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note,
+    })
+}
+
+fn execute_dlvsym_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let handle = parse_dlsym_handle(inputs)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    let version = parse_string(inputs, "version")?;
+    let symbol_c = CString::new(symbol).map_err(|err| format!("CString symbol: {err}"))?;
+    let version_c = CString::new(version).map_err(|err| format!("CString version: {err}"))?;
+
+    clear_impl_dlerror();
+    let impl_sym = unsafe {
+        frankenlibc_abi::dlfcn_abi::dlvsym(handle, symbol_c.as_ptr(), version_c.as_ptr())
+    };
+    let impl_output = dlsym_output_shape(impl_sym);
+
+    clear_host_dlerror();
+    let host_sym = unsafe { host_dlvsym_direct(handle, symbol_c.as_ptr(), version_c.as_ptr()) };
+    let host_output = dlsym_output_shape(host_sym);
+    let host_parity = host_output == impl_output;
+    let note = (!host_parity).then(|| String::from("dlvsym pointer-shape mismatch"));
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note,
+    })
+}
+
+unsafe extern "C" fn count_dl_iterate_phdr_callback(
+    _info: *mut libc::dl_phdr_info,
+    _size: usize,
+    data: *mut c_void,
+) -> c_int {
+    if data.is_null() {
+        return 0;
+    }
+    // SAFETY: callers pass a valid mutable usize pointer for the duration of
+    // dl_iterate_phdr, and the dynamic linker invokes callbacks serially.
+    let count = unsafe { &mut *data.cast::<usize>() };
+    *count = count.saturating_add(1);
+    0
+}
+
+fn dl_iterate_phdr_output_shape(rc: c_int, callback_count: usize) -> String {
+    if rc != 0 {
+        format!("RETURN_{rc}")
+    } else if callback_count > 0 {
+        String::from("ENTRIES_NONZERO")
+    } else {
+        String::from("0")
+    }
+}
+
+fn execute_dl_iterate_phdr_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let callback = parse_string(inputs, "callback")?;
+    if callback != "count" {
+        return Err(format!("unsupported dl_iterate_phdr callback: {callback}"));
+    }
+
+    let mut impl_count = 0_usize;
+    let impl_rc = unsafe {
+        frankenlibc_abi::dlfcn_abi::dl_iterate_phdr(
+            Some(count_dl_iterate_phdr_callback),
+            (&mut impl_count as *mut usize).cast::<c_void>(),
+        )
+    };
+    let impl_output = dl_iterate_phdr_output_shape(impl_rc, impl_count);
+
+    let mut host_count = 0_usize;
+    let host_rc = unsafe {
+        host_dl_iterate_phdr(
+            Some(count_dl_iterate_phdr_callback),
+            (&mut host_count as *mut usize).cast::<c_void>(),
+        )
+    };
+    let host_output = dl_iterate_phdr_output_shape(host_rc, host_count);
+    let host_parity = host_output == impl_output;
+    let note = (!host_parity).then(|| String::from("dl_iterate_phdr count-shape mismatch"));
 
     Ok(DifferentialExecution {
         host_output,
