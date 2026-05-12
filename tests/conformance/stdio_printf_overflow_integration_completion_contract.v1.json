@@ -1,0 +1,163 @@
+{
+  "schema_version": "stdio_printf_overflow_integration_completion_contract.v1",
+  "bead_id": "bd-5t6zo.1",
+  "original_bead": "bd-5t6zo",
+  "title": "Stdio printf overflow integration completion contract",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-5t6zo/scorecard.md",
+  "audit_score": 470,
+  "score_threshold": 700,
+  "completion_debt_evidence": {
+    "missing_items_closed": [
+      "tests.integration.primary"
+    ],
+    "next_audit_score_threshold": 700
+  },
+  "source_artifacts": {
+    "implementation": {
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "required_markers": [
+        "fn printf_result_to_c_int(total_len: usize) -> c_int",
+        "c_int::try_from(total_len)",
+        "set_abi_errno(errno::EOVERFLOW)",
+        "printf_result_to_c_int(total_len)"
+      ],
+      "minimum_helper_uses": 20
+    },
+    "fixture_spec": {
+      "path": "tests/conformance/c_fixture_spec.json",
+      "required_fixture_id": "fixture_stdio_printf",
+      "required_symbols": [
+        "snprintf",
+        "sprintf",
+        "fprintf",
+        "printf",
+        "dprintf",
+        "asprintf",
+        "vsnprintf",
+        "vsprintf",
+        "vdprintf",
+        "vasprintf"
+      ],
+      "minimum_tests": 10,
+      "required_modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    "integration_fixture": {
+      "path": "tests/integration/fixture_stdio_printf.c",
+      "required_functions": [
+        "test_snprintf_contracts",
+        "test_sprintf_contracts",
+        "test_vsnprintf_contracts",
+        "test_vsprintf_contracts",
+        "test_fprintf_contracts",
+        "test_printf_redirect_contracts",
+        "test_dprintf_contracts",
+        "test_vdprintf_contracts",
+        "test_asprintf_contracts",
+        "test_vasprintf_contracts"
+      ],
+      "required_markers": [
+        "fixture_stdio_printf: PASS",
+        "snprintf(NULL, 0, \"xyz=%d\", 9)",
+        "call_vsnprintf(NULL, 0, \"x=%d\", 7)",
+        "vasprintf-%u:%s"
+      ]
+    },
+    "integration_gate": {
+      "path": "scripts/c_fixture_suite.sh",
+      "required_markers": [
+        "FIXTURE_FILTER",
+        "LD_PRELOAD",
+        "FRANKENLIBC_MODE",
+        "fixture_result",
+        "artifact_index.json",
+        "c_fixture_suite: PASS"
+      ]
+    },
+    "fixture_suite_harness": {
+      "path": "crates/frankenlibc-harness/tests/c_fixture_suite_test.rs",
+      "required_functions": [
+        "all_fixture_sources_exist",
+        "acceptance_symbols_covered",
+        "bd15n2_fixtures_have_traceability_and_mode_expectations",
+        "scripts_exist_and_executable"
+      ]
+    },
+    "completion_gate": {
+      "path": "scripts/check_stdio_printf_overflow_integration_completion_contract.sh",
+      "required_markers": [
+        "stdio_printf_overflow_completion.source_binding",
+        "stdio_printf_overflow_completion.integration_binding",
+        "stdio_printf_overflow_completion.summary",
+        "PASS stdio printf overflow integration completion contract"
+      ]
+    },
+    "completion_harness": {
+      "path": "crates/frankenlibc-harness/tests/stdio_printf_overflow_integration_completion_contract_test.rs",
+      "required_functions": [
+        "manifest_binds_printf_integration_sources",
+        "checker_accepts_printf_overflow_completion_contract",
+        "checker_rejects_missing_helper_use",
+        "checker_rejects_fixture_symbol_drift",
+        "checker_rejects_missing_integration_function"
+      ]
+    }
+  },
+  "completion_obligations": [
+    {
+      "id": "tests.integration.primary",
+      "kind": "integration",
+      "description": "The printf overflow guard is tied to the stdio printf C fixture suite and strict/hardened LD_PRELOAD integration gate.",
+      "source_refs": [
+        "crates/frankenlibc-abi/src/stdio_abi.rs",
+        "tests/integration/fixture_stdio_printf.c",
+        "tests/conformance/c_fixture_spec.json",
+        "scripts/c_fixture_suite.sh",
+        "crates/frankenlibc-harness/tests/c_fixture_suite_test.rs"
+      ]
+    }
+  ],
+  "completion_log_contract": {
+    "required_fields": [
+      "timestamp",
+      "trace_id",
+      "bead_id",
+      "original_bead",
+      "event",
+      "outcome",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs"
+    ],
+    "required_events": [
+      "stdio_printf_overflow_completion.source_binding",
+      "stdio_printf_overflow_completion.integration_binding",
+      "stdio_printf_overflow_completion.summary"
+    ]
+  },
+  "required_validation_commands": [
+    "jq empty tests/conformance/stdio_printf_overflow_integration_completion_contract.v1.json",
+    "bash -n scripts/check_stdio_printf_overflow_integration_completion_contract.sh",
+    "bash scripts/check_stdio_printf_overflow_integration_completion_contract.sh",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/stdio_printf_overflow_integration_completion_contract_test.rs",
+    "rch exec -- cargo test -p frankenlibc-harness --test stdio_printf_overflow_integration_completion_contract_test -- --nocapture",
+    "rch exec -- cargo test -p frankenlibc-harness --test c_fixture_suite_test -- --nocapture",
+    "rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test -- --nocapture",
+    "rch exec -- cargo clippy -p frankenlibc-harness --test stdio_printf_overflow_integration_completion_contract_test -- -D warnings",
+    "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-bd-5t6zo-1-fixture-release BEAD_ID=bd-5t6zo.1 FIXTURE_FILTER=fixture_stdio_printf.c bash scripts/c_fixture_suite.sh"
+  ],
+  "failure_signatures": [
+    "missing printf overflow guard marker",
+    "printf overflow helper use count drift",
+    "fixture_stdio_printf spec drift",
+    "stdio printf integration fixture drift",
+    "stdio printf completion log missing required field"
+  ]
+}
