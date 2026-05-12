@@ -1,0 +1,436 @@
+{
+  "schema_version": "abi_drift_auto_bisect_completion_contract.v1",
+  "original_bead": "bd-26xb.7",
+  "completion_debt_bead": "bd-26xb.7.1",
+  "generated_at_utc": "2026-05-12T05:00:00Z",
+  "purpose": "Bind the ABI Drift Auto-Bisect Engine completion-debt audit items to explicit unit, e2e, and telemetry evidence with deterministic synthetic drift histories.",
+  "audit_source": {
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-26xb.7/scorecard.md",
+    "missing_items": [
+      {
+        "id": "tests.unit.primary",
+        "kind": "unit",
+        "description": "unit coverage for binary-search strategy, monotonic-history validation, root-cause bundle shape, line refs, source anchors, and mutation rejection"
+      },
+      {
+        "id": "tests.e2e.primary",
+        "kind": "e2e",
+        "description": "replayable synthetic ABI drift histories that emit reproducible bisect transcripts and candidate root-cause bundles"
+      },
+      {
+        "id": "telemetry.primary",
+        "kind": "telemetry",
+        "description": "structured JSON report and JSONL event stream emitted by the completion checker"
+      }
+    ]
+  },
+  "source_artifacts": {
+    "parent_tracker": ".beads/issues.jsonl",
+    "workspace_manifest": "Cargo.toml",
+    "harness_manifest": "crates/frankenlibc-harness/Cargo.toml",
+    "asupersync_orchestrator": "crates/frankenlibc-harness/src/asupersync_orchestrator.rs",
+    "snapshot_diff": "crates/frankenlibc-harness/src/snapshot_diff.rs",
+    "completion_contract": "tests/conformance/abi_drift_auto_bisect_completion_contract.v1.json",
+    "completion_gate": "scripts/check_abi_drift_auto_bisect_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/abi_drift_auto_bisect_completion_contract_test.rs"
+  },
+  "source_anchors": {
+    "parent_tracker": [
+      "\"id\":\"bd-26xb.7\"",
+      "ABI Drift Auto-Bisect Engine",
+      "Engine must emit reproducible bisect transcript and candidate root-cause bundle"
+    ],
+    "workspace_manifest": [
+      "asupersync-conformance = \"0.3.1\"",
+      "ftui-harness = \"0.3.1\""
+    ],
+    "harness_manifest": [
+      "default = [\"asupersync-tooling\"]",
+      "frankentui-ui = [",
+      "asupersync-conformance = { workspace = true, optional = true }",
+      "ftui-harness = { workspace = true, optional = true }"
+    ],
+    "asupersync_orchestrator": [
+      "Deterministic harness orchestration using /dp/asupersync tooling",
+      "asupersync_conformance::checkpoint"
+    ],
+    "snapshot_diff": [
+      "pub fn render_ftui",
+      "ftui_harness::buffer_to_text"
+    ],
+    "completion_gate": [
+      "abi_drift_auto_bisect_completion.unit_binding",
+      "abi_drift_auto_bisect_completion.e2e_transcript",
+      "abi_drift_auto_bisect_completion.telemetry_contract",
+      "abi_drift_auto_bisect_completion.validated"
+    ],
+    "completion_harness": [
+      "fn manifest_binds_auto_bisect_completion_items()",
+      "fn checker_emits_reproducible_transcripts_and_telemetry()",
+      "fn checker_rejects_first_bad_candidate_drift()",
+      "fn checker_rejects_non_monotonic_histories()"
+    ]
+  },
+  "tooling_contract": {
+    "deterministic_orchestration": {
+      "dependency": "asupersync-conformance",
+      "feature": "asupersync-tooling",
+      "evidence_refs": [
+        "Cargo.toml:50",
+        "crates/frankenlibc-harness/Cargo.toml:15",
+        "crates/frankenlibc-harness/src/asupersync_orchestrator.rs:1"
+      ]
+    },
+    "deterministic_diff_snapshot": {
+      "dependency": "ftui-harness",
+      "feature": "frankentui-ui",
+      "evidence_refs": [
+        "Cargo.toml:51",
+        "crates/frankenlibc-harness/Cargo.toml:17",
+        "crates/frankenlibc-harness/src/snapshot_diff.rs:352"
+      ]
+    }
+  },
+  "bisect_engine_contract": {
+    "strategy": "leftmost_first_bad_binary_search",
+    "max_probe_rule": "ceil(log2(commit_count)) + 1",
+    "minimum_scenarios": 3,
+    "required_candidate_fields": [
+      "scenario_id",
+      "first_bad_commit",
+      "previous_good_commit",
+      "changed_symbols",
+      "drift_class",
+      "witnesses",
+      "artifact_refs"
+    ],
+    "scenarios": [
+      {
+        "scenario_id": "midrange_symbol_removed",
+        "api_family": "stdio",
+        "symbol": "fopen64",
+        "drift_class": "abi_symbol_removed",
+        "commits": [
+          {
+            "id": "abi-mid-000",
+            "status": "pass",
+            "witnesses": [
+              "support_matrix:fopen64:Implemented"
+            ]
+          },
+          {
+            "id": "abi-mid-001",
+            "status": "pass",
+            "witnesses": [
+              "version_script:fopen64@GLIBC_2.2.5"
+            ]
+          },
+          {
+            "id": "abi-mid-002",
+            "status": "pass",
+            "witnesses": [
+              "fixture:fopen64:strict+hardened"
+            ]
+          },
+          {
+            "id": "abi-mid-003",
+            "status": "fail",
+            "witnesses": [
+              "abi_witness:missing_export:fopen64",
+              "behavior_probe:open64_fixture:no_symbol"
+            ]
+          },
+          {
+            "id": "abi-mid-004",
+            "status": "fail",
+            "witnesses": [
+              "abi_witness:missing_export:fopen64"
+            ]
+          },
+          {
+            "id": "abi-mid-005",
+            "status": "fail",
+            "witnesses": [
+              "abi_witness:missing_export:fopen64"
+            ]
+          },
+          {
+            "id": "abi-mid-006",
+            "status": "fail",
+            "witnesses": [
+              "abi_witness:missing_export:fopen64"
+            ]
+          },
+          {
+            "id": "abi-mid-007",
+            "status": "fail",
+            "witnesses": [
+              "abi_witness:missing_export:fopen64"
+            ]
+          }
+        ],
+        "expected_probe_sequence": [
+          "abi-mid-003",
+          "abi-mid-001",
+          "abi-mid-002"
+        ],
+        "expected_first_bad_commit": "abi-mid-003",
+        "expected_previous_good_commit": "abi-mid-002",
+        "candidate_root_cause": {
+          "scenario_id": "midrange_symbol_removed",
+          "first_bad_commit": "abi-mid-003",
+          "previous_good_commit": "abi-mid-002",
+          "changed_symbols": [
+            "fopen64"
+          ],
+          "drift_class": "abi_symbol_removed",
+          "witnesses": [
+            "abi_witness:missing_export:fopen64",
+            "behavior_probe:open64_fixture:no_symbol"
+          ],
+          "artifact_refs": [
+            "support_matrix.json",
+            "crates/frankenlibc-abi/version_scripts/libc.map",
+            "tests/conformance/reality_report.v1.json"
+          ]
+        }
+      },
+      {
+        "scenario_id": "late_status_taxonomy_regression",
+        "api_family": "unistd",
+        "symbol": "copy_file_range",
+        "drift_class": "support_status_regression",
+        "commits": [
+          {
+            "id": "abi-late-000",
+            "status": "pass",
+            "witnesses": [
+              "support_matrix:copy_file_range:RawSyscall"
+            ]
+          },
+          {
+            "id": "abi-late-001",
+            "status": "pass",
+            "witnesses": [
+              "raw_syscall_probe:copy_file_range:ENOSYS_or_success"
+            ]
+          },
+          {
+            "id": "abi-late-002",
+            "status": "pass",
+            "witnesses": [
+              "abi_witness:copy_file_range:exported"
+            ]
+          },
+          {
+            "id": "abi-late-003",
+            "status": "pass",
+            "witnesses": [
+              "behavior_probe:copy_file_range:errno_parity"
+            ]
+          },
+          {
+            "id": "abi-late-004",
+            "status": "pass",
+            "witnesses": [
+              "support_matrix:copy_file_range:RawSyscall"
+            ]
+          },
+          {
+            "id": "abi-late-005",
+            "status": "pass",
+            "witnesses": [
+              "fixture:copy_file_range:strict"
+            ]
+          },
+          {
+            "id": "abi-late-006",
+            "status": "pass",
+            "witnesses": [
+              "fixture:copy_file_range:hardened"
+            ]
+          },
+          {
+            "id": "abi-late-007",
+            "status": "fail",
+            "witnesses": [
+              "support_matrix:copy_file_range:Stub",
+              "reality_report:raw_syscall_count_drift"
+            ]
+          },
+          {
+            "id": "abi-late-008",
+            "status": "fail",
+            "witnesses": [
+              "support_matrix:copy_file_range:Stub"
+            ]
+          }
+        ],
+        "expected_probe_sequence": [
+          "abi-late-004",
+          "abi-late-006",
+          "abi-late-007"
+        ],
+        "expected_first_bad_commit": "abi-late-007",
+        "expected_previous_good_commit": "abi-late-006",
+        "candidate_root_cause": {
+          "scenario_id": "late_status_taxonomy_regression",
+          "first_bad_commit": "abi-late-007",
+          "previous_good_commit": "abi-late-006",
+          "changed_symbols": [
+            "copy_file_range"
+          ],
+          "drift_class": "support_status_regression",
+          "witnesses": [
+            "support_matrix:copy_file_range:Stub",
+            "reality_report:raw_syscall_count_drift"
+          ],
+          "artifact_refs": [
+            "support_matrix.json",
+            "tests/conformance/reality_report.v1.json",
+            "scripts/check_symbol_drift.sh"
+          ]
+        }
+      },
+      {
+        "scenario_id": "early_behavior_probe_divergence",
+        "api_family": "string",
+        "symbol": "memmove",
+        "drift_class": "behavior_probe_divergence",
+        "commits": [
+          {
+            "id": "abi-early-000",
+            "status": "pass",
+            "witnesses": [
+              "behavior_probe:memmove:overlap_parity"
+            ]
+          },
+          {
+            "id": "abi-early-001",
+            "status": "pass",
+            "witnesses": [
+              "behavior_probe:memmove:reverse_overlap_parity"
+            ]
+          },
+          {
+            "id": "abi-early-002",
+            "status": "fail",
+            "witnesses": [
+              "behavior_probe:memmove:overlap_order_drift",
+              "abi_witness:memmove:exported"
+            ]
+          },
+          {
+            "id": "abi-early-003",
+            "status": "fail",
+            "witnesses": [
+              "behavior_probe:memmove:overlap_order_drift"
+            ]
+          },
+          {
+            "id": "abi-early-004",
+            "status": "fail",
+            "witnesses": [
+              "behavior_probe:memmove:overlap_order_drift"
+            ]
+          }
+        ],
+        "expected_probe_sequence": [
+          "abi-early-002",
+          "abi-early-001"
+        ],
+        "expected_first_bad_commit": "abi-early-002",
+        "expected_previous_good_commit": "abi-early-001",
+        "candidate_root_cause": {
+          "scenario_id": "early_behavior_probe_divergence",
+          "first_bad_commit": "abi-early-002",
+          "previous_good_commit": "abi-early-001",
+          "changed_symbols": [
+            "memmove"
+          ],
+          "drift_class": "behavior_probe_divergence",
+          "witnesses": [
+            "behavior_probe:memmove:overlap_order_drift",
+            "abi_witness:memmove:exported"
+          ],
+          "artifact_refs": [
+            "crates/frankenlibc-core/src/string",
+            "scripts/check_symbol_drift.sh",
+            "tests/conformance/reality_report.v1.json"
+          ]
+        }
+      }
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_abi_drift_auto_bisect_completion_contract.sh:1",
+        "tests/conformance/abi_drift_auto_bisect_completion_contract.v1.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/abi_drift_auto_bisect_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_abi_drift_auto_bisect_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test abi_drift_auto_bisect_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_abi_drift_auto_bisect_completion_contract.sh:1",
+        "tests/conformance/abi_drift_auto_bisect_completion_contract.v1.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/abi_drift_auto_bisect_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_abi_drift_auto_bisect_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test abi_drift_auto_bisect_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_abi_drift_auto_bisect_completion_contract.sh:1",
+        "tests/conformance/abi_drift_auto_bisect_completion_contract.v1.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/abi_drift_auto_bisect_completion_contract_test.rs:1"
+      ],
+      "telemetry_refs": [
+        "scripts/check_abi_drift_auto_bisect_completion_contract.sh:1",
+        "tests/conformance/abi_drift_auto_bisect_completion_contract.v1.json:1"
+      ],
+      "required_events": [
+        "abi_drift_auto_bisect_completion.unit_binding",
+        "abi_drift_auto_bisect_completion.e2e_transcript",
+        "abi_drift_auto_bisect_completion.telemetry_contract",
+        "abi_drift_auto_bisect_completion.validated"
+      ],
+      "required_commands": [
+        "bash scripts/check_abi_drift_auto_bisect_completion_contract.sh",
+        "rch exec -- cargo clippy -p frankenlibc-harness --test abi_drift_auto_bisect_completion_contract_test --no-deps -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "default_report_path": "target/conformance/abi_drift_auto_bisect_completion_contract.report.json",
+    "default_log_path": "target/conformance/abi_drift_auto_bisect_completion_contract.log.jsonl",
+    "pass_events": [
+      "abi_drift_auto_bisect_completion.unit_binding",
+      "abi_drift_auto_bisect_completion.e2e_transcript",
+      "abi_drift_auto_bisect_completion.telemetry_contract",
+      "abi_drift_auto_bisect_completion.validated"
+    ],
+    "fail_event": "abi_drift_auto_bisect_completion.failed"
+  }
+}
