@@ -1,0 +1,298 @@
+{
+  "schema_version": "v1_completion_contract.v1",
+  "manifest_id": "bd-2uro.1-v1-completion-contract",
+  "original_bead": "bd-2uro",
+  "completion_debt_bead": "bd-2uro.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-2uro/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "description": "Completion-debt evidence binding for the FrankenLibC v1.0 closeout: symbol/native coverage, LD_PRELOAD smoke, CVE arena, fuzz, strict differential, POSIX obligation, proof binder, release dossier, and structured telemetry evidence.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "conformance_coverage": "tests/conformance/conformance_coverage_baseline.v1.json",
+    "closure_sweep": "tests/conformance/closure_sweep_report.v1.json",
+    "ld_preload_smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "cve_corpus_index": "tests/cve_arena/corpus_index.v1.json",
+    "fuzz_phase1_targets": "tests/conformance/fuzz_phase1_targets.v1.json",
+    "posix_obligation_matrix": "tests/conformance/posix_obligation_matrix.v1.json",
+    "proof_binder_validation": "tests/conformance/proof_binder_validation.v1.json",
+    "strict_differential_parity_contract": "tests/conformance/strict_differential_parity_completion_contract.v1.json",
+    "release_dossier_report": "tests/release/dossier_validation_report.v1.json",
+    "closure_contract": "tests/conformance/closure_contract.v1.json",
+    "ld_preload_smoke_test": "crates/frankenlibc-harness/tests/ld_preload_smoke_e2e_index_test.rs",
+    "fuzz_phase1_test": "crates/frankenlibc-harness/tests/fuzz_phase1_targets_completion_contract_test.rs",
+    "strict_differential_test": "crates/frankenlibc-harness/tests/strict_differential_parity_completion_contract_test.rs",
+    "proof_binder_test": "crates/frankenlibc-harness/tests/proof_obligations_binder_completion_contract_test.rs",
+    "release_dossier_test": "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs",
+    "completion_checker": "scripts/check_v1_completion_contract.sh",
+    "completion_harness_test": "crates/frankenlibc-harness/tests/v1_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    "support_matrix.json:1",
+    "tests/conformance/conformance_coverage_baseline.v1.json:1",
+    "tests/conformance/closure_sweep_report.v1.json:1",
+    "tests/conformance/ld_preload_smoke_summary.v1.json:1",
+    "tests/cve_arena/corpus_index.v1.json:1",
+    "tests/conformance/fuzz_phase1_targets.v1.json:1",
+    "tests/conformance/posix_obligation_matrix.v1.json:1",
+    "tests/conformance/proof_binder_validation.v1.json:1",
+    "tests/conformance/strict_differential_parity_completion_contract.v1.json:1",
+    "tests/release/dossier_validation_report.v1.json:1",
+    "scripts/check_v1_completion_contract.sh:1",
+    "crates/frankenlibc-harness/tests/v1_completion_contract_test.rs:1"
+  ],
+  "claimed_closure_contract": {
+    "support_matrix": {
+      "expected_total_exported": 4119,
+      "expected_native_total": 4119,
+      "expected_glibc_callthrough": 0,
+      "expected_stub": 0
+    },
+    "conformance_coverage": {
+      "expected_classified_symbols": 3980,
+      "minimum_fixture_cases": 558,
+      "minimum_fixture_files": 51
+    },
+    "closure_sweep": {
+      "expected_callthrough_remaining": 0,
+      "expected_open_gap_beads": 0,
+      "expected_errors": 0
+    },
+    "ld_preload_smoke": {
+      "expected_total_cases": 64,
+      "expected_passes": 58,
+      "expected_fails": 0,
+      "expected_skips": 6,
+      "expected_overall_failed": false
+    },
+    "cve_arena": {
+      "minimum_total_scenarios": 4,
+      "require_all_replay_deterministic": true,
+      "required_tsm_features": [
+        "canary",
+        "bounds_checking",
+        "quarantine",
+        "generational_arena",
+        "allocation_fingerprints"
+      ]
+    },
+    "fuzz_phase1": {
+      "expected_phase": 1,
+      "expected_total_targets": 4,
+      "expected_functional_targets": 4,
+      "expected_stub_targets": 0,
+      "minimum_cwes_targeted": 11
+    },
+    "posix_obligations": {
+      "expected_total_obligations": 268,
+      "expected_covered_obligations": 268,
+      "expected_execution_failures": 0
+    },
+    "proof_binder": {
+      "expected_binder_valid": true,
+      "expected_total_violations": 0,
+      "minimum_valid_obligations": 24,
+      "required_categories": [
+        "formal_verification",
+        "optimization_proof",
+        "statistical_guarantee",
+        "controller_safety"
+      ]
+    },
+    "strict_differential": {
+      "minimum_required_cases": 4,
+      "expected_claimed_surface_mismatch_max": 0
+    },
+    "release_dossier": {
+      "expected_status": "pass",
+      "expected_verdict": "PASS",
+      "expected_critical_missing": 0,
+      "expected_errors": 0,
+      "minimum_valid_artifacts": 14
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "description": "Unit evidence pins the completion contract parser, source-artifact references, existing smoke/fuzz/differential/proof/dossier unit tests, and the fail-closed command guard.",
+      "implementation_refs": [
+        "scripts/check_v1_completion_contract.sh:1",
+        "crates/frankenlibc-harness/tests/v1_completion_contract_test.rs:1",
+        "crates/frankenlibc-harness/tests/ld_preload_smoke_e2e_index_test.rs:69",
+        "crates/frankenlibc-harness/tests/fuzz_phase1_targets_completion_contract_test.rs:99",
+        "crates/frankenlibc-harness/tests/strict_differential_parity_completion_contract_test.rs:159"
+      ],
+      "required_test_refs": [
+        {
+          "source": "ld_preload_smoke_test",
+          "name": "index_policy_pins_required_invariants"
+        },
+        {
+          "source": "fuzz_phase1_test",
+          "name": "manifest_binds_unit_e2e_and_fuzz_missing_items"
+        },
+        {
+          "source": "strict_differential_test",
+          "name": "manifest_binds_strict_differential_unit_and_e2e_items"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "manifest_binds_v1_completion_evidence"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_bare_cargo_command"
+        }
+      ],
+      "required_commands": [
+        "jq empty tests/conformance/v1_completion_contract.v1.json",
+        "bash -n scripts/check_v1_completion_contract.sh",
+        "CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test v1_completion_contract_test manifest_binds_v1_completion_evidence checker_rejects_bare_cargo_command -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "description": "E2E evidence binds the strict+hardened LD_PRELOAD smoke index, release dossier gate, and this completion checker report/log run.",
+      "implementation_refs": [
+        "scripts/ld_preload_smoke.sh:1",
+        "tests/conformance/ld_preload_smoke_summary.v1.json:1",
+        "scripts/check_v1_completion_contract.sh:1",
+        "tests/release/dossier_validation_report.v1.json:1"
+      ],
+      "required_test_refs": [
+        {
+          "source": "ld_preload_smoke_test",
+          "name": "primary_e2e_scripts_are_present_and_executable"
+        },
+        {
+          "source": "ld_preload_smoke_test",
+          "name": "telemetry_run_dir_root_pinned_to_canonical_location"
+        },
+        {
+          "source": "release_dossier_test",
+          "name": "dossier_validator_produces_valid_report"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_accepts_contract_and_emits_report_log"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_v1_completion_contract.sh",
+        "CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test ld_preload_smoke_e2e_index_test primary_e2e_scripts_are_present_and_executable telemetry_run_dir_root_pinned_to_canonical_location -- --nocapture",
+        "CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test v1_completion_contract_test checker_accepts_contract_and_emits_report_log -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.fuzz.primary",
+      "description": "Fuzz evidence binds the phase-1 fuzz completion target matrix, functional target count, CWE coverage, and command contract.",
+      "implementation_refs": [
+        "tests/conformance/fuzz_phase1_targets.v1.json:1",
+        "tests/conformance/fuzz_phase1_targets_completion_contract.v1.json:1",
+        "scripts/check_fuzz_phase1_targets_completion_contract.sh:1",
+        "scripts/check_v1_completion_contract.sh:1"
+      ],
+      "required_test_refs": [
+        {
+          "source": "fuzz_phase1_test",
+          "name": "target_contracts_bind_phase1_report"
+        },
+        {
+          "source": "fuzz_phase1_test",
+          "name": "checker_accepts_manifest_and_emits_evidence"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_bare_cargo_command"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_fuzz_phase1_targets_completion_contract.sh",
+        "CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test fuzz_phase1_targets_completion_contract_test target_contracts_bind_phase1_report checker_accepts_manifest_and_emits_evidence -- --nocapture",
+        "CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test v1_completion_contract_test checker_rejects_bare_cargo_command -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "description": "Conformance evidence binds symbol classification, closure sweep, strict differential fixtures, POSIX obligations, CVE arena replayability, and the release dossier.",
+      "implementation_refs": [
+        "tests/conformance/conformance_coverage_baseline.v1.json:1",
+        "tests/conformance/closure_sweep_report.v1.json:1",
+        "tests/conformance/strict_differential_parity_completion_contract.v1.json:1",
+        "tests/conformance/posix_obligation_matrix.v1.json:1",
+        "tests/cve_arena/corpus_index.v1.json:1",
+        "tests/release/dossier_validation_report.v1.json:1"
+      ],
+      "required_test_refs": [
+        {
+          "source": "strict_differential_test",
+          "name": "checker_validates_claimed_surface_and_emits_report_log"
+        },
+        {
+          "source": "proof_binder_test",
+          "name": "contract_binds_proof_binder_e2e_and_telemetry"
+        },
+        {
+          "source": "release_dossier_test",
+          "name": "dossier_integrity_index_consistent"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_support_matrix_callthrough_drift"
+        }
+      ],
+      "required_commands": [
+        "jq empty tests/conformance/conformance_coverage_baseline.v1.json",
+        "jq empty tests/conformance/closure_sweep_report.v1.json",
+        "jq empty tests/conformance/strict_differential_parity_completion_contract.v1.json",
+        "jq empty tests/cve_arena/corpus_index.v1.json",
+        "bash scripts/check_v1_completion_contract.sh",
+        "CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test strict_differential_parity_completion_contract_test checker_validates_claimed_surface_and_emits_report_log -- --nocapture",
+        "CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test v1_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "description": "Telemetry evidence requires deterministic checker report/log artifacts with source binding, missing-item, claim, telemetry, and pass events.",
+      "implementation_refs": [
+        "scripts/check_v1_completion_contract.sh:1",
+        "crates/frankenlibc-harness/tests/v1_completion_contract_test.rs:1"
+      ],
+      "required_test_refs": [
+        {
+          "source": "completion_harness_test",
+          "name": "checker_accepts_contract_and_emits_report_log"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_missing_required_event"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_v1_completion_contract.sh",
+        "CARGO_TARGET_DIR=<target> RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test v1_completion_contract_test checker_accepts_contract_and_emits_report_log checker_rejects_missing_required_event -- --nocapture"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_events": [
+      "v1_completion_sources_bound",
+      "v1_completion_missing_items_bound",
+      "v1_completion_claims_validated",
+      "v1_completion_telemetry_validated",
+      "v1_completion_contract_pass"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "event",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ],
+    "report_artifact": "target/conformance/v1_completion_contract/v1_completion_contract.report.json",
+    "log_artifact": "target/conformance/v1_completion_contract/v1_completion_contract.log.jsonl"
+  }
+}
