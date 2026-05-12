@@ -1,0 +1,206 @@
+{
+  "schema_version": "runtime_evidence_replay_gate_dashboard_completion_contract.v1",
+  "manifest_id": "bd-zyck1.111.1-runtime-evidence-replay-gate-dashboard-completion-contract",
+  "generated_utc": "2026-05-12T15:50:00Z",
+  "bead_id": "bd-zyck1.111.1",
+  "original_bead": "bd-zyck1.111",
+  "trace_id": "bd-zyck1.111.1::runtime-evidence-replay-gate-dashboard::completion::v1",
+  "description": "Completion-debt evidence binding for the L1 dashboard rows that expose runtime evidence replay gate details. This proves the dashboard rows, runtime replay gate source artifact, source checker, and telemetry are replayable without promoting runtime replay readiness by proxy.",
+  "source_artifacts": {
+    "l1_dashboard": "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+    "l1_dashboard_harness": "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
+    "runtime_replay_manifest": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+    "runtime_replay_gate": "scripts/check_runtime_evidence_replay_gate.sh",
+    "runtime_replay_harness": "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_test.rs",
+    "completion_checker": "scripts/check_runtime_evidence_replay_gate_dashboard_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_dashboard_completion_contract_test.rs"
+  },
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "required_dashboard": {
+      "schema_version": "v1",
+      "total_rows_min": 619,
+      "runtime_replay_row_prefix": "runtime-replay-gate-",
+      "runtime_replay_row_count": 21,
+      "required_row_kind": "runtime_evidence",
+      "required_evidence_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
+      "required_row_ids": [
+        "runtime-replay-gate-default-decision",
+        "runtime-replay-gate-record-count",
+        "runtime-replay-gate-required-decision-count",
+        "runtime-replay-gate-negative-case-count",
+        "runtime-replay-gate-required-log-field-count",
+        "runtime-replay-gate-required-mode-strict",
+        "runtime-replay-gate-required-mode-hardened",
+        "runtime-replay-gate-required-decision-allow",
+        "runtime-replay-gate-required-decision-fullvalidate",
+        "runtime-replay-gate-required-decision-repair",
+        "runtime-replay-gate-required-decision-deny",
+        "runtime-replay-gate-allow-strict-id",
+        "runtime-replay-gate-allow-strict-decision",
+        "runtime-replay-gate-fullvalidate-hardened-decision",
+        "runtime-replay-gate-repair-hardened-healing-action",
+        "runtime-replay-gate-deny-strict-symbol",
+        "runtime-replay-gate-current-snapshot",
+        "runtime-replay-gate-no-redaction",
+        "runtime-replay-gate-first-negative-signature",
+        "runtime-replay-gate-stale-snapshot-negative-signature",
+        "runtime-replay-gate-decision-mismatch-negative-signature"
+      ],
+      "required_expectations": {
+        "runtime-replay-gate-default-decision": {
+          "field": "claim_policy.default_decision",
+          "expected_value": "block_done_until_runtime_evidence_replay_gate_passes"
+        },
+        "runtime-replay-gate-record-count": {
+          "field": "summary.replay_record_count",
+          "expected_value": 4
+        },
+        "runtime-replay-gate-required-decision-count": {
+          "field": "summary.required_decision_count",
+          "expected_value": 4
+        },
+        "runtime-replay-gate-negative-case-count": {
+          "field": "summary.negative_case_count",
+          "expected_value": 5
+        },
+        "runtime-replay-gate-required-log-field-count": {
+          "field": "summary.required_log_field_count",
+          "expected_value": 11
+        },
+        "runtime-replay-gate-required-mode-strict": {
+          "field": "claim_policy.required_modes.0",
+          "expected_value": "strict"
+        },
+        "runtime-replay-gate-required-mode-hardened": {
+          "field": "claim_policy.required_modes.1",
+          "expected_value": "hardened"
+        },
+        "runtime-replay-gate-required-decision-allow": {
+          "field": "claim_policy.required_decisions.0",
+          "expected_value": "Allow"
+        },
+        "runtime-replay-gate-required-decision-fullvalidate": {
+          "field": "claim_policy.required_decisions.1",
+          "expected_value": "FullValidate"
+        },
+        "runtime-replay-gate-required-decision-repair": {
+          "field": "claim_policy.required_decisions.2",
+          "expected_value": "Repair"
+        },
+        "runtime-replay-gate-required-decision-deny": {
+          "field": "claim_policy.required_decisions.3",
+          "expected_value": "Deny"
+        },
+        "runtime-replay-gate-allow-strict-id": {
+          "field": "replay_records.0.replay_id",
+          "expected_value": "runtime-replay-allow-strict"
+        },
+        "runtime-replay-gate-allow-strict-decision": {
+          "field": "replay_records.0.actual_decision",
+          "expected_value": "Allow"
+        },
+        "runtime-replay-gate-fullvalidate-hardened-decision": {
+          "field": "replay_records.1.actual_decision",
+          "expected_value": "FullValidate"
+        },
+        "runtime-replay-gate-repair-hardened-healing-action": {
+          "field": "replay_records.2.healing_action",
+          "expected_value": "IgnoreDoubleFree"
+        },
+        "runtime-replay-gate-deny-strict-symbol": {
+          "field": "replay_records.3.symbol",
+          "expected_value": "longjmp"
+        },
+        "runtime-replay-gate-current-snapshot": {
+          "field": "replay_records.0.evidence_snapshot.snapshot_age_state",
+          "expected_value": "current"
+        },
+        "runtime-replay-gate-no-redaction": {
+          "field": "replay_records.0.evidence_snapshot.redaction_state",
+          "expected_value": "none"
+        },
+        "runtime-replay-gate-first-negative-signature": {
+          "field": "negative_replay_cases.0.expected_failure_signature",
+          "expected_value": "runtime_replay_missing_event"
+        },
+        "runtime-replay-gate-stale-snapshot-negative-signature": {
+          "field": "negative_replay_cases.1.expected_failure_signature",
+          "expected_value": "runtime_replay_stale_snapshot"
+        },
+        "runtime-replay-gate-decision-mismatch-negative-signature": {
+          "field": "negative_replay_cases.4.expected_failure_signature",
+          "expected_value": "runtime_replay_decision_mismatch"
+        }
+      }
+    },
+    "required_source_gate_markers": {
+      "runtime_replay_gate": "runtime evidence replay gate passed"
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "implementation_refs": [
+        "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+        "tests/conformance/runtime_evidence_replay_gate.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
+        "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_test.rs",
+        "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_dashboard_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "l1_dry_run_readiness_dashboard_test::runtime_replay_gate_rows_are_explicit",
+        "runtime_evidence_replay_gate_test::gate_artifact_covers_runtime_evidence_replay_contract",
+        "runtime_evidence_replay_gate_dashboard_completion_contract_test::checker_accepts_dashboard_completion_contract"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "implementation_refs": [
+        "scripts/check_runtime_evidence_replay_gate_dashboard_completion_contract.sh",
+        "scripts/check_runtime_evidence_replay_gate.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_test.rs",
+        "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_dashboard_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "runtime_evidence_replay_gate_dashboard_completion_contract_test::checker_accepts_dashboard_completion_contract",
+        "runtime_evidence_replay_gate_dashboard_completion_contract_test::checker_replays_runtime_replay_source_gate",
+        "runtime_evidence_replay_gate_dashboard_completion_contract_test::checker_rejects_missing_telemetry_binding"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "report_schema_version": "runtime_evidence_replay_gate_dashboard_completion_contract.report.v1",
+    "required_events": [
+      "runtime_replay_dashboard.sources_validated",
+      "runtime_replay_dashboard.rows_validated",
+      "runtime_replay_dashboard.bindings_validated",
+      "runtime_replay_dashboard.source_gates_replayed",
+      "runtime_replay_dashboard.completion_contract_pass"
+    ],
+    "forbidden_pass_events": [
+      "runtime_replay_dashboard.completion_contract_fail"
+    ]
+  },
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_dashboard_conformance_and_telemetry",
+      "checker_accepts_dashboard_completion_contract",
+      "checker_replays_runtime_replay_source_gate"
+    ],
+    "negative": [
+      "checker_rejects_missing_dashboard_row",
+      "checker_rejects_missing_telemetry_binding",
+      "checker_rejects_dashboard_row_count_drift"
+    ]
+  }
+}
