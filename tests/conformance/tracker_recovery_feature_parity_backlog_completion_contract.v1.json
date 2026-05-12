@@ -1,0 +1,276 @@
+{
+  "schema_version": "tracker_recovery_feature_parity_backlog_completion_contract.v1",
+  "bead_id": "bd-bp8fl.2.10",
+  "original_bead": "bd-bp8fl.2",
+  "trace_id": "bd-bp8fl.2.10::tracker-recovery-feature-parity-backlog::completion::v1",
+  "purpose": "Bind the tracker recovery and evidence-backed feature parity backlog parent to executable unit, e2e, conformance, and telemetry evidence gates.",
+  "source_artifacts": {
+    "tracker_health_manifest": "tests/conformance/tracker_health_report.v1.json",
+    "tracker_health_checker": "scripts/check_tracker_health_report.sh",
+    "tracker_health_harness": "crates/frankenlibc-harness/tests/tracker_health_report_test.rs",
+    "br_bv_dashboard_manifest": "tests/conformance/br_bv_disagreement_dashboard.v1.json",
+    "br_bv_dashboard_checker": "scripts/check_br_bv_disagreement_dashboard.sh",
+    "br_bv_dashboard_harness": "crates/frankenlibc-harness/tests/br_bv_disagreement_dashboard_test.rs",
+    "ambition_graph_manifest": "tests/conformance/ambition_graph_readiness_lint.v1.json",
+    "ambition_graph_checker": "scripts/check_ambition_graph_readiness_lint.sh",
+    "ambition_graph_harness": "crates/frankenlibc-harness/tests/ambition_graph_readiness_lint_test.rs",
+    "crypt_dashboard_manifest": "tests/conformance/crypt_dashboard_reconciliation.v1.json",
+    "crypt_dashboard_checker": "scripts/check_crypt_dashboard_reconciliation.sh",
+    "crypt_dashboard_harness": "crates/frankenlibc-harness/tests/crypt_dashboard_reconciliation_test.rs",
+    "feature_parity_manifest": "tests/conformance/feature_parity_targeted_closure_beads.v1.json",
+    "feature_parity_checker": "scripts/check_feature_parity_targeted_closure_beads.sh",
+    "feature_parity_harness": "crates/frankenlibc-harness/tests/feature_parity_targeted_closure_beads_test.rs",
+    "hard_parts_manifest": "tests/conformance/hard_parts_failure_replay_gate.v1.json",
+    "hard_parts_checker": "scripts/check_hard_parts_failure_replay_gate.sh",
+    "hard_parts_harness": "crates/frankenlibc-harness/tests/hard_parts_failure_replay_gate_test.rs",
+    "workstream_templates_manifest": "tests/conformance/workstream_done_templates.v1.json",
+    "workstream_templates_checker": "scripts/check_workstream_done_templates.sh",
+    "workstream_templates_harness": "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs",
+    "reality_bridge_manifest": "tests/conformance/reality_bridge_import_reconciliation.v1.json",
+    "reality_bridge_checker": "scripts/check_reality_bridge_import_reconciliation.sh",
+    "reality_bridge_harness": "crates/frankenlibc-harness/tests/reality_bridge_import_reconciliation_test.rs",
+    "completion_checker": "scripts/check_tracker_recovery_feature_parity_backlog_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/tracker_recovery_feature_parity_backlog_completion_contract_test.rs"
+  },
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "required_source_gates": [
+      {
+        "id": "tracker_health",
+        "script": "scripts/check_tracker_health_report.sh",
+        "args": [
+          "--fixture-replay"
+        ],
+        "artifact": "tests/conformance/tracker_health_report.v1.json",
+        "artifact_env": "FRANKENLIBC_TRACKER_HEALTH_ARTIFACT",
+        "target_env": "FRANKENLIBC_TRACKER_HEALTH_TARGET_DIR",
+        "report_env": "FRANKENLIBC_TRACKER_HEALTH_REPORT",
+        "log_env": "FRANKENLIBC_TRACKER_HEALTH_LOG",
+        "report_filename": "tracker_health_report.report.json",
+        "log_filename": "tracker_health_report.log.jsonl",
+        "expected_report_status": "pass",
+        "expected_stdout_contains": "PASS: tracker health replay classified 5 scenarios",
+        "expected_summary": {
+          "scenario_count": 5
+        }
+      },
+      {
+        "id": "br_bv_disagreement",
+        "script": "scripts/check_br_bv_disagreement_dashboard.sh",
+        "args": [
+          "--fixture-replay"
+        ],
+        "artifact": "tests/conformance/br_bv_disagreement_dashboard.v1.json",
+        "artifact_env": "FRANKENLIBC_BR_BV_DASHBOARD_ARTIFACT",
+        "target_env": "FRANKENLIBC_BR_BV_DASHBOARD_TARGET_DIR",
+        "report_env": "FRANKENLIBC_BR_BV_DASHBOARD_REPORT",
+        "log_env": "FRANKENLIBC_BR_BV_DASHBOARD_LOG",
+        "report_filename": "br_bv_disagreement_dashboard.report.json",
+        "log_filename": "br_bv_disagreement_dashboard.log.jsonl",
+        "expected_report_status": "pass",
+        "expected_stdout_contains": "PASS: br/bv disagreement dashboard replay classified 8 scenarios",
+        "expected_summary": {
+          "dashboard_row_count": 8
+        }
+      },
+      {
+        "id": "ambition_graph_readiness",
+        "script": "scripts/check_ambition_graph_readiness_lint.sh",
+        "args": [
+          "--fixture-replay"
+        ],
+        "artifact": "tests/conformance/ambition_graph_readiness_lint.v1.json",
+        "artifact_env": "FRANKENLIBC_AMBITION_GRAPH_LINT_ARTIFACT",
+        "target_env": "FRANKENLIBC_AMBITION_GRAPH_LINT_TARGET_DIR",
+        "report_env": "FRANKENLIBC_AMBITION_GRAPH_LINT_REPORT",
+        "log_env": "FRANKENLIBC_AMBITION_GRAPH_LINT_LOG",
+        "report_filename": "ambition_graph_readiness_lint.report.json",
+        "log_filename": "ambition_graph_readiness_lint.log.jsonl",
+        "expected_report_status": "pass",
+        "expected_stdout_contains": "PASS --fixture-replay:",
+        "expected_summary": {
+          "hard_failure_count": 3
+        }
+      },
+      {
+        "id": "crypt_dashboard",
+        "script": "scripts/check_crypt_dashboard_reconciliation.sh",
+        "args": [
+          "--fixture-replay"
+        ],
+        "artifact": "tests/conformance/crypt_dashboard_reconciliation.v1.json",
+        "artifact_env": "FRANKENLIBC_CRYPT_DASHBOARD_ARTIFACT",
+        "target_env": "FRANKENLIBC_CRYPT_DASHBOARD_TARGET_DIR",
+        "report_env": "FRANKENLIBC_CRYPT_DASHBOARD_REPORT",
+        "log_env": "FRANKENLIBC_CRYPT_DASHBOARD_LOG",
+        "report_filename": "crypt_dashboard_reconciliation.report.json",
+        "log_filename": "crypt_dashboard_reconciliation.log.jsonl",
+        "expected_report_status": "pass",
+        "expected_stdout_contains": "PASS: crypt dashboard reconciliation replay classified 6 scenarios",
+        "expected_summary": {
+          "scenario_count": 6
+        }
+      },
+      {
+        "id": "feature_parity_closure",
+        "script": "scripts/check_feature_parity_targeted_closure_beads.sh",
+        "args": [],
+        "artifact": "tests/conformance/feature_parity_targeted_closure_beads.v1.json",
+        "replay": false,
+        "artifact_env": "FRANKENLIBC_TARGETED_CLOSURE_BEADS",
+        "target_env": "FRANKENLIBC_TARGETED_CLOSURE_OUT_DIR",
+        "report_env": "FRANKENLIBC_TARGETED_CLOSURE_REPORT",
+        "log_env": "FRANKENLIBC_TARGETED_CLOSURE_LOG",
+        "report_filename": "feature_parity_targeted_closure_beads.report.json",
+        "log_filename": "feature_parity_targeted_closure_beads.log.jsonl",
+        "expected_report_status": "pass",
+        "expected_stdout_contains": "\"gap_count\": 111",
+        "expected_summary": {
+          "expected_gap_count": 111,
+          "created_issue_count": 10
+        }
+      },
+      {
+        "id": "hard_parts_replay",
+        "script": "scripts/check_hard_parts_failure_replay_gate.sh",
+        "args": [],
+        "artifact": "tests/conformance/hard_parts_failure_replay_gate.v1.json",
+        "artifact_env": "FRANKENLIBC_HARD_PARTS_REPLAY_GATE",
+        "target_env": "FRANKENLIBC_HARD_PARTS_REPLAY_OUT_DIR",
+        "report_env": "FRANKENLIBC_HARD_PARTS_REPLAY_REPORT",
+        "log_env": "FRANKENLIBC_HARD_PARTS_REPLAY_LOG",
+        "report_filename": "hard_parts_failure_replay_gate.report.json",
+        "log_filename": "hard_parts_failure_replay_gate.log.jsonl",
+        "expected_report_status": "pass",
+        "expected_stdout_contains": "",
+        "expected_summary": {
+          "scenario_count": 7,
+          "covered_family_count": 7
+        }
+      },
+      {
+        "id": "workstream_done_templates",
+        "script": "scripts/check_workstream_done_templates.sh",
+        "args": [],
+        "artifact": "tests/conformance/workstream_done_templates.v1.json",
+        "artifact_env": "FLC_WORKSTREAM_DONE_TEMPLATES",
+        "target_env": "",
+        "report_env": "",
+        "log_env": "",
+        "report_filename": "target/conformance/workstream_done_templates.report.json",
+        "log_filename": "target/conformance/workstream_done_templates.log.jsonl",
+        "expected_report_status": "pass",
+        "expected_stdout_contains": "\"template_count\": 10",
+        "expected_summary": {
+          "template_count": 10,
+          "handoff_branch_count": 7
+        }
+      },
+      {
+        "id": "reality_bridge_reconciliation",
+        "script": "scripts/check_reality_bridge_import_reconciliation.sh",
+        "args": [
+          "--fixture-replay"
+        ],
+        "artifact": "tests/conformance/reality_bridge_import_reconciliation.v1.json",
+        "replay": false,
+        "artifact_env": "FRANKENLIBC_REALITY_BRIDGE_IMPORT_ARTIFACT",
+        "target_env": "FRANKENLIBC_REALITY_BRIDGE_IMPORT_TARGET_DIR",
+        "report_env": "FRANKENLIBC_REALITY_BRIDGE_IMPORT_REPORT",
+        "log_env": "FRANKENLIBC_REALITY_BRIDGE_IMPORT_LOG",
+        "report_filename": "reality_bridge_import_reconciliation.report.json",
+        "log_filename": "reality_bridge_import_reconciliation.log.jsonl",
+        "expected_report_status": "pass",
+        "expected_stdout_contains": "PASS: reality bridge import reconciliation valid",
+        "expected_summary": {
+          "backlog_import_rows": 10,
+          "feature_gap_import_rows": 111,
+          "unique_target_issue_count": 64
+        }
+      }
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "evidence_kind": "unit",
+      "artifacts": [
+        "crates/frankenlibc-harness/tests/tracker_health_report_test.rs",
+        "crates/frankenlibc-harness/tests/br_bv_disagreement_dashboard_test.rs",
+        "crates/frankenlibc-harness/tests/ambition_graph_readiness_lint_test.rs",
+        "crates/frankenlibc-harness/tests/tracker_recovery_feature_parity_backlog_completion_contract_test.rs"
+      ],
+      "required_tests": [
+        "contract_binds_tracker_recovery_sources",
+        "checker_accepts_tracker_recovery_completion_contract",
+        "checker_rejects_missing_telemetry_binding"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "evidence_kind": "e2e",
+      "artifacts": [
+        "scripts/check_tracker_health_report.sh",
+        "scripts/check_br_bv_disagreement_dashboard.sh",
+        "scripts/check_reality_bridge_import_reconciliation.sh",
+        "scripts/check_tracker_recovery_feature_parity_backlog_completion_contract.sh"
+      ],
+      "required_tests": [
+        "checker_replays_all_source_gates"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "evidence_kind": "conformance",
+      "artifacts": [
+        "tests/conformance/tracker_health_report.v1.json",
+        "tests/conformance/br_bv_disagreement_dashboard.v1.json",
+        "tests/conformance/ambition_graph_readiness_lint.v1.json",
+        "tests/conformance/crypt_dashboard_reconciliation.v1.json",
+        "tests/conformance/feature_parity_targeted_closure_beads.v1.json",
+        "tests/conformance/hard_parts_failure_replay_gate.v1.json",
+        "tests/conformance/workstream_done_templates.v1.json",
+        "tests/conformance/reality_bridge_import_reconciliation.v1.json",
+        "tests/conformance/tracker_recovery_feature_parity_backlog_completion_contract.v1.json"
+      ],
+      "required_tests": [
+        "contract_binds_tracker_recovery_sources",
+        "checker_rejects_missing_source_artifact"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "evidence_kind": "telemetry",
+      "artifacts": [
+        "target/conformance/tracker_recovery_feature_parity_backlog_completion_contract/report.json",
+        "target/conformance/tracker_recovery_feature_parity_backlog_completion_contract/events.jsonl"
+      ],
+      "required_tests": [
+        "checker_accepts_tracker_recovery_completion_contract",
+        "checker_rejects_source_gate_status_drift"
+      ]
+    }
+  ],
+  "telemetry": {
+    "report_schema_version": "tracker_recovery_feature_parity_backlog_completion_contract.report.v1",
+    "required_events": [
+      "tracker_recovery_backlog.sources_validated",
+      "tracker_recovery_backlog.bindings_validated",
+      "tracker_recovery_backlog.source_gates_replayed",
+      "tracker_recovery_backlog.completion_contract_pass"
+    ],
+    "failure_event": "tracker_recovery_backlog.completion_contract_fail",
+    "default_report_path": "target/conformance/tracker_recovery_feature_parity_backlog_completion_contract/report.json",
+    "default_log_path": "target/conformance/tracker_recovery_feature_parity_backlog_completion_contract/events.jsonl"
+  },
+  "negative_tests": [
+    "checker_rejects_missing_telemetry_binding",
+    "checker_rejects_missing_source_artifact",
+    "checker_rejects_source_gate_status_drift"
+  ]
+}
