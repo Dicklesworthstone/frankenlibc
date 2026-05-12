@@ -1,0 +1,347 @@
+{
+  "schema_version": "aarch64_raw_syscall_tls_completion_contract.v1",
+  "original_bead": "bd-1gg.3",
+  "completion_debt_bead": "bd-1gg.3.1",
+  "generated_at_utc": "2026-05-12T04:20:00Z",
+  "purpose": "Close the bd-1gg.3.1 completion-debt audit items by binding the existing aarch64 raw syscall veneer, clone/TLS control primitives, startup/TLS conformance artifacts, fuzz surfaces, and structured completion telemetry to explicit proof surfaces.",
+  "audit_source": {
+    "missing_items": [
+      {
+        "id": "tests.unit.primary",
+        "kind": "unit",
+        "description": "unit-level coverage for raw syscall ABI layout and pthread TLS key/lifecycle primitives"
+      },
+      {
+        "id": "tests.e2e.primary",
+        "kind": "e2e",
+        "description": "thread lifecycle and startup/TLS gate evidence covering clone/TLS handoff behavior"
+      },
+      {
+        "id": "tests.fuzz.primary",
+        "kind": "fuzz",
+        "description": "fuzz targets for raw syscall families and pthread TLS/key control primitives"
+      },
+      {
+        "id": "tests.conformance.primary",
+        "kind": "conformance",
+        "description": "pthread TLS/thread conformance fixtures and L1 startup/TLS proof matrix coverage"
+      },
+      {
+        "id": "telemetry.primary",
+        "kind": "telemetry",
+        "description": "structured report/log evidence emitted by this completion contract gate"
+      }
+    ]
+  },
+  "source_artifacts": {
+    "raw_syscall": "crates/frankenlibc-core/src/syscall/raw.rs",
+    "syscall_mod": "crates/frankenlibc-core/src/syscall/mod.rs",
+    "tls_core": "crates/frankenlibc-core/src/pthread/tls.rs",
+    "thread_core": "crates/frankenlibc-core/src/pthread/thread.rs",
+    "pthread_abi": "crates/frankenlibc-abi/src/pthread_abi.rs",
+    "startup_abi": "crates/frankenlibc-abi/src/startup_abi.rs",
+    "startup_tls_contract": "tests/conformance/l1_crt_startup_tls_completion_contract.v1.json",
+    "startup_tls_matrix": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+    "pthread_tls_fixture": "tests/conformance/fixtures/pthread_tls_keys.json",
+    "pthread_thread_fixture": "tests/conformance/fixtures/pthread_thread.json",
+    "pthread_tls_harness": "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs",
+    "pthread_thread_harness": "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs",
+    "fuzz_open_syscalls": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_open_syscalls.rs",
+    "fuzz_security_syscalls": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_security_syscalls.rs",
+    "fuzz_sched": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_sched.rs",
+    "fuzz_pthread_keys": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pthread_keys.rs",
+    "fuzz_pthread_keys_corpus": "crates/frankenlibc-fuzz/corpus/fuzz_pthread_keys",
+    "completion_contract": "tests/conformance/aarch64_raw_syscall_tls_completion_contract.v1.json",
+    "completion_gate": "scripts/check_aarch64_raw_syscall_tls_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/aarch64_raw_syscall_tls_completion_contract_test.rs"
+  },
+  "source_anchors": {
+    "raw_syscall": [
+      "`svc 0` on aarch64",
+      "pub unsafe fn syscall0(nr: usize) -> usize",
+      "pub unsafe fn syscall1(nr: usize, a1: usize) -> usize",
+      "pub unsafe fn syscall2(nr: usize, a1: usize, a2: usize) -> usize",
+      "pub unsafe fn syscall3(nr: usize, a1: usize, a2: usize, a3: usize) -> usize",
+      "pub unsafe fn syscall4(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize) -> usize",
+      "pub unsafe fn syscall5(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize) -> usize",
+      "pub unsafe fn syscall6(",
+      "clone(flags, stack, parent_tid, tls, child_tid)",
+      "fn current_raw_clone_tail_abi_matches_aarch64_layout()"
+    ],
+    "syscall_mod": [
+      "aarch64 Linux syscall ABI:",
+      "pub const SYS_READ: usize = 63;",
+      "pub const SYS_WRITE: usize = 64;",
+      "pub const SYS_OPEN: usize = 56;",
+      "pub const SYS_CLONE: usize = 220;",
+      "pub const SYS_EXIT: usize = 93;"
+    ],
+    "tls_core": [
+      "Allocation safety",
+      "fn current_tid() -> i32",
+      "pub fn pthread_getspecific(key: PthreadKey) -> u64",
+      "pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32",
+      "pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry)",
+      "pub(crate) fn teardown_thread_tls(tid: i32)",
+      "fn key_create_returns_zero()",
+      "fn setspecific_and_getspecific_roundtrip()"
+    ],
+    "thread_core": [
+      "Uses the Linux `clone` syscall directly instead of delegating to glibc.",
+      "super::tls::register_thread_tls",
+      "unsafe fn unmapself_and_exit(stack_base: usize, stack_total_size: usize) -> !",
+      "syscall::sys_futex",
+      "pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32>",
+      "pub unsafe fn detach_thread(handle_ptr: *mut ThreadHandle) -> Result<(), i32>",
+      "pub fn self_tid() -> i32"
+    ],
+    "pthread_abi": [
+      "use frankenlibc_core::pthread::tls",
+      "#[cfg(target_arch = \"aarch64\")]",
+      "pub unsafe extern \"C\" fn pthread_getspecific(key: libc::pthread_key_t) -> *mut c_void",
+      "pub unsafe extern \"C\" fn pthread_setspecific("
+    ],
+    "startup_abi": [
+      "static TLS_ATEXIT_LIST",
+      "HOST_CXA_THREAD_ATEXIT_IMPL",
+      "pub unsafe extern \"C\" fn __cxa_thread_atexit_impl",
+      "pub(crate) fn invoke_tls_dtors()"
+    ],
+    "startup_tls_contract": [
+      "\"schema_version\": \"l1_crt_startup_tls_completion_contract.v1\"",
+      "\"unit_primary\"",
+      "\"e2e_primary\"",
+      "\"conformance_primary\"",
+      "\"telemetry_primary\""
+    ],
+    "startup_tls_matrix": [
+      "\"tls_initialization\"",
+      "\"pthread_tls_keys\"",
+      "\"source_commit_freshness_policy\"",
+      "\"required_log_fields\""
+    ],
+    "pthread_tls_fixture": [
+      "\"family\": \"pthread/tls_keys\"",
+      "\"pthread_key_create\"",
+      "\"pthread_key_delete\"",
+      "\"pthread_getspecific\"",
+      "\"pthread_setspecific\""
+    ],
+    "pthread_thread_fixture": [
+      "\"family\": \"pthread/thread\"",
+      "\"pthread_create\"",
+      "\"pthread_join\"",
+      "\"pthread_detach\"",
+      "\"pthread_self\""
+    ],
+    "pthread_tls_harness": [
+      "fn pthread_tls_keys_fixture_exists()",
+      "fn pthread_tls_keys_covers_key_create()",
+      "fn pthread_tls_keys_covers_destructors()"
+    ],
+    "pthread_thread_harness": [
+      "fn pthread_thread_covers_create()",
+      "fn pthread_thread_covers_join()",
+      "fn pthread_thread_covers_detach()"
+    ],
+    "fuzz_open_syscalls": [
+      "fuzz_target!",
+      "Differential + crash-detector fuzz target",
+      "ALLOWED_ERRNOS"
+    ],
+    "fuzz_security_syscalls": [
+      "fuzz_target!",
+      "Structure-aware fuzz target",
+      "Guard bytes around perf_event_attr survive every call"
+    ],
+    "fuzz_sched": [
+      "fuzz_target!",
+      "sched_*-family wrappers",
+      "Syscall differential"
+    ],
+    "fuzz_pthread_keys": [
+      "fuzz_target!",
+      "pthread_key_create, pthread_key_delete",
+      "Destructor invocation under thread exit"
+    ],
+    "completion_gate": [
+      "aarch64_raw_syscall_tls_completion.unit_binding",
+      "aarch64_raw_syscall_tls_completion.e2e_binding",
+      "aarch64_raw_syscall_tls_completion.fuzz_binding",
+      "aarch64_raw_syscall_tls_completion.conformance_binding",
+      "aarch64_raw_syscall_tls_completion.telemetry_contract",
+      "aarch64_raw_syscall_tls_completion.validated"
+    ],
+    "completion_harness": [
+      "fn manifest_binds_all_completion_items()",
+      "fn source_anchors_and_line_refs_resolve()",
+      "fn checker_emits_report_and_jsonl()",
+      "fn checker_rejects_missing_syscall_arity_binding()"
+    ]
+  },
+  "aarch64_raw_syscall_tls_contract": {
+    "required_arch": "aarch64",
+    "required_syscall_arity": [0, 1, 2, 3, 4, 5, 6],
+    "required_syscall_constants": {
+      "SYS_READ": 63,
+      "SYS_WRITE": 64,
+      "SYS_OPEN": 56,
+      "SYS_CLOSE": 57,
+      "SYS_MUNMAP": 215,
+      "SYS_CLONE": 220,
+      "SYS_EXIT": 93
+    },
+    "required_clone_tail_order": ["parent_tid", "tls", "child_tid"],
+    "required_tls_controls": [
+      "register_thread_tls",
+      "teardown_thread_tls",
+      "pthread_getspecific",
+      "pthread_setspecific",
+      "__cxa_thread_atexit_impl",
+      "invoke_tls_dtors"
+    ],
+    "required_proof_rows": [
+      "tls_initialization",
+      "pthread_tls_keys"
+    ],
+    "required_conformance_fixtures": [
+      "pthread_tls_keys",
+      "pthread_thread"
+    ],
+    "required_fuzz_targets": [
+      "fuzz_open_syscalls",
+      "fuzz_security_syscalls",
+      "fuzz_sched",
+      "fuzz_pthread_keys"
+    ],
+    "pthread_keys_corpus_min_seeds": 7,
+    "next_audit_threshold": 900
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "crates/frankenlibc-core/src/syscall/raw.rs:59",
+        "crates/frankenlibc-core/src/syscall/raw.rs:551",
+        "crates/frankenlibc-core/src/syscall/raw.rs:540",
+        "crates/frankenlibc-core/src/pthread/tls.rs:440",
+        "crates/frankenlibc-core/src/pthread/tls.rs:459"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-core/src/pthread/tls.rs:646",
+        "crates/frankenlibc-core/src/pthread/tls.rs:714",
+        "crates/frankenlibc-harness/tests/aarch64_raw_syscall_tls_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_aarch64_raw_syscall_tls_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test aarch64_raw_syscall_tls_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "crates/frankenlibc-core/src/pthread/thread.rs:223",
+        "crates/frankenlibc-core/src/pthread/thread.rs:363",
+        "crates/frankenlibc-core/src/pthread/thread.rs:588",
+        "crates/frankenlibc-abi/src/startup_abi.rs:1006"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:161",
+        "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:177",
+        "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:197",
+        "tests/conformance/l1_crt_startup_tls_completion_contract.v1.json:136"
+      ],
+      "required_commands": [
+        "bash scripts/check_aarch64_raw_syscall_tls_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test pthread_thread_conformance_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.fuzz.primary",
+      "kind": "fuzz",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_open_syscalls.rs:1",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_security_syscalls.rs:1",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_sched.rs:1",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pthread_keys.rs:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-fuzz/corpus/fuzz_pthread_keys/seed_basic:1",
+        "crates/frankenlibc-fuzz/corpus/fuzz_pthread_keys/seed_child_destructor_run:1",
+        "crates/frankenlibc-harness/tests/aarch64_raw_syscall_tls_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_aarch64_raw_syscall_tls_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test aarch64_raw_syscall_tls_completion_contract_test checker_emits_report_and_jsonl -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json:48",
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json:111",
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json:133",
+        "tests/conformance/fixtures/pthread_tls_keys.json:1",
+        "tests/conformance/fixtures/pthread_thread.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs:122",
+        "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs:202",
+        "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:128",
+        "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:357"
+      ],
+      "required_commands": [
+        "bash scripts/check_aarch64_raw_syscall_tls_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test pthread_tls_keys_conformance_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_aarch64_raw_syscall_tls_completion_contract.sh:1",
+        "tests/conformance/aarch64_raw_syscall_tls_completion_contract.v1.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/aarch64_raw_syscall_tls_completion_contract_test.rs:1"
+      ],
+      "telemetry_refs": [
+        "scripts/check_aarch64_raw_syscall_tls_completion_contract.sh:1",
+        "tests/conformance/aarch64_raw_syscall_tls_completion_contract.v1.json:1"
+      ],
+      "required_events": [
+        "aarch64_raw_syscall_tls_completion.unit_binding",
+        "aarch64_raw_syscall_tls_completion.e2e_binding",
+        "aarch64_raw_syscall_tls_completion.fuzz_binding",
+        "aarch64_raw_syscall_tls_completion.conformance_binding",
+        "aarch64_raw_syscall_tls_completion.telemetry_contract",
+        "aarch64_raw_syscall_tls_completion.validated"
+      ],
+      "required_commands": [
+        "bash scripts/check_aarch64_raw_syscall_tls_completion_contract.sh",
+        "rch exec -- cargo clippy -p frankenlibc-harness --test aarch64_raw_syscall_tls_completion_contract_test --no-deps -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "default_report_path": "target/conformance/aarch64_raw_syscall_tls_completion_contract.report.json",
+    "default_log_path": "target/conformance/aarch64_raw_syscall_tls_completion_contract.log.jsonl",
+    "pass_events": [
+      "aarch64_raw_syscall_tls_completion.unit_binding",
+      "aarch64_raw_syscall_tls_completion.e2e_binding",
+      "aarch64_raw_syscall_tls_completion.fuzz_binding",
+      "aarch64_raw_syscall_tls_completion.conformance_binding",
+      "aarch64_raw_syscall_tls_completion.telemetry_contract",
+      "aarch64_raw_syscall_tls_completion.validated"
+    ],
+    "fail_event": "aarch64_raw_syscall_tls_completion.failed"
+  }
+}
