@@ -1,0 +1,389 @@
+{
+  "schema_version": "gentoo_ecosystem_validation_completion_contract.v1",
+  "manifest_id": "gentoo-ecosystem-validation-completion-contract",
+  "bead": "bd-2icq",
+  "completion_debt_bead": "bd-2icq.25",
+  "generated_utc": "2026-05-12T00:00:00Z",
+  "purpose": "Parent completion-debt contract for the Gentoo ecosystem validation epic. The audit pass requires unit, e2e, fuzz, conformance, and telemetry evidence; this manifest binds the existing Gentoo validation lane, dry-run probes, e2e scripts, fuzz gates, conformance manifests, and structured telemetry to a fail-closed checker.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-2icq/scorecard.md",
+    "spec_path": "passes/2026-05-10T03-16-16Z/beads/bd-2icq/spec.json",
+    "score_before": 670,
+    "score_threshold": 800
+  },
+  "required_missing_items": [
+    "tests.unit.primary",
+    "tests.e2e.primary",
+    "tests.fuzz.primary",
+    "tests.conformance.primary",
+    "telemetry.primary"
+  ],
+  "source_artifacts": [
+    {
+      "id": "gentoo_unit_contract",
+      "kind": "contract",
+      "path": "tests/conformance/gentoo_unit_test_contract.v1.json",
+      "role": "Unit-test evidence binder for the Gentoo build runner, test runner, Docker integration helpers, log parser, cache manager, regression detector, flaky detector, and progress reporter.",
+      "line_refs": [
+        "tests/conformance/gentoo_unit_test_contract.v1.json:25",
+        "tests/conformance/gentoo_unit_test_contract.v1.json:470"
+      ],
+      "required_needles": [
+        "\"completion_debt_bead\": \"bd-2icq.13.1\"",
+        "\"unit_primary\"",
+        "\"telemetry_primary\""
+      ]
+    },
+    {
+      "id": "gentoo_unit_checker",
+      "kind": "checker",
+      "path": "scripts/check_gentoo_unit_test_contract.sh",
+      "role": "Fail-closed unit evidence checker.",
+      "line_refs": [
+        "scripts/check_gentoo_unit_test_contract.sh:27",
+        "scripts/check_gentoo_unit_test_contract.sh:168"
+      ],
+      "required_needles": [
+        "BEAD_ID = \"bd-2icq.13\"",
+        "completion_debt_evidence"
+      ]
+    },
+    {
+      "id": "gentoo_unit_harness",
+      "kind": "harness_test",
+      "path": "crates/frankenlibc-harness/tests/gentoo_unit_test_contract_test.rs",
+      "role": "Rust harness tests for the Gentoo unit completion contract.",
+      "line_refs": [
+        "crates/frankenlibc-harness/tests/gentoo_unit_test_contract_test.rs:105",
+        "crates/frankenlibc-harness/tests/gentoo_unit_test_contract_test.rs:130"
+      ],
+      "required_needles": [
+        "fn manifest_anchors_completion_debt(",
+        "fn unit_components_cover_parent_required_modules(",
+        "fn checker_accepts_manifest_and_emits_telemetry("
+      ]
+    },
+    {
+      "id": "gentoo_e2e_runner",
+      "kind": "e2e_script",
+      "path": "tests/gentoo/e2e/run_all_e2e.sh",
+      "role": "Top-level Gentoo e2e suite with fast, single-package, build-wave, full-pipeline, failure-recovery, and progress-reporting modes.",
+      "line_refs": [
+        "tests/gentoo/e2e/run_all_e2e.sh:30",
+        "tests/gentoo/e2e/run_all_e2e.sh:95"
+      ],
+      "required_needles": [
+        "single_package:test_single_package.sh:5",
+        "full_pipeline:test_full_pipeline.sh:30",
+        "failure_recovery:test_failure_recovery.sh:10"
+      ]
+    },
+    {
+      "id": "gentoo_full_pipeline_e2e",
+      "kind": "e2e_script",
+      "path": "tests/gentoo/e2e/test_full_pipeline.sh",
+      "role": "Five-package build plus test pipeline e2e flow.",
+      "line_refs": [
+        "tests/gentoo/e2e/test_full_pipeline.sh:20",
+        "tests/gentoo/e2e/test_full_pipeline.sh:58",
+        "tests/gentoo/e2e/test_full_pipeline.sh:103"
+      ],
+      "required_needles": [
+        "PIPELINE_PACKAGES=(",
+        "run_emerge",
+        "FRANKENLIBC_PORTAGE_ENABLE=1"
+      ]
+    },
+    {
+      "id": "gentoo_fast_validate_tests",
+      "kind": "python_test",
+      "path": "tests/gentoo/test_fast_validate.py",
+      "role": "Dry-run and package-selection tests for the fast Gentoo validation path.",
+      "line_refs": [
+        "tests/gentoo/test_fast_validate.py:74",
+        "tests/gentoo/test_fast_validate.py:316"
+      ],
+      "required_needles": [
+        "class TestFastValidateScript",
+        "def test_dry_run_produces_summary("
+      ]
+    },
+    {
+      "id": "gentoo_telemetry_contract",
+      "kind": "contract",
+      "path": "tests/conformance/gentoo_test_execution_telemetry.v1.json",
+      "role": "Per-package and aggregate test-runner telemetry contract.",
+      "line_refs": [
+        "tests/conformance/gentoo_test_execution_telemetry.v1.json:12",
+        "tests/conformance/gentoo_test_execution_telemetry.v1.json:88"
+      ],
+      "required_needles": [
+        "\"manifest_id\": \"gentoo-test-execution-telemetry\"",
+        "\"required_telemetry_fields\"",
+        "\"required_summary_telemetry_fields\"",
+        "\"dry_run_probe\""
+      ]
+    },
+    {
+      "id": "gentoo_telemetry_harness",
+      "kind": "harness_test",
+      "path": "crates/frankenlibc-harness/tests/gentoo_test_execution_telemetry_test.rs",
+      "role": "Rust harness tests that execute the dry-run telemetry probe and assert output schemas.",
+      "line_refs": [
+        "crates/frankenlibc-harness/tests/gentoo_test_execution_telemetry_test.rs:104",
+        "crates/frankenlibc-harness/tests/gentoo_test_execution_telemetry_test.rs:225"
+      ],
+      "required_needles": [
+        "fn manifest_anchors_to_2icq_8_with_completion_debt_bead(",
+        "fn dry_run_runner_emits_required_telemetry_fields("
+      ]
+    },
+    {
+      "id": "gentoo_regression_contract",
+      "kind": "contract",
+      "path": "tests/conformance/gentoo_regression_detector_completion_contract.v1.json",
+      "role": "Regression detector and release-gate conformance binder.",
+      "line_refs": [
+        "tests/conformance/gentoo_regression_detector_completion_contract.v1.json:3",
+        "tests/conformance/gentoo_regression_detector_completion_contract.v1.json:232"
+      ],
+      "required_needles": [
+        "\"completion_debt_bead\": \"bd-2icq.12.1\"",
+        "\"tests.e2e.primary\"",
+        "\"telemetry.primary\""
+      ]
+    },
+    {
+      "id": "gentoo_log_contract",
+      "kind": "contract",
+      "path": "tests/conformance/log_parsing_validation_completion_contract.v1.json",
+      "role": "Log parser, validator, and sample-log conformance contract.",
+      "line_refs": [
+        "tests/conformance/log_parsing_validation_completion_contract.v1.json:3",
+        "tests/conformance/log_parsing_validation_completion_contract.v1.json:137"
+      ],
+      "required_needles": [
+        "\"completion_debt_bead\": \"bd-2icq.19.1\"",
+        "log_parsing_validation_completion_contract"
+      ]
+    },
+    {
+      "id": "gentoo_pipeline_logging_contract",
+      "kind": "contract",
+      "path": "tests/conformance/full_validation_pipeline_logging_completion_contract.v1.json",
+      "role": "Full validation pipeline logging and replayability contract.",
+      "line_refs": [
+        "tests/conformance/full_validation_pipeline_logging_completion_contract.v1.json:3",
+        "tests/conformance/full_validation_pipeline_logging_completion_contract.v1.json:4"
+      ],
+      "required_needles": [
+        "\"original_bead\": \"bd-2icq.14\"",
+        "\"completion_debt_bead\": \"bd-2icq.14.1\""
+      ]
+    },
+    {
+      "id": "fuzz_phase1_contract",
+      "kind": "contract",
+      "path": "tests/conformance/fuzz_phase1_targets_completion_contract.v1.json",
+      "role": "Phase-1 fuzz target completion evidence with explicit tests.fuzz.primary binding.",
+      "line_refs": [
+        "tests/conformance/fuzz_phase1_targets_completion_contract.v1.json:334",
+        "tests/conformance/fuzz_phase1_targets_completion_contract.v1.json:342"
+      ],
+      "required_needles": [
+        "\"missing_item_id\": \"tests.fuzz.primary\"",
+        "\"fuzz_string\"",
+        "\"fuzz_membrane\""
+      ]
+    },
+    {
+      "id": "fuzz_harness_architecture_contract",
+      "kind": "contract",
+      "path": "tests/conformance/fuzz_harness_architecture_completion_contract.v1.json",
+      "role": "Fuzz harness architecture gate and CI target inventory.",
+      "line_refs": [
+        "tests/conformance/fuzz_harness_architecture_completion_contract.v1.json:2",
+        "tests/conformance/fuzz_harness_architecture_completion_contract.v1.json:54"
+      ],
+      "required_needles": [
+        "fuzz_harness_architecture_completion_contract.v1",
+        "\"fuzz_string\"",
+        "\"fuzz_runtime_math\""
+      ]
+    },
+    {
+      "id": "resource_constraints_gate",
+      "kind": "checker",
+      "path": "scripts/check_resource_constraints.sh",
+      "role": "Resource-constraint validation gate for OOM, timeout, disk-full, and contention classes.",
+      "line_refs": [
+        "scripts/check_resource_constraints.sh:2",
+        "scripts/check_resource_constraints.sh:43"
+      ],
+      "required_needles": [
+        "bd-2icq.20",
+        "Resource Constraint Testing gate"
+      ]
+    }
+  ],
+  "evidence_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "description": "Gentoo ecosystem unit evidence is file-backed by the existing unit completion contract and its Rust harness.",
+      "required_artifacts": [
+        "gentoo_unit_contract",
+        "gentoo_unit_checker",
+        "gentoo_unit_harness"
+      ],
+      "required_test_refs": [
+        {
+          "artifact": "gentoo_unit_harness",
+          "name": "manifest_anchors_completion_debt"
+        },
+        {
+          "artifact": "gentoo_unit_harness",
+          "name": "unit_components_cover_parent_required_modules"
+        },
+        {
+          "artifact": "gentoo_unit_harness",
+          "name": "checker_accepts_manifest_and_emits_telemetry"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_gentoo_unit_test_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test gentoo_unit_test_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "description": "Gentoo ecosystem e2e evidence binds the checked-in suite runner, full-pipeline script, fast-validate dry-run tests, and telemetry probe.",
+      "required_artifacts": [
+        "gentoo_e2e_runner",
+        "gentoo_full_pipeline_e2e",
+        "gentoo_fast_validate_tests",
+        "gentoo_telemetry_harness"
+      ],
+      "required_test_refs": [
+        {
+          "artifact": "gentoo_fast_validate_tests",
+          "name": "test_dry_run_produces_summary"
+        },
+        {
+          "artifact": "gentoo_fast_validate_tests",
+          "name": "test_dry_run_creates_per_package_results"
+        },
+        {
+          "artifact": "gentoo_telemetry_harness",
+          "name": "dry_run_runner_emits_required_telemetry_fields"
+        }
+      ],
+      "required_commands": [
+        "python3 -m unittest tests.gentoo.test_fast_validate",
+        "rch exec -- cargo test -p frankenlibc-harness --test gentoo_test_execution_telemetry_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.fuzz.primary",
+      "description": "Fuzz evidence for the parent epic binds the existing phase-1 fuzz target contract and architecture inventory.",
+      "required_artifacts": [
+        "fuzz_phase1_contract",
+        "fuzz_harness_architecture_contract"
+      ],
+      "required_targets": [
+        "fuzz_string",
+        "fuzz_malloc",
+        "fuzz_membrane",
+        "fuzz_printf"
+      ],
+      "required_test_refs": [
+        {
+          "artifact": "fuzz_phase1_contract",
+          "name": "fuzz_primary"
+        },
+        {
+          "artifact": "fuzz_harness_architecture_contract",
+          "name": "fuzz_runtime_math"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_fuzz_phase1_targets_completion_contract.sh",
+        "bash scripts/check_fuzz_harness_architecture_completion_contract.sh"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "description": "Conformance evidence binds Gentoo Portage mechanics, regression, log parsing, full-pipeline logging, resource constraints, and telemetry manifests.",
+      "required_artifacts": [
+        "gentoo_telemetry_contract",
+        "gentoo_regression_contract",
+        "gentoo_log_contract",
+        "gentoo_pipeline_logging_contract",
+        "resource_constraints_gate"
+      ],
+      "required_test_refs": [
+        {
+          "artifact": "gentoo_telemetry_harness",
+          "name": "manifest_anchors_to_2icq_8_with_completion_debt_bead"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_gentoo_regression_detector_completion_contract.sh",
+        "bash scripts/check_log_parsing_validation_completion_contract.sh",
+        "bash scripts/check_resource_constraints.sh"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "description": "Telemetry evidence binds per-package result telemetry, aggregate summary telemetry, dry-run probe output, build-runner telemetry logs, and this checker's report/JSONL rows.",
+      "required_artifacts": [
+        "gentoo_telemetry_contract",
+        "gentoo_telemetry_harness",
+        "gentoo_unit_contract",
+        "gentoo_unit_checker"
+      ],
+      "required_test_refs": [
+        {
+          "artifact": "gentoo_telemetry_harness",
+          "name": "dry_run_runner_emits_required_telemetry_fields"
+        },
+        {
+          "artifact": "gentoo_unit_harness",
+          "name": "checker_accepts_manifest_and_emits_telemetry"
+        }
+      ],
+      "required_commands": [
+        "bash scripts/check_gentoo_ecosystem_validation_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test gentoo_ecosystem_validation_completion_contract_test checker_accepts_contract_and_emits_report_log -- --nocapture"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "default_report_path": "target/conformance/gentoo_ecosystem_validation_completion_contract/report.json",
+    "default_log_path": "target/conformance/gentoo_ecosystem_validation_completion_contract/events.jsonl",
+    "required_events": [
+      "gentoo_ecosystem_validation.source_artifact",
+      "gentoo_ecosystem_validation.missing_item_binding",
+      "gentoo_ecosystem_validation.required_test_ref",
+      "gentoo_ecosystem_validation.telemetry_contract",
+      "gentoo_ecosystem_validation.validated"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "bead",
+      "completion_debt_bead",
+      "status",
+      "missing_items_bound",
+      "source_artifact_count",
+      "required_test_ref_count",
+      "telemetry_events"
+    ]
+  },
+  "closeout_policy": {
+    "next_audit_score_threshold": 800,
+    "fail_when_artifact_missing": true,
+    "fail_when_line_ref_blank": true,
+    "fail_when_missing_item_unbound": true,
+    "fail_when_required_event_missing": true
+  }
+}
