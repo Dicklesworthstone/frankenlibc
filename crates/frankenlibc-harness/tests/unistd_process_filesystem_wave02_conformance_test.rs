@@ -3,6 +3,7 @@
 //! Run: cargo test -p frankenlibc-harness --test unistd_process_filesystem_wave02_conformance_test
 
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -94,6 +95,38 @@ fn load_fixture() -> FixtureFile {
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
     serde_json::from_str(&content)
         .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+}
+
+fn load_json_artifact(relative_path: &str) -> Value {
+    let path = repo_root().join(relative_path);
+    let content = std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+    serde_json::from_str(&content)
+        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+}
+
+fn json_array_has_str(value: &Value, expected: &str) -> bool {
+    value
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(expected)))
+}
+
+fn find_symbol_row<'a>(coverage: &'a Value, symbol: &str) -> &'a Value {
+    coverage["symbols"]
+        .as_array()
+        .expect("coverage symbols must be an array")
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some(symbol))
+        .unwrap_or_else(|| panic!("missing coverage row for {symbol}"))
+}
+
+fn find_campaign_row<'a>(prioritizer: &'a Value, campaign_id: &str) -> &'a Value {
+    prioritizer["campaigns"]
+        .as_array()
+        .expect("prioritizer campaigns must be an array")
+        .iter()
+        .find(|row| row["campaign_id"].as_str() == Some(campaign_id))
+        .unwrap_or_else(|| panic!("missing prioritizer campaign {campaign_id}"))
 }
 
 fn execute_case_via_harness(
@@ -312,6 +345,68 @@ fn unistd_process_filesystem_wave02_spec_reference_names_required_surfaces() {
             && fixture.spec_reference.contains("addmntent"),
         "fixture must bind POSIX/GNU/Linux wave-02 semantics"
     );
+}
+
+#[test]
+fn unistd_process_filesystem_wave02_coverage_artifacts_bind_first_wave() {
+    let coverage = load_json_artifact("tests/conformance/symbol_fixture_coverage.v1.json");
+    for symbol in FIRST_WAVE_SYMBOLS {
+        let row = find_symbol_row(&coverage, symbol);
+        assert_eq!(
+            row["covered"].as_bool(),
+            Some(true),
+            "{symbol} must be marked covered"
+        );
+        assert_eq!(
+            row["fixture_case_count"].as_u64(),
+            Some(2),
+            "{symbol} must have strict+hardened fixture rows"
+        );
+        assert!(
+            json_array_has_str(
+                &row["fixture_files"],
+                "unistd_process_filesystem_wave02.json"
+            ),
+            "{symbol} coverage must cite unistd_process_filesystem_wave02.json"
+        );
+        assert!(
+            json_array_has_str(&row["fixture_modes"], "strict")
+                && json_array_has_str(&row["fixture_modes"], "hardened"),
+            "{symbol} coverage must record both runtime modes"
+        );
+        assert!(
+            json_array_has_str(&row["fixture_sources"], "fixture_json"),
+            "{symbol} coverage must come from fixture JSON"
+        );
+    }
+
+    let prioritizer = load_json_artifact("tests/conformance/fixture_coverage_prioritizer.v1.json");
+    let campaign = find_campaign_row(&prioritizer, "fcq-unistd-process-filesystem");
+    assert!(
+        campaign["current_coverage_pct"].as_f64().unwrap_or(0.0) >= 7.95,
+        "unistd/process coverage percent must include wave-02 fixture rows"
+    );
+    assert!(
+        campaign["target_covered"].as_u64().unwrap_or(0) >= 59,
+        "unistd/process target_covered must include the 12 wave-02 symbols"
+    );
+    assert!(
+        campaign["target_uncovered"].as_u64().unwrap_or(u64::MAX) <= 683,
+        "unistd/process target_uncovered must shrink after wave-02 coverage"
+    );
+
+    let next_wave: BTreeSet<_> = campaign["first_wave_symbols"]
+        .as_array()
+        .expect("campaign first_wave_symbols must be an array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    for symbol in FIRST_WAVE_SYMBOLS {
+        assert!(
+            !next_wave.contains(symbol),
+            "covered symbol {symbol} must not remain in the next prioritizer wave"
+        );
+    }
 }
 
 #[test]

@@ -3,26 +3,26 @@
   "campaigns": [
     {
       "campaign_id": "fcq-unistd-process-filesystem",
-      "current_coverage_pct": 6.33,
+      "current_coverage_pct": 7.95,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 7.95,
+      "expected_coverage_after_first_wave_pct": 9.57,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "__sched_cpualloc",
-        "__sched_cpucount",
-        "__sched_cpufree",
-        "__sched_rr_get_interval",
-        "__sched_setparam",
-        "__stack_chk_fail",
-        "__stack_chk_guard",
-        "__xpg_basename",
-        "__xstat",
-        "__xstat64",
-        "add_key",
-        "addmntent"
+        "addseverity",
+        "adjtimex",
+        "aio_cancel",
+        "aio_cancel64",
+        "aio_error",
+        "aio_error64",
+        "aio_fsync",
+        "aio_fsync64",
+        "aio_init",
+        "aio_read",
+        "aio_read64",
+        "aio_return"
       ],
       "module": "unistd_abi",
       "next_step": "Add strict/hardened fixtures for process, stat-family, and exit-path symbols before broad syscall tail work.",
@@ -46,9 +46,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "process control, filesystem metadata, cwd, exec, exit, and low-level unistd wrappers",
-      "target_covered": 47,
+      "target_covered": 59,
       "target_total": 742,
-      "target_uncovered": 695,
+      "target_uncovered": 683,
       "title": "unistd/process/filesystem syscall fixture wave",
       "workload_domains": [
         "shell_coreutils",
@@ -59,26 +59,26 @@
     },
     {
       "campaign_id": "fcq-string-memory-hotpaths",
-      "current_coverage_pct": 25.34,
+      "current_coverage_pct": 33.56,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/ld_preload_smoke.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 33.56,
+      "expected_coverage_after_first_wave_pct": 41.78,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "__strcspn_c2",
-        "__strcspn_c3",
-        "__strdup",
-        "__strerror_r",
-        "__strfmon_l",
-        "__strftime_l",
-        "__strncasecmp_l",
-        "__strndup",
-        "__strpbrk_c2",
-        "__strpbrk_c3",
-        "__strsep_1c",
-        "__strsep_2c"
+        "__strsep_3c",
+        "__strsep_g",
+        "__strspn_c1",
+        "__strspn_c2",
+        "__strspn_c3",
+        "__strtod_internal",
+        "__strtod_l",
+        "__strtof_internal",
+        "__strtof_l",
+        "__strtok_r",
+        "__strtok_r_1c",
+        "__strtol_internal"
       ],
       "module": "string_abi",
       "next_step": "Grow boundary, overlap, empty, invalid pointer, locale, and perf guard fixtures for uncovered string families.",
@@ -91,20 +91,20 @@
         "semantic_divergence"
       ],
       "scores": {
-        "coverage_gap_score": 109,
+        "coverage_gap_score": 97,
         "feature_gap_risk_score": 3,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 2,
         "parity_risk_score": 5,
-        "priority_score": 2509,
+        "priority_score": 2497,
         "semantic_risk_score": 0,
         "workload_risk_score": 5
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "mem*, str*, collation-adjacent string helpers, and GNU string extensions",
-      "target_covered": 37,
+      "target_covered": 49,
       "target_total": 146,
-      "target_uncovered": 109,
+      "target_uncovered": 97,
       "title": "string and memory hot-path fixture wave",
       "workload_domains": [
         "performance_sensitive",
@@ -1257,7 +1257,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3676,
+    "all_uncovered_target_symbols": 3652,
     "campaign_count": 17,
     "covered_modules": [
       "fortify_abi",
@@ -1295,7 +1295,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3294,
+    "selected_target_uncovered_symbols": 3270,
     "total_first_wave_fixture_count": 194
   }
 }
