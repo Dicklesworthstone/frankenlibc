@@ -1,0 +1,330 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "raw-syscall-veneer-completion-contract",
+  "bead": "bd-cj0",
+  "completion_debt_bead": "bd-cj0.1",
+  "generated_utc": "2026-05-12T12:55:00Z",
+  "purpose": "Completion-debt contract for the raw Linux syscall veneer. This binds the zero-dependency inline-assembly primitives, typed syscall wrappers, unit and integration tests, verification-matrix row, and structured completion telemetry to the audit-required unit/e2e/telemetry evidence items.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-cj0/scorecard.md",
+    "score_before": 470,
+    "score_threshold": 800
+  },
+  "source_artifacts": [
+    {
+      "artifact_id": "raw_syscall_primitives",
+      "path": "crates/frankenlibc-core/src/syscall/raw.rs",
+      "required_needles": [
+        "pub unsafe fn syscall0",
+        "pub unsafe fn syscall1",
+        "pub unsafe fn syscall2",
+        "pub unsafe fn syscall3",
+        "pub unsafe fn syscall4",
+        "pub unsafe fn syscall5",
+        "pub unsafe fn syscall6",
+        "inlateout(\"rax\") nr => ret",
+        "in(\"r10\") a4",
+        "in(\"r9\") a6",
+        "lateout(\"rcx\") _",
+        "lateout(\"r11\") _",
+        "pub unsafe fn clone_thread_asm",
+        "current_clone_tail_args"
+      ]
+    },
+    {
+      "artifact_id": "typed_syscall_wrappers",
+      "path": "crates/frankenlibc-core/src/syscall/mod.rs",
+      "required_needles": [
+        "pub fn syscall_result",
+        "pub unsafe fn sys_read",
+        "pub unsafe fn sys_write",
+        "pub unsafe fn sys_openat",
+        "pub fn sys_close",
+        "pub unsafe fn sys_mmap",
+        "pub fn sys_getpid",
+        "pub unsafe fn sys_clone_thread",
+        "const MAX_ERRNO: usize = 4095",
+        "raw::syscall6"
+      ]
+    },
+    {
+      "artifact_id": "core_syscall_unit_tests",
+      "path": "crates/frankenlibc-core/src/syscall/mod.rs",
+      "required_needles": [
+        "fn getpid_returns_positive",
+        "fn pipe_read_write_roundtrip",
+        "fn close_bad_fd_returns_ebadf",
+        "fn mmap_anonymous_roundtrip",
+        "fn syscall_result_error",
+        "fn openat_and_close_dev_null"
+      ]
+    },
+    {
+      "artifact_id": "raw_syscall_unit_tests",
+      "path": "crates/frankenlibc-core/src/syscall/raw.rs",
+      "required_needles": [
+        "fn raw_clone_tail_arg_mapping_matches_documented_arch_abis",
+        "fn current_raw_clone_tail_abi_matches_x86_64_layout",
+        "fn current_raw_clone_tail_abi_matches_aarch64_layout"
+      ]
+    },
+    {
+      "artifact_id": "core_syscall_integration_tests",
+      "path": "crates/frankenlibc-core/tests/syscall_veneer_test.rs",
+      "required_needles": [
+        "Integration test: Raw syscall veneer (bd-cj0)",
+        "fn getpid_positive_and_stable",
+        "fn pipe_roundtrip_multiple_messages",
+        "fn file_lifecycle_via_tmp",
+        "fn mmap_full_lifecycle",
+        "fn raw_syscall_primitives_accessible",
+        "fn api_surface_complete"
+      ]
+    },
+    {
+      "artifact_id": "verification_matrix_record",
+      "path": "tests/conformance/verification_matrix.json",
+      "required_needles": [
+        "\"bead_id\": \"bd-cj0\"",
+        "Syscall core: introduce raw Linux x86_64 syscall veneer",
+        "cargo test -p frankenlibc-core --test syscall_veneer_test",
+        "\"coverage_summary\"",
+        "\"overall\": \"complete\"",
+        "Raw x86_64 syscall veneer"
+      ]
+    },
+    {
+      "artifact_id": "completion_contract",
+      "path": "tests/conformance/raw_syscall_veneer_completion_contract.v1.json",
+      "required_needles": [
+        "raw-syscall-veneer-completion-contract",
+        "bd-cj0.1",
+        "telemetry.primary"
+      ]
+    },
+    {
+      "artifact_id": "completion_checker",
+      "path": "scripts/check_raw_syscall_veneer_completion_contract.sh",
+      "required_needles": [
+        "raw_syscall_veneer_completion_contract",
+        "raw_syscall_veneer.source_artifacts_validated",
+        "raw_syscall_veneer.telemetry_binding_validated",
+        "PASS raw syscall veneer completion contract"
+      ]
+    },
+    {
+      "artifact_id": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/raw_syscall_veneer_completion_contract_test.rs",
+      "required_needles": [
+        "fn contract_anchors_raw_syscall_veneer_completion_debt",
+        "fn checker_accepts_contract_and_emits_telemetry",
+        "fn checker_rejects_missing_unit_test_ref",
+        "fn checker_rejects_missing_source_needle"
+      ]
+    }
+  ],
+  "raw_veneer_expectations": {
+    "expected_architectures": [
+      "x86_64",
+      "aarch64"
+    ],
+    "minimum_raw_syscall_primitives": 14,
+    "minimum_typed_wrappers": 25,
+    "minimum_core_unit_tests": 13,
+    "minimum_raw_unit_tests": 3,
+    "minimum_integration_tests": 90,
+    "errno_contract": {
+      "linux_max_errno": 4095,
+      "error_return_range": "[-4095, -1]",
+      "success_return_rule": "non-error raw returns pass through unchanged"
+    },
+    "x86_64_register_contract": {
+      "syscall_number": "rax",
+      "arguments": [
+        "rdi",
+        "rsi",
+        "rdx",
+        "r10",
+        "r8",
+        "r9"
+      ],
+      "return_register": "rax",
+      "clobbers": [
+        "rcx",
+        "r11"
+      ]
+    }
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-cj0.1",
+    "original_bead": "bd-cj0",
+    "next_audit_score_threshold": 800,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "non_claim": "This contract binds existing raw-syscall implementation evidence and completion telemetry; it does not broaden libc API coverage or change runtime syscall behavior.",
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "source": "core_syscall_unit_tests",
+          "name": "pipe_read_write_roundtrip"
+        },
+        {
+          "source": "core_syscall_unit_tests",
+          "name": "syscall_result_error"
+        },
+        {
+          "source": "core_syscall_unit_tests",
+          "name": "openat_and_close_dev_null"
+        },
+        {
+          "source": "raw_syscall_unit_tests",
+          "name": "raw_clone_tail_arg_mapping_matches_documented_arch_abis"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-core syscall -- --nocapture"
+      ],
+      "required_completion_events": [
+        "raw_syscall_veneer.unit_binding_validated"
+      ]
+    },
+    "e2e_primary": {
+      "required_test_refs": [
+        {
+          "source": "core_syscall_integration_tests",
+          "name": "getpid_positive_and_stable"
+        },
+        {
+          "source": "core_syscall_integration_tests",
+          "name": "pipe_roundtrip_multiple_messages"
+        },
+        {
+          "source": "core_syscall_integration_tests",
+          "name": "file_lifecycle_via_tmp"
+        },
+        {
+          "source": "core_syscall_integration_tests",
+          "name": "mmap_full_lifecycle"
+        },
+        {
+          "source": "core_syscall_integration_tests",
+          "name": "raw_syscall_primitives_accessible"
+        },
+        {
+          "source": "core_syscall_integration_tests",
+          "name": "api_surface_complete"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-core --test syscall_veneer_test -- --nocapture"
+      ],
+      "required_completion_events": [
+        "raw_syscall_veneer.e2e_binding_validated"
+      ]
+    },
+    "telemetry_primary": {
+      "required_test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "checker_accepts_contract_and_emits_telemetry"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_unit_test_ref"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_source_needle"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test raw_syscall_veneer_completion_contract_test -- --nocapture",
+        "rch exec -- cargo clippy -p frankenlibc-harness --test raw_syscall_veneer_completion_contract_test -- -D warnings"
+      ],
+      "required_completion_events": [
+        "raw_syscall_veneer.source_artifacts_validated",
+        "raw_syscall_veneer.expectations_validated",
+        "raw_syscall_veneer.implementation_refs_validated",
+        "raw_syscall_veneer.unit_binding_validated",
+        "raw_syscall_veneer.e2e_binding_validated",
+        "raw_syscall_veneer.telemetry_binding_validated",
+        "raw_syscall_veneer.completion_contract_validated",
+        "raw_syscall_veneer.completion_contract_failed"
+      ]
+    }
+  },
+  "implementation_refs": [
+    "crates/frankenlibc-core/src/syscall/raw.rs:37",
+    "crates/frankenlibc-core/src/syscall/raw.rs:219",
+    "crates/frankenlibc-core/src/syscall/raw.rs:336",
+    "crates/frankenlibc-core/src/syscall/raw.rs:469",
+    "crates/frankenlibc-core/src/syscall/mod.rs:1894",
+    "crates/frankenlibc-core/src/syscall/mod.rs:1913",
+    "crates/frankenlibc-core/src/syscall/mod.rs:1952",
+    "crates/frankenlibc-core/src/syscall/mod.rs:2001",
+    "crates/frankenlibc-core/src/syscall/mod.rs:2028",
+    "crates/frankenlibc-core/src/syscall/mod.rs:2966",
+    "crates/frankenlibc-core/src/syscall/mod.rs:3182",
+    "crates/frankenlibc-core/src/syscall/mod.rs:7992",
+    "crates/frankenlibc-core/src/syscall/mod.rs:8088",
+    "crates/frankenlibc-core/src/syscall/mod.rs:8116",
+    "crates/frankenlibc-core/src/syscall/raw.rs:521",
+    "crates/frankenlibc-core/tests/syscall_veneer_test.rs:83",
+    "crates/frankenlibc-core/tests/syscall_veneer_test.rs:95",
+    "crates/frankenlibc-core/tests/syscall_veneer_test.rs:120",
+    "crates/frankenlibc-core/tests/syscall_veneer_test.rs:311",
+    "crates/frankenlibc-core/tests/syscall_veneer_test.rs:565",
+    "crates/frankenlibc-core/tests/syscall_veneer_test.rs:678",
+    "tests/conformance/verification_matrix.json:10473",
+    "tests/conformance/verification_matrix.json:10531",
+    "tests/conformance/verification_matrix.json:10544",
+    "tests/conformance/verification_matrix.json:10560"
+  ],
+  "telemetry_contract": {
+    "report_env": "FRANKENLIBC_RAW_SYSCALL_VENEER_COMPLETION_REPORT",
+    "log_env": "FRANKENLIBC_RAW_SYSCALL_VENEER_COMPLETION_LOG",
+    "required_success_events": [
+      "raw_syscall_veneer.source_artifacts_validated",
+      "raw_syscall_veneer.expectations_validated",
+      "raw_syscall_veneer.implementation_refs_validated",
+      "raw_syscall_veneer.unit_binding_validated",
+      "raw_syscall_veneer.e2e_binding_validated",
+      "raw_syscall_veneer.telemetry_binding_validated",
+      "raw_syscall_veneer.completion_contract_validated"
+    ],
+    "required_failure_event": "raw_syscall_veneer.completion_contract_failed",
+    "required_log_fields": [
+      "schema_version",
+      "timestamp",
+      "trace_id",
+      "event",
+      "level",
+      "status",
+      "bead_id",
+      "completion_debt_bead",
+      "source_commit",
+      "artifact_refs",
+      "details"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "timestamp",
+      "status",
+      "bead_id",
+      "completion_debt_bead",
+      "source_count",
+      "raw_syscall_primitive_count",
+      "typed_wrapper_count",
+      "core_unit_test_count",
+      "raw_unit_test_count",
+      "integration_test_count",
+      "missing_items_closed",
+      "events",
+      "errors"
+    ]
+  }
+}
