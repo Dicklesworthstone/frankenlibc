@@ -1,0 +1,229 @@
+{
+  "schema_version": "pthread_bootstrap_completion_contract.v1",
+  "manifest_id": "bd-yos.1-pthread-bootstrap-completion-contract",
+  "bead": "bd-yos",
+  "completion_debt_bead": "bd-yos.1",
+  "purpose": "Bind existing pthread create/join/detach implementation, unit coverage, strict/hardened fixture coverage, stress artifacts, and completion telemetry to the bd-yos.1 audit-debt items.",
+  "source_artifacts": {
+    "pthread_abi": "crates/frankenlibc-abi/src/pthread_abi.rs",
+    "abi_lifecycle_test": "crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs",
+    "harness_conformance_test": "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs",
+    "pthread_fixture": "tests/conformance/fixtures/pthread_thread.json",
+    "stress_scenarios": "tests/conformance/pthread_thread_stress_scenarios.v1.json",
+    "stress_gate": "scripts/check_bd1f35_thread_stress.sh",
+    "stress_artifacts_test": "crates/frankenlibc-harness/tests/bd1f35_thread_stress_artifacts_test.rs",
+    "nochange_proof": "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
+    "completion_checker": "scripts/check_pthread_bootstrap_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/pthread_bootstrap_completion_contract_test.rs"
+  },
+  "completion_debt": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-yos",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-yos/scorecard.md",
+    "audit_score": 470,
+    "next_audit_score_threshold": 800,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ]
+  },
+  "pthread_bootstrap_surface": {
+    "required_symbols": [
+      "pthread_create",
+      "pthread_join",
+      "pthread_detach"
+    ],
+    "required_behaviors": [
+      "create_join_return_value",
+      "detach_consumes_handle",
+      "join_consumes_handle",
+      "self_join_edeadlk",
+      "unknown_thread_esrch",
+      "fixture_create_join_detach_distribution",
+      "strict_hardened_stress_artifact",
+      "host_thread_handoff_tid_publication"
+    ],
+    "stress_support": {
+      "artifact": "stress_scenarios",
+      "source_bead": "bd-1f35",
+      "required_scenarios": [
+        "fanout_fanin_single",
+        "create_join_churn",
+        "mixed_detach_join",
+        "c_fixture_pthread_common_adversarial"
+      ],
+      "required_modes": [
+        "strict",
+        "hardened"
+      ]
+    }
+  },
+  "completion_debt_evidence": {
+    "implementation_refs": [
+      "crates/frankenlibc-abi/src/pthread_abi.rs:816",
+      "crates/frankenlibc-abi/src/pthread_abi.rs:839",
+      "crates/frankenlibc-abi/src/pthread_abi.rs:1226",
+      "crates/frankenlibc-abi/src/pthread_abi.rs:1548",
+      "crates/frankenlibc-abi/src/pthread_abi.rs:1562",
+      "crates/frankenlibc-abi/src/pthread_abi.rs:1632",
+      "crates/frankenlibc-abi/src/pthread_abi.rs:2158",
+      "crates/frankenlibc-abi/src/pthread_abi.rs:2192",
+      "crates/frankenlibc-abi/src/pthread_abi.rs:2204",
+      "crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs:162",
+      "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:161",
+      "tests/conformance/pthread_thread_stress_scenarios.v1.json:1"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        {
+          "artifact": "abi_lifecycle_test",
+          "name": "pthread_create_join_roundtrip_uses_default_native_routing",
+          "covers": [
+            "pthread_create publishes a joinable handle",
+            "pthread_join returns the child result"
+          ]
+        },
+        {
+          "artifact": "abi_lifecycle_test",
+          "name": "pthread_join_and_detach_unknown_thread_are_esrch",
+          "covers": [
+            "unknown handles fail closed with ESRCH"
+          ]
+        },
+        {
+          "artifact": "abi_lifecycle_test",
+          "name": "pthread_detach_makes_subsequent_join_fail_with_esrch",
+          "covers": [
+            "pthread_detach consumes the live handle"
+          ]
+        },
+        {
+          "artifact": "abi_lifecycle_test",
+          "name": "pthread_join_then_reuse_handle_is_esrch",
+          "covers": [
+            "pthread_join consumes the live handle"
+          ]
+        },
+        {
+          "artifact": "abi_lifecycle_test",
+          "name": "pthread_self_join_is_rejected_with_edeadlk",
+          "covers": [
+            "self-join deadlock rejection"
+          ]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_create_join_roundtrip_uses_default_native_routing -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_detach_makes_subsequent_join_fail_with_esrch -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_join_then_reuse_handle_is_esrch -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "required_test_refs": [
+        {
+          "artifact": "harness_conformance_test",
+          "name": "pthread_thread_covers_create",
+          "covers": [
+            "fixture has create cases"
+          ]
+        },
+        {
+          "artifact": "harness_conformance_test",
+          "name": "pthread_thread_covers_join",
+          "covers": [
+            "fixture has join cases"
+          ]
+        },
+        {
+          "artifact": "harness_conformance_test",
+          "name": "pthread_thread_covers_detach",
+          "covers": [
+            "fixture has detach cases"
+          ]
+        },
+        {
+          "artifact": "harness_conformance_test",
+          "name": "pthread_thread_function_distribution",
+          "covers": [
+            "fixture preserves create/join/detach distribution"
+          ]
+        },
+        {
+          "artifact": "harness_conformance_test",
+          "name": "pthread_thread_error_codes_valid",
+          "covers": [
+            "fixture errno values are bounded to POSIX/Linux thread outcomes"
+          ]
+        },
+        {
+          "artifact": "stress_artifacts_test",
+          "name": "thread_stress_gate_emits_valid_bd1f35_artifacts",
+          "covers": [
+            "strict+hardened stress gate telemetry remains replayable"
+          ]
+        }
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test pthread_thread_conformance_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test bd1f35_thread_stress_artifacts_test thread_stress_gate_emits_valid_bd1f35_artifacts -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "default_report_path": "target/conformance/pthread_bootstrap_completion_contract.report.json",
+      "default_log_path": "target/conformance/pthread_bootstrap_completion_contract.log.jsonl",
+      "required_test_refs": [
+        {
+          "artifact": "completion_test",
+          "name": "checker_validates_contract_and_emits_report_log",
+          "covers": [
+            "completion checker emits deterministic report and JSONL events"
+          ]
+        },
+        {
+          "artifact": "completion_test",
+          "name": "checker_rejects_missing_required_symbol",
+          "covers": [
+            "checker fails closed when a required symbol binding is removed"
+          ]
+        },
+        {
+          "artifact": "completion_test",
+          "name": "checker_rejects_missing_unit_ref",
+          "covers": [
+            "checker fails closed when unit evidence is removed"
+          ]
+        }
+      ],
+      "required_events": [
+        "pthread_bootstrap.source_artifacts_validated",
+        "pthread_bootstrap.implementation_refs_validated",
+        "pthread_bootstrap.test_refs_validated",
+        "pthread_bootstrap.stress_catalog_validated",
+        "pthread_bootstrap.completion_contract_validated",
+        "pthread_bootstrap.completion_contract_failed"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "level",
+        "bead_id",
+        "completion_debt_bead",
+        "original_bead",
+        "status",
+        "source_commit",
+        "missing_items_bound",
+        "required_symbols",
+        "required_behaviors",
+        "test_refs",
+        "stress_scenarios",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    }
+  }
+}
