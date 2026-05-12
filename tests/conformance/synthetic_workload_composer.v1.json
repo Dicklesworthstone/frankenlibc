@@ -1,0 +1,194 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-26xb.11",
+  "completion_debt_bead": "bd-26xb.11.1",
+  "purpose": "Compose deterministic synthetic workloads from trace motifs while preserving source workload module and symbol obligations, increasing rare-edge exercise, and emitting replayable evidence for audit closeout.",
+  "source_artifacts": {
+    "workload_matrix": "tests/conformance/workload_matrix.json",
+    "reverse_round_contracts": "tests/conformance/reverse_round_contracts.v1.json",
+    "harness_cargo": "crates/frankenlibc-harness/Cargo.toml",
+    "composer_artifact": "tests/conformance/synthetic_workload_composer.v1.json",
+    "composer_checker": "scripts/check_synthetic_workload_composer.sh",
+    "composer_harness_test": "crates/frankenlibc-harness/tests/synthetic_workload_composer_test.rs"
+  },
+  "trace_motifs": [
+    {
+      "motif_id": "motif-threaded-runtime",
+      "source_workload_ids": ["wl-002", "wl-003", "wl-005"],
+      "api_family": "pthread",
+      "mode": "strict+hardened",
+      "intensity": 3,
+      "edge_emphasis": ["thread_start", "mutex_contention", "resolver_thread_handoff"],
+      "required_modules": ["pthread_abi", "malloc_abi", "stdio_abi"],
+      "critical_symbols": ["pthread_create", "pthread_mutex_lock", "malloc", "free"],
+      "deterministic_seed": 26011001,
+      "rough_path_signature": "rp3:pthread-runtime:7b1f"
+    },
+    {
+      "motif_id": "motif-resolver-network",
+      "source_workload_ids": ["wl-003", "wl-004", "wl-005"],
+      "api_family": "resolver_socket",
+      "mode": "strict+hardened",
+      "intensity": 4,
+      "edge_emphasis": ["getaddrinfo", "socket_connect", "poll_timeout"],
+      "required_modules": ["resolv_abi", "socket_abi", "poll_abi", "errno_abi"],
+      "critical_symbols": ["getaddrinfo", "socket", "connect", "poll"],
+      "deterministic_seed": 26011002,
+      "rough_path_signature": "rp3:resolver-network:91ac"
+    },
+    {
+      "motif_id": "motif-stdio-locale-shell",
+      "source_workload_ids": ["wl-001", "wl-006"],
+      "api_family": "stdio_locale",
+      "mode": "strict+hardened",
+      "intensity": 2,
+      "edge_emphasis": ["line_buffering", "locale_switch", "readonly_stdio"],
+      "required_modules": ["stdio_abi", "locale_abi", "unistd_abi", "ctype_abi"],
+      "critical_symbols": ["setlocale", "read", "write", "fstat"],
+      "deterministic_seed": 26011003,
+      "rough_path_signature": "rp3:stdio-locale:3d44"
+    },
+    {
+      "motif_id": "motif-allocator-event-loop",
+      "source_workload_ids": ["wl-005", "wl-008", "wl-010"],
+      "api_family": "allocator_event_loop",
+      "mode": "hardened",
+      "intensity": 5,
+      "edge_emphasis": ["large_alloc", "poll_loop", "accept_backpressure"],
+      "required_modules": ["malloc_abi", "socket_abi", "poll_abi", "time_abi"],
+      "critical_symbols": ["malloc", "free", "poll", "accept", "time"],
+      "deterministic_seed": 26011004,
+      "rough_path_signature": "rp3:allocator-event-loop:c018"
+    }
+  ],
+  "composed_workloads": [
+    {
+      "composition_id": "synth-python-git-network-stress",
+      "generated_workload_id": "synth-wl-001",
+      "motifs": ["motif-threaded-runtime", "motif-resolver-network"],
+      "mode": "strict+hardened",
+      "intensity_profile": {"threads": 4, "resolver_queries": 8, "socket_attempts": 6},
+      "required_modules": ["pthread_abi", "malloc_abi", "stdio_abi", "resolv_abi", "socket_abi", "poll_abi", "errno_abi"],
+      "critical_symbols": ["pthread_create", "pthread_mutex_lock", "malloc", "free", "getaddrinfo", "socket", "connect", "poll"],
+      "target_edge_cases": ["resolver_thread_handoff", "poll_timeout", "mutex_contention"],
+      "expected_rare_edge_uplift_pct": 24.0,
+      "deterministic_replay_command": ["scripts/run_user_workload_replay_traces.sh", "--scenario", "synth-python-git-network-stress"],
+      "artifact_refs": ["tests/conformance/workload_matrix.json", "tests/conformance/user_workload_replay_manifest.v1.json"],
+      "preservation_checks": {
+        "required_modules_superset": true,
+        "critical_symbols_superset": true,
+        "deterministic_seed_replay": true
+      }
+    },
+    {
+      "composition_id": "synth-shell-locale-stdio-stress",
+      "generated_workload_id": "synth-wl-002",
+      "motifs": ["motif-stdio-locale-shell", "motif-threaded-runtime"],
+      "mode": "strict+hardened",
+      "intensity_profile": {"locale_switches": 5, "stdio_records": 128, "worker_threads": 2},
+      "required_modules": ["stdio_abi", "locale_abi", "unistd_abi", "ctype_abi", "pthread_abi", "malloc_abi"],
+      "critical_symbols": ["setlocale", "read", "write", "fstat", "pthread_create", "pthread_mutex_lock", "malloc", "free"],
+      "target_edge_cases": ["line_buffering", "locale_switch", "thread_start"],
+      "expected_rare_edge_uplift_pct": 18.5,
+      "deterministic_replay_command": ["scripts/run_user_workload_replay_traces.sh", "--scenario", "synth-shell-locale-stdio-stress"],
+      "artifact_refs": ["tests/conformance/workload_matrix.json", "tests/conformance/user_workload_vertical_slice.v1.json"],
+      "preservation_checks": {
+        "required_modules_superset": true,
+        "critical_symbols_superset": true,
+        "deterministic_seed_replay": true
+      }
+    },
+    {
+      "composition_id": "synth-server-event-loop-stress",
+      "generated_workload_id": "synth-wl-003",
+      "motifs": ["motif-allocator-event-loop", "motif-resolver-network", "motif-threaded-runtime"],
+      "mode": "hardened",
+      "intensity_profile": {"large_allocations": 64, "poll_cycles": 32, "accept_backpressure_events": 6},
+      "required_modules": ["malloc_abi", "socket_abi", "poll_abi", "time_abi", "resolv_abi", "errno_abi", "pthread_abi", "stdio_abi"],
+      "critical_symbols": ["malloc", "free", "poll", "accept", "time", "getaddrinfo", "socket", "connect", "pthread_create", "pthread_mutex_lock"],
+      "target_edge_cases": ["large_alloc", "accept_backpressure", "poll_timeout", "resolver_thread_handoff"],
+      "expected_rare_edge_uplift_pct": 31.0,
+      "deterministic_replay_command": ["scripts/run_user_workload_replay_traces.sh", "--scenario", "synth-server-event-loop-stress"],
+      "artifact_refs": ["tests/conformance/workload_matrix.json", "tests/conformance/workload_latency_budget_join.v1.json"],
+      "preservation_checks": {
+        "required_modules_superset": true,
+        "critical_symbols_superset": true,
+        "deterministic_seed_replay": true
+      }
+    }
+  ],
+  "tooling_contract": {
+    "asupersync_traceability": {
+      "enabled": true,
+      "cargo_feature": "asupersync-tooling",
+      "default_feature_required": true,
+      "required_dependency": "asupersync-conformance",
+      "trace_fields": ["composition_id", "motif_id", "deterministic_seed", "source_workload_ids", "artifact_refs"]
+    },
+    "frankentui_snapshot": {
+      "enabled": true,
+      "cargo_feature": "frankentui-ui",
+      "required_dependency": "ftui-harness",
+      "snapshot_fields": ["composition_id", "target_edge_cases", "expected_rare_edge_uplift_pct", "preservation_checks"]
+    }
+  },
+  "telemetry_contract": {
+    "required_log_fields": [
+      "trace_id",
+      "bead_id",
+      "event",
+      "status",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs",
+      "source_commit",
+      "composition_id",
+      "motif_id",
+      "edge_emphasis_score"
+    ],
+    "required_events": [
+      "synthetic_workload_composer.motif_bound",
+      "synthetic_workload_composer.composition_bound",
+      "synthetic_workload_composer.tooling_bound",
+      "synthetic_workload_composer.validated"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-26xb.11.1",
+    "original_bead": "bd-26xb.11",
+    "audit_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-26xb.11/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Unit assertions cover motif schema, workload-matrix references, composition superset preservation, and completion-debt bindings.",
+      "required_test_names": [
+        "contract_declares_trace_motifs_and_completion_debt",
+        "motifs_reference_workload_matrix",
+        "composed_workloads_preserve_motif_unions"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "The checker validates the full artifact and emits deterministic report/log evidence without running broad workload gates.",
+      "checker_script": "scripts/check_synthetic_workload_composer.sh",
+      "required_test_names": [
+        "checker_passes_and_emits_report_log",
+        "checker_rejects_missing_motif_reference"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "Structured JSONL rows bind motifs, compositions, tooling evidence, and final validation to replayable artifact refs.",
+      "required_test_names": [
+        "checker_passes_and_emits_report_log",
+        "checker_rejects_disabled_tooling_traceability",
+        "checker_rejects_non_deterministic_replay"
+      ]
+    }
+  }
+}
