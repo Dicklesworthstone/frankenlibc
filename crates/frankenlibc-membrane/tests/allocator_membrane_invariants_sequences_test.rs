@@ -1,3 +1,4 @@
+use frankenlibc_membrane::arena::FreeResult;
 use frankenlibc_membrane::{SafetyState, ValidationOutcome, ValidationPipeline};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -42,140 +43,231 @@ enum SlotState {
 }
 
 #[test]
-fn deterministic_allocator_membrane_sequences_hold_core_invariants() {
+fn deterministic_allocator_membrane_sequences_hold_core_invariants() -> Result<(), String> {
+    for seed in [1, 2, 3, 4] {
+        let first = run_deterministic_sequence(seed)?;
+        let second = run_deterministic_sequence(seed)?;
+        assert_eq!(
+            first, second,
+            "seed={seed}: deterministic sequence replay changed outcomes"
+        );
+        assert!(
+            first.allocations > 0,
+            "seed={seed}: sequence must exercise allocations"
+        );
+        assert!(
+            first.live_validations > 0,
+            "seed={seed}: sequence must exercise live validation"
+        );
+        assert!(
+            first.freed_validations > 0,
+            "seed={seed}: sequence must exercise freed validation"
+        );
+        assert!(
+            first.double_free_detections > 0,
+            "seed={seed}: sequence must exercise double-free detection"
+        );
+        assert!(
+            first.canary_corruptions > 0,
+            "seed={seed}: sequence must exercise canary-corruption transitions"
+        );
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SequenceStats {
+    allocations: usize,
+    live_validations: usize,
+    freed_validations: usize,
+    foreign_validations: usize,
+    first_frees: usize,
+    double_free_attempts: usize,
+    double_free_detections: usize,
+    canary_corruptions: usize,
+}
+
+fn run_deterministic_sequence(seed: u64) -> Result<SequenceStats, String> {
     // Deterministic, bounded, and intentionally simple: this is invariant pressure,
     // not a fuzz campaign (those live in frankenlibc-fuzz).
-    const SEEDS: [u64; 4] = [1, 2, 3, 4];
     const STEPS: usize = 2_000;
     const SLOTS: usize = 32;
 
-    for seed in SEEDS {
-        let pipeline = ValidationPipeline::new();
-        let mut rng = XorShift64::new(seed);
+    let pipeline = ValidationPipeline::new();
+    let mut rng = XorShift64::new(seed);
+    let mut stats = SequenceStats::default();
 
-        let mut ptrs = [std::ptr::null_mut::<u8>(); SLOTS];
-        let mut sizes = [0_usize; SLOTS];
-        let mut states = [SlotState::Empty; SLOTS];
+    let mut ptrs = [std::ptr::null_mut::<u8>(); SLOTS];
+    let mut sizes = [0_usize; SLOTS];
+    let mut states = [SlotState::Empty; SLOTS];
 
-        // Foreign pointers should remain allowed but Unknown/unbounded.
-        let foreign_addr = 0xDEAD_BEEF_usize;
-        let foreign_outcome = pipeline.validate(foreign_addr);
-        assert!(
-            matches!(foreign_outcome, ValidationOutcome::Foreign(_)),
-            "seed={seed}: expected Foreign for foreign_addr"
-        );
-        assert!(foreign_outcome.can_read(), "seed={seed}: foreign can_read");
-        assert!(
-            foreign_outcome.can_write(),
-            "seed={seed}: foreign can_write"
-        );
-        let foreign_abs = foreign_outcome.abstraction().expect("foreign abstraction");
-        assert_eq!(
-            foreign_abs.state,
-            SafetyState::Unknown,
-            "seed={seed}: foreign abstraction must be Unknown"
-        );
-        assert!(
-            foreign_abs.remaining.is_none(),
-            "seed={seed}: foreign abstraction must not claim bounds"
-        );
+    // Foreign pointers should remain allowed but Unknown/unbounded.
+    let foreign_addr = 0xDEAD_BEEF_usize;
+    let foreign_outcome = pipeline.validate(foreign_addr);
+    assert!(
+        matches!(foreign_outcome, ValidationOutcome::Foreign(_)),
+        "seed={seed}: op=initial_foreign_validate expected Foreign for foreign_addr"
+    );
+    assert!(
+        foreign_outcome.can_read(),
+        "seed={seed}: op=initial_foreign_validate foreign can_read"
+    );
+    assert!(
+        foreign_outcome.can_write(),
+        "seed={seed}: op=initial_foreign_validate foreign can_write"
+    );
+    let foreign_abs = foreign_outcome
+        .abstraction()
+        .ok_or_else(|| format!("seed={seed}: op=initial_foreign_validate missing abstraction"))?;
+    assert_eq!(
+        foreign_abs.state,
+        SafetyState::Unknown,
+        "seed={seed}: op=initial_foreign_validate foreign abstraction must be Unknown"
+    );
+    assert!(
+        foreign_abs.remaining.is_none(),
+        "seed={seed}: op=initial_foreign_validate foreign abstraction must not claim bounds"
+    );
+    stats.foreign_validations += 1;
 
-        for step in 0..STEPS {
-            let op = rng.gen_range_usize(0, 99);
-            let idx = rng.gen_range_usize(0, SLOTS - 1);
+    for step in 0..STEPS {
+        let op = rng.gen_range_usize(0, 99);
+        let idx = rng.gen_range_usize(0, SLOTS - 1);
 
-            match op {
-                // allocate (biased)
-                0..=44 => {
-                    if states[idx] != SlotState::Empty {
-                        continue;
-                    }
-                    let size = rng.gen_range_usize(1, 2048);
-                    let ptr = pipeline.allocate(size).expect("alloc");
-                    ptrs[idx] = ptr;
-                    sizes[idx] = size;
-                    states[idx] = SlotState::Live;
+        match op {
+            0..=39 => {
+                if states[idx] != SlotState::Empty {
+                    continue;
                 }
-                // validate
-                45..=84 => match states[idx] {
-                    SlotState::Empty => {
-                        let out = pipeline.validate(foreign_addr);
-                        assert!(
-                            matches!(out, ValidationOutcome::Foreign(_)),
-                            "seed={seed} step={step}: foreign validate must be Foreign"
-                        );
-                    }
-                    SlotState::Live => {
-                        let addr = ptrs[idx] as usize;
-                        let out = pipeline.validate(addr);
-                        assert!(
-                            matches!(
-                                out,
-                                ValidationOutcome::CachedValid(_) | ValidationOutcome::Validated(_)
-                            ),
-                            "seed={seed} step={step}: live validate must be CachedValid/Validated (got {out:?})"
-                        );
-                        assert!(
-                            out.can_read() && out.can_write(),
-                            "seed={seed} step={step}: live pointer must be readable+writable"
-                        );
-                        let abs = out.abstraction().expect("live abstraction");
-                        assert_eq!(
-                            abs.state,
-                            SafetyState::Valid,
-                            "seed={seed} step={step}: live abstraction must be Valid"
-                        );
-                        assert_eq!(
-                            abs.remaining,
-                            Some(sizes[idx]),
-                            "seed={seed} step={step}: remaining must match allocation size"
-                        );
-                    }
-                    SlotState::Freed => {
-                        let addr = ptrs[idx] as usize;
-                        let out = pipeline.validate(addr);
-                        assert!(
-                            matches!(out, ValidationOutcome::TemporalViolation(_)),
-                            "seed={seed} step={step}: freed validate must be TemporalViolation (got {out:?})"
-                        );
-                        assert!(
-                            !out.can_read() && !out.can_write(),
-                            "seed={seed} step={step}: freed pointer must not be readable/writable"
-                        );
-                        assert!(
-                            !matches!(out, ValidationOutcome::CachedValid(_)),
-                            "seed={seed} step={step}: freed validate must never be CachedValid"
-                        );
-                    }
-                },
-                // free live
-                85..=94 => {
-                    if states[idx] != SlotState::Live {
-                        continue;
-                    }
-                    let ptr = ptrs[idx];
-                    let result = pipeline.free(ptr);
+                let size = rng.gen_range_usize(1, 2048);
+                let ptr = pipeline.allocate(size).ok_or_else(|| {
+                    format!("seed={seed} step={step} op=allocate size={size}: allocation failed")
+                })?;
+                ptrs[idx] = ptr;
+                sizes[idx] = size;
+                states[idx] = SlotState::Live;
+                stats.allocations += 1;
+            }
+            40..=79 => match states[idx] {
+                SlotState::Empty => {
+                    let out = pipeline.validate(foreign_addr);
                     assert!(
-                        matches!(result, frankenlibc_membrane::arena::FreeResult::Freed),
-                        "seed={seed} step={step}: expected Freed on first free (got {result:?})"
+                        matches!(out, ValidationOutcome::Foreign(_)),
+                        "seed={seed} step={step} op=validate_foreign: expected Foreign (got {out:?})"
                     );
-                    states[idx] = SlotState::Freed;
+                    stats.foreign_validations += 1;
                 }
-                // double-free attempt
-                _ => {
-                    if states[idx] != SlotState::Freed {
-                        continue;
-                    }
-                    let ptr = ptrs[idx];
-                    let result = pipeline.free(ptr);
+                SlotState::Live => {
+                    let addr = ptrs[idx] as usize;
+                    let out = pipeline.validate(addr);
                     assert!(
-                        matches!(result, frankenlibc_membrane::arena::FreeResult::DoubleFree),
-                        "seed={seed} step={step}: expected DoubleFree on second free (got {result:?})"
+                        matches!(
+                            out,
+                            ValidationOutcome::CachedValid(_) | ValidationOutcome::Validated(_)
+                        ),
+                        "seed={seed} step={step} op=validate_live ptr={addr:#x}: expected CachedValid/Validated (got {out:?})"
                     );
+                    assert!(
+                        out.can_read() && out.can_write(),
+                        "seed={seed} step={step} op=validate_live ptr={addr:#x}: live pointer must be readable+writable"
+                    );
+                    let abs = out.abstraction().ok_or_else(|| {
+                        format!(
+                            "seed={seed} step={step} op=validate_live ptr={addr:#x}: missing abstraction"
+                        )
+                    })?;
+                    assert_eq!(
+                        abs.state,
+                        SafetyState::Valid,
+                        "seed={seed} step={step} op=validate_live ptr={addr:#x}: abstraction must be Valid"
+                    );
+                    assert_eq!(
+                        abs.remaining,
+                        Some(sizes[idx]),
+                        "seed={seed} step={step} op=validate_live ptr={addr:#x}: remaining must match allocation size"
+                    );
+                    stats.live_validations += 1;
                 }
+                SlotState::Freed => {
+                    let addr = ptrs[idx] as usize;
+                    let out = pipeline.validate(addr);
+                    assert!(
+                        matches!(out, ValidationOutcome::TemporalViolation(_)),
+                        "seed={seed} step={step} op=validate_freed ptr={addr:#x}: expected TemporalViolation (got {out:?})"
+                    );
+                    assert!(
+                        !out.can_read() && !out.can_write(),
+                        "seed={seed} step={step} op=validate_freed ptr={addr:#x}: freed pointer must not be readable/writable"
+                    );
+                    assert!(
+                        !matches!(out, ValidationOutcome::CachedValid(_)),
+                        "seed={seed} step={step} op=validate_freed ptr={addr:#x}: freed validate must never be CachedValid"
+                    );
+                    stats.freed_validations += 1;
+                }
+            },
+            80..=89 => {
+                if states[idx] != SlotState::Live {
+                    continue;
+                }
+                let ptr = ptrs[idx];
+                let result = pipeline.free(ptr);
+                assert!(
+                    matches!(result, FreeResult::Freed),
+                    "seed={seed} step={step} op=free_live ptr={:#x}: expected Freed (got {result:?})",
+                    ptr as usize
+                );
+                states[idx] = SlotState::Freed;
+                stats.first_frees += 1;
+            }
+            90..=96 => {
+                if states[idx] != SlotState::Freed {
+                    continue;
+                }
+                let ptr = ptrs[idx];
+                stats.double_free_attempts += 1;
+                let result = pipeline.free(ptr);
+                assert!(
+                    matches!(result, FreeResult::DoubleFree),
+                    "seed={seed} step={step} op=double_free ptr={:#x}: expected DoubleFree (got {result:?})",
+                    ptr as usize
+                );
+                stats.double_free_detections += 1;
+            }
+            _ => {
+                if states[idx] != SlotState::Live {
+                    continue;
+                }
+                let ptr = ptrs[idx];
+                let addr = ptr as usize;
+                let size = sizes[idx];
+                assert!(
+                    pipeline.inject_trailing_canary_corruption(addr, size, 0xA5),
+                    "seed={seed} step={step} op=corrupt_canary ptr={addr:#x}: corruption injection failed"
+                );
+                let result = pipeline.free(ptr);
+                assert!(
+                    matches!(result, FreeResult::FreedWithCanaryCorruption),
+                    "seed={seed} step={step} op=free_corrupted ptr={addr:#x}: expected FreedWithCanaryCorruption (got {result:?})"
+                );
+                let out = pipeline.validate(addr);
+                assert!(
+                    matches!(out, ValidationOutcome::TemporalViolation(_)),
+                    "seed={seed} step={step} op=validate_corrupted_freed ptr={addr:#x}: expected TemporalViolation (got {out:?})"
+                );
+                assert!(
+                    !out.can_read() && !out.can_write(),
+                    "seed={seed} step={step} op=validate_corrupted_freed ptr={addr:#x}: corrupted+freed pointer must not be readable/writable"
+                );
+                states[idx] = SlotState::Freed;
+                stats.canary_corruptions += 1;
+                stats.first_frees += 1;
+                stats.freed_validations += 1;
             }
         }
     }
+
+    Ok(stats)
 }
 
 #[derive(Debug, Default)]

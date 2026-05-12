@@ -1,0 +1,97 @@
+{
+  "schema_version": "allocator_membrane_deterministic_sequence_completion_contract.v1",
+  "manifest_id": "bd-66wz.4.1-allocator-membrane-deterministic-sequence-completion-contract",
+  "generated_utc": "2026-05-12T01:00:00Z",
+  "description": "Completion-debt evidence binding for deterministic allocator and membrane state-transition property tests.",
+  "bead": "bd-66wz.4",
+  "source_modules": [
+    "crates/frankenlibc-membrane/src/arena.rs",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs",
+    "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs"
+  ],
+  "completion_debt_evidence": {
+    "bead": "bd-66wz.4.1",
+    "original_bead": "bd-66wz.4",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-66wz.4/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "test_sources": {
+      "ptr_validator_unit": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "allocator_sequences": "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs",
+      "contract_harness": "crates/frankenlibc-harness/tests/allocator_membrane_deterministic_sequence_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-membrane/src/arena.rs:267",
+      "crates/frankenlibc-membrane/src/arena.rs:286",
+      "crates/frankenlibc-membrane/src/arena.rs:340",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:1799",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:1816",
+      "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs:45",
+      "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs:90",
+      "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs:250",
+      "scripts/check_allocator_membrane_deterministic_sequence_completion_contract.sh:1",
+      "tests/conformance/allocator_membrane_deterministic_sequence_completion_contract.v1.json:1"
+    ],
+    "invariant_classes": [
+      "deterministic_replay",
+      "foreign_pointer_unknown_unbounded",
+      "live_pointer_permissiveness",
+      "temporal_safety_after_free",
+      "no_stale_cached_valid_after_free",
+      "double_free_detection",
+      "canary_corruption_detection"
+    ],
+    "detection_guarantees": {
+      "deterministic_replay_mismatches": 0,
+      "freed_cached_valid_false_negatives": 0,
+      "double_free_false_negatives": 0,
+      "canary_corruption_false_negatives": 0
+    },
+    "sequence_contract": {
+      "fixed_seeds": [1, 2, 3, 4],
+      "steps_per_seed": 2000,
+      "slot_count": 32,
+      "required_source_markers": [
+        "fn deterministic_allocator_membrane_sequences_hold_core_invariants",
+        "fn run_deterministic_sequence",
+        "SequenceStats",
+        "deterministic sequence replay changed outcomes",
+        "op=validate_freed",
+        "op=double_free",
+        "op=corrupt_canary",
+        "FreedWithCanaryCorruption"
+      ]
+    },
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "next_audit_score_threshold": 800,
+      "required_test_refs": [
+        {"source": "ptr_validator_unit", "name": "tls_cache_does_not_allow_uaf_after_free"},
+        {"source": "ptr_validator_unit", "name": "double_free_reported"},
+        {"source": "ptr_validator_unit", "name": "canary_corruption_detected_via_pipeline_free"},
+        {"source": "allocator_sequences", "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"},
+        {"source": "contract_harness", "name": "manifest_binds_deterministic_sequence_unit_and_property_evidence"}
+      ],
+      "required_commands": [
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-membrane --test allocator_membrane_invariants_sequences_test deterministic_allocator_membrane_sequences_hold_core_invariants -- --nocapture"
+      ],
+      "evidence_summary": "The deterministic sequence test asserts live, freed, foreign, double-free, canary-corruption, and replay-stability invariants with explicit seed/step/op failure context."
+    },
+    "property_primary": {
+      "missing_item_id": "tests.property.primary",
+      "next_audit_score_threshold": 800,
+      "required_test_refs": [
+        {"source": "ptr_validator_unit", "name": "allocated_pointer_property_validates_as_live"},
+        {"source": "ptr_validator_unit", "name": "freed_pointer_property_becomes_temporal_violation"},
+        {"source": "ptr_validator_unit", "name": "dependency_safe_order_property_holds"},
+        {"source": "allocator_sequences", "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"},
+        {"source": "contract_harness", "name": "checker_rejects_missing_sequence_property_marker"}
+      ],
+      "required_commands": [
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-membrane allocated_pointer_property_validates_as_live -- --nocapture",
+        "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-membrane --test allocator_membrane_invariants_sequences_test deterministic_allocator_membrane_sequences_hold_core_invariants -- --nocapture"
+      ],
+      "evidence_summary": "Property-style tests cover live/freed pointer abstractions and dependency-safe validation ordering; the deterministic sequence harness adds replayable state-transition pressure."
+    }
+  }
+}
