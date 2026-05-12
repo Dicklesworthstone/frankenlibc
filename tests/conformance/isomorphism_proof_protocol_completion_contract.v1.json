@@ -1,0 +1,187 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "isomorphism-proof-protocol-completion-contract",
+  "bead": "bd-2bd",
+  "completion_debt_bead": "bd-2bd.1",
+  "generated_utc": "2026-05-12T05:00:00Z",
+  "purpose": "Completion-debt contract for the isomorphism proof protocol. The checked-in protocol artifact remains the golden source; this contract binds the protocol, gate script, proof corpus, harness tests, e2e replay command, and structured telemetry to the missing audit items.",
+  "source_artifacts": [
+    {
+      "artifact_id": "isomorphism_protocol",
+      "path": "tests/conformance/isomorphism_proof_protocol.json",
+      "required_needles": [
+        "\"schema_version\": 2",
+        "\"proof_categories\"",
+        "\"proof_template\"",
+        "\"existing_proofs\""
+      ]
+    },
+    {
+      "artifact_id": "isomorphism_gate",
+      "path": "scripts/check_isomorphism_proof.sh",
+      "required_needles": [
+        "Isomorphism Proof Gate",
+        "Proof directory and artifact validation",
+        "check_isomorphism_proof: PASS"
+      ]
+    },
+    {
+      "artifact_id": "isomorphism_source_tests",
+      "path": "crates/frankenlibc-harness/tests/isomorphism_proof_test.rs",
+      "required_needles": [
+        "protocol_exists_and_valid",
+        "proof_directory_exists_and_records_validate",
+        "gate_script_exists_and_executable"
+      ]
+    }
+  ],
+  "protocol_expectations": {
+    "minimum_schema_version": 2,
+    "required_categories": [
+      "ordering",
+      "tie_breaking",
+      "fp_behavior",
+      "rng_behavior",
+      "side_effects",
+      "memory_semantics"
+    ],
+    "required_template_fields": [
+      "lever_id",
+      "bead_id",
+      "functions",
+      "categories",
+      "golden_commands",
+      "golden_artifacts",
+      "golden_hash",
+      "proof_status",
+      "rollback_instructions",
+      "attribution_metadata"
+    ],
+    "required_statuses": [
+      "pending",
+      "verified",
+      "failed",
+      "waived"
+    ],
+    "applicable_module_counts": {
+      "high_priority": 6,
+      "medium_priority": 2,
+      "low_priority": 3
+    },
+    "proof_directory": "tests/conformance/proofs/",
+    "required_existing_proofs": [
+      {
+        "lever_id": "mutex-fastpath-nochange-v1",
+        "proof_path": "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "proof_status": "verified"
+      },
+      {
+        "lever_id": "thread-bootstrap-fastpath-nochange-v1",
+        "proof_path": "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
+        "proof_status": "verified"
+      },
+      {
+        "lever_id": "condvar-fastpath-nochange-v1",
+        "proof_path": "tests/conformance/proofs/condvar-nochange-v1.json",
+        "proof_status": "verified"
+      }
+    ],
+    "enforcement": {
+      "ci_gate_script": "scripts/check_isomorphism_proof.sh",
+      "merge_gate_contains": "No optimization bead can close without a completed isomorphism proof artifact"
+    }
+  },
+  "golden_expectations": {
+    "golden_source": "tests/conformance/isomorphism_proof_protocol.json",
+    "summary": {
+      "total_categories": 6,
+      "high_priority_modules": 6,
+      "medium_priority_modules": 2,
+      "low_priority_modules": 3,
+      "existing_proof_count": 3,
+      "enforcement_status": "artifacts_present"
+    },
+    "required_proof_artifact_fields": [
+      "lever_id",
+      "bead_id",
+      "functions",
+      "categories",
+      "golden_commands",
+      "golden_artifacts",
+      "golden_hash",
+      "proof_status",
+      "rollback_instructions",
+      "attribution_metadata"
+    ]
+  },
+  "e2e_gate": {
+    "command": "bash scripts/check_isomorphism_proof.sh",
+    "required_stdout_needles": [
+      "PASS: VALID version=2 categories=6 proofs=3",
+      "PASS: All 6 proof categories defined with checks and golden formats",
+      "PASS: All 3 proof artifacts are listed and hash-valid",
+      "check_isomorphism_proof: PASS"
+    ]
+  },
+  "telemetry_contract": {
+    "report_env": "FRANKENLIBC_ISOMORPHISM_PROTOCOL_REPORT",
+    "log_env": "FRANKENLIBC_ISOMORPHISM_PROTOCOL_LOG",
+    "required_events": [
+      "isomorphism_protocol_source",
+      "isomorphism_protocol_template",
+      "isomorphism_protocol_proof",
+      "isomorphism_protocol_e2e",
+      "isomorphism_protocol_summary"
+    ],
+    "required_log_fields": [
+      "event",
+      "status",
+      "timestamp",
+      "artifact_refs"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-2bd.1",
+    "original_bead": "bd-2bd",
+    "next_audit_score_threshold": 800,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.golden.primary",
+      "telemetry.primary"
+    ],
+    "unit_primary": {
+      "test_source": "crates/frankenlibc-harness/tests/isomorphism_proof_protocol_completion_contract_test.rs",
+      "required_test_names": [
+        "contract_anchors_completion_debt",
+        "protocol_expectations_match_golden_artifact",
+        "checker_rejects_missing_required_category"
+      ]
+    },
+    "e2e_primary": {
+      "checker": "scripts/check_isomorphism_proof_protocol_completion_contract.sh",
+      "command": "bash scripts/check_isomorphism_proof_protocol_completion_contract.sh",
+      "required_test_names": [
+        "checker_accepts_contract_and_emits_telemetry",
+        "checker_rejects_disabled_e2e_gate"
+      ]
+    },
+    "golden_primary": {
+      "golden_source": "tests/conformance/isomorphism_proof_protocol_completion_contract.v1.json",
+      "checked_artifact": "tests/conformance/isomorphism_proof_protocol.json",
+      "checked_proof_directory": "tests/conformance/proofs/",
+      "required_test_names": [
+        "protocol_expectations_match_golden_artifact",
+        "checker_rejects_missing_required_category"
+      ]
+    },
+    "telemetry_primary": {
+      "report_path": "target/conformance/isomorphism_proof_protocol_completion_contract.report.json",
+      "log_path": "target/conformance/isomorphism_proof_protocol_completion_contract.log.jsonl",
+      "required_test_names": [
+        "checker_accepts_contract_and_emits_telemetry",
+        "checker_rejects_missing_telemetry_item"
+      ]
+    }
+  }
+}
