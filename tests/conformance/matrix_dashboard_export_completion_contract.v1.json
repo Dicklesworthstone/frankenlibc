@@ -1,0 +1,188 @@
+{
+  "schema_version": "matrix_dashboard_export_completion_contract.v1",
+  "original_bead": "bd-38s",
+  "completion_debt_bead": "bd-38s.1",
+  "trace_id": "bd-38s-1-matrix-dashboard-export-completion-v1",
+  "description": "Completion-debt evidence binding for the verification matrix dashboard export: operator-friendly text output, machine-readable JSON rows, consistency with verification_matrix.json, and structured telemetry.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-38s/scorecard.md",
+    "score_before": 470,
+    "score_threshold": 800
+  },
+  "source_artifacts": {
+    "verification_matrix": "tests/conformance/verification_matrix.json",
+    "dashboard_script": "scripts/export_matrix_dashboard.sh",
+    "dashboard_harness": "crates/frankenlibc-harness/tests/matrix_dashboard_test.rs",
+    "verification_matrix_completion_contract": "tests/conformance/verification_matrix_completion_contract.v1.json",
+    "verification_matrix_completion_checker": "scripts/check_verification_matrix_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/matrix_dashboard_export_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    "scripts/export_matrix_dashboard.sh:1",
+    "scripts/export_matrix_dashboard.sh:17",
+    "scripts/export_matrix_dashboard.sh:37",
+    "scripts/export_matrix_dashboard.sh:62",
+    "scripts/export_matrix_dashboard.sh:77",
+    "scripts/export_matrix_dashboard.sh:81",
+    "scripts/export_matrix_dashboard.sh:87",
+    "scripts/export_matrix_dashboard.sh:92",
+    "scripts/export_matrix_dashboard.sh:106",
+    "scripts/export_matrix_dashboard.sh:130",
+    "scripts/export_matrix_dashboard.sh:133",
+    "crates/frankenlibc-harness/tests/matrix_dashboard_test.rs:25",
+    "crates/frankenlibc-harness/tests/matrix_dashboard_test.rs:45",
+    "crates/frankenlibc-harness/tests/matrix_dashboard_test.rs:68",
+    "crates/frankenlibc-harness/tests/matrix_dashboard_test.rs:106",
+    "crates/frankenlibc-harness/tests/matrix_dashboard_test.rs:134",
+    "tests/conformance/verification_matrix.json:230",
+    "tests/conformance/verification_matrix_completion_contract.v1.json:1",
+    "scripts/check_verification_matrix_completion_contract.sh:1",
+    "scripts/check_matrix_dashboard_export_completion_contract.sh:1",
+    "crates/frankenlibc-harness/tests/matrix_dashboard_export_completion_contract_test.rs:1"
+  ],
+  "dashboard_contract": {
+    "required_formats": [
+      "text",
+      "json"
+    ],
+    "required_text_needles": [
+      "Verification Matrix Dashboard",
+      "Total beads:",
+      "BEAD",
+      "Legend:",
+      "Gaps:"
+    ],
+    "required_json_top_keys": [
+      "generated_utc",
+      "bead",
+      "summary",
+      "by_priority",
+      "rows"
+    ],
+    "required_summary_fields": [
+      "total",
+      "complete",
+      "partial",
+      "missing"
+    ],
+    "required_priority_buckets": [
+      "P0",
+      "P1",
+      "P2"
+    ],
+    "required_priority_fields": [
+      "total",
+      "complete",
+      "partial",
+      "missing"
+    ],
+    "required_row_fields": [
+      "bead_id",
+      "priority",
+      "title",
+      "overall",
+      "required",
+      "complete",
+      "partial",
+      "missing",
+      "gaps"
+    ],
+    "required_consistency_checks": [
+      "summary_total_matches_rows",
+      "summary_counts_sum_to_total",
+      "priority_counts_sum_to_summary",
+      "row_count_matches_matrix_entries",
+      "rows_sorted_missing_partial_complete_then_priority"
+    ],
+    "evidence_summary": "The dashboard export produces stable text and JSON surfaces for operators, with row-level gap lists and summary counts tied directly to verification_matrix.json entries."
+  },
+  "e2e_primary": {
+    "missing_item_id": "tests.e2e.primary",
+    "description": "E2E evidence exercises the exported text and JSON dashboard surfaces and checks row-count consistency with verification_matrix.json.",
+    "required_test_refs": [
+      {
+        "source": "dashboard_harness",
+        "name": "dashboard_script_exists_and_executable"
+      },
+      {
+        "source": "dashboard_harness",
+        "name": "text_output_has_expected_structure"
+      },
+      {
+        "source": "dashboard_harness",
+        "name": "json_output_is_valid"
+      },
+      {
+        "source": "dashboard_harness",
+        "name": "json_rows_match_matrix_entries"
+      },
+      {
+        "source": "dashboard_harness",
+        "name": "json_rows_have_required_fields"
+      },
+      {
+        "source": "completion_harness",
+        "name": "checker_emits_report_and_jsonl"
+      }
+    ],
+    "required_commands": [
+      "bash scripts/check_matrix_dashboard_export_completion_contract.sh",
+      "rch exec -- cargo test -p frankenlibc-harness --test matrix_dashboard_test -- --nocapture",
+      "rch exec -- cargo test -p frankenlibc-harness --test matrix_dashboard_export_completion_contract_test -- --nocapture"
+    ]
+  },
+  "telemetry_primary": {
+    "missing_item_id": "telemetry.primary",
+    "description": "Telemetry evidence records the dashboard text/json replay status, row counts, priority buckets, and fail-closed drift signatures.",
+    "default_report_path": "target/conformance/matrix_dashboard_export_completion_contract.report.json",
+    "default_log_path": "target/conformance/matrix_dashboard_export_completion_contract.log.jsonl",
+    "required_test_refs": [
+      {
+        "source": "dashboard_harness",
+        "name": "json_output_is_valid"
+      },
+      {
+        "source": "dashboard_harness",
+        "name": "json_rows_have_required_fields"
+      },
+      {
+        "source": "completion_harness",
+        "name": "manifest_binds_dashboard_exports_and_missing_items"
+      },
+      {
+        "source": "completion_harness",
+        "name": "checker_emits_report_and_jsonl"
+      },
+      {
+        "source": "completion_harness",
+        "name": "checker_rejects_missing_gap_field_binding"
+      }
+    ],
+    "required_events": [
+      "matrix_dashboard_text_export_validated",
+      "matrix_dashboard_json_export_validated",
+      "matrix_dashboard_rows_validated",
+      "matrix_dashboard_export_completion_contract_validated",
+      "matrix_dashboard_export_completion_contract_failed"
+    ],
+    "required_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "level",
+      "completion_debt_bead",
+      "original_bead",
+      "source_commit",
+      "status",
+      "matrix_summary",
+      "dashboard_summary",
+      "row_count",
+      "priority_buckets",
+      "missing_items_bound",
+      "test_refs",
+      "artifact_refs",
+      "failure_signature"
+    ]
+  }
+}
