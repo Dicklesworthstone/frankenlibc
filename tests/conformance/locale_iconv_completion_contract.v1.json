@@ -1,0 +1,368 @@
+{
+  "schema_version": "locale_iconv_completion_contract.v1",
+  "bead": "bd-1j4.4",
+  "completion_debt_bead": "bd-1j4.4.1",
+  "description": "Completion-debt evidence binding for locale/iconv baseline behavior, deterministic table integrity, fuzz replay surfaces, conformance fixtures, and structured telemetry.",
+  "completion_debt_evidence": {
+    "bead": "bd-1j4.4.1",
+    "original_bead": "bd-1j4.4",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-1j4.4/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "artifacts": {
+      "core_locale": "crates/frankenlibc-core/src/locale/mod.rs",
+      "core_locale_catgets": "crates/frankenlibc-core/src/locale/catgets.rs",
+      "core_iconv": "crates/frankenlibc-core/src/iconv/mod.rs",
+      "abi_locale": "crates/frankenlibc-abi/src/locale_abi.rs",
+      "abi_iconv": "crates/frankenlibc-abi/src/iconv_abi.rs",
+      "abi_locale_unit": "crates/frankenlibc-abi/tests/locale_abi_test.rs",
+      "abi_iconv_unit": "crates/frankenlibc-abi/tests/iconv_abi_test.rs",
+      "locale_fixture": "tests/conformance/fixtures/locale_ops.json",
+      "iconv_fixture": "tests/conformance/fixtures/iconv_phase1.json",
+      "locale_conformance": "crates/frankenlibc-harness/tests/locale_ops_conformance_test.rs",
+      "iconv_conformance": "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+      "iconv_scope_ledger": "tests/conformance/iconv_codec_scope_ledger.v1.json",
+      "iconv_scope_test": "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+      "locale_iconv_breadth_ledger": "tests/conformance/locale_iconv_breadth_scope_ledger.v1.json",
+      "locale_iconv_breadth_test": "crates/frankenlibc-harness/tests/locale_iconv_breadth_scope_ledger_test.rs",
+      "iconv_table_pack": "tests/conformance/iconv_table_pack.v1.json",
+      "iconv_table_checksums": "tests/conformance/iconv_table_checksums.v1.json",
+      "iconv_table_gate": "scripts/check_iconv_table_generation.sh",
+      "iconv_table_test": "crates/frankenlibc-harness/tests/iconv_table_generation_test.rs",
+      "iconv_stateful_fixture_pack": "tests/conformance/iconv_stateful_codec_fixture_pack.v1.json",
+      "iconv_stateful_gate": "scripts/check_iconv_stateful_codec_fixture_pack.sh",
+      "iconv_stateful_test": "crates/frankenlibc-harness/tests/iconv_stateful_codec_fixture_pack_test.rs",
+      "locale_catalog_fixture_pack": "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json",
+      "locale_catalog_gate": "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+      "locale_catalog_test": "crates/frankenlibc-harness/tests/locale_catalog_transliteration_fixture_pack_test.rs",
+      "iconv_locale_family_contract": "tests/conformance/iconv_locale_family_completion_contract.v1.json",
+      "iconv_locale_family_gate": "scripts/check_iconv_locale_family_completion_contract.sh",
+      "iconv_locale_family_test": "crates/frankenlibc-harness/tests/iconv_locale_family_completion_contract_test.rs",
+      "fuzz_iconv_target": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_iconv.rs",
+      "fuzz_locale_target": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_locale.rs",
+      "fuzz_iconv_corpus": "crates/frankenlibc-fuzz/corpus/fuzz_iconv",
+      "fuzz_locale_corpus": "crates/frankenlibc-fuzz/corpus/fuzz_locale",
+      "support_matrix": "support_matrix.json",
+      "completion_contract": "tests/conformance/locale_iconv_completion_contract.v1.json",
+      "completion_gate": "scripts/check_locale_iconv_completion_contract.sh",
+      "completion_harness": "crates/frankenlibc-harness/tests/locale_iconv_completion_contract_test.rs"
+    },
+    "directory_artifacts": [
+      "fuzz_iconv_corpus",
+      "fuzz_locale_corpus"
+    ],
+    "implementation_refs": [
+      "crates/frankenlibc-core/src/locale/mod.rs:30",
+      "crates/frankenlibc-core/src/locale/mod.rs:80",
+      "crates/frankenlibc-core/src/locale/mod.rs:120",
+      "crates/frankenlibc-core/src/iconv/mod.rs:457",
+      "crates/frankenlibc-core/src/iconv/mod.rs:514",
+      "crates/frankenlibc-abi/src/locale_abi.rs:136",
+      "crates/frankenlibc-abi/src/locale_abi.rs:184",
+      "crates/frankenlibc-abi/src/locale_abi.rs:206",
+      "crates/frankenlibc-abi/src/locale_abi.rs:481",
+      "crates/frankenlibc-abi/src/locale_abi.rs:622",
+      "crates/frankenlibc-abi/src/iconv_abi.rs:125",
+      "crates/frankenlibc-abi/src/iconv_abi.rs:185",
+      "crates/frankenlibc-abi/src/iconv_abi.rs:385",
+      "tests/conformance/fixtures/locale_ops.json:1",
+      "tests/conformance/fixtures/iconv_phase1.json:1",
+      "tests/conformance/iconv_table_pack.v1.json:1",
+      "tests/conformance/iconv_table_checksums.v1.json:1",
+      "crates/frankenlibc-fuzz/fuzz_targets/fuzz_iconv.rs:1",
+      "crates/frankenlibc-fuzz/fuzz_targets/fuzz_locale.rs:1",
+      "scripts/check_locale_iconv_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/locale_iconv_completion_contract_test.rs:1"
+    ],
+    "source_needles": {
+      "core_locale": [
+        "pub fn valid_category",
+        "pub fn c_locale_conv",
+        "pub fn is_c_locale"
+      ],
+      "core_iconv": [
+        "pub fn iconv_open_detailed",
+        "pub fn iconv(",
+        "pub fn iconv_close"
+      ],
+      "abi_locale": [
+        "pub unsafe extern \"C\" fn setlocale",
+        "pub unsafe extern \"C\" fn localeconv",
+        "pub unsafe extern \"C\" fn nl_langinfo",
+        "pub unsafe extern \"C\" fn newlocale",
+        "pub unsafe extern \"C\" fn catopen"
+      ],
+      "abi_iconv": [
+        "pub unsafe extern \"C\" fn iconv_open",
+        "pub unsafe extern \"C\" fn iconv(",
+        "pub unsafe extern \"C\" fn iconv_close"
+      ],
+      "fuzz_iconv_target": [
+        "fuzz_open_close",
+        "fuzz_convert",
+        "fuzz_known_codecs"
+      ],
+      "fuzz_locale_target": [
+        "fuzz_core_locale_helpers",
+        "fuzz_setlocale",
+        "fuzz_gettext_domain_state"
+      ],
+      "iconv_table_gate": [
+        "deterministic_generation_replay",
+        "table_pack_sha256",
+        "checksum manifest"
+      ]
+    },
+    "missing_item_bindings": [
+      {
+        "missing_item_id": "tests.unit.primary",
+        "evidence_section": "unit_primary"
+      },
+      {
+        "missing_item_id": "tests.e2e.primary",
+        "evidence_section": "e2e_primary"
+      },
+      {
+        "missing_item_id": "tests.fuzz.primary",
+        "evidence_section": "fuzz_primary"
+      },
+      {
+        "missing_item_id": "tests.conformance.primary",
+        "evidence_section": "conformance_primary"
+      },
+      {
+        "missing_item_id": "telemetry.primary",
+        "evidence_section": "telemetry_primary"
+      }
+    ],
+    "unit_primary": {
+      "description": "Unit tests pin locale categories, C-locale defaults, catalog parsing, phase-1 codec selection, conversion edge paths, and ABI errno behavior.",
+      "commands": [
+        "rch exec -- cargo test -p frankenlibc-core locale --lib -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-core iconv --lib -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test locale_abi_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test iconv_abi_test -- --nocapture"
+      ],
+      "required_test_refs": [
+        {
+          "source": "core_locale",
+          "name": "valid_category_accepts_all_defined_categories"
+        },
+        {
+          "source": "core_locale",
+          "name": "c_locale_conv_decimal_point_is_dot"
+        },
+        {
+          "source": "core_locale",
+          "name": "is_c_locale_rejects_other_names"
+        },
+        {
+          "source": "core_locale_catgets",
+          "name": "parse_minimal_catalog_with_one_message"
+        },
+        {
+          "source": "core_iconv",
+          "name": "iconv_open_recognizes_phase1_encodings"
+        },
+        {
+          "source": "core_iconv",
+          "name": "utf8_to_latin1_basic_conversion"
+        },
+        {
+          "source": "core_iconv",
+          "name": "invalid_utf8_reports_eilseq"
+        },
+        {
+          "source": "core_iconv",
+          "name": "incomplete_utf8_reports_einval"
+        },
+        {
+          "source": "abi_locale_unit",
+          "name": "setlocale_set_c_locale"
+        },
+        {
+          "source": "abi_locale_unit",
+          "name": "localeconv_stable_pointer"
+        },
+        {
+          "source": "abi_locale_unit",
+          "name": "nl_langinfo_codeset"
+        },
+        {
+          "source": "abi_locale_unit",
+          "name": "generated_catalog_hit_miss_and_close_match_host"
+        },
+        {
+          "source": "abi_iconv_unit",
+          "name": "iconv_open_utf8_to_utf16le"
+        },
+        {
+          "source": "abi_iconv_unit",
+          "name": "iconv_utf8_to_latin1"
+        },
+        {
+          "source": "abi_iconv_unit",
+          "name": "iconv_invalid_utf8_reports_eilseq_and_preserves_progress"
+        },
+        {
+          "source": "abi_iconv_unit",
+          "name": "strict_mode_iconv_invalid_utf8_reports_eilseq"
+        },
+        {
+          "source": "abi_iconv_unit",
+          "name": "hardened_mode_iconv_invalid_utf8_reports_eilseq"
+        }
+      ]
+    },
+    "e2e_primary": {
+      "description": "Existing iconv/locale family completion gate and isolated locale/iconv fixture executions provide replayable strict+hardened E2E coverage.",
+      "commands": [
+        "bash scripts/check_iconv_locale_family_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test iconv_locale_family_completion_contract_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test locale_ops_conformance_test locale_ops_fixture_executes_mode_specific_contracts -- --exact --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --exact --nocapture"
+      ],
+      "required_artifacts": [
+        "iconv_locale_family_contract",
+        "iconv_locale_family_gate",
+        "iconv_locale_family_test",
+        "locale_fixture",
+        "iconv_fixture"
+      ]
+    },
+    "fuzz_primary": {
+      "description": "Structure-aware iconv and locale fuzz targets bind parser, descriptor, conversion, locale state, gettext, and catalog edge spaces with seeded corpora.",
+      "commands": [
+        "cargo fuzz run fuzz_iconv",
+        "cargo fuzz run fuzz_locale",
+        "rch exec -- cargo test -p frankenlibc-fuzz --no-run"
+      ],
+      "corpus_requirements": [
+        {
+          "artifact": "fuzz_iconv_corpus",
+          "min_seed_files": 5
+        },
+        {
+          "artifact": "fuzz_locale_corpus",
+          "min_seed_files": 5
+        }
+      ]
+    },
+    "conformance_primary": {
+      "description": "Fixture, ledger, table-pack, and checksum gates freeze deterministic locale/iconv behavior and fail closed on data drift.",
+      "commands": [
+        "bash scripts/check_iconv_table_generation.sh",
+        "bash scripts/check_iconv_codec_scope_ledger.sh",
+        "bash scripts/check_iconv_stateful_codec_fixture_pack.sh",
+        "bash scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+        "bash scripts/check_locale_iconv_completion_contract.sh"
+      ],
+      "required_test_refs": [
+        {
+          "source": "locale_conformance",
+          "name": "locale_ops_fixture_executes_mode_specific_contracts"
+        },
+        {
+          "source": "iconv_conformance",
+          "name": "iconv_phase1_fixture_executes_via_isolated_harness"
+        },
+        {
+          "source": "iconv_scope_test",
+          "name": "iconv_scope_ledger_included_set_matches_phase1_contract"
+        },
+        {
+          "source": "locale_iconv_breadth_test",
+          "name": "implemented_bootstrap_cross_references_canonical_phase1_ledger"
+        },
+        {
+          "source": "iconv_table_test",
+          "name": "iconv_table_generation_gate_script_passes"
+        },
+        {
+          "source": "iconv_table_test",
+          "name": "iconv_table_pack_schema_is_locked"
+        },
+        {
+          "source": "iconv_table_test",
+          "name": "iconv_table_checksums_are_consistent"
+        },
+        {
+          "source": "iconv_stateful_test",
+          "name": "manifest_defines_iconv_stateful_schema_and_required_coverage"
+        },
+        {
+          "source": "locale_catalog_test",
+          "name": "manifest_defines_locale_fixture_schema_and_required_classes"
+        }
+      ],
+      "required_artifacts": [
+        "locale_fixture",
+        "iconv_fixture",
+        "iconv_scope_ledger",
+        "locale_iconv_breadth_ledger",
+        "iconv_table_pack",
+        "iconv_table_checksums",
+        "iconv_stateful_fixture_pack",
+        "locale_catalog_fixture_pack"
+      ],
+      "required_locale_functions": [
+        "setlocale",
+        "localeconv",
+        "nl_langinfo",
+        "nl_langinfo_l",
+        "newlocale",
+        "uselocale",
+        "duplocale",
+        "freelocale"
+      ],
+      "required_iconv_functions": [
+        "iconv_open",
+        "iconv",
+        "iconv_close"
+      ],
+      "required_codecs": [
+        "UTF-8",
+        "ISO-8859-1",
+        "UTF-16LE",
+        "UTF-32"
+      ],
+      "required_errno_values": [
+        0,
+        7,
+        22,
+        84
+      ]
+    },
+    "telemetry_primary": {
+      "description": "The completion checker emits deterministic report JSON and JSONL rows for source refs, missing-item bindings, fuzz corpora, conformance artifacts, table checksum validation, and final pass/fail state.",
+      "report_path": "target/conformance/locale_iconv_completion_contract.report.json",
+      "log_path": "target/conformance/locale_iconv_completion_contract.log.jsonl",
+      "required_events": [
+        "locale_iconv_completion.source_ref",
+        "locale_iconv_completion.missing_item_bound",
+        "locale_iconv_completion.fuzz_corpus_bound",
+        "locale_iconv_completion.conformance_artifact_bound",
+        "locale_iconv_completion.table_checksum_bound",
+        "locale_iconv_completion.completion_contract_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "missing_items",
+        "artifact_refs",
+        "unit_test_ref_count",
+        "e2e_artifact_count",
+        "fuzz_corpus_seed_count",
+        "conformance_test_ref_count",
+        "conformance_artifact_count",
+        "table_checksum_count",
+        "failure_signature"
+      ]
+    }
+  }
+}
