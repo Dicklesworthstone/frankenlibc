@@ -14,7 +14,11 @@
 //!
 //! Bead: CONFORMANCE: libc fnmatch.h + glob.h diff matrix.
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicI32, AtomicUsize, Ordering},
+};
 
 use frankenlibc_abi::string_abi as fl;
 
@@ -36,6 +40,14 @@ const FNM_PERIOD: c_int = 1 << 2;
 
 const GLOB_NOMATCH: c_int = 3;
 const GLOB_NOSORT: c_int = 1 << 5;
+const GLOB_ERR: c_int = 1;
+const GLOB_ABORTED: c_int = 2;
+
+static GLOB_ERRFUNC_LOCK: Mutex<()> = Mutex::new(());
+static GLOB_ERRFUNC_CALLS: AtomicUsize = AtomicUsize::new(0);
+static GLOB_ERRFUNC_ERRNO: AtomicI32 = AtomicI32::new(0);
+static GLOB_ERRFUNC_RETURN: AtomicI32 = AtomicI32::new(0);
+static GLOB_ERRFUNC_PATH: Mutex<Option<String>> = Mutex::new(None);
 
 // glibc glob_t layout (Linux x86_64).
 #[repr(C)]
@@ -249,6 +261,79 @@ unsafe fn glob_collect_lc(pat: &str, flags: c_int) -> (c_int, Vec<String>) {
     (rc, out)
 }
 
+unsafe extern "C" fn recording_glob_errfunc(path: *const c_char, errno: c_int) -> c_int {
+    GLOB_ERRFUNC_CALLS.fetch_add(1, Ordering::SeqCst);
+    GLOB_ERRFUNC_ERRNO.store(errno, Ordering::SeqCst);
+    let rendered = if path.is_null() {
+        "<null>".to_string()
+    } else {
+        // SAFETY: glob implementations pass a valid, null-terminated path for
+        // the duration of the errfunc callback.
+        unsafe { CStr::from_ptr(path) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    *GLOB_ERRFUNC_PATH.lock().unwrap() = Some(rendered);
+    GLOB_ERRFUNC_RETURN.load(Ordering::SeqCst)
+}
+
+fn reset_glob_errfunc(return_value: c_int) {
+    GLOB_ERRFUNC_CALLS.store(0, Ordering::SeqCst);
+    GLOB_ERRFUNC_ERRNO.store(0, Ordering::SeqCst);
+    GLOB_ERRFUNC_RETURN.store(return_value, Ordering::SeqCst);
+    *GLOB_ERRFUNC_PATH.lock().unwrap() = None;
+}
+
+fn glob_errfunc_snapshot() -> (usize, c_int, Option<String>) {
+    (
+        GLOB_ERRFUNC_CALLS.load(Ordering::SeqCst),
+        GLOB_ERRFUNC_ERRNO.load(Ordering::SeqCst),
+        GLOB_ERRFUNC_PATH.lock().unwrap().clone(),
+    )
+}
+
+unsafe fn glob_rc_fl(
+    pat: &str,
+    flags: c_int,
+    errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
+) -> c_int {
+    let cpat = CString::new(pat).unwrap();
+    let mut g: GlobT = unsafe { core::mem::zeroed() };
+    let rc = unsafe {
+        fl::glob(
+            cpat.as_ptr(),
+            flags,
+            errfunc,
+            &mut g as *mut _ as *mut c_void,
+        )
+    };
+    if rc == 0 {
+        unsafe { fl::globfree(&mut g as *mut _ as *mut c_void) };
+    }
+    rc
+}
+
+unsafe fn glob_rc_lc(
+    pat: &str,
+    flags: c_int,
+    errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
+) -> c_int {
+    let cpat = CString::new(pat).unwrap();
+    let mut g: GlobT = unsafe { core::mem::zeroed() };
+    let rc = unsafe {
+        glob(
+            cpat.as_ptr(),
+            flags,
+            errfunc,
+            &mut g as *mut _ as *mut c_void,
+        )
+    };
+    if rc == 0 {
+        unsafe { globfree(&mut g as *mut _ as *mut c_void) };
+    }
+    rc
+}
+
 #[test]
 fn diff_glob_basic_patterns() {
     let mut divs = Vec::new();
@@ -309,6 +394,87 @@ fn diff_glob_basic_patterns() {
         }
     }
     assert!(divs.is_empty(), "glob divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_glob_errfunc_directory_error_paths() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = GLOB_ERRFUNC_LOCK.lock().unwrap();
+    let mut divs = Vec::new();
+    let dir = build_test_tree();
+    let blocked = dir.path.join("blocked");
+    std::fs::create_dir(&blocked).unwrap();
+    let mut blocked_permissions = std::fs::metadata(&blocked).unwrap().permissions();
+    blocked_permissions.set_mode(0o000);
+    std::fs::set_permissions(&blocked, blocked_permissions).unwrap();
+    let pat = format!("{}/blocked/*", dir.path.to_string_lossy());
+
+    let cases: &[(&str, c_int, c_int, c_int)] = &[
+        ("callback aborts", 0, 1, GLOB_ABORTED),
+        ("GLOB_ERR aborts after callback", GLOB_ERR, 0, GLOB_ABORTED),
+        ("callback continues", 0, 0, GLOB_NOMATCH),
+    ];
+
+    for (name, flags, callback_return, expected_rc) in cases {
+        reset_glob_errfunc(*callback_return);
+        let rc_fl = unsafe { glob_rc_fl(&pat, *flags, Some(recording_glob_errfunc)) };
+        let (calls_fl, errno_fl, path_fl) = glob_errfunc_snapshot();
+
+        reset_glob_errfunc(*callback_return);
+        let rc_lc = unsafe { glob_rc_lc(&pat, *flags, Some(recording_glob_errfunc)) };
+        let (calls_lc, errno_lc, path_lc) = glob_errfunc_snapshot();
+
+        if rc_fl != rc_lc || rc_fl != *expected_rc {
+            divs.push(Divergence {
+                function: "glob errfunc",
+                case: format!("{name}: {pat:?}, flags={flags:#x}, callback={callback_return}"),
+                field: "rc",
+                frankenlibc: format!("{rc_fl}"),
+                glibc: format!("{rc_lc}, expected {expected_rc}"),
+            });
+        }
+        if calls_fl != 1 || calls_lc != 1 {
+            divs.push(Divergence {
+                function: "glob errfunc",
+                case: name.to_string(),
+                field: "callback_calls",
+                frankenlibc: format!("{calls_fl}"),
+                glibc: format!("{calls_lc}"),
+            });
+        }
+        if errno_fl == 0 || errno_lc == 0 {
+            divs.push(Divergence {
+                function: "glob errfunc",
+                case: name.to_string(),
+                field: "errno",
+                frankenlibc: format!("{errno_fl}"),
+                glibc: format!("{errno_lc}"),
+            });
+        }
+        for (impl_name, path) in [("frankenlibc", path_fl), ("glibc", path_lc)] {
+            let path = path.unwrap_or_default();
+            if !path.contains("blocked") {
+                divs.push(Divergence {
+                    function: "glob errfunc",
+                    case: name.to_string(),
+                    field: "epath",
+                    frankenlibc: format!("{impl_name}: {path:?}"),
+                    glibc: "expected path containing blocked".to_string(),
+                });
+            }
+        }
+    }
+
+    let mut restored_permissions = std::fs::metadata(&blocked).unwrap().permissions();
+    restored_permissions.set_mode(0o700);
+    std::fs::set_permissions(&blocked, restored_permissions).unwrap();
+
+    assert!(
+        divs.is_empty(),
+        "glob errfunc divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================

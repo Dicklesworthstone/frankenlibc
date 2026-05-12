@@ -217,10 +217,23 @@ fn bracket_match(pat: &[u8], start: usize, ch: u8) -> (bool, usize) {
 
 /// Expand a glob pattern and return matching paths.
 ///
-/// `flags` are the POSIX glob flags (GLOB_ERR, GLOB_MARK, etc.).
-/// `errfunc` is currently ignored (always returns error on directory failure
-/// if GLOB_ERR is set).
 pub fn glob_expand(pattern: &[u8], flags: i32) -> Result<GlobResult, i32> {
+    glob_expand_with_error_handler(pattern, flags, |_, _| false)
+}
+
+/// Expand a glob pattern and invoke `errfunc` on directory traversal errors.
+///
+/// The handler receives the path that failed and the raw OS errno. Returning
+/// true requests POSIX `GLOB_ABORTED`; returning false lets traversal continue
+/// unless `GLOB_ERR` is set.
+pub fn glob_expand_with_error_handler<F>(
+    pattern: &[u8],
+    flags: i32,
+    mut errfunc: F,
+) -> Result<GlobResult, i32>
+where
+    F: FnMut(&[u8], i32) -> bool,
+{
     // Find the pattern up to first null byte.
     let pat_len = pattern
         .iter()
@@ -261,7 +274,7 @@ pub fn glob_expand(pattern: &[u8], flags: i32) -> Result<GlobResult, i32> {
     }
 
     let mut results = Vec::new();
-    glob_recursive(pat, flags, &mut results)?;
+    glob_recursive(pat, flags, &mut results, &mut errfunc)?;
 
     if results.is_empty() {
         if flags & GLOB_NOCHECK != 0 {
@@ -281,7 +294,15 @@ pub fn glob_expand(pattern: &[u8], flags: i32) -> Result<GlobResult, i32> {
 }
 
 /// Recursively expand a glob pattern with directory traversal.
-fn glob_recursive(pat: &[u8], flags: i32, results: &mut Vec<Vec<u8>>) -> Result<(), i32> {
+fn glob_recursive<F>(
+    pat: &[u8],
+    flags: i32,
+    results: &mut Vec<Vec<u8>>,
+    errfunc: &mut F,
+) -> Result<(), i32>
+where
+    F: FnMut(&[u8], i32) -> bool,
+{
     let (dir_prefix, tail) = split_pattern(pat);
 
     // Split tail at the next '/' to get the component pattern.
@@ -301,8 +322,14 @@ fn glob_recursive(pat: &[u8], flags: i32, results: &mut Vec<Vec<u8>>) -> Result<
     // Read directory entries.
     let entries = match std::fs::read_dir(dir_path) {
         Ok(e) => e,
-        Err(_) => {
-            if flags & GLOB_ERR != 0 {
+        Err(error) => {
+            let errno = error.raw_os_error().unwrap_or(crate::errno::EIO);
+            if errno == crate::errno::ENOTDIR {
+                return Ok(());
+            }
+            let failed_path = failed_directory_path(dir_prefix);
+            let callback_aborted = errfunc(&failed_path, errno);
+            if callback_aborted || flags & GLOB_ERR != 0 {
                 return Err(GLOB_ABORTED);
             }
             return Ok(());
@@ -350,11 +377,21 @@ fn glob_recursive(pat: &[u8], flags: i32, results: &mut Vec<Vec<u8>>) -> Result<
             // More pattern components remain — recurse into directory.
             full_path.push(b'/');
             full_path.extend_from_slice(rest);
-            glob_recursive(&full_path, flags, results)?;
+            glob_recursive(&full_path, flags, results, errfunc)?;
         }
     }
 
     Ok(())
+}
+
+fn failed_directory_path(dir_prefix: &[u8]) -> Vec<u8> {
+    if dir_prefix.is_empty() {
+        return b".".to_vec();
+    }
+    if dir_prefix.len() > 1 && dir_prefix.ends_with(b"/") {
+        return dir_prefix[..dir_prefix.len() - 1].to_vec();
+    }
+    dir_prefix.to_vec()
 }
 
 /// Expand ~ to $HOME.
@@ -388,6 +425,7 @@ fn expand_tilde(pat: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn test_has_magic() {
@@ -494,6 +532,57 @@ mod tests {
     }
 
     #[test]
+    fn directory_error_callback_can_abort() {
+        let (blocked_dir, pattern) = unreadable_directory_pattern("errfunc_abort");
+
+        let mut calls = 0;
+        let mut observed_path = Vec::new();
+        let mut observed_errno = 0;
+        let result = glob_expand_with_error_handler(&pattern, 0, |path, errno| {
+            calls += 1;
+            observed_path = path.to_vec();
+            observed_errno = errno;
+            true
+        });
+        restore_directory(&blocked_dir);
+
+        assert_eq!(result.unwrap_err(), GLOB_ABORTED);
+        assert_eq!(calls, 1);
+        assert_eq!(observed_path, blocked_dir.as_os_str().as_bytes());
+        assert_ne!(observed_errno, 0);
+    }
+
+    #[test]
+    fn directory_error_callback_can_continue() {
+        let (blocked_dir, pattern) = unreadable_directory_pattern("errfunc_continue");
+
+        let mut calls = 0;
+        let result = glob_expand_with_error_handler(&pattern, 0, |_, _| {
+            calls += 1;
+            false
+        });
+        restore_directory(&blocked_dir);
+
+        assert_eq!(result.unwrap_err(), GLOB_NOMATCH);
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn glob_err_aborts_after_callback() {
+        let (blocked_dir, pattern) = unreadable_directory_pattern("errfunc_glob_err");
+
+        let mut calls = 0;
+        let result = glob_expand_with_error_handler(&pattern, GLOB_ERR, |_, _| {
+            calls += 1;
+            false
+        });
+        restore_directory(&blocked_dir);
+
+        assert_eq!(result.unwrap_err(), GLOB_ABORTED);
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
     fn test_tilde_expansion() {
         let expanded = expand_tilde(b"~/test");
         if let Ok(home) = std::env::var("HOME") {
@@ -514,15 +603,7 @@ mod tests {
 
     #[test]
     fn noescape_treats_backslash_star_as_magic() {
-        let unique = format!(
-            "frankenlibc_glob_noescape_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let temp = std::env::temp_dir().join(unique);
+        let temp = unique_glob_test_dir("noescape");
         std::fs::create_dir_all(&temp).unwrap();
         let escaped_name = b"\\alpha";
         let escaped_path = temp.join(OsStr::from_bytes(escaped_name));
@@ -537,5 +618,38 @@ mod tests {
         assert_eq!(res.paths.len(), 1);
         assert_eq!(res.paths[0], escaped_path.as_os_str().as_bytes());
         assert!(has_magic(b"\\*", true));
+    }
+
+    fn unique_glob_test_dir(name: &str) -> std::path::PathBuf {
+        let unique = format!(
+            "frankenlibc_glob_{name}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        std::env::temp_dir().join(unique)
+    }
+
+    fn unreadable_directory_pattern(name: &str) -> (std::path::PathBuf, Vec<u8>) {
+        let temp = unique_glob_test_dir(name);
+        let blocked_dir = temp.join("blocked");
+        std::fs::create_dir_all(&blocked_dir).unwrap();
+        set_directory_mode(&blocked_dir, 0o000);
+
+        let mut pattern = blocked_dir.as_os_str().as_bytes().to_vec();
+        pattern.extend_from_slice(b"/*\0");
+        (blocked_dir, pattern)
+    }
+
+    fn restore_directory(path: &std::path::Path) {
+        set_directory_mode(path, 0o700);
+    }
+
+    fn set_directory_mode(path: &std::path::Path, mode: u32) {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(mode);
+        std::fs::set_permissions(path, permissions).unwrap();
     }
 }

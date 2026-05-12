@@ -5289,10 +5289,11 @@ struct GlobT {
 pub unsafe extern "C" fn glob(
     pattern: *const c_char,
     flags: c_int,
-    _errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
+    errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
     pglob: *mut c_void,
 ) -> c_int {
     use frankenlibc_core::string::glob as glob_core;
+    use std::ffi::CString;
 
     if pattern.is_null() || pglob.is_null() {
         return glob_core::GLOB_NOMATCH;
@@ -5325,7 +5326,22 @@ pub unsafe extern "C" fn glob(
     };
 
     // Run the glob engine.
-    let result = glob_core::glob_expand(&pat_bytes, flags);
+    let result = match errfunc {
+        Some(callback) => {
+            glob_core::glob_expand_with_error_handler(&pat_bytes, flags, |path, errno| {
+                match CString::new(path) {
+                    Ok(epath) => {
+                        // SAFETY: `epath` is a null-terminated CString that stays
+                        // alive for the whole errfunc call, and POSIX callbacks
+                        // receive the errno value by copy.
+                        unsafe { callback(epath.as_ptr(), errno as c_int) != 0 }
+                    }
+                    Err(_) => true,
+                }
+            })
+        }
+        None => glob_core::glob_expand(&pat_bytes, flags),
+    };
 
     match result {
         Ok(res) => {
