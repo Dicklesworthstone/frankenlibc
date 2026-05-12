@@ -7387,29 +7387,34 @@ pub unsafe extern "C" fn strnunvis(dst: *mut c_char, dlen: usize, src: *const c_
 
 /// NetBSD `vis(dst, c, flags, nextc)` — encode the single byte `c`
 /// into `dst` (NUL-terminated), returning a pointer to the trailing
-/// NUL. `nextc` is a documented disambiguation hint; with our
-/// 3-digit-padded `\NNN` octal it has no effect.
+/// NUL. `nextc` is used by `VIS_CSTYLE` to avoid ambiguous `\0`
+/// before an octal digit.
 ///
 /// Returns NULL when `dst` is NULL.
 ///
 /// # Safety
 ///
 /// Caller must ensure `dst` is large enough for the worst-case
-/// encoded byte (5 bytes for `\M-\^X`) plus the trailing NUL.
+/// encoded byte (7 bytes for `\M-\000`) plus the trailing NUL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vis(
     dst: *mut c_char,
     c: c_int,
     flags: c_int,
-    _nextc: c_int,
+    nextc: c_int,
 ) -> *mut c_char {
     if dst.is_null() {
         return std::ptr::null_mut();
     }
     let mut buf: Vec<u8> = Vec::with_capacity(8);
-    frankenlibc_core::stdio::vis::encode_byte(c as u8, flags as u32, &mut buf);
+    frankenlibc_core::stdio::vis::encode_byte_with_next(
+        c as u8,
+        flags as u32,
+        Some(nextc as u8),
+        &mut buf,
+    );
     // SAFETY: caller-supplied dst has room for the worst-case
-    // encoded byte (max 5 bytes + NUL).
+    // encoded byte (max 7 bytes + NUL).
     unsafe {
         std::ptr::copy_nonoverlapping(buf.as_ptr(), dst as *mut u8, buf.len());
         *dst.add(buf.len()) = 0;
@@ -7431,13 +7436,18 @@ pub unsafe extern "C" fn nvis(
     dlen: usize,
     c: c_int,
     flags: c_int,
-    _nextc: c_int,
+    nextc: c_int,
 ) -> *mut c_char {
     if dst.is_null() || dlen == 0 {
         return std::ptr::null_mut();
     }
     let mut buf: Vec<u8> = Vec::with_capacity(8);
-    frankenlibc_core::stdio::vis::encode_byte(c as u8, flags as u32, &mut buf);
+    frankenlibc_core::stdio::vis::encode_byte_with_next(
+        c as u8,
+        flags as u32,
+        Some(nextc as u8),
+        &mut buf,
+    );
     if buf.len() + 1 > dlen {
         return std::ptr::null_mut();
     }
@@ -7716,7 +7726,7 @@ pub unsafe extern "C" fn svis(
     dst: *mut c_char,
     c: c_int,
     flags: c_int,
-    _nextc: c_int,
+    nextc: c_int,
     extra: *const c_char,
 ) -> *mut c_char {
     if dst.is_null() {
@@ -7726,7 +7736,13 @@ pub unsafe extern "C" fn svis(
         return std::ptr::null_mut();
     };
     let mut buf: Vec<u8> = Vec::with_capacity(8);
-    frankenlibc_core::stdio::vis::encode_byte_with_extra(c as u8, flags as u32, extras, &mut buf);
+    frankenlibc_core::stdio::vis::encode_byte_with_extra_and_next(
+        c as u8,
+        flags as u32,
+        Some(nextc as u8),
+        extras,
+        &mut buf,
+    );
     unsafe {
         std::ptr::copy_nonoverlapping(buf.as_ptr(), dst as *mut u8, buf.len());
         *dst.add(buf.len()) = 0;
@@ -7748,7 +7764,7 @@ pub unsafe extern "C" fn snvis(
     dlen: usize,
     c: c_int,
     flags: c_int,
-    _nextc: c_int,
+    nextc: c_int,
     extra: *const c_char,
 ) -> *mut c_char {
     if dst.is_null() || dlen == 0 {
@@ -7758,7 +7774,13 @@ pub unsafe extern "C" fn snvis(
         return std::ptr::null_mut();
     };
     let mut buf: Vec<u8> = Vec::with_capacity(8);
-    frankenlibc_core::stdio::vis::encode_byte_with_extra(c as u8, flags as u32, extras, &mut buf);
+    frankenlibc_core::stdio::vis::encode_byte_with_extra_and_next(
+        c as u8,
+        flags as u32,
+        Some(nextc as u8),
+        extras,
+        &mut buf,
+    );
     if buf.len() + 1 > dlen {
         return std::ptr::null_mut();
     }

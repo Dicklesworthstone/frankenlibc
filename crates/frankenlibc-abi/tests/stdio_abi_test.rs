@@ -4180,6 +4180,13 @@ fn vis_string(buf: &[c_char], n: c_int) -> Vec<u8> {
     buf[..n as usize].iter().map(|&c| c as u8).collect()
 }
 
+const ABI_VIS_OCTAL: c_int = 0x01;
+const ABI_VIS_SP: c_int = 0x04;
+const ABI_VIS_TAB: c_int = 0x08;
+const ABI_VIS_NL: c_int = 0x10;
+const ABI_VIS_CSTYLE: c_int = 0x20;
+const ABI_VIS_WHITE: c_int = ABI_VIS_SP | ABI_VIS_TAB | ABI_VIS_NL;
+
 unsafe fn tracked_bytes_without_nul(bytes: &[u8]) -> *mut c_char {
     let ptr = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()).cast::<c_char>() };
     assert!(!ptr.is_null());
@@ -4207,16 +4214,39 @@ fn strvis_doubles_backslash() {
 }
 
 #[test]
-fn strvis_with_octal_flag_renders_three_digit_octal() {
+fn strvis_keeps_safe_whitespace_by_default() {
+    let src = c"a\t\nb";
+    let mut buf = vis_buf::<32>();
+    let n = unsafe { strvis(buf.as_mut_ptr(), src.as_ptr(), 0) };
+    assert_eq!(vis_string(&buf, n), b"a\t\nb");
+}
+
+#[test]
+fn strvis_whitespace_flags_force_default_escapes() {
+    let src = c" \t\n";
+    let mut buf = vis_buf::<32>();
+    let n = unsafe { strvis(buf.as_mut_ptr(), src.as_ptr(), ABI_VIS_WHITE) };
+    assert_eq!(vis_string(&buf, n), b"\\040\\^I\\^J");
+}
+
+#[test]
+fn strvis_cstyle_whitespace_uses_named_escapes() {
+    let src = c" \t\n";
     let mut buf = vis_buf::<32>();
     let n = unsafe {
-        strnvis(
+        strvis(
             buf.as_mut_ptr(),
-            buf.len(),
-            c"\xff".as_ptr(),
-            0x01, // VIS_OCTAL
+            src.as_ptr(),
+            ABI_VIS_CSTYLE | ABI_VIS_WHITE,
         )
     };
+    assert_eq!(vis_string(&buf, n), b"\\s\\t\\n");
+}
+
+#[test]
+fn strvis_with_octal_flag_renders_three_digit_octal() {
+    let mut buf = vis_buf::<32>();
+    let n = unsafe { strnvis(buf.as_mut_ptr(), buf.len(), c"\xff".as_ptr(), ABI_VIS_OCTAL) };
     assert_eq!(vis_string(&buf, n), b"\\377");
 }
 
@@ -4369,9 +4399,65 @@ fn vis_encodes_control_as_caret_escape() {
 }
 
 #[test]
+fn vis_keeps_tab_and_newline_by_default() {
+    let mut tab = [0 as c_char; 8];
+    let tab_end = unsafe { vis(tab.as_mut_ptr(), b'\t' as c_int, 0, 0) };
+    assert_eq!(unsafe { tab_end.offset_from(tab.as_ptr()) }, 1);
+    assert_eq!(tab[0], b'\t' as c_char);
+
+    let mut newline = [0 as c_char; 8];
+    let nl_end = unsafe { vis(newline.as_mut_ptr(), b'\n' as c_int, 0, 0) };
+    assert_eq!(unsafe { nl_end.offset_from(newline.as_ptr()) }, 1);
+    assert_eq!(newline[0], b'\n' as c_char);
+}
+
+#[test]
+fn vis_cstyle_uses_nextc_to_disambiguate_nul() {
+    let mut short = [0 as c_char; 8];
+    let short_end = unsafe { vis(short.as_mut_ptr(), 0, ABI_VIS_CSTYLE, b'x' as c_int) };
+    assert!(!short_end.is_null());
+    let short_bytes: Vec<u8> = short
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(short_bytes, b"\\0");
+
+    let mut octal = [0 as c_char; 8];
+    let octal_end = unsafe { vis(octal.as_mut_ptr(), 0, ABI_VIS_CSTYLE, b'7' as c_int) };
+    assert!(!octal_end.is_null());
+    let octal_bytes: Vec<u8> = octal
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(octal_bytes, b"\\000");
+}
+
+#[test]
+fn vis_cstyle_forced_whitespace_uses_named_escapes() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe {
+        vis(
+            buf.as_mut_ptr(),
+            b'\n' as c_int,
+            ABI_VIS_CSTYLE | ABI_VIS_NL,
+            0,
+        )
+    };
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\n");
+}
+
+#[test]
 fn vis_encodes_with_octal_flag() {
     let mut buf = [0 as c_char; 8];
-    let end = unsafe { vis(buf.as_mut_ptr(), 0xff, 0x01, 0) }; // VIS_OCTAL
+    let end = unsafe { vis(buf.as_mut_ptr(), 0xff, ABI_VIS_OCTAL, 0) };
     assert!(!end.is_null());
     let bytes: Vec<u8> = buf
         .iter()
@@ -4384,7 +4470,7 @@ fn vis_encodes_with_octal_flag() {
 #[test]
 fn vis_returns_pointer_to_trailing_nul() {
     let mut buf = [0 as c_char; 8];
-    let end = unsafe { vis(buf.as_mut_ptr(), 0xff, 0x01, 0) };
+    let end = unsafe { vis(buf.as_mut_ptr(), 0xff, ABI_VIS_OCTAL, 0) };
     assert!(!end.is_null());
     // The byte at `end` must be the NUL terminator.
     assert_eq!(unsafe { *end }, 0);
@@ -4407,7 +4493,7 @@ fn nvis_writes_when_dlen_sufficient() {
 #[test]
 fn nvis_returns_null_when_dlen_too_small() {
     let mut buf = [0 as c_char; 2]; // octal needs 4 bytes + NUL
-    let end = unsafe { nvis(buf.as_mut_ptr(), buf.len(), 0xff, 0x01, 0) };
+    let end = unsafe { nvis(buf.as_mut_ptr(), buf.len(), 0xff, ABI_VIS_OCTAL, 0) };
     assert!(end.is_null());
 }
 
@@ -4458,10 +4544,33 @@ fn strvisx_encodes_buffer_with_embedded_nul() {
 }
 
 #[test]
+fn strvisx_cstyle_encodes_embedded_nul_and_whitespace_names() {
+    let src: [c_char; 5] = [
+        0,
+        b'\t' as c_char,
+        b'\n' as c_char,
+        b' ' as c_char,
+        b'7' as c_char,
+    ];
+    let mut dst = [0 as c_char; 32];
+    let flags = ABI_VIS_CSTYLE | ABI_VIS_WHITE;
+    let n = unsafe { strvisx(dst.as_mut_ptr(), src.as_ptr(), src.len(), flags) };
+    assert_eq!(vis_collect(&dst, n), b"\\0\\t\\n\\s7");
+}
+
+#[test]
+fn strvisx_cstyle_uses_octal_nul_before_octal_digit() {
+    let src: [c_char; 2] = [0, b'7' as c_char];
+    let mut dst = [0 as c_char; 16];
+    let n = unsafe { strvisx(dst.as_mut_ptr(), src.as_ptr(), src.len(), ABI_VIS_CSTYLE) };
+    assert_eq!(vis_collect(&dst, n), b"\\0007");
+}
+
+#[test]
 fn strvisx_with_octal_flag_renders_three_digit_octal() {
     let src: [c_char; 1] = [-1 as c_char];
     let mut dst = [0 as c_char; 8];
-    let n = unsafe { strvisx(dst.as_mut_ptr(), src.as_ptr(), 1, 0x01) };
+    let n = unsafe { strvisx(dst.as_mut_ptr(), src.as_ptr(), 1, ABI_VIS_OCTAL) };
     let bytes = vis_collect(&dst, n);
     assert_eq!(bytes, b"\\377");
 }
@@ -5276,8 +5385,9 @@ fn strenvisx_without_env_matches_strvisx() {
 fn strenvisx_honors_vis_octal_from_env() {
     let _g = VIS_OPTIONS_LOCK.lock().unwrap();
     let _restore = VisOptionsGuard::set(Some(c"VIS_OCTAL"));
-    // Encode \n with no flags from caller — env should force octal.
-    let payload: &[u8] = b"\n";
+    // Encode a non-whitespace control byte with no flags from the
+    // caller; env should force octal representation.
+    let payload: &[u8] = b"\x01";
     let mut buf = [0 as c_char; 16];
     let mut cerr: c_int = 99;
     let n = unsafe {
@@ -5291,16 +5401,38 @@ fn strenvisx_honors_vis_octal_from_env() {
     };
     assert_eq!(n, 4);
     assert_eq!(cerr, 0);
-    // 0x0a in octal = "\012".
+    // 0x01 in octal = "\001".
     let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
-    assert_eq!(bytes, b"\\012".to_vec());
+    assert_eq!(bytes, b"\\001".to_vec());
+}
+
+#[test]
+fn strenvisx_honors_cstyle_and_newline_from_env() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(Some(c"VIS_CSTYLE,VIS_NL"));
+    let payload: &[u8] = b"\n";
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    assert_eq!(n, 2);
+    assert_eq!(cerr, 0);
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"\\n".to_vec());
 }
 
 #[test]
 fn strenvisx_unknown_env_tokens_are_ignored() {
     let _g = VIS_OPTIONS_LOCK.lock().unwrap();
     let _restore = VisOptionsGuard::set(Some(c"VIS_FOO,VIS_BAR,VIS_OCTAL"));
-    let payload: &[u8] = b"\n";
+    let payload: &[u8] = b"\x01";
     let mut buf = [0 as c_char; 16];
     let mut cerr: c_int = 0;
     let n = unsafe {
@@ -5314,7 +5446,7 @@ fn strenvisx_unknown_env_tokens_are_ignored() {
     };
     // Only VIS_OCTAL is recognized; bytes match the octal-mode form.
     let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
-    assert_eq!(bytes, b"\\012".to_vec());
+    assert_eq!(bytes, b"\\001".to_vec());
 }
 
 #[test]

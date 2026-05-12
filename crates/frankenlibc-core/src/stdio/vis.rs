@@ -6,9 +6,10 @@
 //!
 //! ## Encoding (default mode, no flags)
 //!
-//! - Printable ASCII (0x20..=0x7e) except `\\` → emitted as-is.
+//! - Printable ASCII (0x20..=0x7e) except `\\`, plus tab and
+//!   newline → emitted as-is.
 //! - `\\` → `\\\\`.
-//! - Non-printable c < 0x80 → `\\^X` where X = c XOR 0x40.
+//! - Other non-printable c < 0x80 → `\\^X` where X = c XOR 0x40.
 //! - 0x7f (DEL) → `\\^?`.
 //! - High-bit bytes (c >= 0x80) → `\\M-X` followed by the encoded
 //!   form of c & 0x7f (recursive — but bounded since the next call
@@ -16,8 +17,9 @@
 //!
 //! ## Encoding ([`VIS_OCTAL`])
 //!
-//! All non-printable bytes (anything outside 0x20..=0x7e plus the
-//! mandatory `\\`-escape) are rendered as `\\NNN` (3-digit octal).
+//! All encoded non-printable bytes (anything outside 0x20..=0x7e
+//! except the default-safe whitespace plus the mandatory
+//! `\\`-escape) are rendered as `\\NNN` (3-digit octal).
 //!
 //! ## Decoding
 //!
@@ -25,26 +27,29 @@
 //! escapes `\\n \\t \\r \\b \\v \\a \\f \\0`. Anything else after a
 //! `\\` is passed through verbatim.
 //!
-//! Other libutil flags (`VIS_TAB`, `VIS_NL`, `VIS_HTTPSTYLE`,
-//! `VIS_SAFE`, etc.) are accepted but currently ignored — the v1
-//! port focuses on the byte-stream-safe defaults.
+//! `VIS_SP`, `VIS_TAB`, and `VIS_NL` force the normally safe
+//! whitespace bytes to be escaped. `VIS_CSTYLE` uses C-style escape
+//! spellings for the standard control characters. Other libutil flags
+//! (`VIS_HTTPSTYLE`, `VIS_SAFE`, etc.) are accepted but currently
+//! ignored — the v1 port focuses on the byte-stream-safe defaults.
 
 /// Render all non-printable bytes as `\NNN` octal triples instead
 /// of the default `\^X` / `\M-X` notation.
 pub const VIS_OCTAL: u32 = 0x01;
-/// Encode space as a literal byte even though it qualifies as
-/// "graph". (Default mode emits space as-is, so this is a no-op
-/// for our v1.)
+/// Force space to be escaped instead of using the default literal
+/// passthrough.
 pub const VIS_SP: u32 = 0x04;
-/// Encode tab as `\t` rather than `\^I`. Accepted but ignored in
-/// v1; non-default tab handling differs only in cosmetics.
+/// Force tab to be escaped instead of using the default literal
+/// passthrough.
 pub const VIS_TAB: u32 = 0x08;
-/// Encode newline as `\n` rather than `\^J`. Accepted but ignored
-/// in v1 (same rationale as `VIS_TAB`).
+/// Force newline to be escaped instead of using the default literal
+/// passthrough.
 pub const VIS_NL: u32 = 0x10;
-/// Encode `?` as `\?` to avoid trigraph collision. Accepted but
-/// ignored in v1.
+/// Use C-style escape spellings for standard control characters
+/// that must be encoded.
 pub const VIS_CSTYLE: u32 = 0x20;
+/// Convenience mask for whitespace-forcing flags.
+pub const VIS_WHITE: u32 = VIS_SP | VIS_TAB | VIS_NL;
 
 /// Parse a NetBSD `VIS_OPTIONS`-style flag string and return the
 /// OR of the recognized `VIS_*` flag bits.
@@ -71,12 +76,12 @@ pub fn parse_vis_options(s: &[u8]) -> u32 {
             b"VIS_TAB" => flags |= VIS_TAB,
             b"VIS_NL" => flags |= VIS_NL,
             b"VIS_CSTYLE" => flags |= VIS_CSTYLE,
+            b"VIS_WHITE" => flags |= VIS_WHITE,
             // NetBSD-specific tokens that we accept (and silently
             // discard, since the bits aren't part of our v1 byte
             // encoder's behavior).
             b"VIS_HTTPSTYLE" | b"VIS_SAFE" | b"VIS_NOSLASH" | b"VIS_GLOB" | b"VIS_HTTP1808"
-            | b"VIS_MIMESTYLE" | b"VIS_NOLOCALE" | b"VIS_DQ" | b"VIS_SHELL" | b"VIS_META"
-            | b"VIS_WHITE" => {}
+            | b"VIS_MIMESTYLE" | b"VIS_NOLOCALE" | b"VIS_DQ" | b"VIS_SHELL" | b"VIS_META" => {}
             _ => {} // Unknown token — silently ignore.
         }
     }
@@ -96,35 +101,87 @@ fn trim_ascii(s: &[u8]) -> &[u8] {
     &s[start..end]
 }
 
+fn is_octal_digit(c: u8) -> bool {
+    (b'0'..=b'7').contains(&c)
+}
+
+fn push_octal(c: u8, out: &mut Vec<u8>) {
+    out.push(b'\\');
+    out.push(b'0' + ((c >> 6) & 0x07));
+    out.push(b'0' + ((c >> 3) & 0x07));
+    out.push(b'0' + (c & 0x07));
+}
+
+fn whitespace_passthrough(c: u8, flags: u32) -> bool {
+    matches!(c, b' ' if flags & VIS_SP == 0)
+        || matches!(c, b'\t' if flags & VIS_TAB == 0)
+        || matches!(c, b'\n' if flags & VIS_NL == 0)
+}
+
+fn push_cstyle_escape(c: u8, nextc: Option<u8>, out: &mut Vec<u8>) -> bool {
+    let escaped = match c {
+        b'\0' => {
+            if nextc.is_some_and(is_octal_digit) {
+                push_octal(c, out);
+                return true;
+            }
+            b'0'
+        }
+        0x07 => b'a',
+        b'\x08' => b'b',
+        0x0c => b'f',
+        b'\n' => b'n',
+        b'\r' => b'r',
+        b' ' => b's',
+        b'\t' => b't',
+        0x0b => b'v',
+        _ => return false,
+    };
+    out.push(b'\\');
+    out.push(escaped);
+    true
+}
+
 /// Encode a single byte `c` into `out`, appending the result.
 /// `flags` is the OR of `VIS_*` constants.
 pub fn encode_byte(c: u8, flags: u32, out: &mut Vec<u8>) {
+    encode_byte_with_next(c, flags, None, out);
+}
+
+/// Encode a single byte, using `nextc` for `VIS_CSTYLE` NUL
+/// disambiguation.
+pub fn encode_byte_with_next(c: u8, flags: u32, nextc: Option<u8>, out: &mut Vec<u8>) {
     let octal_mode = flags & VIS_OCTAL != 0;
+    let cstyle_mode = flags & VIS_CSTYLE != 0;
 
     if c == b'\\' {
         out.push(b'\\');
         out.push(b'\\');
         return;
     }
-    if (0x20..=0x7e).contains(&c) {
+    if (0x21..=0x7e).contains(&c) || whitespace_passthrough(c, flags) {
         out.push(c);
         return;
     }
-    if octal_mode {
-        out.push(b'\\');
-        out.push(b'0' + ((c >> 6) & 0x07));
-        out.push(b'0' + ((c >> 3) & 0x07));
-        out.push(b'0' + (c & 0x07));
-        return;
-    }
-    if c >= 0x80 {
+    if c >= 0x80 && !octal_mode {
         // High bit set: emit \M- prefix then recursively encode the
         // low 7 bits. Recursion is bounded — the recursive call sees
         // a 7-bit byte and never re-enters this branch.
         out.push(b'\\');
         out.push(b'M');
         out.push(b'-');
-        encode_byte(c & 0x7f, flags, out);
+        encode_byte_with_next(c & 0x7f, flags, nextc, out);
+        return;
+    }
+    if cstyle_mode && push_cstyle_escape(c, nextc, out) {
+        return;
+    }
+    if c == b' ' {
+        push_octal(c, out);
+        return;
+    }
+    if octal_mode {
+        push_octal(c, out);
         return;
     }
     if c == 0x7f {
@@ -143,8 +200,8 @@ pub fn encode_byte(c: u8, flags: u32, out: &mut Vec<u8>) {
 /// behavior of NetBSD `strvis(dst, src, flags)`.
 pub fn strvis_to_vec(src: &[u8], flags: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity(src.len() * 4 + 1);
-    for &c in src {
-        encode_byte(c, flags, &mut out);
+    for (idx, &c) in src.iter().enumerate() {
+        encode_byte_with_next(c, flags, src.get(idx + 1).copied(), &mut out);
     }
     out
 }
@@ -153,26 +210,35 @@ pub fn strvis_to_vec(src: &[u8], flags: u32) -> Vec<u8> {
 /// `extra` as needing escape (even bytes that would otherwise pass
 /// through). Mirrors NetBSD `svis(3)`.
 pub fn encode_byte_with_extra(c: u8, flags: u32, extra: &[u8], out: &mut Vec<u8>) {
+    encode_byte_with_extra_and_next(c, flags, None, extra, out);
+}
+
+/// Encode a byte like [`encode_byte_with_extra`], using `nextc` for
+/// `VIS_CSTYLE` NUL disambiguation.
+pub fn encode_byte_with_extra_and_next(
+    c: u8,
+    flags: u32,
+    nextc: Option<u8>,
+    extra: &[u8],
+    out: &mut Vec<u8>,
+) {
     if extra.contains(&c) && c != b'\\' && (0x20..=0x7e).contains(&c) {
         // Extra-escaped printable bytes still have to be safe inside
         // a NUL-terminated C output string. Caret form would turn
         // bytes like '@' through '_' into embedded control bytes, so
         // use octal for this forced-escape path in every mode.
-        out.push(b'\\');
-        out.push(b'0' + ((c >> 6) & 0x07));
-        out.push(b'0' + ((c >> 3) & 0x07));
-        out.push(b'0' + (c & 0x07));
+        push_octal(c, out);
         return;
     }
-    encode_byte(c, flags, out);
+    encode_byte_with_next(c, flags, nextc, out);
 }
 
 /// Encode `src` into a fresh `Vec<u8>` with `extra` bytes also forced
 /// to escape. Mirrors NetBSD `strsvis(dst, src, flags, extra)`.
 pub fn strvis_to_vec_with_extra(src: &[u8], flags: u32, extra: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(src.len() * 4 + 1);
-    for &c in src {
-        encode_byte_with_extra(c, flags, extra, &mut out);
+    for (idx, &c) in src.iter().enumerate() {
+        encode_byte_with_extra_and_next(c, flags, src.get(idx + 1).copied(), extra, &mut out);
     }
     out
 }
@@ -333,6 +399,8 @@ mod tests {
     fn printable_bytes_pass_through() {
         assert_eq!(enc(b"hello"), b"hello".to_vec());
         assert_eq!(enc(b" "), b" ".to_vec());
+        assert_eq!(enc(b"\t"), b"\t".to_vec());
+        assert_eq!(enc(b"\n"), b"\n".to_vec());
         assert_eq!(enc(b"~"), b"~".to_vec());
     }
 
@@ -378,11 +446,46 @@ mod tests {
     #[test]
     fn octal_mode_keeps_printable_passthrough() {
         assert_eq!(enc_oct(b"foo"), b"foo".to_vec());
+        assert_eq!(enc_oct(b" \t\n"), b" \t\n".to_vec());
     }
 
     #[test]
     fn octal_mode_still_doubles_backslash() {
         assert_eq!(enc_oct(b"\\"), b"\\\\".to_vec());
+    }
+
+    #[test]
+    fn whitespace_flags_force_default_escapes() {
+        assert_eq!(strvis_to_vec(b" ", VIS_SP), b"\\040".to_vec());
+        assert_eq!(strvis_to_vec(b"\t", VIS_TAB), b"\\^I".to_vec());
+        assert_eq!(strvis_to_vec(b"\n", VIS_NL), b"\\^J".to_vec());
+        assert_eq!(
+            strvis_to_vec(b" \t\n", VIS_WHITE),
+            b"\\040\\^I\\^J".to_vec()
+        );
+    }
+
+    #[test]
+    fn cstyle_mode_uses_named_escapes_for_encoded_bytes() {
+        let flags = VIS_CSTYLE | VIS_WHITE;
+        assert_eq!(
+            strvis_to_vec(b"\0\x07\x08\x0c\n\r \t\x0b", flags),
+            b"\\0\\a\\b\\f\\n\\r\\s\\t\\v".to_vec()
+        );
+    }
+
+    #[test]
+    fn cstyle_nul_uses_octal_before_octal_digit() {
+        assert_eq!(strvis_to_vec(&[0, b'7'], VIS_CSTYLE), b"\\0007".to_vec());
+    }
+
+    #[test]
+    fn cstyle_octal_fallback_handles_unnamed_controls() {
+        assert_eq!(
+            strvis_to_vec(b"\x01", VIS_CSTYLE | VIS_OCTAL),
+            b"\\001".to_vec()
+        );
+        assert_eq!(strvis_to_vec(b"\x01", VIS_CSTYLE), b"\\^A".to_vec());
     }
 
     #[test]
@@ -948,7 +1051,7 @@ mod unvis_tests {
 
     #[test]
     fn parse_vis_options_recognizes_implemented_flags() {
-        let s = b"VIS_OCTAL,VIS_TAB,VIS_NL,VIS_CSTYLE,VIS_SP";
+        let s = b"VIS_OCTAL,VIS_TAB,VIS_NL,VIS_CSTYLE,VIS_SP,VIS_WHITE";
         let flags = parse_vis_options(s);
         assert_eq!(flags, VIS_OCTAL | VIS_TAB | VIS_NL | VIS_CSTYLE | VIS_SP);
     }
