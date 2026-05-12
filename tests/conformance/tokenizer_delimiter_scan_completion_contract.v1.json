@@ -1,0 +1,165 @@
+{
+  "schema_version": "tokenizer_delimiter_scan_completion_contract.v1",
+  "bead_id": "bd-5if6f.1",
+  "original_bead": "bd-5if6f",
+  "title": "Tokenizer delimiter scan conformance completion contract",
+  "audit_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-5if6f/scorecard.md",
+  "audit_score": 470,
+  "score_threshold": 700,
+  "completion_debt_evidence": {
+    "missing_items_closed": [
+      "tests.conformance.primary"
+    ],
+    "next_audit_score_threshold": 700
+  },
+  "source_artifacts": {
+    "implementation": {
+      "path": "crates/frankenlibc-abi/src/string_abi.rs",
+      "required_markers": [
+        "pub unsafe extern \"C\" fn strtok(",
+        "pub unsafe extern \"C\" fn strtok_r(",
+        "pub unsafe extern \"C\" fn strsep(",
+        "let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);",
+        "let (delim_len, delim_term) = scan_c_string(delim, delim_bound);"
+      ]
+    },
+    "conformance_diff": {
+      "path": "crates/frankenlibc-abi/tests/conformance_diff_string_mut.rs",
+      "required_functions": [
+        "diff_strtok_r_cases"
+      ],
+      "required_markers": [
+        "fn tokenize_with(",
+        "let fl_toks = tokenize_with(fl::strtok_r, src, delim);",
+        "let lc_toks = tokenize_with(libc::strtok_r, src, delim);",
+        "strtok_r divergences"
+      ],
+      "required_case_markers": [
+        "b\"a,b,c\"",
+        "b\",,a,,b,,\"",
+        "b\"hello world how are you\"",
+        "b\"a-b_c d\""
+      ]
+    },
+    "unit_regressions": {
+      "path": "crates/frankenlibc-abi/tests/string_abi_test.rs",
+      "required_functions": [
+        "strtok_r_rejects_tracked_unterminated_delimiter",
+        "strtok_rejects_tracked_unterminated_delimiter",
+        "strsep_rejects_tracked_unterminated_delimiter"
+      ],
+      "required_markers": [
+        "malloc_unterminated(b\",\")",
+        "malloc_unterminated(b\":\")",
+        "assert!(tok.is_null());",
+        "assert_eq!(&buf, b\"a,b\\0\");",
+        "assert_eq!(&buf, b\"a:b\\0\");"
+      ]
+    },
+    "fixture": {
+      "path": "tests/conformance/fixtures/string_strtok.json",
+      "required_family": "string/strtok",
+      "required_functions": [
+        "strtok",
+        "strtok_r"
+      ],
+      "required_case_ids": [
+        "strtok_all_delims",
+        "strtok_basic_first",
+        "strtok_comma_delim",
+        "strtok_leading_delims",
+        "strtok_no_delim_found",
+        "strtok_r_basic_first",
+        "strtok_r_comma_delim",
+        "strtok_r_empty"
+      ]
+    },
+    "golden_fixture_table": {
+      "path": "tests/conformance/golden/fixture_verify_strict_hardened.v1.md",
+      "required_trace_ids": [
+        "fixture-verify::string/strtok::strtok::strict::strtok_all_delims",
+        "fixture-verify::string/strtok::strtok::strict::strtok_basic_first",
+        "fixture-verify::string/strtok::strtok::strict::strtok_comma_delim",
+        "fixture-verify::string/strtok::strtok::strict::strtok_leading_delims",
+        "fixture-verify::string/strtok::strtok::strict::strtok_no_delim_found",
+        "fixture-verify::string/strtok::strtok_r::strict::strtok_r_basic_first",
+        "fixture-verify::string/strtok::strtok_r::strict::strtok_r_comma_delim",
+        "fixture-verify::string/strtok::strtok_r::strict::strtok_r_empty"
+      ],
+      "required_status": "PASS"
+    },
+    "completion_gate": {
+      "path": "scripts/check_tokenizer_delimiter_scan_completion_contract.sh",
+      "required_markers": [
+        "tokenizer_delimiter_completion.source_binding",
+        "tokenizer_delimiter_completion.conformance_binding",
+        "tokenizer_delimiter_completion.fixture_golden_binding",
+        "tokenizer_delimiter_completion.summary"
+      ]
+    },
+    "completion_harness": {
+      "path": "crates/frankenlibc-harness/tests/tokenizer_delimiter_scan_completion_contract_test.rs",
+      "required_functions": [
+        "manifest_binds_tokenizer_conformance_sources",
+        "checker_accepts_tokenizer_completion_contract",
+        "checker_rejects_missing_conformance_function",
+        "checker_rejects_fixture_case_drift",
+        "checker_rejects_golden_trace_drift"
+      ]
+    }
+  },
+  "completion_obligations": [
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "description": "Tokenizer delimiter scan conformance is bound by glibc differential strtok_r cases plus strict fixture/golden coverage for strtok and strtok_r tokenization.",
+      "source_refs": [
+        "crates/frankenlibc-abi/tests/conformance_diff_string_mut.rs",
+        "tests/conformance/fixtures/string_strtok.json",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.md",
+        "crates/frankenlibc-abi/tests/string_abi_test.rs"
+      ]
+    }
+  ],
+  "completion_log_contract": {
+    "required_fields": [
+      "timestamp",
+      "trace_id",
+      "bead_id",
+      "original_bead",
+      "event",
+      "outcome",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs"
+    ],
+    "required_events": [
+      "tokenizer_delimiter_completion.source_binding",
+      "tokenizer_delimiter_completion.conformance_binding",
+      "tokenizer_delimiter_completion.fixture_golden_binding",
+      "tokenizer_delimiter_completion.summary"
+    ]
+  },
+  "required_validation_commands": [
+    "jq empty tests/conformance/tokenizer_delimiter_scan_completion_contract.v1.json",
+    "bash -n scripts/check_tokenizer_delimiter_scan_completion_contract.sh",
+    "bash scripts/check_tokenizer_delimiter_scan_completion_contract.sh",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/tokenizer_delimiter_scan_completion_contract_test.rs",
+    "rch exec -- cargo test -p frankenlibc-harness --test tokenizer_delimiter_scan_completion_contract_test -- --nocapture",
+    "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_string_mut diff_strtok_r_cases -- --nocapture",
+    "rch exec -- cargo test -p frankenlibc-abi --test string_abi_test tracked_unterminated_delimiter -- --nocapture",
+    "rch exec -- cargo clippy -p frankenlibc-harness --test tokenizer_delimiter_scan_completion_contract_test -- -D warnings"
+  ],
+  "failure_signatures": [
+    "missing source artifact marker",
+    "missing tokenizer conformance function",
+    "tokenizer fixture case drift",
+    "tokenizer golden trace drift",
+    "tokenizer completion log missing required field"
+  ]
+}
