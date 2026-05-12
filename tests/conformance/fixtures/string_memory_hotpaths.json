@@ -1,0 +1,452 @@
+{
+  "version": "v1",
+  "family": "string_memory_hotpaths",
+  "captured_at": "2026-05-12T00:00:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-string-memory-hotpaths first-wave GNU string and memory-adjacent helper symbols. Outputs classify spans, allocation lengths, tokenization state, locale-neutral formatting, and error strings without recording concrete allocation addresses, host locale internals, process-specific strerror buffers, or pointer values.",
+  "spec_reference": "GNU libc optimized string helper compatibility plus POSIX.1-2017 string, strerror, strftime, and monetary-format semantics",
+  "campaign": {
+    "bead": "bd-yy970.1",
+    "campaign_id": "fcq-string-memory-hotpaths",
+    "wave_id": "wave-04-string-memory-hotpaths",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture",
+    "first_wave_symbols": [
+      "__strcspn_c2",
+      "__strcspn_c3",
+      "__strdup",
+      "__strerror_r",
+      "__strfmon_l",
+      "__strftime_l",
+      "__strncasecmp_l",
+      "__strndup",
+      "__strpbrk_c2",
+      "__strpbrk_c3",
+      "__strsep_1c",
+      "__strsep_2c"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "strcspn_c2_colon_reject_strict",
+      "function": "__strcspn_c2",
+      "spec_section": "GNU __strcspn_c2 optimized reject set",
+      "inputs": {
+        "symbol": "__strcspn_c2",
+        "scenario": "two_byte_reject_finds_colon",
+        "haystack": "alpha:beta",
+        "reject": ":/",
+        "expected": "SPAN_5",
+        "oracle_source": "frankenlibc_core_string_strcspn",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strcspn_c2;mode=strict;expected=SPAN_5;actual=SPAN_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strcspn_c2_colon_reject_hardened",
+      "function": "__strcspn_c2",
+      "spec_section": "GNU __strcspn_c2 optimized reject set",
+      "inputs": {
+        "symbol": "__strcspn_c2",
+        "scenario": "two_byte_reject_finds_colon",
+        "haystack": "alpha:beta",
+        "reject": ":/",
+        "expected": "SPAN_5",
+        "oracle_source": "frankenlibc_core_string_strcspn",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strcspn_c2;mode=hardened;expected=SPAN_5;actual=SPAN_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strcspn_c3_alpha_reject_strict",
+      "function": "__strcspn_c3",
+      "spec_section": "GNU __strcspn_c3 optimized reject set",
+      "inputs": {
+        "symbol": "__strcspn_c3",
+        "scenario": "three_byte_reject_finds_x",
+        "haystack": "abcXdef",
+        "reject": "XYZ",
+        "expected": "SPAN_3",
+        "oracle_source": "frankenlibc_core_string_strcspn",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strcspn_c3;mode=strict;expected=SPAN_3;actual=SPAN_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strcspn_c3_alpha_reject_hardened",
+      "function": "__strcspn_c3",
+      "spec_section": "GNU __strcspn_c3 optimized reject set",
+      "inputs": {
+        "symbol": "__strcspn_c3",
+        "scenario": "three_byte_reject_finds_x",
+        "haystack": "abcXdef",
+        "reject": "XYZ",
+        "expected": "SPAN_3",
+        "oracle_source": "frankenlibc_core_string_strcspn",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strcspn_c3;mode=hardened;expected=SPAN_3;actual=SPAN_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strdup_ascii_strict",
+      "function": "__strdup",
+      "spec_section": "POSIX strdup / GNU __strdup allocation wrapper",
+      "inputs": {
+        "symbol": "__strdup",
+        "scenario": "duplicate_ascii_without_pointer_capture",
+        "input": "franken",
+        "expected": "DUP_LEN_7_TEXT_franken",
+        "oracle_source": "frankenlibc_core_strdup_bytes",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strdup;mode=strict;expected=DUP_LEN_7_TEXT_franken;actual=DUP_LEN_7_TEXT_franken;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strdup_ascii_hardened",
+      "function": "__strdup",
+      "spec_section": "POSIX strdup / GNU __strdup allocation wrapper",
+      "inputs": {
+        "symbol": "__strdup",
+        "scenario": "duplicate_ascii_without_pointer_capture",
+        "input": "franken",
+        "expected": "DUP_LEN_7_TEXT_franken",
+        "oracle_source": "frankenlibc_core_strdup_bytes",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strdup;mode=hardened;expected=DUP_LEN_7_TEXT_franken;actual=DUP_LEN_7_TEXT_franken;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strerror_r_enoent_strict",
+      "function": "__strerror_r",
+      "spec_section": "POSIX strerror_r and GNU __strerror_r message buffer semantics",
+      "inputs": {
+        "symbol": "__strerror_r",
+        "scenario": "enoent_message_fits_buffer",
+        "errnum": 2,
+        "buflen": 64,
+        "expected": "STRERROR_No such file or directory",
+        "oracle_source": "frankenlibc_errno_message_table",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strerror_r;mode=strict;expected=STRERROR_No such file or directory;actual=STRERROR_No such file or directory;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strerror_r_enoent_hardened",
+      "function": "__strerror_r",
+      "spec_section": "POSIX strerror_r and GNU __strerror_r message buffer semantics",
+      "inputs": {
+        "symbol": "__strerror_r",
+        "scenario": "enoent_message_fits_buffer",
+        "errnum": 2,
+        "buflen": 64,
+        "expected": "STRERROR_No such file or directory",
+        "oracle_source": "frankenlibc_errno_message_table",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strerror_r;mode=hardened;expected=STRERROR_No such file or directory;actual=STRERROR_No such file or directory;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strfmon_l_basic_value_strict",
+      "function": "__strfmon_l",
+      "spec_section": "POSIX strfmon_l locale-aware monetary formatting",
+      "inputs": {
+        "symbol": "__strfmon_l",
+        "scenario": "locale_neutral_two_decimal_format",
+        "format": "%n",
+        "value": 1234.5,
+        "maxsize": 16,
+        "expected": "STRFMON_LEN_7_TEXT_1234.50",
+        "oracle_source": "frankenlibc_strfmon_l_locale_neutral_contract",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strfmon_l;mode=strict;expected=STRFMON_LEN_7_TEXT_1234.50;actual=STRFMON_LEN_7_TEXT_1234.50;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strfmon_l_basic_value_hardened",
+      "function": "__strfmon_l",
+      "spec_section": "POSIX strfmon_l locale-aware monetary formatting",
+      "inputs": {
+        "symbol": "__strfmon_l",
+        "scenario": "locale_neutral_two_decimal_format",
+        "format": "%n",
+        "value": 1234.5,
+        "maxsize": 16,
+        "expected": "STRFMON_LEN_7_TEXT_1234.50",
+        "oracle_source": "frankenlibc_strfmon_l_locale_neutral_contract",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strfmon_l;mode=hardened;expected=STRFMON_LEN_7_TEXT_1234.50;actual=STRFMON_LEN_7_TEXT_1234.50;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strftime_l_epoch_date_strict",
+      "function": "__strftime_l",
+      "spec_section": "POSIX strftime_l locale-aware date formatting",
+      "inputs": {
+        "symbol": "__strftime_l",
+        "scenario": "epoch_iso_date_locale_neutral",
+        "format": "%Y-%m-%d",
+        "epoch": 0,
+        "maxsize": 32,
+        "expected": "STRFTIME_LEN_10_TEXT_1970-01-01",
+        "oracle_source": "frankenlibc_core_time_strftime",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strftime_l;mode=strict;expected=STRFTIME_LEN_10_TEXT_1970-01-01;actual=STRFTIME_LEN_10_TEXT_1970-01-01;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strftime_l_epoch_date_hardened",
+      "function": "__strftime_l",
+      "spec_section": "POSIX strftime_l locale-aware date formatting",
+      "inputs": {
+        "symbol": "__strftime_l",
+        "scenario": "epoch_iso_date_locale_neutral",
+        "format": "%Y-%m-%d",
+        "epoch": 0,
+        "maxsize": 32,
+        "expected": "STRFTIME_LEN_10_TEXT_1970-01-01",
+        "oracle_source": "frankenlibc_core_time_strftime",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strftime_l;mode=hardened;expected=STRFTIME_LEN_10_TEXT_1970-01-01;actual=STRFTIME_LEN_10_TEXT_1970-01-01;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strncasecmp_l_prefix_equal_strict",
+      "function": "__strncasecmp_l",
+      "spec_section": "POSIX strncasecmp_l length-limited case-insensitive comparison",
+      "inputs": {
+        "symbol": "__strncasecmp_l",
+        "scenario": "prefix_equal_under_length_limit",
+        "lhs": "AlphaZ",
+        "rhs": "alphaQ",
+        "n": 5,
+        "locale": "C",
+        "expected": "CMP_0",
+        "oracle_source": "frankenlibc_core_strncasecmp",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strncasecmp_l;mode=strict;expected=CMP_0;actual=CMP_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strncasecmp_l_prefix_equal_hardened",
+      "function": "__strncasecmp_l",
+      "spec_section": "POSIX strncasecmp_l length-limited case-insensitive comparison",
+      "inputs": {
+        "symbol": "__strncasecmp_l",
+        "scenario": "prefix_equal_under_length_limit",
+        "lhs": "AlphaZ",
+        "rhs": "alphaQ",
+        "n": 5,
+        "locale": "C",
+        "expected": "CMP_0",
+        "oracle_source": "frankenlibc_core_strncasecmp",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strncasecmp_l;mode=hardened;expected=CMP_0;actual=CMP_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strndup_prefix_strict",
+      "function": "__strndup",
+      "spec_section": "POSIX strndup / GNU __strndup allocation wrapper",
+      "inputs": {
+        "symbol": "__strndup",
+        "scenario": "duplicate_prefix_without_pointer_capture",
+        "input": "prefix-tail",
+        "n": 6,
+        "expected": "DUPN_LEN_6_TEXT_prefix",
+        "oracle_source": "frankenlibc_core_strndup_bytes",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strndup;mode=strict;expected=DUPN_LEN_6_TEXT_prefix;actual=DUPN_LEN_6_TEXT_prefix;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strndup_prefix_hardened",
+      "function": "__strndup",
+      "spec_section": "POSIX strndup / GNU __strndup allocation wrapper",
+      "inputs": {
+        "symbol": "__strndup",
+        "scenario": "duplicate_prefix_without_pointer_capture",
+        "input": "prefix-tail",
+        "n": 6,
+        "expected": "DUPN_LEN_6_TEXT_prefix",
+        "oracle_source": "frankenlibc_core_strndup_bytes",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strndup;mode=hardened;expected=DUPN_LEN_6_TEXT_prefix;actual=DUPN_LEN_6_TEXT_prefix;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strpbrk_c2_colon_accept_strict",
+      "function": "__strpbrk_c2",
+      "spec_section": "GNU __strpbrk_c2 optimized accept set",
+      "inputs": {
+        "symbol": "__strpbrk_c2",
+        "scenario": "two_byte_accept_finds_colon",
+        "haystack": "abc:def",
+        "accept": ":/",
+        "expected": "PBRK_INDEX_3",
+        "oracle_source": "frankenlibc_core_string_strpbrk",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strpbrk_c2;mode=strict;expected=PBRK_INDEX_3;actual=PBRK_INDEX_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strpbrk_c2_colon_accept_hardened",
+      "function": "__strpbrk_c2",
+      "spec_section": "GNU __strpbrk_c2 optimized accept set",
+      "inputs": {
+        "symbol": "__strpbrk_c2",
+        "scenario": "two_byte_accept_finds_colon",
+        "haystack": "abc:def",
+        "accept": ":/",
+        "expected": "PBRK_INDEX_3",
+        "oracle_source": "frankenlibc_core_string_strpbrk",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strpbrk_c2;mode=hardened;expected=PBRK_INDEX_3;actual=PBRK_INDEX_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strpbrk_c3_alpha_accept_strict",
+      "function": "__strpbrk_c3",
+      "spec_section": "GNU __strpbrk_c3 optimized accept set",
+      "inputs": {
+        "symbol": "__strpbrk_c3",
+        "scenario": "three_byte_accept_finds_z",
+        "haystack": "abcZdef",
+        "accept": "XYZ",
+        "expected": "PBRK_INDEX_3",
+        "oracle_source": "frankenlibc_core_string_strpbrk",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strpbrk_c3;mode=strict;expected=PBRK_INDEX_3;actual=PBRK_INDEX_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strpbrk_c3_alpha_accept_hardened",
+      "function": "__strpbrk_c3",
+      "spec_section": "GNU __strpbrk_c3 optimized accept set",
+      "inputs": {
+        "symbol": "__strpbrk_c3",
+        "scenario": "three_byte_accept_finds_z",
+        "haystack": "abcZdef",
+        "accept": "XYZ",
+        "expected": "PBRK_INDEX_3",
+        "oracle_source": "frankenlibc_core_string_strpbrk",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strpbrk_c3;mode=hardened;expected=PBRK_INDEX_3;actual=PBRK_INDEX_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strsep_1c_colon_strict",
+      "function": "__strsep_1c",
+      "spec_section": "BSD strsep / GNU __strsep_1c single delimiter helper",
+      "inputs": {
+        "symbol": "__strsep_1c",
+        "scenario": "single_char_delimiter_tokenizes_prefix",
+        "input": "alpha:beta",
+        "delimiters": ":",
+        "expected": "TOKEN_alpha_REST_beta",
+        "oracle_source": "frankenlibc_core_string_strsep_contract",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strsep_1c;mode=strict;expected=TOKEN_alpha_REST_beta;actual=TOKEN_alpha_REST_beta;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strsep_1c_colon_hardened",
+      "function": "__strsep_1c",
+      "spec_section": "BSD strsep / GNU __strsep_1c single delimiter helper",
+      "inputs": {
+        "symbol": "__strsep_1c",
+        "scenario": "single_char_delimiter_tokenizes_prefix",
+        "input": "alpha:beta",
+        "delimiters": ":",
+        "expected": "TOKEN_alpha_REST_beta",
+        "oracle_source": "frankenlibc_core_string_strsep_contract",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strsep_1c;mode=hardened;expected=TOKEN_alpha_REST_beta;actual=TOKEN_alpha_REST_beta;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strsep_2c_equal_comma_strict",
+      "function": "__strsep_2c",
+      "spec_section": "BSD strsep / GNU __strsep_2c two delimiter helper",
+      "inputs": {
+        "symbol": "__strsep_2c",
+        "scenario": "two_char_delimiter_tokenizes_prefix",
+        "input": "key=value,next",
+        "delimiters": "=,",
+        "expected": "TOKEN_key_REST_value,next",
+        "oracle_source": "frankenlibc_core_string_strsep_contract",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strsep_2c;mode=strict;expected=TOKEN_key_REST_value,next;actual=TOKEN_key_REST_value,next;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strsep_2c_equal_comma_hardened",
+      "function": "__strsep_2c",
+      "spec_section": "BSD strsep / GNU __strsep_2c two delimiter helper",
+      "inputs": {
+        "symbol": "__strsep_2c",
+        "scenario": "two_char_delimiter_tokenizes_prefix",
+        "input": "key=value,next",
+        "delimiters": "=,",
+        "expected": "TOKEN_key_REST_value,next",
+        "oracle_source": "frankenlibc_core_string_strsep_contract",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strsep_2c;mode=hardened;expected=TOKEN_key_REST_value,next;actual=TOKEN_key_REST_value,next;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

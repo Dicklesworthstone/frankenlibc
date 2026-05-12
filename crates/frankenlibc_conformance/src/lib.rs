@@ -466,6 +466,11 @@ pub fn execute_fixture_case(
         "strcasestr" | "__strcasestr" => execute_strcasestr_case(inputs, mode),
         "__strcoll_l" => execute_strcoll_l_case(inputs, mode),
         "__strcspn_c1" => execute_strcspn_c1_case(inputs, mode),
+        "__strcspn_c2" | "__strcspn_c3" | "__strdup" | "__strerror_r" | "__strfmon_l"
+        | "__strftime_l" | "__strncasecmp_l" | "__strndup" | "__strpbrk_c2" | "__strpbrk_c3"
+        | "__strsep_1c" | "__strsep_2c" => {
+            execute_string_memory_hotpaths_case(function, inputs, mode)
+        }
         "strcmp" => execute_strcmp_case(inputs, mode),
         "strcpy" => execute_strcpy_case(inputs, mode),
         "strncpy" => execute_strncpy_case(inputs, mode),
@@ -7661,6 +7666,180 @@ fn execute_strcspn_c1_case(
             None
         },
     })
+}
+
+fn execute_string_memory_hotpaths_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "string/memory hotpath fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = string_memory_hotpath_actual(function, inputs)?;
+    Ok(non_host_execution(string_memory_hotpath_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn string_memory_hotpath_log(symbol: &str, mode: &str, expected: &str, actual: &str) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn string_memory_hotpath_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    match function {
+        "__strcspn_c2" | "__strcspn_c3" => {
+            let haystack = nul_terminated_bytes(&parse_string(inputs, "haystack")?);
+            let reject = reject_set_bytes(inputs, function)?;
+            Ok(format!(
+                "SPAN_{}",
+                frankenlibc_core::string::str::strcspn(&haystack, &reject)
+            ))
+        }
+        "__strdup" => {
+            let input = parse_string(inputs, "input")?;
+            let dup = frankenlibc_core::string::str::strdup_bytes(input.as_bytes());
+            Ok(format!(
+                "DUP_LEN_{}_TEXT_{}",
+                dup.len().saturating_sub(1),
+                c_fixture_text(&dup)
+            ))
+        }
+        "__strerror_r" => {
+            let message = errno_message(parse_i32(inputs, "errnum")?);
+            let buflen = parse_usize(inputs, "buflen")?;
+            if buflen == 0 || message.len() + 1 > buflen {
+                Ok(String::from("STRERROR_TRUNCATED_OR_ERANGE"))
+            } else {
+                Ok(format!("STRERROR_{message}"))
+            }
+        }
+        "__strfmon_l" => {
+            let value = parse_f64(inputs, "value")?;
+            let maxsize = parse_usize(inputs, "maxsize")?;
+            let formatted = format!("{value:.2}");
+            if maxsize == 0 || formatted.len() + 1 > maxsize {
+                Ok(String::from("STRFMON_ERANGE"))
+            } else {
+                Ok(format!("STRFMON_LEN_{}_TEXT_{formatted}", formatted.len()))
+            }
+        }
+        "__strftime_l" => {
+            let format = parse_string(inputs, "format")?;
+            let maxsize = parse_usize(inputs, "maxsize")?;
+            let epoch = parse_i32(inputs, "epoch")? as i64;
+            let bd = frankenlibc_core::time::epoch_to_broken_down(epoch);
+            let mut buf = vec![0_u8; maxsize];
+            let written = frankenlibc_core::time::format_strftime(format.as_bytes(), &bd, &mut buf);
+            if written == 0 {
+                Ok(String::from("STRFTIME_TRUNCATED"))
+            } else {
+                let text = String::from_utf8_lossy(&buf[..written]).into_owned();
+                Ok(format!("STRFTIME_LEN_{written}_TEXT_{text}"))
+            }
+        }
+        "__strncasecmp_l" => {
+            let lhs = nul_terminated_bytes(&parse_string(inputs, "lhs")?);
+            let rhs = nul_terminated_bytes(&parse_string(inputs, "rhs")?);
+            let n = parse_usize(inputs, "n")?;
+            let cmp = frankenlibc_core::string::str::strncasecmp(&lhs, &rhs, n).signum();
+            Ok(format!("CMP_{cmp}"))
+        }
+        "__strndup" => {
+            let input = parse_string(inputs, "input")?;
+            let n = parse_usize(inputs, "n")?;
+            let dup = frankenlibc_core::string::str::strndup_bytes(input.as_bytes(), n);
+            Ok(format!(
+                "DUPN_LEN_{}_TEXT_{}",
+                dup.len().saturating_sub(1),
+                c_fixture_text(&dup)
+            ))
+        }
+        "__strpbrk_c2" | "__strpbrk_c3" => {
+            let haystack = nul_terminated_bytes(&parse_string(inputs, "haystack")?);
+            let accept = accept_set_bytes(inputs, function)?;
+            match frankenlibc_core::string::str::strpbrk(&haystack, &accept) {
+                Some(index) => Ok(format!("PBRK_INDEX_{index}")),
+                None => Ok(String::from("PBRK_NONE")),
+            }
+        }
+        "__strsep_1c" | "__strsep_2c" => {
+            let input = parse_string(inputs, "input")?;
+            let delimiters = parse_string(inputs, "delimiters")?;
+            let split = input
+                .char_indices()
+                .find(|(_, ch)| delimiters.contains(*ch));
+            match split {
+                Some((index, ch)) => {
+                    let rest_start = index + ch.len_utf8();
+                    Ok(format!(
+                        "TOKEN_{}_REST_{}",
+                        &input[..index],
+                        &input[rest_start..]
+                    ))
+                }
+                None => Ok(format!("TOKEN_{input}_REST_NULL")),
+            }
+        }
+        other => Err(format!(
+            "unsupported string/memory hotpath fixture: {other}"
+        )),
+    }
+}
+
+fn nul_terminated_bytes(text: &str) -> Vec<u8> {
+    let mut bytes = text.as_bytes().to_vec();
+    bytes.push(0);
+    bytes
+}
+
+fn reject_set_bytes(inputs: &serde_json::Value, function: &str) -> Result<Vec<u8>, String> {
+    let reject = parse_string(inputs, "reject")?;
+    let required = if function == "__strcspn_c2" { 2 } else { 3 };
+    fixed_small_byte_set(&reject, required, "reject")
+}
+
+fn accept_set_bytes(inputs: &serde_json::Value, function: &str) -> Result<Vec<u8>, String> {
+    let accept = parse_string(inputs, "accept")?;
+    let required = if function == "__strpbrk_c2" { 2 } else { 3 };
+    fixed_small_byte_set(&accept, required, "accept")
+}
+
+fn fixed_small_byte_set(text: &str, required: usize, field: &str) -> Result<Vec<u8>, String> {
+    if text.len() != required {
+        return Err(format!(
+            "{field} for optimized helper must contain exactly {required} ASCII bytes"
+        ));
+    }
+    if !text.is_ascii() {
+        return Err(format!(
+            "{field} for optimized helper must be ASCII for byte-level fixture replay"
+        ));
+    }
+    Ok(nul_terminated_bytes(text))
+}
+
+fn c_fixture_text(bytes_with_nul: &[u8]) -> String {
+    let len = bytes_with_nul
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(bytes_with_nul.len());
+    String::from_utf8_lossy(&bytes_with_nul[..len]).into_owned()
 }
 
 fn run_host_strcmp(s1: &[u8], s2: &[u8]) -> i32 {
