@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-12T20:38:48Z",
-  "report_hash": "e0ef760b8c4945ff",
+  "generated_at": "2026-05-12T21:41:09Z",
+  "report_hash": "5d118bf326847acf",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 427,
-    "symbols_without_fixtures": 3692,
-    "fixture_coverage_pct": 10.4,
-    "implemented_coverage_pct": 9.9,
-    "total_fixture_files": 60,
-    "total_cases": 1332,
+    "symbols_with_fixtures": 441,
+    "symbols_without_fixtures": 3678,
+    "fixture_coverage_pct": 10.7,
+    "implemented_coverage_pct": 10.3,
+    "total_fixture_files": 61,
+    "total_cases": 1360,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 320,
-    "symbols_with_errno_checks": 424,
-    "total_quality_issues": 3639,
-    "uncovered_action_count": 3692
+    "symbols_with_edge_cases": 323,
+    "symbols_with_errno_checks": 438,
+    "total_quality_issues": 3636,
+    "uncovered_action_count": 3678
   },
   "fixture_file_analyses": [
     {
@@ -62,8 +62,8 @@
       "file": "dlfcn_ops.json",
       "family": "dlfcn_ops",
       "valid": true,
-      "total_cases": 9,
-      "unique_symbols": 4,
+      "total_cases": 13,
+      "unique_symbols": 6,
       "issues": []
     },
     {
@@ -371,6 +371,14 @@
       "issues": []
     },
     {
+      "file": "stdio_libio_symbols.json",
+      "family": "stdio_libio_symbols",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
       "file": "stdlib_conversion.json",
       "family": "stdlib/conversion",
       "valid": true,
@@ -545,45 +553,60 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "_IO_2_1_stdin_",
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "_IO_2_1_stdout_",
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "_IO_adjust_column",
@@ -815,14 +838,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -830,14 +858,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -1196,14 +1229,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -1388,14 +1426,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -1403,14 +1446,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -1433,14 +1481,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -1769,14 +1822,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -1784,14 +1842,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -1859,14 +1922,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_symbols.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -22153,14 +22221,19 @@
       "status": "Implemented",
       "module": "dlfcn_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "dlfcn_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -22325,14 +22398,19 @@
       "status": "Implemented",
       "module": "dlfcn_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "dlfcn_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -63830,27 +63908,6 @@
   ],
   "uncovered_action_list": [
     {
-      "symbol": "_IO_2_1_stderr_",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_2_1_stdin_",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_2_1_stdout_",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_IO_default_pbackfail",
       "status": "Implemented",
       "module": "io_internal_abi",
@@ -63903,20 +63960,6 @@
       "symbol": "_IO_fdopen",
       "status": "Implemented",
       "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_feof",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_ferror",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -64075,13 +64118,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "_IO_flockfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_IO_flush_all",
       "status": "Implemented",
       "module": "io_internal_abi",
@@ -64145,30 +64181,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "_IO_ftrylockfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_funlockfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_IO_fwrite",
       "status": "Implemented",
       "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_getc",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -64236,20 +64251,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "_IO_padn",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_peekc_locked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_IO_popen",
       "status": "Implemented",
       "module": "io_internal_abi",
@@ -64274,13 +64275,6 @@
       "symbol": "_IO_proc_open",
       "status": "Implemented",
       "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_putc",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -73007,13 +73001,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "dl_iterate_phdr",
-      "status": "Implemented",
-      "module": "dlfcn_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "dladdr1",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -73024,13 +73011,6 @@
       "symbol": "dlmopen",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "dlvsym",
-      "status": "Implemented",
-      "module": "dlfcn_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

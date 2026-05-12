@@ -190,27 +190,27 @@
       "module_family": "stdio_abi",
       "track": "stdio",
       "title": "stdio/libio stream semantics fixture wave",
-      "current_coverage_pct": 23.02,
-      "expected_coverage_after_first_wave_pct": 32.54,
+      "current_coverage_pct": 32.54,
+      "expected_coverage_after_first_wave_pct": 42.06,
       "target_total": 126,
-      "target_covered": 29,
-      "target_uncovered": 97,
+      "target_covered": 41,
+      "target_uncovered": 85,
       "candidate_status_counts": {
         "Implemented": 12
       },
       "first_wave_symbols": [
-        "_IO_2_1_stderr_",
-        "_IO_2_1_stdin_",
-        "_IO_2_1_stdout_",
-        "_IO_feof",
-        "_IO_ferror",
-        "_IO_flockfile",
-        "_IO_ftrylockfile",
-        "_IO_funlockfile",
-        "_IO_getc",
-        "_IO_padn",
-        "_IO_peekc_locked",
-        "_IO_putc"
+        "_IO_puts",
+        "_IO_seekoff",
+        "_IO_seekpos",
+        "_IO_sgetn",
+        "__isoc23_fscanf",
+        "__isoc23_scanf",
+        "__isoc23_sscanf",
+        "__isoc23_vfscanf",
+        "__isoc23_vscanf",
+        "__isoc23_vsscanf",
+        "__isoc99_fscanf",
+        "__isoc99_scanf"
       ],
       "implementation_surface": [
         "crates/frankenlibc-abi/src/stdio_abi.rs",
@@ -220,7 +220,8 @@
       "fixture_files": [
         "tests/conformance/fixtures/stdio_file_ops.json",
         "tests/conformance/fixtures/printf_conformance.json",
-        "tests/conformance/fixtures/scanf_conformance.json"
+        "tests/conformance/fixtures/scanf_conformance.json",
+        "tests/conformance/fixtures/stdio_libio_symbols.json"
       ],
       "required_evidence": [
         "stream state and _IO alias fixtures",
@@ -403,37 +404,45 @@
       ]
     },
     {
-      "wave_id": "wave-08-dlfcn-loader",
-      "campaign_id": "fcq-dlfcn-loader",
+      "wave_id": "wave-08-poll-event-loop",
+      "campaign_id": "fcq-poll-event-loop",
       "rank": 8,
-      "module_family": "dlfcn_abi",
-      "track": "rtld/dlfcn",
-      "title": "loader symbol versioning fixture wave",
-      "current_coverage_pct": 71.43,
-      "expected_coverage_after_first_wave_pct": 100.0,
-      "target_total": 7,
-      "target_covered": 5,
-      "target_uncovered": 2,
+      "module_family": "poll_abi",
+      "track": "poll",
+      "title": "poll/epoll/eventfd/timerfd fixture wave",
+      "current_coverage_pct": 13.33,
+      "expected_coverage_after_first_wave_pct": 93.33,
+      "target_total": 15,
+      "target_covered": 2,
+      "target_uncovered": 13,
       "candidate_status_counts": {
-        "Implemented": 2
+        "RawSyscall": 12
       },
       "first_wave_symbols": [
-        "dl_iterate_phdr",
-        "dlvsym"
+        "epoll_create",
+        "epoll_create1",
+        "epoll_ctl",
+        "epoll_pwait",
+        "epoll_wait",
+        "eventfd",
+        "ppoll",
+        "prctl",
+        "pselect",
+        "sched_yield",
+        "timerfd_create",
+        "timerfd_gettime"
       ],
       "implementation_surface": [
-        "crates/frankenlibc-abi/src/dlfcn_abi.rs",
-        "crates/frankenlibc-core/src/dlfcn/",
-        "tests/conformance/fixtures/loader_edges.json"
+        "crates/frankenlibc-abi/src/poll_abi.rs",
+        "crates/frankenlibc-abi/version_scripts/libc.map"
       ],
       "fixture_files": [
-        "tests/conformance/fixtures/dlfcn_ops.json",
-        "tests/conformance/fixtures/loader_edges.json"
+        "tests/conformance/fixtures/poll_ops.json"
       ],
       "required_evidence": [
-        "versioned-symbol fixture rows",
-        "phdr iteration fixture rows",
-        "standalone loader smoke proof before replacement claim promotion"
+        "deterministic timeout and readiness rows",
+        "invalid-fd and mode-pair cases for event-loop syscalls",
+        "scheduler-yield and timerfd evidence before service-loop claims advance"
       ]
     }
   ],
@@ -516,8 +525,7 @@
       "paired_wave_ids": [
         "wave-03-stdio-libio",
         "wave-04-pthread-sync",
-        "wave-05-malloc-membrane",
-        "wave-08-dlfcn-loader"
+        "wave-05-malloc-membrane"
       ],
       "next_action": "Keep allocator and scanf hardened rows explicit before raising replacement thresholds."
     }

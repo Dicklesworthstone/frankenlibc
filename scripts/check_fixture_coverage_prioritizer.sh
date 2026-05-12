@@ -138,6 +138,26 @@ COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIXTURE = Path(
 COMPLETED_UNISTD_PROCESS_FILESYSTEM_HARNESS = Path(
     "crates/frankenlibc-harness/tests/unistd_process_filesystem_conformance_test.rs"
 )
+COMPLETED_STDIO_LIBIO_FIRST_WAVE = [
+    "_IO_2_1_stderr_",
+    "_IO_2_1_stdin_",
+    "_IO_2_1_stdout_",
+    "_IO_feof",
+    "_IO_ferror",
+    "_IO_flockfile",
+    "_IO_ftrylockfile",
+    "_IO_funlockfile",
+    "_IO_getc",
+    "_IO_padn",
+    "_IO_peekc_locked",
+    "_IO_putc",
+]
+COMPLETED_STDIO_LIBIO_FIXTURE = Path(
+    "tests/conformance/fixtures/stdio_libio_symbols.json"
+)
+COMPLETED_STDIO_LIBIO_HARNESS = Path(
+    "crates/frankenlibc-harness/tests/stdio_libio_symbols_conformance_test.rs"
+)
 
 def load_json(path):
     try:
@@ -382,6 +402,77 @@ else:
         errors.append("fcq-unistd-process-filesystem current_coverage_pct did not advance to at least 6.33")
 
 checks["completed_unistd_first_wave_guard"] = "pass" if completed_unistd_ok else "fail"
+
+completed_stdio_ok = True
+stdio_fixture_path = root / COMPLETED_STDIO_LIBIO_FIXTURE
+stdio_harness_path = root / COMPLETED_STDIO_LIBIO_HARNESS
+stdio_fixture = load_json(stdio_fixture_path) if stdio_fixture_path.exists() else None
+if not stdio_fixture_path.exists():
+    completed_stdio_ok = False
+    errors.append(f"completed stdio/libio first wave fixture missing: {COMPLETED_STDIO_LIBIO_FIXTURE}")
+if not stdio_harness_path.exists():
+    completed_stdio_ok = False
+    errors.append(f"completed stdio/libio first wave harness missing: {COMPLETED_STDIO_LIBIO_HARNESS}")
+else:
+    stdio_harness_text = stdio_harness_path.read_text(encoding="utf-8")
+    for needle in [
+        "stdio_libio_symbols_cover_first_wave_in_both_modes",
+        "stdio_libio_symbols_fixture_executes_via_isolated_harness",
+        "failure_signature",
+    ]:
+        if needle not in stdio_harness_text:
+            completed_stdio_ok = False
+            errors.append(f"completed stdio/libio first wave harness missing needle: {needle}")
+
+if isinstance(stdio_fixture, dict):
+    declared = stdio_fixture.get("campaign", {}).get("first_wave_symbols", [])
+    if declared != COMPLETED_STDIO_LIBIO_FIRST_WAVE:
+        completed_stdio_ok = False
+        errors.append("completed stdio/libio first wave fixture symbols drifted")
+    cases = stdio_fixture.get("cases", [])
+    symbols_in_cases = sorted({case.get("function") for case in cases if isinstance(case, dict)})
+    missing_fixture_symbols = sorted(set(COMPLETED_STDIO_LIBIO_FIRST_WAVE) - set(symbols_in_cases))
+    if missing_fixture_symbols:
+        completed_stdio_ok = False
+        errors.append("completed stdio/libio first wave fixture is missing cases for: " + ", ".join(missing_fixture_symbols))
+
+per_symbol_by_symbol = {row.get("symbol"): row for row in per_symbol_rows if row.get("module") == "stdio_abi"}
+for symbol in COMPLETED_STDIO_LIBIO_FIRST_WAVE:
+    row = per_symbol_by_symbol.get(symbol)
+    if row is None:
+        completed_stdio_ok = False
+        errors.append(f"completed stdio/libio first wave symbol missing from per-symbol report: {symbol}")
+        continue
+    if row.get("has_fixtures") is not True:
+        completed_stdio_ok = False
+        errors.append(f"completed stdio/libio first wave symbol lacks fixture accounting: {symbol}")
+    if row.get("case_count", 0) < 2:
+        completed_stdio_ok = False
+        errors.append(f"completed stdio/libio first wave symbol lacks strict+hardened cases: {symbol}")
+    if "stdio_libio_symbols.json" not in row.get("fixture_files", []):
+        completed_stdio_ok = False
+        errors.append(f"completed stdio/libio first wave symbol lacks fixture file backlink: {symbol}")
+    if set(row.get("modes_tested", [])) != {"strict", "hardened"}:
+        completed_stdio_ok = False
+        errors.append(f"completed stdio/libio first wave symbol lacks strict+hardened mode accounting: {symbol}")
+
+stdio_campaign = next((campaign for campaign in campaigns if campaign.get("campaign_id") == "fcq-stdio-libio"), None)
+if stdio_campaign is None:
+    completed_stdio_ok = False
+    errors.append("fcq-stdio-libio campaign missing after first-wave completion")
+else:
+    stale_symbols = sorted(set(COMPLETED_STDIO_LIBIO_FIRST_WAVE) & set(stdio_campaign.get("first_wave_symbols", [])))
+    if stale_symbols:
+        completed_stdio_ok = False
+        errors.append("completed stdio/libio first wave symbols still appear in next first-wave claim: " + ", ".join(stale_symbols))
+    if stdio_campaign.get("target_covered", 0) < 41:
+        completed_stdio_ok = False
+        errors.append("fcq-stdio-libio target_covered did not advance to at least 41")
+    if float(stdio_campaign.get("current_coverage_pct", 0.0)) < 32.54:
+        completed_stdio_ok = False
+        errors.append("fcq-stdio-libio current_coverage_pct did not advance to at least 32.54")
+
+checks["completed_stdio_libio_first_wave_guard"] = "pass" if completed_stdio_ok else "fail"
 
 raw_deferred_modules = artifact.get("deferred_modules", [])
 deferred_modules = raw_deferred_modules if isinstance(raw_deferred_modules, list) else []

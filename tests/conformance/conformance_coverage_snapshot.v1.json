@@ -1,13 +1,13 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-05-12T20:38:37Z",
+  "generated_at": "2026-05-12T21:41:29Z",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 427,
-    "coverage_pct": 10,
-    "total_fixture_files": 60,
-    "total_fixture_cases": 1333,
+    "symbols_with_fixtures": 441,
+    "coverage_pct": 11,
+    "total_fixture_files": 61,
+    "total_fixture_cases": 1361,
     "total_families": 49
   },
   "module_coverage": {
@@ -28,8 +28,8 @@
     },
     "dlfcn_abi": {
       "total": 7,
-      "covered": 5,
-      "pct": 71
+      "covered": 7,
+      "pct": 100
     },
     "err_abi": {
       "total": 12,
@@ -178,8 +178,8 @@
     },
     "stdio_abi": {
       "total": 126,
-      "covered": 29,
-      "pct": 23
+      "covered": 41,
+      "pct": 33
     },
     "stdlib_abi": {
       "total": 154,
@@ -287,12 +287,14 @@
       ]
     },
     "dlfcn": {
-      "function_count": 4,
+      "function_count": 6,
       "functions": [
+        "dl_iterate_phdr",
         "dlclose",
         "dlerror",
         "dlopen",
-        "dlsym"
+        "dlsym",
+        "dlvsym"
       ]
     },
     "elf": {
@@ -741,8 +743,20 @@
       ]
     },
     "stdio": {
-      "function_count": 26,
+      "function_count": 38,
       "functions": [
+        "_IO_2_1_stderr_",
+        "_IO_2_1_stdin_",
+        "_IO_2_1_stdout_",
+        "_IO_feof",
+        "_IO_ferror",
+        "_IO_flockfile",
+        "_IO_ftrylockfile",
+        "_IO_funlockfile",
+        "_IO_getc",
+        "_IO_padn",
+        "_IO_peekc_locked",
+        "_IO_putc",
         "asprintf",
         "dprintf",
         "fclose",
@@ -1019,13 +1033,15 @@
     },
     "dlfcn_ops": {
       "file": "dlfcn_ops.json",
-      "sha256": "d7e36c136aa49ee7ce5747b6f847af9a18a71f698351fcba54cda3d5fa492896",
-      "case_count": 9,
+      "sha256": "74aae81a1f681a65c316cc13163aed31d9276bd15b2deb159fd5a792002cdffa",
+      "case_count": 13,
       "functions": [
+        "dl_iterate_phdr",
         "dlclose",
         "dlerror",
         "dlopen",
-        "dlsym"
+        "dlsym",
+        "dlvsym"
       ],
       "families": [
         "dlfcn"
@@ -1710,6 +1726,28 @@
         "vdprintf",
         "vsnprintf",
         "vsprintf"
+      ],
+      "families": [
+        "stdio"
+      ]
+    },
+    "stdio_libio_symbols": {
+      "file": "stdio_libio_symbols.json",
+      "sha256": "e2c676dda066fdb6f403e6a1abee5ded6e6cf8706a425848ca169c5af3c59d69",
+      "case_count": 24,
+      "functions": [
+        "_IO_2_1_stderr_",
+        "_IO_2_1_stdin_",
+        "_IO_2_1_stdout_",
+        "_IO_feof",
+        "_IO_ferror",
+        "_IO_flockfile",
+        "_IO_ftrylockfile",
+        "_IO_funlockfile",
+        "_IO_getc",
+        "_IO_padn",
+        "_IO_peekc_locked",
+        "_IO_putc"
       ],
       "families": [
         "stdio"

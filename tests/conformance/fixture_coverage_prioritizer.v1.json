@@ -115,26 +115,26 @@
     },
     {
       "campaign_id": "fcq-stdio-libio",
-      "current_coverage_pct": 23.02,
+      "current_coverage_pct": 32.54,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 32.54,
+      "expected_coverage_after_first_wave_pct": 42.06,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "_IO_2_1_stderr_",
-        "_IO_2_1_stdin_",
-        "_IO_2_1_stdout_",
-        "_IO_feof",
-        "_IO_ferror",
-        "_IO_flockfile",
-        "_IO_ftrylockfile",
-        "_IO_funlockfile",
-        "_IO_getc",
-        "_IO_padn",
-        "_IO_peekc_locked",
-        "_IO_putc"
+        "_IO_puts",
+        "_IO_seekoff",
+        "_IO_seekpos",
+        "_IO_sgetn",
+        "__isoc23_fscanf",
+        "__isoc23_scanf",
+        "__isoc23_sscanf",
+        "__isoc23_vfscanf",
+        "__isoc23_vscanf",
+        "__isoc23_vsscanf",
+        "__isoc99_fscanf",
+        "__isoc99_scanf"
       ],
       "module": "stdio_abi",
       "next_step": "Add stream-state and _IO alias fixtures that prove behavior before native stdio replacement claims advance.",
@@ -147,20 +147,20 @@
         "stdio_libio_divergence"
       ],
       "scores": {
-        "coverage_gap_score": 97,
+        "coverage_gap_score": 85,
         "feature_gap_risk_score": 3,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 3,
         "parity_risk_score": 5,
-        "priority_score": 2447,
+        "priority_score": 2435,
         "semantic_risk_score": 0,
         "workload_risk_score": 5
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "FILE state, _IO compatibility names, locking, formatted IO, buffering, and stream errors",
-      "target_covered": 29,
+      "target_covered": 41,
       "target_total": 126,
-      "target_uncovered": 97,
+      "target_uncovered": 85,
       "title": "stdio/libio stream semantics fixture wave",
       "workload_domains": [
         "stdio_libio",
@@ -395,51 +395,6 @@
       ]
     },
     {
-      "campaign_id": "fcq-dlfcn-loader",
-      "current_coverage_pct": 71.43,
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "expected_coverage_after_first_wave_pct": 100.0,
-      "first_wave_fixture_count": 2,
-      "first_wave_symbols": [
-        "dl_iterate_phdr",
-        "dlvsym"
-      ],
-      "module": "dlfcn_abi",
-      "next_step": "Close the small but high-risk dlfcn fixture gap with versioned-symbol and phdr iteration tests.",
-      "oracle_kind": "loader_symbol_replay",
-      "rank": 8,
-      "risk_tags": [
-        "standalone_blocker",
-        "startup_linking_failure",
-        "symbol_missing",
-        "version_node"
-      ],
-      "scores": {
-        "coverage_gap_score": 2,
-        "feature_gap_risk_score": 3,
-        "hard_parts_risk_tags": [],
-        "implementation_complexity_score": 4,
-        "parity_risk_score": 5,
-        "priority_score": 2302,
-        "semantic_risk_score": 0,
-        "workload_risk_score": 5
-      },
-      "structured_log_fields": "required_log_fields",
-      "symbol_family": "dl_iterate_phdr, dlvsym, loader namespace, and versioned symbol behavior",
-      "target_covered": 5,
-      "target_total": 7,
-      "target_uncovered": 2,
-      "title": "loader symbol versioning fixture wave",
-      "workload_domains": [
-        "startup_linking",
-        "language_runtimes",
-        "build_tools"
-      ]
-    },
-    {
       "campaign_id": "fcq-poll-event-loop",
       "current_coverage_pct": 13.33,
       "deterministic_e2e_scripts": [
@@ -465,7 +420,7 @@
       "module": "poll_abi",
       "next_step": "Add deterministic timeout, readiness, invalid-fd, and mode-pair cases for event-loop syscalls.",
       "oracle_kind": "threaded_service_replay",
-      "rank": 9,
+      "rank": 8,
       "risk_tags": [
         "event_loop",
         "mode_pair_mismatch",
@@ -520,7 +475,7 @@
       "module": "wchar_abi",
       "next_step": "Add stateful mb/wchar fixtures with invalid sequence, short buffer, and locale variation cases.",
       "oracle_kind": "locale_mode_pair_oracle",
-      "rank": 10,
+      "rank": 9,
       "risk_tags": [
         "buffer_boundary",
         "locale_sensitive",
@@ -573,7 +528,7 @@
       "module": "socket_abi",
       "next_step": "Add loopback-only socket fixtures with deterministic peer, timeout, and errno normalization.",
       "oracle_kind": "loopback_network_replay",
-      "rank": 11,
+      "rank": 10,
       "risk_tags": [
         "errno_mapping",
         "mode_pair_mismatch",
@@ -629,7 +584,7 @@
       "module": "fortify_abi",
       "next_step": "Add positive and negative checked-wrapper fixtures before fortify safety claims expand.",
       "oracle_kind": "hardened_bounds_oracle",
-      "rank": 12,
+      "rank": 11,
       "risk_tags": [
         "buffer_boundary",
         "claim_blocked",
@@ -680,7 +635,7 @@
       "module": "locale_abi",
       "next_step": "Add pinned-locale fixtures before user-facing locale or transliteration support claims advance.",
       "oracle_kind": "locale_fixture_oracle",
-      "rank": 13,
+      "rank": 12,
       "risk_tags": [
         "claim_blocked",
         "locale",
@@ -739,7 +694,7 @@
       "module": "time_abi",
       "next_step": "Add pinned-time and invalid-clock fixtures with deterministic tolerance rules.",
       "oracle_kind": "pinned_time_fixture_oracle",
-      "rank": 14,
+      "rank": 13,
       "risk_tags": [
         "errno_mapping",
         "semantic_divergence",
@@ -796,7 +751,7 @@
       "module": "math_abi",
       "next_step": "Start with finite aliases and fpclassification before expanding to the long libm tail.",
       "oracle_kind": "glibc_fixture_oracle",
-      "rank": 15,
+      "rank": 14,
       "risk_tags": [
         "fenv_adjacent",
         "numeric_boundary",
@@ -854,7 +809,7 @@
       "module": "signal_abi",
       "next_step": "Add deterministic signal-mask and alternate-stack fixtures before broader async-cancellation campaigns.",
       "oracle_kind": "mode_pair_process_replay",
-      "rank": 16,
+      "rank": 15,
       "risk_tags": [
         "async_signal",
         "diagnostics_gap",
@@ -908,7 +863,7 @@
       "module": "glibc_internal_abi",
       "next_step": "Split compatibility internals into supported, deterministic-fallback, and claim-blocked fixture groups.",
       "oracle_kind": "symbol_coverage_gate",
-      "rank": 17,
+      "rank": 16,
       "risk_tags": [
         "compatibility_internal",
         "diagnostics_gap",
@@ -962,7 +917,7 @@
       "module": "rpc_abi",
       "next_step": "Add deterministic compatibility/unsupported fixtures before claiming RPC-related coverage.",
       "oracle_kind": "claim_reconciliation_gate",
-      "rank": 18,
+      "rank": 17,
       "risk_tags": [
         "deterministic_fallback",
         "legacy_network",
@@ -1302,10 +1257,9 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3690,
-    "campaign_count": 18,
+    "all_uncovered_target_symbols": 3676,
+    "campaign_count": 17,
     "covered_modules": [
-      "dlfcn_abi",
       "fortify_abi",
       "glibc_internal_abi",
       "locale_abi",
@@ -1341,7 +1295,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3308,
-    "total_first_wave_fixture_count": 196
+    "selected_target_uncovered_symbols": 3294,
+    "total_first_wave_fixture_count": 194
   }
 }
