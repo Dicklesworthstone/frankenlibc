@@ -1,0 +1,218 @@
+{
+  "schema_version": "rpc_fixture_wave_completion_contract.v1",
+  "bead_id": "bd-mu4lw.3",
+  "epic_id": "bd-mu4lw",
+  "trace_id": "bd-mu4lw.3::rpc-fixture-wave::completion::v1",
+  "description": "Completion contract binding the RPC first-wave fixtures, README/support-claim guard, structured telemetry, and rch validation commands for the RPC legacy compatibility wave.",
+  "source_artifacts": [
+    {
+      "id": "beads_ledger",
+      "kind": "tracker",
+      "path": ".beads/issues.jsonl",
+      "evidence": "Tracker rows for bd-mu4lw.1, bd-mu4lw.2, and bd-mu4lw.3."
+    },
+    {
+      "id": "fixture_coverage_prioritizer",
+      "kind": "campaign_source",
+      "path": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+      "evidence": "Source campaign fcq-rpc-legacy-network with first-wave RPC symbols."
+    },
+    {
+      "id": "rpc_fixture",
+      "kind": "fixture",
+      "path": "tests/conformance/fixtures/rpc_legacy_network.json",
+      "evidence": "Strict and hardened deterministic RPC compatibility fixtures for the 12 first-wave symbols."
+    },
+    {
+      "id": "fixture_executor",
+      "kind": "implementation",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "evidence": "execute_fixture_case dispatch and deterministic RPC fixture executor."
+    },
+    {
+      "id": "rpc_fixture_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/rpc_legacy_network_conformance_test.rs",
+      "evidence": "Harness tests for fixture shape, first-wave coverage, structured output fields, and isolated execution."
+    },
+    {
+      "id": "readme_claim_surface",
+      "kind": "docs",
+      "path": "README.md",
+      "evidence": "README rpc_abi wording avoids support-taxonomy stub claims."
+    },
+    {
+      "id": "support_matrix",
+      "kind": "support_taxonomy",
+      "path": "support_matrix.json",
+      "evidence": "Support taxonomy summary with Stub count."
+    },
+    {
+      "id": "artifact_precedence_manifest",
+      "kind": "claim_guard_artifact",
+      "path": "tests/conformance/artifact_precedence.v1.json",
+      "evidence": "Expected current summary includes readme_rpc_stub_claim_count=0."
+    },
+    {
+      "id": "artifact_precedence_gate",
+      "kind": "claim_guard",
+      "path": "scripts/check_artifact_precedence.sh",
+      "evidence": "README/support matrix stale RPC stub wording guard."
+    },
+    {
+      "id": "artifact_precedence_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/artifact_precedence_test.rs",
+      "evidence": "Positive and stale README failure coverage for the RPC stub-claim guard."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/rpc_fixture_wave_completion_contract.v1.json",
+      "evidence": "Machine-readable binding for bd-mu4lw.3 completion obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_rpc_fixture_wave_completion_contract.sh",
+      "evidence": "Fail-closed validator for source artifacts, fixture evidence, claim realism, telemetry, and rch validation commands."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/rpc_fixture_wave_completion_contract_test.rs",
+      "evidence": "Rust harness tests for the RPC fixture wave completion contract and negative drift signatures."
+    }
+  ],
+  "completion_contract": {
+    "closed_child_beads": [
+      "bd-mu4lw.1",
+      "bd-mu4lw.2"
+    ],
+    "child_closure_evidence": [
+      {
+        "bead_id": "bd-mu4lw.1",
+        "status": "closed",
+        "commit": "3f5d41d3",
+        "evidence": "RPC first-wave fixture proof commit and close reason validated 12 symbols across strict and hardened modes."
+      },
+      {
+        "bead_id": "bd-mu4lw.2",
+        "status": "closed",
+        "commit": "e70d0d3c",
+        "evidence": "RPC README/support taxonomy stub-claim guard commit and close reason validated stale wording rejection."
+      }
+    ],
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "required_first_wave_symbols": [
+      "__rpc_thread_createerr",
+      "__rpc_thread_svc_fdset",
+      "__rpc_thread_svc_max_pollfd",
+      "__rpc_thread_svc_pollfd",
+      "_authenticate",
+      "_null_auth",
+      "_rpc_dtablesize",
+      "_seterr_reply",
+      "authdes_create",
+      "authdes_getucred",
+      "authdes_pk_create",
+      "authnone_create"
+    ],
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_structured_log_fields": [
+      "symbol",
+      "mode",
+      "expected_class",
+      "actual",
+      "failure_signature"
+    ],
+    "required_telemetry_events": [
+      "source_artifacts_validated",
+      "child_beads_validated",
+      "rpc_fixture_validated",
+      "claim_realism_validated",
+      "validation_commands_validated",
+      "test_surfaces_validated",
+      "telemetry_contract_validated",
+      "rpc_fixture_wave_completion_contract_validated"
+    ],
+    "readme_rpc_abi_text": "Native XDR plus deterministic legacy RPC safe defaults",
+    "support_matrix_stub_count": 0,
+    "artifact_precedence_summary": {
+      "readme_rpc_stub_claim_count": 0
+    },
+    "runtime_validation": [
+      "jq empty tests/conformance/rpc_fixture_wave_completion_contract.v1.json",
+      "bash -n scripts/check_rpc_fixture_wave_completion_contract.sh",
+      "bash scripts/check_rpc_fixture_wave_completion_contract.sh",
+      "rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_frostydune_rpc_completion_test cargo test -p frankenlibc-harness --test rpc_fixture_wave_completion_contract_test -- --nocapture",
+      "rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_frostydune_rpc_completion_check cargo check -p frankenlibc-harness --test rpc_fixture_wave_completion_contract_test",
+      "rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_frostydune_rpc_completion_clippy cargo clippy -p frankenlibc-harness --test rpc_fixture_wave_completion_contract_test -- -D warnings"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "scripts/check_rpc_fixture_wave_completion_contract.sh",
+        "tests/conformance/rpc_fixture_wave_completion_contract.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/rpc_fixture_wave_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_frostydune_rpc_completion_test cargo test -p frankenlibc-harness --test rpc_fixture_wave_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "implementation_refs": [
+        "scripts/check_rpc_fixture_wave_completion_contract.sh",
+        "scripts/check_artifact_precedence.sh",
+        "tests/conformance/fixtures/rpc_legacy_network.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/rpc_legacy_network_conformance_test.rs",
+        "crates/frankenlibc-harness/tests/artifact_precedence_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_rpc_fixture_wave_completion_contract.sh",
+        "rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_frostydune_rpc_legacy cargo test -p frankenlibc-harness --test rpc_legacy_network_conformance_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "implementation_refs": [
+        "tests/conformance/fixtures/rpc_legacy_network.json",
+        "crates/frankenlibc_conformance/src/lib.rs"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/rpc_legacy_network_conformance_test.rs"
+      ],
+      "runtime_validation": [
+        "rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_frostydune_rpc_legacy cargo test -p frankenlibc-harness --test rpc_legacy_network_conformance_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "telemetry.primary",
+      "implementation_refs": [
+        "tests/conformance/rpc_fixture_wave_completion_contract.v1.json",
+        "scripts/check_rpc_fixture_wave_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/rpc_fixture_wave_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_rpc_fixture_wave_completion_contract.sh"
+      ]
+    }
+  ]
+}
