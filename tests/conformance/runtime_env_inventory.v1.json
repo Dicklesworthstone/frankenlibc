@@ -2,7 +2,7 @@
   "generator": "scripts/generate_runtime_env_inventory.py",
   "inventory": [
     {
-      "access_count": 7,
+      "access_count": 4,
       "accesses": [
         {
           "line": 76,
@@ -26,32 +26,11 @@
           "snippet": "if std::env::var(\"FRANKENLIBC_BENCH_PIN\").ok().as_deref() != Some(\"1\") {"
         },
         {
-          "line": 476,
+          "line": 65,
           "operation": "write",
           "path": "scripts/perf_gate.sh",
           "scope": "scripts",
-          "snippet": "FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE=\"${mode}\" \\"
-        },
-        {
-          "line": 482,
-          "operation": "write",
-          "path": "scripts/perf_gate.sh",
-          "scope": "scripts",
-          "snippet": "FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE=\"${mode}\" \\"
-        },
-        {
-          "line": 488,
-          "operation": "write",
-          "path": "scripts/perf_gate.sh",
-          "scope": "scripts",
-          "snippet": "FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_ERRNO_BENCH_MODE=\"${mode}\" \\"
-        },
-        {
-          "line": 495,
-          "operation": "write",
-          "path": "scripts/perf_gate.sh",
-          "scope": "scripts",
-          "snippet": "FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE=\"${mode}\" \\"
+          "snippet": "local -a mode_env_args=(FRANKENLIBC_BENCH_PIN=1)"
         }
       ],
       "env_key": "FRANKENLIBC_BENCH_PIN",
@@ -69,7 +48,7 @@
       },
       "read_count": 3,
       "reference_count": 0,
-      "write_count": 4
+      "write_count": 1
     },
     {
       "access_count": 4,
@@ -1026,7 +1005,7 @@
       "write_count": 8
     },
     {
-      "access_count": 189,
+      "access_count": 192,
       "accesses": [
         {
           "line": 141,
@@ -1302,7 +1281,7 @@
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 122,
+          "line": 119,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs",
           "scope": "other",
@@ -1687,7 +1666,7 @@
           "snippet": "env FRANKENLIBC_MODE=\"${mode}\" bash -lc \"${cmd}\""
         },
         {
-          "line": 178,
+          "line": 195,
           "operation": "write",
           "path": "scripts/c_fixture_suite.sh",
           "scope": "scripts",
@@ -1727,6 +1706,13 @@
           "path": "scripts/check_double_free_stress.sh",
           "scope": "scripts",
           "snippet": "FRANKENLIBC_MODE=\"${mode}\" \\"
+        },
+        {
+          "line": 322,
+          "operation": "reference",
+          "path": "scripts/check_dual_mode_logging_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(policy.get(\"env_key\") == \"FRANKENLIBC_MODE\", \"mode_policy_env\", \"mode policy must bind FRANKENLIBC_MODE\")"
         },
         {
           "line": 159,
@@ -1881,6 +1867,13 @@
           "path": "scripts/check_mode_contract_lock_completion_contract.sh",
           "scope": "scripts",
           "snippet": "require(mode in joined_snippets, f\"docs env inventory FRANKENLIBC_MODE mentions missing {mode}\")"
+        },
+        {
+          "line": 233,
+          "operation": "reference",
+          "path": "scripts/check_mode_semantics_matrix_completion_contract.sh",
+          "scope": "scripts",
+          "snippet": "require(matrix.get(\"env_variable\") == expectations.get(\"env_variable\") == \"FRANKENLIBC_MODE\", \"matrix env_variable drifted\")"
         },
         {
           "line": 404,
@@ -2170,25 +2163,32 @@
           "snippet": "env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" \\"
         },
         {
-          "line": 476,
+          "line": 71,
           "operation": "write",
           "path": "scripts/perf_gate.sh",
           "scope": "scripts",
-          "snippet": "FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE=\"${mode}\" \\"
+          "snippet": "mode_env_args+=(FRANKENLIBC_MODE=\"${mode}\")"
         },
         {
-          "line": 482,
-          "operation": "write",
+          "line": 534,
+          "operation": "reference",
           "path": "scripts/perf_gate.sh",
           "scope": "scripts",
-          "snippet": "FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE=\"${mode}\" \\"
+          "snippet": "out_rt=\"$(capture_bench_lines \"${mode}\" \"runtime_math_bench\" \"RUNTIME_MATH_BENCH\" \"FRANKENLIBC_MODE\")\""
         },
         {
-          "line": 495,
-          "operation": "write",
+          "line": 535,
+          "operation": "reference",
           "path": "scripts/perf_gate.sh",
           "scope": "scripts",
-          "snippet": "FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE=\"${mode}\" \\"
+          "snippet": "out_mem=\"$(capture_bench_lines \"${mode}\" \"membrane_bench\" \"MEMBRANE_BENCH\" \"FRANKENLIBC_MODE\")\""
+        },
+        {
+          "line": 539,
+          "operation": "reference",
+          "path": "scripts/perf_gate.sh",
+          "scope": "scripts",
+          "snippet": "out_kernels=\"$(capture_bench_lines \"${mode}\" \"runtime_math_kernels_bench\" \"RUNTIME_MATH_KERNEL_BENCH\" \"FRANKENLIBC_MODE\")\""
         },
         {
           "line": 165,
@@ -2345,7 +2345,7 @@
           "snippet": "self.assertIn(f\"FRANKENLIBC_MODE={mode}\", cmd)"
         },
         {
-          "line": 226,
+          "line": 323,
           "operation": "reference",
           "path": "tests/gentoo/test_fast_validate.py",
           "scope": "tests",
@@ -2371,8 +2371,8 @@
         "safety_impact": "high"
       },
       "read_count": 30,
-      "reference_count": 109,
-      "write_count": 55
+      "reference_count": 114,
+      "write_count": 53
     },
     {
       "access_count": 2,
@@ -2446,14 +2446,14 @@
       "access_count": 6,
       "accesses": [
         {
-          "line": 506,
+          "line": 553,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION\", \"0\")"
         },
         {
-          "line": 533,
+          "line": 580,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
           "scope": "harness",
@@ -2467,7 +2467,7 @@
           "snippet": "ALLOW_TARGET_VIOLATION=\"${FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION:-1}\""
         },
         {
-          "line": 72,
+          "line": 74,
           "operation": "write",
           "path": "scripts/check_benchmark_gate.sh",
           "scope": "scripts",
@@ -2509,14 +2509,14 @@
       "access_count": 5,
       "accesses": [
         {
-          "line": 508,
+          "line": 555,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE\", \"1\")"
         },
         {
-          "line": 541,
+          "line": 588,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
           "scope": "harness",
@@ -2530,7 +2530,7 @@
           "snippet": "ENABLE_KERNEL_SUITE=\"${FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE:-0}\""
         },
         {
-          "line": 74,
+          "line": 76,
           "operation": "write",
           "path": "scripts/check_benchmark_gate.sh",
           "scope": "scripts",
@@ -2599,14 +2599,14 @@
       "access_count": 5,
       "accesses": [
         {
-          "line": 505,
+          "line": 552,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_PERF_MAX_REGRESSION_PCT\", \"17\")"
         },
         {
-          "line": 529,
+          "line": 576,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
           "scope": "harness",
@@ -2620,7 +2620,7 @@
           "snippet": "MAX_REGRESSION_PCT=\"${FRANKENLIBC_PERF_MAX_REGRESSION_PCT:-20}\""
         },
         {
-          "line": 71,
+          "line": 73,
           "operation": "write",
           "path": "scripts/check_benchmark_gate.sh",
           "scope": "scripts",
@@ -2654,14 +2654,14 @@
       "access_count": 7,
       "accesses": [
         {
-          "line": 507,
+          "line": 554,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_PERF_SKIP_OVERLOADED\", \"0\")"
         },
         {
-          "line": 537,
+          "line": 584,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/perf_regression_gate_test.rs",
           "scope": "harness",
@@ -2675,7 +2675,7 @@
           "snippet": "SKIP_OVERLOADED=\"${FRANKENLIBC_PERF_SKIP_OVERLOADED:-1}\""
         },
         {
-          "line": 73,
+          "line": 75,
           "operation": "write",
           "path": "scripts/check_benchmark_gate.sh",
           "scope": "scripts",
