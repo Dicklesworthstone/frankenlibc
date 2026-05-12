@@ -35,6 +35,16 @@ fn load_matrix() -> serde_json::Value {
     serde_json::from_str(&content).expect("support_matrix.json should be valid JSON")
 }
 
+fn stub_symbols_from_matrix(matrix: &serde_json::Value) -> HashSet<String> {
+    matrix["symbols"]
+        .as_array()
+        .expect("support_matrix.symbols should be an array")
+        .iter()
+        .filter(|entry| entry["status"].as_str() == Some("Stub"))
+        .filter_map(|entry| entry["symbol"].as_str().map(String::from))
+        .collect()
+}
+
 #[test]
 fn contracts_file_exists_and_valid() {
     let contracts = load_contracts();
@@ -87,15 +97,7 @@ fn all_stub_symbols_covered() {
     let contracts = load_contracts();
     let matrix = load_matrix();
 
-    // Collect Stub symbols from matrix
-    let mut stub_symbols = HashSet::new();
-    if let Some(symbols) = matrix["symbols"].as_object() {
-        for (name, info) in symbols {
-            if info["status"].as_str() == Some("Stub") {
-                stub_symbols.insert(name.clone());
-            }
-        }
-    }
+    let stub_symbols = stub_symbols_from_matrix(&matrix);
 
     // Collect contracted symbols
     let contracted: HashSet<String> = contracts["contracts"]
