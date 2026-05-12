@@ -1,0 +1,250 @@
+{
+  "schema_version": "resolver_nss_hardening_completion_contract.v1",
+  "bead": "bd-1j4.3",
+  "completion_debt_bead": "bd-1j4.3.1",
+  "description": "Completion-debt evidence binding for NSS/resolver deterministic cache, retry, backoff, fixture, fuzz, and telemetry obligations.",
+  "completion_debt_evidence": {
+    "bead": "bd-1j4.3.1",
+    "original_bead": "bd-1j4.3",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-1j4.3/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "artifacts": {
+      "core_resolver": "crates/frankenlibc-core/src/resolv/mod.rs",
+      "abi_resolver": "crates/frankenlibc-abi/src/resolv_abi.rs",
+      "resolver_fixture": "tests/conformance/fixtures/resolver.json",
+      "resolver_conformance": "crates/frankenlibc-harness/tests/resolver_conformance_test.rs",
+      "resolver_abi_unit": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+      "nss_cache_unit": "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+      "hard_parts_manifest": "tests/conformance/resolver_nss_hard_parts.v1.json",
+      "hard_parts_gate": "scripts/check_resolver_nss_hard_parts.sh",
+      "semantic_kernels_manifest": "tests/conformance/hermetic_resolver_nss_semantic_kernels.v1.json",
+      "semantic_kernels_gate": "scripts/check_hermetic_resolver_nss_semantic_kernels.sh",
+      "hermetic_lab_manifest": "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+      "hermetic_lab_runner": "scripts/run_hermetic_nss_resolver_lab.sh",
+      "fuzz_resolv": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_resolv.rs",
+      "fuzz_resolver": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_resolver.rs",
+      "fuzz_resolv_corpus": "crates/frankenlibc-fuzz/corpus/fuzz_resolv",
+      "fuzz_resolver_corpus": "crates/frankenlibc-fuzz/corpus/fuzz_resolver",
+      "completion_contract": "tests/conformance/resolver_nss_hardening_completion_contract.v1.json",
+      "completion_gate": "scripts/check_resolver_nss_hardening_completion_contract.sh",
+      "completion_harness": "crates/frankenlibc-harness/tests/resolver_nss_hardening_completion_contract_test.rs"
+    },
+    "directory_artifacts": [
+      "fuzz_resolv_corpus",
+      "fuzz_resolver_corpus"
+    ],
+    "implementation_refs": [
+      "crates/frankenlibc-core/src/resolv/mod.rs:538",
+      "crates/frankenlibc-core/src/resolv/mod.rs:645",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1091",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1217",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1241",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1629",
+      "tests/conformance/fixtures/resolver.json:139",
+      "tests/conformance/fixtures/resolver.json:187",
+      "tests/conformance/fixtures/resolver.json:202",
+      "tests/conformance/fixtures/resolver.json:232",
+      "tests/conformance/fixtures/resolver.json:268",
+      "crates/frankenlibc-harness/tests/resolver_conformance_test.rs:200",
+      "crates/frankenlibc-harness/tests/resolver_conformance_test.rs:214",
+      "crates/frankenlibc-fuzz/fuzz_targets/fuzz_resolv.rs:31",
+      "crates/frankenlibc-fuzz/fuzz_targets/fuzz_resolver.rs:60",
+      "scripts/check_resolver_nss_hardening_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/resolver_nss_hardening_completion_contract_test.rs:1"
+    ],
+    "source_needles": {
+      "core_resolver": [
+        "pub fn getaddrinfo_with_hosts",
+        "Explicitly no DNS/NSS network fallback",
+        "pub fn getaddrinfo",
+        "fn lookup_hosts_found",
+        "fn getaddrinfo_with_hosts_no_network_fallback"
+      ],
+      "abi_resolver": [
+        "pub unsafe extern \"C\" fn getaddrinfo",
+        "native_dns_resolve",
+        "ReturnSafeDefault",
+        "pub unsafe extern \"C\" fn gethostbyname"
+      ],
+      "resolver_conformance": [
+        "resolver_covers_getaddrinfo",
+        "resolver_covers_gethostbyname",
+        "resolver_fixture_executes_via_harness"
+      ],
+      "fuzz_resolv": [
+        "fuzz_parse_hosts_line",
+        "fuzz_lookup_hosts",
+        "fuzz_getaddrinfo"
+      ],
+      "fuzz_resolver": [
+        "fuzz_resolv_conf_parse",
+        "fuzz_domain_name_roundtrip"
+      ]
+    },
+    "missing_item_bindings": [
+      {
+        "missing_item_id": "tests.unit.primary",
+        "evidence_section": "unit_primary"
+      },
+      {
+        "missing_item_id": "tests.e2e.primary",
+        "evidence_section": "e2e_primary"
+      },
+      {
+        "missing_item_id": "tests.fuzz.primary",
+        "evidence_section": "fuzz_primary"
+      },
+      {
+        "missing_item_id": "tests.golden.primary",
+        "evidence_section": "golden_primary"
+      },
+      {
+        "missing_item_id": "tests.conformance.primary",
+        "evidence_section": "conformance_primary"
+      },
+      {
+        "missing_item_id": "telemetry.primary",
+        "evidence_section": "telemetry_primary"
+      }
+    ],
+    "unit_primary": {
+      "description": "Unit tests pin resolver parser, hosts lookup, numeric getaddrinfo, addrconfig filtering, gethostbyname error semantics, and NSS cache retry/idempotence behavior.",
+      "commands": [
+        "rch exec -- cargo test -p frankenlibc-core resolv --lib -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test nss_cache_policy_test -- --nocapture"
+      ],
+      "required_test_refs": [
+        {
+          "source": "core_resolver",
+          "name": "lookup_hosts_found"
+        },
+        {
+          "source": "core_resolver",
+          "name": "getaddrinfo_numeric_ipv4"
+        },
+        {
+          "source": "core_resolver",
+          "name": "getaddrinfo_with_hosts_ipv4_lookup"
+        },
+        {
+          "source": "core_resolver",
+          "name": "getaddrinfo_with_hosts_no_network_fallback"
+        },
+        {
+          "source": "resolver_abi_unit",
+          "name": "gethostbyname_unknown_host_sets_thread_local_h_errno"
+        },
+        {
+          "source": "nss_cache_unit",
+          "name": "hosts_cache_refreshes_forward_lookup_after_file_change"
+        }
+      ]
+    },
+    "e2e_primary": {
+      "description": "Hermetic resolver/NSS lab and semantic-kernel gates provide replayable lookup scenarios without ambient DNS dependency.",
+      "commands": [
+        "bash scripts/run_hermetic_nss_resolver_lab.sh",
+        "bash scripts/check_hermetic_resolver_nss_semantic_kernels.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test hermetic_nss_resolver_lab_execution_test -- --nocapture"
+      ],
+      "required_artifacts": [
+        "hermetic_lab_manifest",
+        "hermetic_lab_runner",
+        "semantic_kernels_manifest",
+        "semantic_kernels_gate"
+      ]
+    },
+    "fuzz_primary": {
+      "description": "Resolver parser and lookup fuzz targets cover hosts/services parsing, getaddrinfo/getnameinfo, DNS packet decoding, resolv.conf parsing, and domain-name encoding.",
+      "commands": [
+        "cargo fuzz run fuzz_resolv",
+        "cargo fuzz run fuzz_resolver",
+        "rch exec -- cargo test -p frankenlibc-fuzz --no-run"
+      ],
+      "corpus_requirements": [
+        {
+          "artifact": "fuzz_resolv_corpus",
+          "min_seed_files": 5
+        },
+        {
+          "artifact": "fuzz_resolver_corpus",
+          "min_seed_files": 6
+        }
+      ]
+    },
+    "golden_primary": {
+      "description": "Golden resolver fixture rows freeze strict/hardened hosts lookup, getaddrinfo, gethostbyname, and retry-policy defaults.",
+      "fixture": "resolver_fixture",
+      "required_cases": [
+        "hosts_lookup_inline_comments_and_aliases",
+        "getaddrinfo_hosts_file_subset",
+        "hosts_lookup_inline_comments_and_aliases_hardened",
+        "getaddrinfo_hosts_file_subset_hardened",
+        "getaddrinfo_numeric_ipv4",
+        "getaddrinfo_unknown_host",
+        "gethostbyname_numeric_ipv4",
+        "gethostbyname_numeric_ipv4_hardened"
+      ],
+      "required_retry_policy": {
+        "timeout_default_secs": 5,
+        "attempts_default": 2
+      }
+    },
+    "conformance_primary": {
+      "description": "Fixture-driven conformance gates require getaddrinfo/gethostbyname coverage and hard-parts manifest validation.",
+      "commands": [
+        "bash scripts/check_resolver_nss_hard_parts.sh",
+        "bash scripts/check_resolver_nss_hardening_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test resolver_conformance_test -- --nocapture"
+      ],
+      "required_test_refs": [
+        {
+          "source": "resolver_conformance",
+          "name": "resolver_covers_getaddrinfo"
+        },
+        {
+          "source": "resolver_conformance",
+          "name": "resolver_covers_gethostbyname"
+        },
+        {
+          "source": "resolver_conformance",
+          "name": "resolver_fixture_executes_via_harness"
+        }
+      ],
+      "required_artifacts": [
+        "hard_parts_manifest",
+        "hard_parts_gate"
+      ]
+    },
+    "telemetry_primary": {
+      "description": "The completion checker emits deterministic report JSON plus JSONL rows for source refs, missing-item bindings, fuzz corpus, golden cases, and final pass/fail state.",
+      "report_path": "target/conformance/resolver_nss_hardening_completion_contract.report.json",
+      "log_path": "target/conformance/resolver_nss_hardening_completion_contract.log.jsonl",
+      "required_events": [
+        "resolver_nss_hardening.source_ref",
+        "resolver_nss_hardening.missing_item_bound",
+        "resolver_nss_hardening.fuzz_corpus_bound",
+        "resolver_nss_hardening.golden_case_bound",
+        "resolver_nss_hardening.completion_contract_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "missing_items",
+        "artifact_refs",
+        "unit_test_ref_count",
+        "golden_case_count",
+        "fuzz_corpus_seed_count",
+        "conformance_test_ref_count",
+        "failure_signature"
+      ]
+    }
+  }
+}
