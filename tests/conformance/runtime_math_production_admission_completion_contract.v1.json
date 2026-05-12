@@ -1,0 +1,309 @@
+{
+  "schema_version": "runtime_math_production_admission_completion_contract.v1",
+  "original_bead": "bd-3ot",
+  "completion_debt_bead": "bd-3ot.4",
+  "trace_id": "runtime_math_production_admission_completion::bd-3ot.4",
+  "source_artifacts": {
+    "admission_report": "tests/runtime_math/admission_gate_report.v1.json",
+    "controller_manifest": "tests/runtime_math/controller_manifest.v1.json",
+    "production_manifest": "tests/runtime_math/production_kernel_manifest.v1.json",
+    "math_governance": "tests/conformance/math_governance.json",
+    "math_value_proof": "tests/conformance/math_value_proof.json",
+    "math_retirement_policy": "tests/conformance/math_retirement_policy.json",
+    "fuzz_phase2_targets": "tests/conformance/fuzz_phase2_targets.v1.json",
+    "admission_ci_contract": "tests/conformance/runtime_math_admission_ci_completion_contract.v1.json",
+    "admission_retirement_contract": "tests/conformance/runtime_math_admission_retirement_completion_contract.v1.json",
+    "controller_ablation_contract": "tests/conformance/runtime_math_controller_ablation_completion_contract.v1.json",
+    "math_value_contract": "tests/conformance/math_value_proof_completion_contract.v1.json",
+    "math_value_ablations_contract": "tests/conformance/math_value_ablations_completion_contract.v1.json",
+    "math_retirement_contract": "tests/conformance/math_retirement_completion_contract.v1.json",
+    "unit_coverage_contract": "tests/conformance/runtime_math_unit_coverage_completion_contract.v1.json",
+    "logging_contract": "tests/conformance/runtime_math_logging_completion_contract.v1.json",
+    "fuzz_phase2_contract": "tests/conformance/fuzz_phase2_completion_contract.v1.json",
+    "admission_gate_checker": "scripts/check_runtime_math_admission.sh",
+    "admission_ci_checker": "scripts/check_runtime_math_admission_ci_completion_contract.sh",
+    "admission_retirement_checker": "scripts/check_runtime_math_admission_retirement_completion_contract.sh",
+    "controller_ablation_checker": "scripts/check_runtime_math_controller_ablation_completion_contract.sh",
+    "math_value_checker": "scripts/check_math_value_proof_completion_contract.sh",
+    "math_value_ablations_checker": "scripts/check_math_value_ablations_completion_contract.sh",
+    "math_retirement_checker": "scripts/check_math_retirement_completion_contract.sh",
+    "unit_coverage_checker": "scripts/check_runtime_math_unit_coverage_completion_contract.sh",
+    "logging_checker": "scripts/check_runtime_math_logging_completion_contract.sh",
+    "fuzz_phase2_checker": "scripts/check_fuzz_phase2_completion_contract.sh",
+    "epic_closure_checker": "scripts/check_runtime_math_epic_closure.sh",
+    "completion_checker": "scripts/check_runtime_math_production_admission_completion_contract.sh",
+    "admission_gate_test": "crates/frankenlibc-harness/tests/runtime_math_admission_gate_test.rs",
+    "math_value_proof_test": "crates/frankenlibc-harness/tests/math_value_proof_test.rs",
+    "math_retirement_test": "crates/frankenlibc-harness/tests/math_retirement_test.rs",
+    "fuzz_phase2_completion_test": "crates/frankenlibc-harness/tests/fuzz_phase2_completion_contract_test.rs",
+    "logging_completion_test": "crates/frankenlibc-harness/tests/runtime_math_logging_completion_contract_test.rs",
+    "epic_closure_test": "crates/frankenlibc-harness/tests/runtime_math_epic_closure_test.rs",
+    "completion_harness": "crates/frankenlibc-harness/tests/runtime_math_production_admission_completion_contract_test.rs",
+    "fuzz_runtime_math": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_runtime_math.rs"
+  },
+  "required_source_contract": {
+    "admission_report": {
+      "status": "pass",
+      "total_modules": 69,
+      "admitted": 25,
+      "retired": 44,
+      "blocked": 0,
+      "errors": 0,
+      "warnings": 0
+    },
+    "controller_manifest_summary": {
+      "total_entries": 69,
+      "production_manifest_entries": 25,
+      "missing_decision_hook": 0,
+      "missing_invariant": 0,
+      "missing_fallback": 0,
+      "missing_benefit_target": 0
+    },
+    "math_governance": {
+      "production_core": 12,
+      "production_monitor": 13,
+      "research": 44
+    },
+    "production_manifest": {
+      "production_modules": 25,
+      "research_only_modules": 44
+    },
+    "math_value_proof": {
+      "total_modules_assessed": 25,
+      "all_retained": true,
+      "research_modules_excluded": 44,
+      "retention_threshold": 2.0
+    },
+    "math_retirement_policy": {
+      "total_modules_in_manifest": 25,
+      "production_compliant": 25,
+      "retirement_candidates_rc1": 0,
+      "retirement_candidates_rc2": 0,
+      "active_waivers": 0,
+      "policy_status": "enforcing_no_waivers"
+    },
+    "fuzz_phase2": {
+      "required_target": "fuzz_runtime_math",
+      "minimum_targets": 4,
+      "runs_per_target": 1000000,
+      "max_crashes": 0
+    },
+    "required_child_contract_ids": [
+      "admission_ci",
+      "admission_retirement",
+      "controller_ablation",
+      "math_value",
+      "math_value_ablations",
+      "math_retirement",
+      "unit_coverage",
+      "runtime_math_logging",
+      "fuzz_phase2"
+    ]
+  },
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.fuzz.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "implementation_refs": [
+      "tests/conformance/runtime_math_admission_ci_completion_contract.v1.json:108",
+      "tests/conformance/runtime_math_admission_retirement_completion_contract.v1.json:116",
+      "tests/conformance/runtime_math_controller_ablation_completion_contract.v1.json:78",
+      "tests/conformance/math_value_proof_completion_contract.v1.json:1",
+      "tests/conformance/math_value_ablations_completion_contract.v1.json:1",
+      "tests/conformance/math_retirement_completion_contract.v1.json:1",
+      "tests/conformance/runtime_math_unit_coverage_completion_contract.v1.json:158",
+      "tests/conformance/runtime_math_logging_completion_contract.v1.json:171",
+      "tests/conformance/fuzz_phase2_completion_contract.v1.json:160",
+      "crates/frankenlibc-fuzz/fuzz_targets/fuzz_runtime_math.rs:34",
+      "scripts/check_runtime_math_epic_closure.sh:148",
+      "crates/frankenlibc-harness/tests/runtime_math_epic_closure_test.rs:45"
+    ],
+    "child_contracts": [
+      {
+        "id": "admission_ci",
+        "path": "tests/conformance/runtime_math_admission_ci_completion_contract.v1.json",
+        "schema_version": "runtime_math_admission_ci_completion_contract.v1",
+        "completion_debt_bead": "bd-3ot.3.1",
+        "covers": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"]
+      },
+      {
+        "id": "admission_retirement",
+        "path": "tests/conformance/runtime_math_admission_retirement_completion_contract.v1.json",
+        "schema_version": "runtime_math_admission_retirement_completion_contract.v1",
+        "completion_debt_bead": "bd-w2c3.5.3.1",
+        "covers": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"]
+      },
+      {
+        "id": "controller_ablation",
+        "path": "tests/conformance/runtime_math_controller_ablation_completion_contract.v1.json",
+        "schema_version": "runtime_math_controller_ablation_completion_contract.v1",
+        "completion_debt_bead": "bd-3ot.2.1",
+        "covers": ["tests.unit.primary", "tests.e2e.primary"]
+      },
+      {
+        "id": "math_value",
+        "path": "tests/conformance/math_value_proof_completion_contract.v1.json",
+        "schema_version": "math_value_proof_completion_contract.v1",
+        "completion_debt_bead": "bd-3tp.1",
+        "covers": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"]
+      },
+      {
+        "id": "math_value_ablations",
+        "path": "tests/conformance/math_value_ablations_completion_contract.v1.json",
+        "schema_version": "math_value_ablations_completion_contract.v1",
+        "completion_debt_bead": "bd-1rxj.1",
+        "covers": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"]
+      },
+      {
+        "id": "math_retirement",
+        "path": "tests/conformance/math_retirement_completion_contract.v1.json",
+        "schema_version": "math_retirement_completion_contract.v1",
+        "completion_debt_bead": "bd-545.1",
+        "covers": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"]
+      },
+      {
+        "id": "unit_coverage",
+        "path": "tests/conformance/runtime_math_unit_coverage_completion_contract.v1.json",
+        "schema_version": "runtime_math_unit_coverage_completion_contract.v1",
+        "completion_debt_bead": "bd-5vr.6.1",
+        "covers": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"]
+      },
+      {
+        "id": "runtime_math_logging",
+        "path": "tests/conformance/runtime_math_logging_completion_contract.v1.json",
+        "schema_version": "runtime_math_logging_completion_contract.v1",
+        "completion_debt_bead": "bd-5vr.8.1",
+        "covers": ["telemetry.primary"]
+      },
+      {
+        "id": "fuzz_phase2",
+        "path": "tests/conformance/fuzz_phase2_completion_contract.v1.json",
+        "schema_version": "fuzz_phase2_completion_contract.v1",
+        "completion_debt_bead": "bd-1oz.7.1",
+        "covers": ["tests.fuzz.primary", "tests.conformance.primary", "telemetry.primary"]
+      }
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Runtime-math production admission unit evidence is bound through admission, value-proof, retirement, unit-coverage, and parent completion harness tests.",
+      "required_test_refs": [
+        {"source": "admission_gate_test", "name": "admission_gate_passes"},
+        {"source": "admission_gate_test", "name": "admission_ledger_completeness"},
+        {"source": "admission_gate_test", "name": "retirement_lockout_invariants"},
+        {"source": "math_value_proof_test", "name": "retained_modules_meet_threshold"},
+        {"source": "math_retirement_test", "name": "policy_exists_and_valid"},
+        {"source": "math_retirement_test", "name": "production_compliant_match_governance"},
+        {"source": "completion_harness", "name": "manifest_binds_all_bd3ot4_missing_items"}
+      ],
+      "required_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_production_admission_completion_contract_test -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_admission_gate_test --test math_value_proof_test --test math_retirement_test -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "The parent checker binds admission CI, admission-retirement, value proof, retirement, fuzz phase-2, logging, and aggregate epic closure gates to deterministic report and JSONL artifacts.",
+      "required_test_refs": [
+        {"source": "completion_harness", "name": "checker_validates_runtime_math_production_admission_contract"},
+        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_child_contract"},
+        {"source": "epic_closure_test", "name": "gate_script_emits_valid_report_and_log"},
+        {"source": "fuzz_phase2_completion_test", "name": "checker_emits_report_log_and_replays_existing_gate"}
+      ],
+      "required_commands": [
+        "bash scripts/check_runtime_math_production_admission_completion_contract.sh",
+        "bash scripts/check_runtime_math_admission_ci_completion_contract.sh",
+        "bash scripts/check_runtime_math_admission_retirement_completion_contract.sh",
+        "bash scripts/check_fuzz_phase2_completion_contract.sh",
+        "bash scripts/check_runtime_math_logging_completion_contract.sh",
+        "bash scripts/check_runtime_math_epic_closure.sh"
+      ]
+    },
+    "fuzz_primary": {
+      "missing_item_id": "tests.fuzz.primary",
+      "description": "Runtime-math admission retains the phase-2 structure-aware fuzz target for RuntimeMathKernel decisions and observation cycles.",
+      "required_targets": ["fuzz_runtime_math"],
+      "required_target_sources": ["crates/frankenlibc-fuzz/fuzz_targets/fuzz_runtime_math.rs"],
+      "required_cargo_fuzz_command": "rch exec -- env CARGO_TARGET_DIR=<target> cargo fuzz run --fuzz-dir crates/frankenlibc-fuzz fuzz_runtime_math -- -runs=1000000 -print_final_stats=1",
+      "max_crashes": 0,
+      "required_test_refs": [
+        {"source": "fuzz_phase2_completion_test", "name": "contract_binds_phase2_targets_ci_and_existing_tests"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_fuzz_runtime_math_target"}
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "description": "Conformance evidence is the checked-in admission/value/retirement/fuzz contracts plus generated target reports from the replayable parent checker.",
+      "required_checkers": [
+        "scripts/check_runtime_math_admission.sh",
+        "scripts/check_runtime_math_admission_ci_completion_contract.sh",
+        "scripts/check_runtime_math_admission_retirement_completion_contract.sh",
+        "scripts/check_math_value_proof_completion_contract.sh",
+        "scripts/check_math_retirement_completion_contract.sh",
+        "scripts/check_fuzz_phase2_completion_contract.sh",
+        "scripts/check_runtime_math_production_admission_completion_contract.sh"
+      ],
+      "required_artifacts": [
+        "tests/runtime_math/admission_gate_report.v1.json",
+        "tests/conformance/math_value_proof.json",
+        "tests/conformance/math_retirement_policy.json",
+        "tests/conformance/fuzz_phase2_completion_contract.v1.json",
+        "tests/conformance/runtime_math_production_admission_completion_contract.v1.json",
+        "target/conformance/runtime_math_production_admission_completion_contract.report.json",
+        "target/conformance/runtime_math_production_admission_completion_contract.log.jsonl"
+      ],
+      "required_test_refs": [
+        {"source": "completion_harness", "name": "checker_validates_runtime_math_production_admission_contract"},
+        {"source": "completion_harness", "name": "checker_rejects_non_rch_cargo_validation_command"}
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "The parent checker emits one structured JSONL row per missing completion item and carries source bead, completion bead, source commit, child contract count, test counts, artifact refs, and fail-closed signatures.",
+      "required_events": [
+        "runtime_math_production_admission_units_validated",
+        "runtime_math_production_admission_e2e_validated",
+        "runtime_math_production_admission_fuzz_validated",
+        "runtime_math_production_admission_conformance_validated",
+        "runtime_math_production_admission_telemetry_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "missing_item_id",
+        "child_contract_count",
+        "unit_test_ref_count",
+        "e2e_test_ref_count",
+        "fuzz_target_count",
+        "conformance_artifact_count",
+        "telemetry_event_count",
+        "telemetry_field_count",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "required_test_refs": [
+        {"source": "logging_completion_test", "name": "checker_emits_runtime_math_logging_report_and_jsonl"},
+        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_telemetry_event"}
+      ]
+    },
+    "test_sources": {
+      "admission_gate_test": "crates/frankenlibc-harness/tests/runtime_math_admission_gate_test.rs",
+      "math_value_proof_test": "crates/frankenlibc-harness/tests/math_value_proof_test.rs",
+      "math_retirement_test": "crates/frankenlibc-harness/tests/math_retirement_test.rs",
+      "fuzz_phase2_completion_test": "crates/frankenlibc-harness/tests/fuzz_phase2_completion_contract_test.rs",
+      "logging_completion_test": "crates/frankenlibc-harness/tests/runtime_math_logging_completion_contract_test.rs",
+      "epic_closure_test": "crates/frankenlibc-harness/tests/runtime_math_epic_closure_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/runtime_math_production_admission_completion_contract_test.rs"
+    }
+  }
+}
