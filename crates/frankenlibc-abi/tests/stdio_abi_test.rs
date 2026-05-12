@@ -4181,10 +4181,11 @@ fn vis_string(buf: &[c_char], n: c_int) -> Vec<u8> {
 }
 
 const ABI_VIS_OCTAL: c_int = 0x01;
+const ABI_VIS_CSTYLE: c_int = 0x02;
 const ABI_VIS_SP: c_int = 0x04;
 const ABI_VIS_TAB: c_int = 0x08;
 const ABI_VIS_NL: c_int = 0x10;
-const ABI_VIS_CSTYLE: c_int = 0x20;
+const ABI_VIS_SAFE: c_int = 0x20;
 const ABI_VIS_WHITE: c_int = ABI_VIS_SP | ABI_VIS_TAB | ABI_VIS_NL;
 
 unsafe fn tracked_bytes_without_nul(bytes: &[u8]) -> *mut c_char {
@@ -4432,6 +4433,19 @@ fn vis_cstyle_uses_nextc_to_disambiguate_nul() {
         .map(|&c| c as u8)
         .collect();
     assert_eq!(octal_bytes, b"\\000");
+}
+
+#[test]
+fn vis_safe_bit_does_not_enable_cstyle() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0, ABI_VIS_SAFE, b'x' as c_int) };
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\^@");
 }
 
 #[test]

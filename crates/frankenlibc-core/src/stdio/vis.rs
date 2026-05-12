@@ -47,9 +47,12 @@ pub const VIS_TAB: u32 = 0x08;
 pub const VIS_NL: u32 = 0x10;
 /// Use C-style escape spellings for standard control characters
 /// that must be encoded.
-pub const VIS_CSTYLE: u32 = 0x20;
+pub const VIS_CSTYLE: u32 = 0x02;
 /// Convenience mask for whitespace-forcing flags.
 pub const VIS_WHITE: u32 = VIS_SP | VIS_TAB | VIS_NL;
+/// NetBSD `VIS_SAFE` bit. Accepted for ABI flag parity; the v1
+/// byte encoder still uses the default safety set.
+pub const VIS_SAFE: u32 = 0x20;
 
 /// Parse a NetBSD `VIS_OPTIONS`-style flag string and return the
 /// OR of the recognized `VIS_*` flag bits.
@@ -486,6 +489,14 @@ mod tests {
             b"\\001".to_vec()
         );
         assert_eq!(strvis_to_vec(b"\x01", VIS_CSTYLE), b"\\^A".to_vec());
+    }
+
+    #[test]
+    fn vis_safe_bit_does_not_enable_cstyle() {
+        assert_eq!(VIS_CSTYLE, 0x02);
+        assert_eq!(VIS_SAFE, 0x20);
+        assert_eq!(strvis_to_vec(b"\0", VIS_SAFE), b"\\^@".to_vec());
+        assert_eq!(strvis_to_vec(b"\0", VIS_CSTYLE), b"\\0".to_vec());
     }
 
     #[test]
@@ -1054,6 +1065,7 @@ mod unvis_tests {
         let s = b"VIS_OCTAL,VIS_TAB,VIS_NL,VIS_CSTYLE,VIS_SP,VIS_WHITE";
         let flags = parse_vis_options(s);
         assert_eq!(flags, VIS_OCTAL | VIS_TAB | VIS_NL | VIS_CSTYLE | VIS_SP);
+        assert_eq!(flags & VIS_CSTYLE, 0x02);
     }
 
     #[test]
