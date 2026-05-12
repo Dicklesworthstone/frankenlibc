@@ -1,0 +1,372 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "io-raw-veneer-migration-completion-contract",
+  "bead": "bd-ef2",
+  "completion_debt_bead": "bd-ef2.1",
+  "generated_utc": "2026-05-12T13:23:00Z",
+  "purpose": "Completion-debt contract for the I/O migration wave. This binds existing unistd/io/mmap ABI entrypoints to the core raw syscall veneer, verifies direct libc::syscall calls stay out of those route files, and records unit/e2e/migration/telemetry evidence for the audit closeout.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-ef2/scorecard.md",
+    "score_before": 470,
+    "score_threshold": 800
+  },
+  "source_artifacts": [
+    {
+      "artifact_id": "abi_unistd_raw_routes",
+      "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "required_needles": [
+        "use frankenlibc_core::syscall;",
+        "pub(crate) unsafe fn sys_read_fd",
+        "syscall::sys_read",
+        "pub(crate) unsafe fn sys_write_fd",
+        "syscall::sys_write",
+        "pub unsafe extern \"C\" fn close",
+        "syscall::sys_close",
+        "pub unsafe extern \"C\" fn lseek",
+        "syscall::sys_lseek",
+        "pub unsafe extern \"C\" fn open",
+        "syscall::sys_openat",
+        "pub unsafe extern \"C\" fn openat",
+        "pub unsafe extern \"C\" fn pread64",
+        "crate::io_abi::pread",
+        "pub unsafe extern \"C\" fn mmap64",
+        "crate::mmap_abi::mmap"
+      ],
+      "forbidden_needles": [
+        "libc::syscall("
+      ]
+    },
+    {
+      "artifact_id": "abi_io_raw_routes",
+      "path": "crates/frankenlibc-abi/src/io_abi.rs",
+      "required_needles": [
+        "use frankenlibc_core::syscall;",
+        "syscall::sys_dup",
+        "syscall::sys_dup2",
+        "syscall::sys_pipe2",
+        "syscall::sys_fcntl",
+        "pub unsafe extern \"C\" fn pread",
+        "syscall::sys_pread64",
+        "pub unsafe extern \"C\" fn pwrite",
+        "syscall::sys_pwrite64",
+        "pub unsafe extern \"C\" fn readv",
+        "syscall::sys_readv",
+        "pub unsafe extern \"C\" fn writev",
+        "syscall::sys_writev",
+        "syscall::sys_sendfile",
+        "syscall::sys_copy_file_range",
+        "syscall::sys_memfd_create"
+      ],
+      "forbidden_needles": [
+        "libc::syscall("
+      ]
+    },
+    {
+      "artifact_id": "abi_mmap_raw_routes",
+      "path": "crates/frankenlibc-abi/src/mmap_abi.rs",
+      "required_needles": [
+        "use frankenlibc_core::syscall;",
+        "use frankenlibc_core::syscall as raw_syscall;",
+        "pub unsafe extern \"C\" fn mmap",
+        "syscall::sys_mmap",
+        "pub unsafe extern \"C\" fn munmap",
+        "syscall::sys_munmap",
+        "pub unsafe extern \"C\" fn mprotect",
+        "syscall::sys_mprotect",
+        "syscall::sys_msync",
+        "syscall::sys_madvise",
+        "raw_syscall::sys_mlock",
+        "raw_syscall::sys_mremap"
+      ],
+      "forbidden_needles": [
+        "libc::syscall("
+      ]
+    },
+    {
+      "artifact_id": "abi_io_tests",
+      "path": "crates/frankenlibc-abi/tests/io_abi_test.rs",
+      "required_needles": [
+        "fn pwrite_and_pread_roundtrip",
+        "fn writev_and_readv_scatter_gather",
+        "fn pipe2_cloexec",
+        "fn pipe2_nonblock",
+        "fn fcntl_getfd",
+        "fn dup3_with_cloexec"
+      ]
+    },
+    {
+      "artifact_id": "abi_mmap_tests",
+      "path": "crates/frankenlibc-abi/tests/mmap_abi_test.rs",
+      "required_needles": [
+        "fn mmap_anonymous_and_munmap",
+        "fn mmap_zero_length_fails",
+        "fn mprotect_changes_protection",
+        "fn mmap_file_backed",
+        "fn under_mmap64_creates_anon_mapping"
+      ]
+    },
+    {
+      "artifact_id": "abi_unistd_tests",
+      "path": "crates/frankenlibc-abi/tests/unistd_abi_test.rs",
+      "required_needles": [
+        "fn open_write_read_close_round_trip",
+        "fn read_rejects_tracked_short_output_buffer",
+        "fn write_rejects_tracked_short_input_buffer",
+        "fn lseek_reports_position",
+        "fn openat2_opens_existing_file_in_temp_dir"
+      ]
+    },
+    {
+      "artifact_id": "verification_matrix_record",
+      "path": "tests/conformance/verification_matrix.json",
+      "required_needles": [
+        "\"bead_id\": \"bd-ef2\"",
+        "I/O migration wave: route core unistd/io ABI entrypoints through raw veneer",
+        "17 ABI functions migrated from libc::syscall to raw veneer",
+        "crates/frankenlibc-abi/src/unistd_abi.rs",
+        "crates/frankenlibc-abi/src/io_abi.rs",
+        "crates/frankenlibc-abi/src/mmap_abi.rs",
+        "\"overall\": \"complete\""
+      ]
+    },
+    {
+      "artifact_id": "completion_contract",
+      "path": "tests/conformance/io_raw_veneer_migration_completion_contract.v1.json",
+      "required_needles": [
+        "io-raw-veneer-migration-completion-contract",
+        "bd-ef2.1",
+        "migrations.primary",
+        "telemetry.primary"
+      ]
+    },
+    {
+      "artifact_id": "completion_checker",
+      "path": "scripts/check_io_raw_veneer_migration_completion_contract.sh",
+      "required_needles": [
+        "io_raw_veneer_migration_completion_contract",
+        "io_raw_veneer_migration.source_artifacts_validated",
+        "io_raw_veneer_migration.telemetry_binding_validated",
+        "PASS io raw veneer migration completion contract"
+      ]
+    },
+    {
+      "artifact_id": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/io_raw_veneer_migration_completion_contract_test.rs",
+      "required_needles": [
+        "fn contract_anchors_io_raw_veneer_migration_completion_debt",
+        "fn checker_accepts_contract_and_emits_telemetry",
+        "fn checker_rejects_direct_libc_syscall_route",
+        "fn checker_rejects_missing_migration_test_ref"
+      ]
+    }
+  ],
+  "migration_expectations": {
+    "minimum_raw_route_call_sites": 17,
+    "minimum_io_abi_tests": 50,
+    "minimum_mmap_abi_tests": 20,
+    "minimum_unistd_abi_tests": 500,
+    "forbidden_runtime_route": "libc::syscall(",
+    "required_route_modules": [
+      "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "crates/frankenlibc-abi/src/io_abi.rs",
+      "crates/frankenlibc-abi/src/mmap_abi.rs"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-ef2.1",
+    "original_bead": "bd-ef2",
+    "next_audit_score_threshold": 800,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "migrations.primary",
+      "telemetry.primary"
+    ],
+    "non_claim": "This contract binds existing I/O raw-veneer migration evidence and completion telemetry; it does not introduce new ABI symbols or alter syscall behavior.",
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "source": "abi_io_tests",
+          "name": "pwrite_and_pread_roundtrip"
+        },
+        {
+          "source": "abi_io_tests",
+          "name": "writev_and_readv_scatter_gather"
+        },
+        {
+          "source": "abi_mmap_tests",
+          "name": "mmap_anonymous_and_munmap"
+        },
+        {
+          "source": "abi_unistd_tests",
+          "name": "open_write_read_close_round_trip"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-abi --test io_abi_test pwrite_and_pread_roundtrip -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test mmap_abi_test mmap_anonymous_and_munmap -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test unistd_abi_test open_write_read_close_round_trip -- --nocapture"
+      ],
+      "required_completion_events": [
+        "io_raw_veneer_migration.unit_binding_validated"
+      ]
+    },
+    "e2e_primary": {
+      "required_test_refs": [
+        {
+          "source": "abi_io_tests",
+          "name": "pipe2_nonblock"
+        },
+        {
+          "source": "abi_io_tests",
+          "name": "fcntl_getfd"
+        },
+        {
+          "source": "abi_mmap_tests",
+          "name": "mprotect_changes_protection"
+        },
+        {
+          "source": "abi_unistd_tests",
+          "name": "lseek_reports_position"
+        },
+        {
+          "source": "abi_unistd_tests",
+          "name": "openat2_opens_existing_file_in_temp_dir"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-abi --test io_abi_test pipe2_nonblock -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test mmap_abi_test mprotect_changes_protection -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test unistd_abi_test lseek_reports_position -- --nocapture"
+      ],
+      "required_completion_events": [
+        "io_raw_veneer_migration.e2e_binding_validated"
+      ]
+    },
+    "migrations_primary": {
+      "required_sources": [
+        "abi_unistd_raw_routes",
+        "abi_io_raw_routes",
+        "abi_mmap_raw_routes",
+        "verification_matrix_record"
+      ],
+      "forbidden_needles": [
+        "libc::syscall("
+      ],
+      "required_commands": [
+        "bash scripts/check_io_raw_veneer_migration_completion_contract.sh"
+      ],
+      "required_completion_events": [
+        "io_raw_veneer_migration.migration_binding_validated"
+      ]
+    },
+    "telemetry_primary": {
+      "required_test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "checker_accepts_contract_and_emits_telemetry"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_direct_libc_syscall_route"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_migration_test_ref"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test io_raw_veneer_migration_completion_contract_test -- --nocapture",
+        "rch exec -- cargo clippy -p frankenlibc-harness --test io_raw_veneer_migration_completion_contract_test -- -D warnings"
+      ],
+      "required_completion_events": [
+        "io_raw_veneer_migration.source_artifacts_validated",
+        "io_raw_veneer_migration.expectations_validated",
+        "io_raw_veneer_migration.implementation_refs_validated",
+        "io_raw_veneer_migration.unit_binding_validated",
+        "io_raw_veneer_migration.e2e_binding_validated",
+        "io_raw_veneer_migration.migration_binding_validated",
+        "io_raw_veneer_migration.telemetry_binding_validated",
+        "io_raw_veneer_migration.completion_contract_validated",
+        "io_raw_veneer_migration.completion_contract_failed"
+      ]
+    }
+  },
+  "implementation_refs": [
+    "crates/frankenlibc-abi/src/unistd_abi.rs:245",
+    "crates/frankenlibc-abi/src/unistd_abi.rs:273",
+    "crates/frankenlibc-abi/src/unistd_abi.rs:329",
+    "crates/frankenlibc-abi/src/unistd_abi.rs:385",
+    "crates/frankenlibc-abi/src/unistd_abi.rs:483",
+    "crates/frankenlibc-abi/src/unistd_abi.rs:1231",
+    "crates/frankenlibc-abi/src/unistd_abi.rs:1650",
+    "crates/frankenlibc-abi/src/unistd_abi.rs:4197",
+    "crates/frankenlibc-abi/src/unistd_abi.rs:4212",
+    "crates/frankenlibc-abi/src/io_abi.rs:66",
+    "crates/frankenlibc-abi/src/io_abi.rs:143",
+    "crates/frankenlibc-abi/src/io_abi.rs:316",
+    "crates/frankenlibc-abi/src/io_abi.rs:385",
+    "crates/frankenlibc-abi/src/io_abi.rs:533",
+    "crates/frankenlibc-abi/src/io_abi.rs:875",
+    "crates/frankenlibc-abi/src/mmap_abi.rs:25",
+    "crates/frankenlibc-abi/src/mmap_abi.rs:120",
+    "crates/frankenlibc-abi/src/mmap_abi.rs:152",
+    "crates/frankenlibc-abi/src/mmap_abi.rs:381",
+    "crates/frankenlibc-abi/tests/io_abi_test.rs:268",
+    "crates/frankenlibc-abi/tests/io_abi_test.rs:351",
+    "crates/frankenlibc-abi/tests/mmap_abi_test.rs:19",
+    "crates/frankenlibc-abi/tests/mmap_abi_test.rs:91",
+    "crates/frankenlibc-abi/tests/unistd_abi_test.rs:4761",
+    "crates/frankenlibc-abi/tests/unistd_abi_test.rs:6202",
+    "tests/conformance/verification_matrix.json:10564",
+    "tests/conformance/verification_matrix.json:10604",
+    "tests/conformance/verification_matrix.json:10630",
+    "tests/conformance/verification_matrix.json:10639",
+    "tests/conformance/verification_matrix.json:10646",
+    "tests/conformance/verification_matrix.json:10651"
+  ],
+  "telemetry_contract": {
+    "report_env": "FRANKENLIBC_IO_RAW_VENEER_MIGRATION_COMPLETION_REPORT",
+    "log_env": "FRANKENLIBC_IO_RAW_VENEER_MIGRATION_COMPLETION_LOG",
+    "required_success_events": [
+      "io_raw_veneer_migration.source_artifacts_validated",
+      "io_raw_veneer_migration.expectations_validated",
+      "io_raw_veneer_migration.implementation_refs_validated",
+      "io_raw_veneer_migration.unit_binding_validated",
+      "io_raw_veneer_migration.e2e_binding_validated",
+      "io_raw_veneer_migration.migration_binding_validated",
+      "io_raw_veneer_migration.telemetry_binding_validated",
+      "io_raw_veneer_migration.completion_contract_validated"
+    ],
+    "required_failure_event": "io_raw_veneer_migration.completion_contract_failed",
+    "required_log_fields": [
+      "schema_version",
+      "timestamp",
+      "trace_id",
+      "event",
+      "level",
+      "status",
+      "bead_id",
+      "completion_debt_bead",
+      "source_commit",
+      "artifact_refs",
+      "details"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "timestamp",
+      "status",
+      "bead_id",
+      "completion_debt_bead",
+      "source_count",
+      "raw_route_call_site_count",
+      "io_abi_test_count",
+      "mmap_abi_test_count",
+      "unistd_abi_test_count",
+      "missing_items_closed",
+      "events",
+      "errors"
+    ]
+  }
+}
