@@ -1,0 +1,139 @@
+{
+  "schema_version": "beads_sqlite_integrity_completion_contract.v1",
+  "original_bead": "bd-yaiw",
+  "completion_debt_bead": "bd-yaiw.1",
+  "trace_id": "bd-yaiw-1-beads-sqlite-integrity-completion-v1",
+  "purpose": "Bind the prior Beads SQLite integrity repair to a replayable golden completion proof without mutating tracker state.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-yaiw/scorecard.md",
+    "score_before": 470,
+    "score_threshold": 800
+  },
+  "source_artifacts": {
+    "jsonl_source_of_truth": ".beads/issues.jsonl",
+    "canonical_database": ".beads/beads.db",
+    "completion_contract": "tests/conformance/beads_sqlite_integrity_completion_contract.v1.json",
+    "completion_checker": "scripts/check_beads_sqlite_integrity_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/beads_sqlite_integrity_completion_contract_test.rs",
+    "db_repair_contract": "tests/conformance/br_db_repair_completion_contract.v1.json",
+    "exact_id_split_brain_contract": "tests/conformance/br_exact_id_split_brain_completion_contract.v1.json"
+  },
+  "golden_primary": {
+    "missing_item": "tests.golden.primary",
+    "description": "The canonical tracker database remains readable and integrity-clean, while JSONL remains the auditable source of truth for no-db recovery.",
+    "required_doctor_checks": [
+      "sqlite.integrity_check",
+      "counts.db_vs_jsonl",
+      "sync.metadata",
+      "schema.tables",
+      "jsonl.parse"
+    ],
+    "accepted_degraded_checks": [
+      "db.recovery_artifacts",
+      "db.sidecars"
+    ],
+    "required_sync_status": {
+      "dirty_count": 0,
+      "jsonl_newer": false,
+      "db_newer": false
+    },
+    "required_no_db_records": [
+      {
+        "id": "bd-yaiw",
+        "status": "closed"
+      },
+      {
+        "id": "bd-yaiw.1",
+        "status": "open"
+      }
+    ],
+    "required_jsonl_ids": [
+      "bd-yaiw",
+      "bd-yaiw.1"
+    ]
+  },
+  "read_only_probe_contract": {
+    "allowed_commands": [
+      "br doctor --json",
+      "br sync --status --json",
+      "br --no-db show bd-yaiw --json",
+      "br --no-db show bd-yaiw.1 --json",
+      "br dep cycles --no-db --json"
+    ],
+    "forbidden_command_fragments": [
+      "br sync --flush-only",
+      "br sync --import-only",
+      "br sync --rebuild",
+      "br create",
+      "br close",
+      "git clean",
+      "git reset --hard",
+      "rm -rf"
+    ],
+    "live_commands_are_read_only": true,
+    "doctor_rollback_probe_is_allowed": true,
+    "preserved_recovery_artifacts_are_audit_history": true
+  },
+  "completion_debt_evidence": {
+    "missing_items_closed": [
+      "tests.golden.primary"
+    ],
+    "implementation_refs": [
+      ".beads/issues.jsonl:1942",
+      ".beads/issues.jsonl:1943",
+      "scripts/check_beads_sqlite_integrity_completion_contract.sh:32",
+      "scripts/check_beads_sqlite_integrity_completion_contract.sh:255",
+      "crates/frankenlibc-harness/tests/beads_sqlite_integrity_completion_contract_test.rs:101"
+    ],
+    "required_test_refs": [
+      "manifest_binds_sqlite_integrity_completion_debt",
+      "checker_validates_current_tracker_health_and_emits_telemetry",
+      "checker_rejects_destructive_probe_command",
+      "checker_rejects_missing_golden_binding",
+      "checker_rejects_missing_doctor_integrity_check"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "original_bead",
+      "completion_debt_bead",
+      "trace_id",
+      "source_commit",
+      "status",
+      "summary",
+      "probe_results",
+      "artifact_refs",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "completion_debt_bead",
+      "gate",
+      "expected",
+      "actual",
+      "source_commit",
+      "target_dir",
+      "failure_signature",
+      "artifact_refs"
+    ],
+    "required_events": [
+      "beads_sqlite_integrity.source_artifacts_validated",
+      "beads_sqlite_integrity.golden_binding_validated",
+      "beads_sqlite_integrity.read_only_probe_validated",
+      "beads_sqlite_integrity.completion_contract_validated",
+      "beads_sqlite_integrity.completion_contract_failed"
+    ]
+  },
+  "claim_policy": {
+    "no_destructive_tracker_repair": true,
+    "no_tracker_close_in_code_proof_commit": true,
+    "source_truth_prefers_no_db_jsonl_when_db_is_stale": true,
+    "sqlite_integrity_must_be_current": true,
+    "completion_must_fail_closed_if_integrity_check_is_removed": true,
+    "completion_must_fail_closed_if_jsonl_parse_is_removed": true
+  }
+}
