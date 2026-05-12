@@ -1,0 +1,174 @@
+{
+  "schema_version": "strspn_optimization_completion_contract.v1",
+  "manifest_id": "strspn-optimization-completion-contract",
+  "bead": "bd-0e4vu",
+  "completion_debt_bead": "bd-0e4vu.1",
+  "generated_utc": "2026-05-12T00:00:00Z",
+  "purpose": "Bind the optimized strspn implementation, unit/ABI coverage, conformance symbol coverage, and performance telemetry to the bd-0e4vu.1 completion-debt items.",
+  "audit_reference": {
+    "pass": "2026-05-10T-pass3-cumulative-patches",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T-pass3-cumulative-patches/beads/bd-0e4vu.1/scorecard.md",
+    "score_before": 540,
+    "score_threshold": 800
+  },
+  "source_artifacts": [
+    {
+      "artifact_id": "core_string_strspn",
+      "kind": "implementation_and_unit_tests",
+      "path": "crates/frankenlibc-core/src/string/str.rs",
+      "required_line_refs": [
+        "crates/frankenlibc-core/src/string/str.rs:381",
+        "crates/frankenlibc-core/src/string/str.rs:382",
+        "crates/frankenlibc-core/src/string/str.rs:383",
+        "crates/frankenlibc-core/src/string/str.rs:418",
+        "crates/frankenlibc-core/src/string/str.rs:876",
+        "crates/frankenlibc-core/src/string/str.rs:881",
+        "crates/frankenlibc-core/src/string/str.rs:886",
+        "crates/frankenlibc-core/src/string/str.rs:897"
+      ],
+      "required_needles": [
+        "pub fn strspn",
+        "let accept_len = strlen(accept)",
+        "match accept_len",
+        "let accept_set = &accept[..accept_len]",
+        "test_strspn_single_accept_full_without_terminator",
+        "test_strspn_small_accept_sets",
+        "test_strspn_full_without_terminator_returns_len"
+      ]
+    },
+    {
+      "artifact_id": "abi_string_tests",
+      "kind": "abi_unit_tests",
+      "path": "crates/frankenlibc-abi/tests/string_abi_test.rs",
+      "required_line_refs": [
+        "crates/frankenlibc-abi/tests/string_abi_test.rs:622",
+        "crates/frankenlibc-abi/tests/string_abi_test.rs:630",
+        "crates/frankenlibc-abi/tests/string_abi_test.rs:646"
+      ],
+      "required_needles": [
+        "strspn_counts_accepted_prefix",
+        "strspn_zero_when_no_match",
+        "constant_set_scan_helpers_match_public_entrypoints",
+        "__strspn_c2",
+        "__strspn_c3"
+      ]
+    },
+    {
+      "artifact_id": "per_symbol_fixture_tests",
+      "kind": "conformance_artifact",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "required_line_refs": [
+        "tests/conformance/per_symbol_fixture_tests.v1.json:55497",
+        "tests/conformance/per_symbol_fixture_tests.v1.json:86363"
+      ],
+      "required_needles": [
+        "\"symbol\": \"strspn\""
+      ]
+    },
+    {
+      "artifact_id": "symbol_fixture_coverage",
+      "kind": "conformance_artifact",
+      "path": "tests/conformance/symbol_fixture_coverage.v1.json",
+      "required_line_refs": [
+        "tests/conformance/symbol_fixture_coverage.v1.json:56794"
+      ],
+      "required_needles": [
+        "\"symbol\": \"strspn\""
+      ]
+    },
+    {
+      "artifact_id": "perf_budget_policy",
+      "kind": "telemetry_artifact",
+      "path": "tests/conformance/perf_budget_policy.json",
+      "required_line_refs": [
+        "tests/conformance/perf_budget_policy.json:965"
+      ],
+      "required_needles": [
+        "\"symbol\": \"strspn\"",
+        "\"module\": \"string_abi\"",
+        "\"status\": \"Implemented\""
+      ]
+    },
+    {
+      "artifact_id": "completion_checker",
+      "kind": "completion_gate",
+      "path": "scripts/check_strspn_optimization_completion_contract.sh",
+      "required_line_refs": [
+        "scripts/check_strspn_optimization_completion_contract.sh:30",
+        "scripts/check_strspn_optimization_completion_contract.sh:133",
+        "scripts/check_strspn_optimization_completion_contract.sh:206",
+        "scripts/check_strspn_optimization_completion_contract.sh:241"
+      ],
+      "required_needles": [
+        "REQUIRED_MISSING_ITEMS",
+        "validate_source_artifacts",
+        "validate_missing_item_bindings",
+        "validate_json_symbol_contracts"
+      ]
+    },
+    {
+      "artifact_id": "completion_harness_test",
+      "kind": "unit_test",
+      "path": "crates/frankenlibc-harness/tests/strspn_optimization_completion_contract_test.rs",
+      "required_line_refs": [
+        "crates/frankenlibc-harness/tests/strspn_optimization_completion_contract_test.rs:80",
+        "crates/frankenlibc-harness/tests/strspn_optimization_completion_contract_test.rs:122",
+        "crates/frankenlibc-harness/tests/strspn_optimization_completion_contract_test.rs:157",
+        "crates/frankenlibc-harness/tests/strspn_optimization_completion_contract_test.rs:187"
+      ],
+      "required_needles": [
+        "manifest_binds_strspn_completion_items",
+        "checker_validates_strspn_completion_contract",
+        "checker_rejects_missing_core_source_needle",
+        "checker_rejects_missing_telemetry_symbol"
+      ]
+    }
+  ],
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "description": "Core and ABI unit coverage bind the optimized strspn path and constant-set wrappers.",
+      "required_test_names": [
+        "manifest_binds_strspn_completion_items",
+        "checker_validates_strspn_completion_contract"
+      ]
+    },
+    {
+      "id": "tests.conformance.primary",
+      "description": "Conformance artifact coverage binds strspn to the per-symbol fixture and symbol coverage ledgers.",
+      "required_test_names": [
+        "checker_validates_strspn_completion_contract",
+        "checker_rejects_missing_core_source_needle"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "description": "Performance telemetry binds strspn to the string ABI budget policy.",
+      "required_test_names": [
+        "checker_validates_strspn_completion_contract",
+        "checker_rejects_missing_telemetry_symbol"
+      ]
+    }
+  ],
+  "conformance_primary": {
+    "required_json_symbols": [
+      {
+        "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+        "symbol": "strspn"
+      },
+      {
+        "path": "tests/conformance/symbol_fixture_coverage.v1.json",
+        "symbol": "strspn"
+      }
+    ]
+  },
+  "telemetry_primary": {
+    "required_json_symbols": [
+      {
+        "path": "tests/conformance/perf_budget_policy.json",
+        "symbol": "strspn",
+        "status": "Implemented"
+      }
+    ]
+  }
+}
