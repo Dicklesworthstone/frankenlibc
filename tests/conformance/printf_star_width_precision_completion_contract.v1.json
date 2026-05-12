@@ -1,0 +1,158 @@
+{
+  "schema_version": "printf_star_width_precision_completion_contract.v1",
+  "original_bead": "bd-wv5ym",
+  "completion_debt_bead": "bd-wv5ym.1",
+  "trace_id": "bd-wv5ym-1-printf-star-width-precision-completion-v1",
+  "description": "Completion-debt evidence binding for printf star width and precision normalization: existing ABI implementation anchors, ABI regressions, glibc differential conformance, and discrepancy documentation.",
+  "audit_reference": {
+    "pass": "2026-05-10T03-16-16Z",
+    "scorecard_path": "passes/2026-05-10T03-16-16Z/beads/bd-wv5ym/scorecard.md",
+    "score_before": 470,
+    "score_threshold": 800
+  },
+  "completion_debt_evidence": {
+    "missing_items_closed": [
+      "tests.conformance.primary"
+    ],
+    "next_audit_score_threshold": 800,
+    "non_claim": "This contract binds the already-shipped negative star width/precision conformance evidence; it does not change printf formatting behavior."
+  },
+  "source_artifacts": [
+    {
+      "id": "printf_abi_implementation",
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "required_needles": [
+        "as c_int and sign-extend",
+        "let w = (raw_width as core::ffi::c_int) as i64",
+        "resolved_spec.flags.left_justify = true",
+        "let p = (raw_precision as core::ffi::c_int) as i64",
+        "Precision::None"
+      ]
+    },
+    {
+      "id": "stdio_abi_regressions",
+      "path": "crates/frankenlibc-abi/tests/stdio_abi_test.rs",
+      "required_needles": [
+        "fn snprintf_normalizes_positional_negative_star_width",
+        "fn snprintf_normalizes_positional_negative_star_precision",
+        "fn vsprintf_normalizes_negative_star_width_from_va_list",
+        "b\"|42   |\"",
+        "assert_eq!(out.to_bytes(), b\"42\")"
+      ]
+    },
+    {
+      "id": "glibc_differential_conformance",
+      "path": "crates/frankenlibc-abi/tests/conformance_diff_stdio_printf.rs",
+      "required_needles": [
+        "fn diff_snprintf_negative_star_width_precision",
+        "%1$*2$d width=-5",
+        "%1$.*2$d precision=-1",
+        "libc::snprintf",
+        "snprintf negative star width/precision divergences"
+      ]
+    },
+    {
+      "id": "discrepancy_record",
+      "path": "tests/conformance/DISCREPANCIES.md",
+      "required_needles": [
+        "DISC-004: Positional Arguments with Dynamic Width (FIXED)",
+        "zero-extended negative positional",
+        "snprintf_normalizes_positional_negative_star_width",
+        "diff_snprintf_negative_star_width_precision"
+      ]
+    },
+    {
+      "id": "completion_contract",
+      "path": "tests/conformance/printf_star_width_precision_completion_contract.v1.json",
+      "required_needles": [
+        "printf_star_width_precision_completion_contract.v1",
+        "bd-wv5ym.1",
+        "tests.conformance.primary"
+      ]
+    },
+    {
+      "id": "completion_checker",
+      "path": "scripts/check_printf_star_width_precision_completion_contract.sh",
+      "required_needles": [
+        "printf_star_width_precision_completion_contract",
+        "printf_star_width_precision.source_artifacts_validated",
+        "printf_star_width_precision.conformance_binding_validated",
+        "PASS printf star width precision completion contract"
+      ]
+    },
+    {
+      "id": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/printf_star_width_precision_completion_contract_test.rs",
+      "required_needles": [
+        "fn contract_anchors_printf_star_width_precision_completion_debt",
+        "fn checker_accepts_contract_and_emits_telemetry",
+        "fn checker_rejects_missing_conformance_binding"
+      ]
+    }
+  ],
+  "implementation_refs": [
+    "crates/frankenlibc-abi/src/stdio_abi.rs:2970",
+    "crates/frankenlibc-abi/src/stdio_abi.rs:3053",
+    "crates/frankenlibc-abi/src/stdio_abi.rs:3055",
+    "crates/frankenlibc-abi/src/stdio_abi.rs:3071",
+    "crates/frankenlibc-abi/tests/stdio_abi_test.rs:1117",
+    "crates/frankenlibc-abi/tests/stdio_abi_test.rs:1136",
+    "crates/frankenlibc-abi/tests/stdio_abi_test.rs:2417",
+    "crates/frankenlibc-abi/tests/conformance_diff_stdio_printf.rs:271",
+    "tests/conformance/DISCREPANCIES.md:48",
+    "tests/conformance/DISCREPANCIES.md:49"
+  ],
+  "conformance_primary": {
+    "missing_item_id": "tests.conformance.primary",
+    "description": "Conformance evidence covers positional negative star width, positional negative star precision, va_list negative star width extraction, and glibc differential parity for negative star width/precision.",
+    "required_test_refs": [
+      {
+        "source": "stdio_abi_regressions",
+        "name": "snprintf_normalizes_positional_negative_star_width"
+      },
+      {
+        "source": "stdio_abi_regressions",
+        "name": "snprintf_normalizes_positional_negative_star_precision"
+      },
+      {
+        "source": "stdio_abi_regressions",
+        "name": "vsprintf_normalizes_negative_star_width_from_va_list"
+      },
+      {
+        "source": "glibc_differential_conformance",
+        "name": "diff_snprintf_negative_star_width_precision"
+      },
+      {
+        "source": "completion_harness",
+        "name": "checker_accepts_contract_and_emits_telemetry"
+      }
+    ],
+    "required_commands": [
+      "bash scripts/check_printf_star_width_precision_completion_contract.sh",
+      "rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test negative_star -- --nocapture",
+      "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_stdio_printf diff_snprintf_negative_star_width_precision -- --nocapture",
+      "rch exec -- cargo test -p frankenlibc-harness --test printf_star_width_precision_completion_contract_test -- --nocapture"
+    ],
+    "required_completion_events": [
+      "printf_star_width_precision.source_artifacts_validated",
+      "printf_star_width_precision.conformance_binding_validated",
+      "printf_star_width_precision.completion_contract_validated",
+      "printf_star_width_precision.completion_contract_failed"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "timestamp",
+      "event",
+      "status",
+      "completion_debt_bead",
+      "original_bead",
+      "source_commit",
+      "missing_items_bound",
+      "source_count",
+      "implementation_ref_count",
+      "test_binding_count",
+      "artifact_refs",
+      "failure_signature"
+    ]
+  }
+}
