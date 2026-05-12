@@ -1,0 +1,195 @@
+{
+  "schema_version": "callthrough_census_completion_contract.v1",
+  "bead_id": "bd-7ef9.1",
+  "original_bead": "bd-7ef9",
+  "trace_id": "bd-7ef9.1::callthrough-census::completion::v1",
+  "description": "Completion contract binding the support-matrix callthrough census, dependency-aware decommission sequencing, unit coverage, and structured telemetry to bd-7ef9.1.",
+  "source_artifacts": [
+    {
+      "id": "support_matrix",
+      "kind": "source_of_truth",
+      "path": "support_matrix.json",
+      "evidence": "Canonical support taxonomy source for GlibcCallThrough status counts."
+    },
+    {
+      "id": "callthrough_census",
+      "kind": "conformance_artifact",
+      "path": "tests/conformance/callthrough_census.v1.json",
+      "evidence": "Machine-readable callthrough symbol/module census and decommission wave plan."
+    },
+    {
+      "id": "census_generator",
+      "kind": "generator",
+      "path": "scripts/generate_callthrough_census.py",
+      "evidence": "Reproducible generator for support-matrix-tied callthrough census and dependency-aware waves."
+    },
+    {
+      "id": "census_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_callthrough_census.sh",
+      "evidence": "CI gate that checks reproducibility, support-matrix alignment, wave coverage, dependency ordering, report output, and structured log output."
+    },
+    {
+      "id": "census_harness_test",
+      "kind": "unit_test",
+      "path": "crates/frankenlibc-harness/tests/callthrough_census_test.rs",
+      "evidence": "Rust harness tests for generator summary parsing, artifact shape/counts, gate pass, and structured log fields."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/callthrough_census_completion_contract.v1.json",
+      "evidence": "Machine-readable binding for bd-7ef9.1 missing unit, migration, and telemetry obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_callthrough_census_completion_contract.sh",
+      "evidence": "Fail-closed validator for source bindings, migration sequencing, structured telemetry, and existing callthrough census gate replay."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/callthrough_census_completion_contract_test.rs",
+      "evidence": "Rust harness test validating the completion contract, checker report/logs, and negative drift signatures."
+    }
+  ],
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "migrations.primary",
+      "telemetry.primary"
+    ],
+    "required_support_matrix": {
+      "total_exported": 4119,
+      "status_summary_callthrough": 0,
+      "derived_callthrough_symbols": 0,
+      "summary_delta": 0
+    },
+    "required_census_summary": {
+      "module_count": 0,
+      "symbol_count": 0,
+      "wave_count": 0
+    },
+    "required_generator_anchors": [
+      "RUNTIME_IMPACT_WEIGHTS",
+      "REPLACEMENT_COMPLEXITY_WEIGHTS",
+      "def replacement_complexity",
+      "def priority_score",
+      "def build_decommission_waves",
+      "def _wave",
+      "depends_on",
+      "rollback_strategy",
+      "summary_delta"
+    ],
+    "required_gate_checks": [
+      "artifact_reproducible",
+      "support_matrix_alignment",
+      "module_counts_consistent",
+      "wave_coverage_complete",
+      "wave_dependencies_valid"
+    ],
+    "required_log_fields": [
+      "trace_id",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs",
+      "symbol_count",
+      "module_count",
+      "wave_count"
+    ],
+    "required_harness_tests": [
+      "generator_accepts_snake_case_support_summary_for_callthrough_count",
+      "artifact_exists_and_has_required_shape",
+      "artifact_summary_counts_match_rows",
+      "gate_script_passes_and_emits_artifacts"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "scripts/generate_callthrough_census.py",
+        "scripts/check_callthrough_census_completion_contract.sh",
+        "tests/conformance/callthrough_census.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/callthrough_census_test.rs",
+        "crates/frankenlibc-harness/tests/callthrough_census_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "cargo test -p frankenlibc-harness --test callthrough_census_test -- --nocapture",
+        "cargo test -p frankenlibc-harness --test callthrough_census_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "migrations.primary",
+      "implementation_refs": [
+        "tests/conformance/callthrough_census.v1.json",
+        "scripts/generate_callthrough_census.py",
+        "scripts/check_callthrough_census.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/callthrough_census_test.rs",
+        "crates/frankenlibc-harness/tests/callthrough_census_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_callthrough_census.sh",
+        "bash scripts/check_callthrough_census_completion_contract.sh"
+      ]
+    },
+    {
+      "missing_item_id": "telemetry.primary",
+      "implementation_refs": [
+        "scripts/check_callthrough_census.sh",
+        "scripts/check_callthrough_census_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/callthrough_census_test.rs",
+        "crates/frankenlibc-harness/tests/callthrough_census_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_callthrough_census.sh",
+        "bash scripts/check_callthrough_census_completion_contract.sh"
+      ]
+    }
+  ],
+  "required_validation_commands": [
+    "jq empty tests/conformance/callthrough_census_completion_contract.v1.json",
+    "bash -n scripts/check_callthrough_census_completion_contract.sh",
+    "bash scripts/check_callthrough_census_completion_contract.sh",
+    "bash scripts/check_callthrough_census.sh",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/callthrough_census_completion_contract_test.rs",
+    "cargo test -p frankenlibc-harness --test callthrough_census_completion_contract_test -- --nocapture",
+    "cargo test -p frankenlibc-harness --test callthrough_census_test -- --nocapture",
+    "cargo clippy -p frankenlibc-harness --test callthrough_census_completion_contract_test -- -D warnings"
+  ],
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_callthrough_census_sources",
+      "checker_accepts_callthrough_census_completion_contract",
+      "checker_emits_structured_callthrough_telemetry"
+    ],
+    "negative": [
+      "checker_rejects_missing_migration_binding",
+      "checker_rejects_callthrough_summary_drift",
+      "checker_rejects_missing_telemetry_binding"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/callthrough_census_completion_contract.v1.json",
+      "scripts/check_callthrough_census_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/callthrough_census_completion_contract_test.rs",
+      "tests/conformance/callthrough_census.v1.json",
+      "scripts/generate_callthrough_census.py",
+      "scripts/check_callthrough_census.sh",
+      "crates/frankenlibc-harness/tests/callthrough_census_test.rs"
+    ]
+  }
+}
