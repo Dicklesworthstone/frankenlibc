@@ -30,7 +30,18 @@
         "hardened": 10.0
       }
     },
-    "target_source": "scripts/perf_baseline.json::targets_ns_op"
+    "target_source": "scripts/perf_baseline.json::targets_ns_op",
+    "default_absolute_noise_floor_ns": 1.0,
+    "per_mode_absolute_noise_floor_ns": {
+      "strict": 1.0,
+      "hardened": 1.0
+    },
+    "per_benchmark_absolute_noise_floor_ns": {
+      "membrane/stage_tls_cache_hit": {
+        "strict": 3.0,
+        "hardened": 3.0
+      }
+    }
   },
   "attribution": {
     "regression_classes": [
@@ -92,7 +103,8 @@
       "delta_pct",
       "verdict",
       "warning_threshold",
-      "warning_pct"
+      "warning_pct",
+      "absolute_noise_floor_ns"
     ],
     "log_format": "jsonl"
   },

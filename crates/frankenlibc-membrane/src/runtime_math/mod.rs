@@ -2320,6 +2320,7 @@ impl RuntimeMathKernel {
     }
 
     /// Feed observed runtime outcome back into online controllers.
+    #[inline]
     pub fn observe_validation_result(
         &self,
         mode: SafetyLevel,
@@ -2333,6 +2334,19 @@ impl RuntimeMathKernel {
             return;
         }
 
+        self.observe_validation_result_enabled(mode, family, profile, estimated_cost_ns, adverse);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn observe_validation_result_enabled(
+        &self,
+        mode: SafetyLevel,
+        family: ApiFamily,
+        profile: ValidationProfile,
+        estimated_cost_ns: u64,
+        adverse: bool,
+    ) {
         let probe_mask = self.cached_probe_mask.load(Ordering::Relaxed) as u32;
         self.risk.observe(family, adverse);
         self.router

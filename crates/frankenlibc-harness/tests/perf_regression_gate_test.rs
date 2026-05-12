@@ -57,15 +57,29 @@ fn resolve_warning_threshold(
         .or_else(|| policy["warning_policy"]["default_warning_pct"].as_f64())
 }
 
+fn resolve_absolute_noise_floor(
+    policy: &serde_json::Value,
+    mode: &str,
+    benchmark_id: &str,
+) -> Option<f64> {
+    policy["threshold_policy"]["per_benchmark_absolute_noise_floor_ns"][benchmark_id][mode]
+        .as_f64()
+        .or_else(|| policy["threshold_policy"]["per_mode_absolute_noise_floor_ns"][mode].as_f64())
+        .or_else(|| policy["threshold_policy"]["default_absolute_noise_floor_ns"].as_f64())
+}
+
 fn classify_regression(
     observed: f64,
     baseline: f64,
     target: f64,
     warning_pct: f64,
     threshold_pct: f64,
+    absolute_noise_floor_ns: f64,
 ) -> &'static str {
-    let warning_threshold = baseline * (1.0 + warning_pct / 100.0);
-    let threshold = baseline * (1.0 + threshold_pct / 100.0);
+    let warning_threshold =
+        (baseline * (1.0 + warning_pct / 100.0)).max(baseline + absolute_noise_floor_ns);
+    let threshold =
+        (baseline * (1.0 + threshold_pct / 100.0)).max(baseline + absolute_noise_floor_ns);
     let warning_hit = observed > warning_threshold;
     let baseline_ok = observed <= threshold;
     let target_ok = observed <= target;
@@ -191,31 +205,64 @@ fn warning_threshold_resolver_deterministic() {
 }
 
 #[test]
+fn absolute_noise_floor_resolver_deterministic() {
+    let policy = load_policy();
+    let default_floor = policy["threshold_policy"]["default_absolute_noise_floor_ns"]
+        .as_f64()
+        .unwrap();
+
+    let errno_floor =
+        resolve_absolute_noise_floor(&policy, "strict", "errno/errno_location_fastpath").unwrap();
+    assert_eq!(
+        errno_floor, default_floor,
+        "errno fast path should use the default nanosecond noise floor"
+    );
+
+    let tls_floor =
+        resolve_absolute_noise_floor(&policy, "hardened", "membrane/stage_tls_cache_hit").unwrap();
+    assert_eq!(
+        tls_floor, 3.0,
+        "TLS cache hit should resolve benchmark-specific nanosecond floor"
+    );
+
+    let unknown = resolve_absolute_noise_floor(&policy, "strict", "unknown/bench").unwrap();
+    assert_eq!(
+        unknown, default_floor,
+        "unknown benchmark should fall back to default nanosecond floor"
+    );
+}
+
+#[test]
 fn regression_classifier_stable() {
     assert_eq!(
-        classify_regression(100.0, 100.0, 120.0, 5.0, 20.0),
+        classify_regression(100.0, 100.0, 120.0, 5.0, 20.0, 1.0),
         "ok",
         "within warning threshold and target"
     );
     assert_eq!(
-        classify_regression(107.0, 100.0, 120.0, 5.0, 20.0),
+        classify_regression(107.0, 100.0, 120.0, 5.0, 20.0, 1.0),
         "baseline_warning",
         "exceeds warning threshold but not blocking threshold"
     );
     assert_eq!(
-        classify_regression(121.0, 100.0, 200.0, 5.0, 20.0),
+        classify_regression(121.0, 100.0, 200.0, 5.0, 20.0, 1.0),
         "baseline_regression",
         "exceeds baseline threshold only"
     );
     assert_eq!(
-        classify_regression(80.0, 70.0, 75.0, 5.0, 20.0),
+        classify_regression(80.0, 70.0, 75.0, 5.0, 20.0, 1.0),
         "target_budget_violation",
         "within baseline threshold but above target budget"
     );
     assert_eq!(
-        classify_regression(121.0, 100.0, 90.0, 5.0, 20.0),
+        classify_regression(121.0, 100.0, 90.0, 5.0, 20.0, 1.0),
         "baseline_and_budget_violation",
         "exceeds both baseline threshold and target budget"
+    );
+    assert_eq!(
+        classify_regression(2.7, 2.0, 20.0, 5.0, 20.0, 1.0),
+        "ok",
+        "sub-nanosecond drift should be covered by the absolute noise floor"
     );
 }
 
@@ -542,8 +589,8 @@ printf '%s\n' "$@" >"${RCH_LOG}"
         "rch call should forward kernel-suite toggle"
     );
     assert!(
-        logged.contains("FRANKENLIBC_PERF_USE_RCH_BENCH=1"),
-        "rch call should request rch-backed cargo bench execution"
+        logged.contains("FRANKENLIBC_PERF_USE_RCH_BENCH=0"),
+        "rch wrapper should avoid nested rch benchmark dispatch by default"
     );
     assert!(
         logged.contains("FRANKENLIBC_PERF_REPORT=target/conformance/perf_gate.wrapper.report.json"),

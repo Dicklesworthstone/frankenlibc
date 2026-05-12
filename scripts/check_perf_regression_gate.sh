@@ -94,11 +94,21 @@ default_pct = threshold.get("default_max_regression_pct")
 if not isinstance(default_pct, (int, float)) or default_pct <= 0:
     errors.append("default_max_regression_pct must be positive")
 
+default_floor = threshold.get("default_absolute_noise_floor_ns")
+if not isinstance(default_floor, (int, float)) or default_floor < 0:
+    errors.append("default_absolute_noise_floor_ns must be non-negative")
+
 mode_thresholds = threshold.get("per_mode_max_regression_pct", {})
 for mode in ("strict", "hardened"):
     pct = mode_thresholds.get(mode)
     if not isinstance(pct, (int, float)) or pct <= 0:
         errors.append(f"per_mode_max_regression_pct.{mode} must be positive")
+
+mode_floors = threshold.get("per_mode_absolute_noise_floor_ns", {})
+for mode in ("strict", "hardened"):
+    floor = mode_floors.get(mode)
+    if not isinstance(floor, (int, float)) or floor < 0:
+        errors.append(f"per_mode_absolute_noise_floor_ns.{mode} must be non-negative")
 
 default_warning = warning.get("default_warning_pct")
 if not isinstance(default_warning, (int, float)) or default_warning <= 0:
@@ -140,6 +150,19 @@ for benchmark_id, by_mode in overrides.items():
             errors.append(f"per_benchmark_overrides.{benchmark_id} has invalid mode: {mode}")
         if not isinstance(pct, (int, float)) or pct <= 0:
             errors.append(f"per_benchmark_overrides.{benchmark_id}.{mode} must be positive")
+
+absolute_floor_overrides = threshold.get("per_benchmark_absolute_noise_floor_ns", {})
+for benchmark_id, by_mode in absolute_floor_overrides.items():
+    if benchmark_id not in required_benchmark_ids:
+        errors.append(f"per_benchmark_absolute_noise_floor_ns references unknown benchmark_id: {benchmark_id}")
+    if not isinstance(by_mode, dict):
+        errors.append(f"per_benchmark_absolute_noise_floor_ns.{benchmark_id} must be object")
+        continue
+    for mode, floor in by_mode.items():
+        if mode not in ("strict", "hardened"):
+            errors.append(f"per_benchmark_absolute_noise_floor_ns.{benchmark_id} has invalid mode: {mode}")
+        if not isinstance(floor, (int, float)) or floor < 0:
+            errors.append(f"per_benchmark_absolute_noise_floor_ns.{benchmark_id}.{mode} must be non-negative")
 
 warning_overrides = warning.get("per_benchmark_overrides", {})
 for benchmark_id, by_mode in warning_overrides.items():

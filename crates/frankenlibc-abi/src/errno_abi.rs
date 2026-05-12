@@ -7,6 +7,10 @@ use std::cell::UnsafeCell;
 use std::ffi::c_int;
 use std::sync::{LazyLock, Mutex};
 
+thread_local! {
+    static ERRNO: UnsafeCell<c_int> = const { UnsafeCell::new(0) };
+}
+
 static FALLBACK_ERRNO_SLOTS: LazyLock<
     Mutex<std::collections::HashMap<std::thread::ThreadId, Box<c_int>>>,
 > = LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
@@ -21,10 +25,8 @@ fn fallback_errno_slot_for_current_thread() -> *mut c_int {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[inline]
 pub unsafe extern "C" fn __errno_location() -> *mut c_int {
-    thread_local! {
-        static ERRNO: UnsafeCell<c_int> = const { UnsafeCell::new(0) };
-    }
     match ERRNO.try_with(|cell| cell.get()) {
         Ok(ptr) => ptr,
         Err(_) => fallback_errno_slot_for_current_thread(),

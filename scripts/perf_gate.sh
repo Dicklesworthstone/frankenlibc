@@ -193,6 +193,23 @@ resolve_warning_pct() {
     printf "%s" "${pct}"
 }
 
+resolve_absolute_noise_floor() {
+    local mode="$1" benchmark_id="$2"
+    local floor=""
+    if [[ -f "${ATTRIBUTION_POLICY_FILE}" ]]; then
+        floor="$(jq -r --arg mode "${mode}" --arg benchmark_id "${benchmark_id}" '
+          .threshold_policy.per_benchmark_absolute_noise_floor_ns[$benchmark_id][$mode]
+          // .threshold_policy.per_mode_absolute_noise_floor_ns[$mode]
+          // .threshold_policy.default_absolute_noise_floor_ns
+          // empty
+        ' "${ATTRIBUTION_POLICY_FILE}" 2>/dev/null || true)"
+    fi
+    if [[ -z "${floor}" || "${floor}" == "null" ]]; then
+        floor="0"
+    fi
+    printf "%s" "${floor}"
+}
+
 resolve_suspect_component() {
     local benchmark_id="$1"
     local component=""
@@ -211,6 +228,7 @@ emit_regression_event() {
     local mode="$1" benchmark_id="$2" threshold="$3" observed="$4" regression_class="$5"
     local suspect_component="$6" baseline="$7" target="$8" threshold_pct="$9" delta_pct="${10}"
     local verdict="${11}" warning_threshold="${12}" warning_pct="${13}" confidence="${14}"
+    local absolute_noise_floor="${15}"
     local ts json
     ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     json="$(jq -cn \
@@ -234,6 +252,7 @@ emit_regression_event() {
         --arg verdict "${verdict}" \
         --arg warning_threshold "${warning_threshold}" \
         --arg warning_pct "${warning_pct}" \
+        --arg absolute_noise_floor "${absolute_noise_floor}" \
         '{
           timestamp: $timestamp,
           trace_id: $trace_id,
@@ -254,7 +273,8 @@ emit_regression_event() {
           delta_pct: $delta_pct,
           verdict: $verdict,
           warning_threshold: $warning_threshold,
-          warning_pct: $warning_pct
+          warning_pct: $warning_pct,
+          absolute_noise_floor_ns: $absolute_noise_floor
         }')"
     if [[ -n "${EVENT_LOG_PATH}" ]]; then
         echo "${json}" >>"${EVENT_LOG_PATH}"
@@ -385,15 +405,24 @@ PY
 
 check_metric() {
     local label="$1" mode="$2" bench="$3" baseline="$4" target="$5" current="$6"
-    local benchmark_id threshold_pct warning_pct threshold warning_threshold delta_pct ok_reg ok_target warn_hit
+    local benchmark_id threshold_pct warning_pct absolute_noise_floor threshold warning_threshold delta_pct ok_reg ok_target warn_hit
     local regression_class suspect verdict confidence
 
     benchmark_id="${label}/${bench}"
     threshold_pct="$(resolve_threshold_pct "${mode}" "${benchmark_id}")"
     warning_pct="$(resolve_warning_pct "${mode}" "${benchmark_id}")"
+    absolute_noise_floor="$(resolve_absolute_noise_floor "${mode}" "${benchmark_id}")"
     warning_pct="$(awk -v w="${warning_pct}" -v t="${threshold_pct}" 'BEGIN { print (w > t) ? t : w }')"
-    warning_threshold="$(awk -v b="${baseline}" -v pct="${warning_pct}" 'BEGIN { printf "%.3f", b*(1.0 + pct/100.0) }')"
-    threshold="$(awk -v b="${baseline}" -v pct="${threshold_pct}" 'BEGIN { printf "%.3f", b*(1.0 + pct/100.0) }')"
+    warning_threshold="$(awk -v b="${baseline}" -v pct="${warning_pct}" -v floor="${absolute_noise_floor}" 'BEGIN {
+      pct_threshold = b*(1.0 + pct/100.0);
+      floor_threshold = b + floor;
+      printf "%.3f", (pct_threshold > floor_threshold) ? pct_threshold : floor_threshold
+    }')"
+    threshold="$(awk -v b="${baseline}" -v pct="${threshold_pct}" -v floor="${absolute_noise_floor}" 'BEGIN {
+      pct_threshold = b*(1.0 + pct/100.0);
+      floor_threshold = b + floor;
+      printf "%.3f", (pct_threshold > floor_threshold) ? pct_threshold : floor_threshold
+    }')"
     delta_pct="$(awk -v c="${current}" -v b="${baseline}" 'BEGIN { if (b==0) { print "inf"; exit } printf "%.2f", ((c-b)/b)*100.0 }')"
 
     ok_reg="$(awk -v c="${current}" -v th="${threshold}" 'BEGIN { print (c <= th) ? "1" : "0" }')"
@@ -426,10 +455,10 @@ check_metric() {
     fi
     emit_regression_event "${mode}" "${benchmark_id}" "${threshold}" "${current}" "${regression_class}" \
         "${suspect}" "${baseline}" "${target}" "${threshold_pct}" "${delta_pct}" "${verdict}" \
-        "${warning_threshold}" "${warning_pct}" "${confidence}"
+        "${warning_threshold}" "${warning_pct}" "${confidence}" "${absolute_noise_floor}"
 
-    printf "%-18s %-8s %-16s baseline=%9.3f current=%9.3f delta=%7s%% target=%7.0f warn_pct=%5s threshold_pct=%5s suspect=%s " \
-        "${label}" "${mode}" "${bench}" "${baseline}" "${current}" "${delta_pct}" "${target}" "${warning_pct}" "${threshold_pct}" "${suspect}"
+    printf "%-18s %-8s %-16s baseline=%9.3f current=%9.3f delta=%7s%% target=%7.0f warn_pct=%5s threshold_pct=%5s floor_ns=%5s suspect=%s " \
+        "${label}" "${mode}" "${bench}" "${baseline}" "${current}" "${delta_pct}" "${target}" "${warning_pct}" "${threshold_pct}" "${absolute_noise_floor}" "${suspect}"
 
     if [[ "${regression_class}" == "ok" ]]; then
         echo "OK"

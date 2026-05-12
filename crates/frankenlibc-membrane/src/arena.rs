@@ -376,6 +376,13 @@ impl AllocationArena {
     fn lookup_in_shard(&self, shard_idx: usize, user_ptr: usize) -> Option<ArenaSlot> {
         let shard = self.shards[shard_idx].lock();
 
+        if let Some(&slot_idx) = shard.addr_to_slot.get(&user_ptr) {
+            let slot = &shard.slots[slot_idx];
+            if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                return Some(*slot);
+            }
+        }
+
         // Check exact match or inner pointer / canary (user_base <= user_ptr)
         if let Some((&_base, &slot_idx)) = shard.addr_to_slot.range(..=user_ptr).next_back() {
             let slot = &shard.slots[slot_idx];
