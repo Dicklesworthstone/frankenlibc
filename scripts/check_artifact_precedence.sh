@@ -7,13 +7,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${FLC_ARTIFACT_PRECEDENCE_MANIFEST:-${ROOT}/tests/conformance/artifact_precedence.v1.json}"
+README="${FLC_ARTIFACT_PRECEDENCE_README:-${ROOT}/README.md}"
 OUT_DIR="${FLC_ARTIFACT_PRECEDENCE_OUT_DIR:-${ROOT}/target/conformance}"
 REPORT="${OUT_DIR}/artifact_precedence.report.json"
 LOG="${OUT_DIR}/artifact_precedence.log.jsonl"
 
 mkdir -p "${OUT_DIR}"
 
-python3 - "${ROOT}" "${MANIFEST}" "${REPORT}" "${LOG}" <<'PY'
+python3 - "${ROOT}" "${MANIFEST}" "${REPORT}" "${LOG}" "${README}" <<'PY'
 import datetime as dt
 import hashlib
 import json
@@ -25,6 +26,7 @@ root = Path(sys.argv[1])
 manifest_path = Path(sys.argv[2])
 report_path = Path(sys.argv[3])
 log_path = Path(sys.argv[4])
+readme_path = Path(sys.argv[5])
 
 errors = []
 checks = {}
@@ -34,6 +36,7 @@ stale_artifacts = []
 conflicting_claims = []
 prose_only_claims = []
 out_of_order_artifacts = []
+readme_rpc_stub_claims = []
 
 
 def rel(path):
@@ -113,6 +116,7 @@ artifact_refs = [rel(manifest_path)]
 for artifact in manifest.get("artifacts", []):
     if isinstance(artifact, dict) and artifact.get("path"):
         artifact_refs.append(str(artifact.get("path")))
+artifact_refs.append(rel(readme_path))
 
 
 def event(
@@ -511,12 +515,64 @@ for claim in claim_rows:
 
 checks["claim_precedence"] = "pass" if claims_ok else "fail"
 
+readme_claim_ok = True
+support_matrix = artifact_data.get("support_matrix", {})
+stub_count = None
+if isinstance(support_matrix, dict):
+    stub_count = get_field(support_matrix, "counts.stub")
+
+try:
+    readme_lines = readme_path.read_text(encoding="utf-8").splitlines()
+except Exception as exc:
+    readme_claim_ok = False
+    fail(
+        "readme_rpc_stub_claim",
+        f"readme_rpc_stub_claim: README claim surface missing or unreadable: {exc}",
+        consumer_claim="README/FEATURE_PARITY support claims",
+        expected="readable README.md",
+        actual=rel(readme_path),
+        failure_signature="readme_claim_surface_missing",
+    )
+    readme_lines = []
+
+if stub_count == 0:
+    for line_no, line in enumerate(readme_lines, start=1):
+        if "rpc_abi.rs" in line and "stub" in line.lower():
+            readme_claim_ok = False
+            finding = {
+                "path": rel(readme_path),
+                "line": line_no,
+                "claim": line.strip(),
+                "support_matrix_stub_count": stub_count,
+            }
+            readme_rpc_stub_claims.append(finding)
+            fail(
+                "readme_rpc_stub_claim",
+                f"readme_rpc_stub_claim: {rel(readme_path)}:{line_no}: rpc_abi README wording uses stub language while support_matrix Stub count is 0",
+                consumer_claim="README/FEATURE_PARITY support claims",
+                expected="rpc_abi wording avoids support-taxonomy stub language when Stub count is 0",
+                actual=line.strip(),
+                failure_signature="readme_rpc_stub_claim",
+            )
+
+if readme_claim_ok:
+    event(
+        "readme_rpc_stub_claim",
+        consumer_claim="README/FEATURE_PARITY support claims",
+        freshness_state="current",
+        precedence_decision="allow",
+        expected="no rpc_abi stub wording when support_matrix Stub count is 0",
+        actual=f"support_matrix_stub_count={stub_count}",
+    )
+checks["readme_rpc_stub_claim"] = "pass" if readme_claim_ok else "fail"
+
 summary = {
     "artifact_count": len(artifact_rows),
     "claim_count": len(claim_rows),
     "missing_artifact_count": len(missing_artifacts),
     "stale_artifact_count": len(stale_artifacts),
     "conflicting_claim_count": len(conflicting_claims),
+    "readme_rpc_stub_claim_count": len(readme_rpc_stub_claims),
     "prose_only_claim_count": len(prose_only_claims),
     "out_of_order_artifact_count": len(out_of_order_artifacts),
 }
@@ -545,6 +601,7 @@ report = {
     "missing_artifacts": missing_artifacts,
     "stale_artifacts": stale_artifacts,
     "conflicting_claims": conflicting_claims,
+    "readme_rpc_stub_claims": readme_rpc_stub_claims,
     "prose_only_claims": prose_only_claims,
     "out_of_order_artifacts": out_of_order_artifacts,
     "artifact_refs": artifact_refs,

@@ -1284,7 +1284,7 @@ The `crates/frankenlibc-abi/src/` directory contains **39 ABI module files**, ea
 | `c11threads_abi.rs` | C11 thread API (`thrd_create`, `thrd_join`, etc.) |
 | `stdbit_abi.rs` | C23 bit manipulation (`stdc_*` functions) |
 | `mmap_abi.rs` | `mmap`, `munmap`, `mprotect`, `msync` |
-| `rpc_abi.rs` | RPC function stubs |
+| `rpc_abi.rs` | Native XDR plus deterministic legacy RPC safe defaults |
 
 ### The Validate-Delegate Pattern
 

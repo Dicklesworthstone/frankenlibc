@@ -189,6 +189,14 @@ fn gate_passes_current_manifest_and_emits_report_and_log() {
         Some(0)
     );
     assert_eq!(
+        report["summary"]["readme_rpc_stub_claim_count"].as_u64(),
+        Some(0)
+    );
+    assert_eq!(
+        report["checks"]["readme_rpc_stub_claim"].as_str(),
+        Some("pass")
+    );
+    assert_eq!(
         report["summary"]["prose_only_claim_count"].as_u64(),
         Some(0)
     );
@@ -291,6 +299,26 @@ fn prose_only_claim_advancement_fails() {
     let report = assert_gate_fails_with(&output, "prose-only");
     assert_eq!(
         report["summary"]["prose_only_claim_count"].as_u64(),
+        Some(1)
+    );
+}
+
+#[test]
+fn readme_rpc_stub_wording_fails_when_support_stub_count_is_zero() {
+    let root = workspace_root();
+    let readme =
+        std::fs::read_to_string(root.join("README.md")).expect("README should be readable");
+    let bad_readme = readme.replace(
+        "| `rpc_abi.rs` | Native XDR plus deterministic legacy RPC safe defaults |",
+        "| `rpc_abi.rs` | RPC function stubs |",
+    );
+    let fixture = unique_temp_path("artifact-precedence-readme-rpc-stub", "md");
+    std::fs::write(&fixture, bad_readme).expect("failed to write README fixture");
+
+    let output = run_gate_with_env(&[("FLC_ARTIFACT_PRECEDENCE_README", &fixture)]);
+    let report = assert_gate_fails_with(&output, "readme_rpc_stub_claim");
+    assert_eq!(
+        report["summary"]["readme_rpc_stub_claim_count"].as_u64(),
         Some(1)
     );
 }
