@@ -1,0 +1,318 @@
+{
+  "schema_version": "e2e_reality_gate_completion_contract.v1",
+  "manifest_id": "bd-mtj.1-e2e-reality-gate-completion-contract",
+  "original_bead": "bd-mtj",
+  "completion_debt_bead": "bd-mtj.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "audit_score": 670,
+  "next_audit_score_threshold": 800,
+  "description": "Completion-debt evidence binding for the E2E reality gate: scenario manifest, LD_PRELOAD smoke evidence, standalone link/run smoke, dual-mode strict/hardened evidence, ABI export surface, deterministic child gates, and structured telemetry.",
+  "source_artifacts": {
+    "e2e_scenario_manifest": {
+      "path": "tests/conformance/e2e_scenario_manifest.v1.json",
+      "expected_schema": "v1"
+    },
+    "e2e_manifest_contract": {
+      "path": "tests/conformance/e2e_scenario_manifest_catalog_completion_contract.v1.json",
+      "expected_schema": "e2e_scenario_manifest_catalog_completion_contract.v1"
+    },
+    "e2e_manifest_checker": {
+      "path": "scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+      "required_text": [
+        "PASS: E2E scenario manifest catalog completion contract validated",
+        "e2e_scenario_manifest_catalog_completion_contract_validated"
+      ]
+    },
+    "e2e_manifest_test": {
+      "path": "crates/frankenlibc-harness/tests/e2e_scenario_manifest_catalog_completion_contract_test.rs"
+    },
+    "e2e_suite_script": {
+      "path": "scripts/e2e_suite.sh",
+      "required_text": [
+        "FRANKENLIBC_E2E_MANIFEST",
+        "--dry-run-manifest"
+      ]
+    },
+    "e2e_validator": {
+      "path": "scripts/validate_e2e_manifest.py",
+      "required_text": [
+        "schema_version",
+        "scenarios"
+      ]
+    },
+    "ld_preload_smoke_summary": {
+      "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "expected_schema": "v1"
+    },
+    "ld_preload_smoke_index": {
+      "path": "tests/conformance/ld_preload_smoke_e2e_index.v1.json",
+      "expected_schema": "v1"
+    },
+    "ld_preload_smoke_script": {
+      "path": "scripts/ld_preload_smoke.sh",
+      "required_text": [
+        "LD_PRELOAD",
+        "rch exec -- cargo build -p frankenlibc-abi --release"
+      ]
+    },
+    "ld_preload_smoke_index_test": {
+      "path": "crates/frankenlibc-harness/tests/ld_preload_smoke_e2e_index_test.rs"
+    },
+    "real_program_smoke_suite": {
+      "path": "tests/conformance/real_program_smoke_suite.v1.json",
+      "expected_schema": "v1"
+    },
+    "real_program_smoke_contract": {
+      "path": "tests/conformance/real_program_smoke_suite_completion_contract.v1.json",
+      "expected_schema": "real_program_smoke_suite_completion_contract.v1"
+    },
+    "real_program_smoke_checker": {
+      "path": "scripts/check_real_program_smoke_suite_completion_contract.sh",
+      "required_text": [
+        "PASS real-program smoke suite completion contract",
+        "real_program_smoke_completion.smoke_contract"
+      ]
+    },
+    "real_program_smoke_test": {
+      "path": "crates/frankenlibc-harness/tests/real_program_smoke_suite_completion_contract_test.rs"
+    },
+    "standalone_link_run_smoke": {
+      "path": "tests/conformance/standalone_link_run_smoke.v1.json",
+      "expected_schema": "v1"
+    },
+    "standalone_link_run_smoke_contract": {
+      "path": "tests/conformance/standalone_link_run_smoke_completion_contract.v1.json",
+      "expected_schema": "standalone_link_run_smoke_completion_contract.v1"
+    },
+    "standalone_link_run_smoke_checker": {
+      "path": "scripts/check_standalone_link_run_smoke_completion_contract.sh",
+      "required_text": [
+        "PASS: standalone link-run smoke completion contract",
+        "standalone_link_run_smoke_completion_contract_validated"
+      ]
+    },
+    "standalone_link_run_smoke_test": {
+      "path": "crates/frankenlibc-harness/tests/standalone_link_run_smoke_completion_contract_test.rs"
+    },
+    "dual_mode_e2e_contract": {
+      "path": "tests/conformance/dual_mode_e2e_completion_contract.v1.json",
+      "expected_schema": "dual_mode_e2e_completion_contract.v1"
+    },
+    "dual_mode_e2e_checker": {
+      "path": "scripts/check_dual_mode_e2e_completion_contract.sh",
+      "required_text": [
+        "PASS: dual-mode E2E completion contract validated",
+        "dual_mode_e2e_completion_contract_pass"
+      ]
+    },
+    "dual_mode_e2e_test": {
+      "path": "crates/frankenlibc-harness/tests/dual_mode_e2e_completion_contract_test.rs"
+    },
+    "strict_hardened_evidence": {
+      "path": "tests/conformance/strict_hardened_evidence_e2e.v1.json",
+      "expected_schema": "v1"
+    },
+    "strict_hardened_checker": {
+      "path": "scripts/check_strict_hardened_evidence_e2e.sh",
+      "required_text": [
+        "strict/hardened evidence e2e gate passed",
+        "strict_hardened_e2e_missing_family"
+      ]
+    },
+    "strict_hardened_test": {
+      "path": "crates/frankenlibc-harness/tests/strict_hardened_evidence_e2e_test.rs"
+    },
+    "libc_map": {
+      "path": "crates/frankenlibc-abi/version_scripts/libc.map"
+    },
+    "libc_map_export_golden": {
+      "path": "tests/conformance/libc_map_export_golden.v1.json",
+      "expected_schema": "v1"
+    },
+    "libc_map_export_golden_test": {
+      "path": "crates/frankenlibc-harness/tests/libc_map_export_golden_test.rs"
+    },
+    "completion_checker": {
+      "path": "scripts/check_e2e_reality_gate_completion_contract.sh"
+    },
+    "completion_test": {
+      "path": "crates/frankenlibc-harness/tests/e2e_reality_gate_completion_contract_test.rs"
+    }
+  },
+  "proof_lanes": [
+    {
+      "id": "scenario-manifest",
+      "missing_items": [
+        "tests.unit.primary",
+        "tests.e2e.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "e2e_scenario_manifest",
+        "e2e_manifest_contract",
+        "e2e_suite_script",
+        "e2e_validator"
+      ],
+      "checker_commands": [
+        "bash scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh"
+      ],
+      "test_artifact": "e2e_manifest_test",
+      "required_test_refs": [
+        "contract_binds_e2e_scenario_manifest_unit_and_e2e_evidence",
+        "checker_passes_and_emits_report_and_jsonl"
+      ]
+    },
+    {
+      "id": "ld-preload-smoke",
+      "missing_items": [
+        "tests.e2e.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "ld_preload_smoke_summary",
+        "ld_preload_smoke_index",
+        "ld_preload_smoke_script",
+        "real_program_smoke_suite",
+        "real_program_smoke_contract"
+      ],
+      "checker_commands": [
+        "bash scripts/check_real_program_smoke_suite_completion_contract.sh"
+      ],
+      "test_artifact": "real_program_smoke_test",
+      "required_test_refs": [
+        "manifest_binds_real_program_smoke_completion_items",
+        "checker_validates_real_program_smoke_contract_and_emits_report_log"
+      ]
+    },
+    {
+      "id": "standalone-link-run",
+      "missing_items": [
+        "tests.e2e.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "standalone_link_run_smoke",
+        "standalone_link_run_smoke_contract"
+      ],
+      "checker_commands": [
+        "bash scripts/check_standalone_link_run_smoke_completion_contract.sh"
+      ],
+      "test_artifact": "standalone_link_run_smoke_test",
+      "required_test_refs": [
+        "manifest_binds_unit_e2e_metamorphic_conformance_and_telemetry_evidence",
+        "checker_replays_standalone_smoke_gate_and_preserves_claim_block",
+        "checker_emits_report_and_jsonl"
+      ]
+    },
+    {
+      "id": "dual-mode-strict-hardened",
+      "missing_items": [
+        "tests.unit.primary",
+        "tests.e2e.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "dual_mode_e2e_contract",
+        "strict_hardened_evidence"
+      ],
+      "checker_commands": [
+        "bash scripts/check_dual_mode_e2e_completion_contract.sh",
+        "bash scripts/check_strict_hardened_evidence_e2e.sh"
+      ],
+      "test_artifact": "dual_mode_e2e_test",
+      "required_test_refs": [
+        "manifest_binds_dual_mode_e2e_completion_items",
+        "checker_validates_dual_mode_e2e_contract_and_emits_report_log"
+      ]
+    },
+    {
+      "id": "abi-surface",
+      "missing_items": [
+        "tests.unit.primary",
+        "tests.e2e.primary"
+      ],
+      "artifact_ids": [
+        "libc_map",
+        "libc_map_export_golden"
+      ],
+      "checker_commands": [],
+      "test_artifact": "libc_map_export_golden_test",
+      "required_test_refs": [
+        "libc_map_parses_and_yields_a_non_trivial_export_set",
+        "export_set_fingerprint_matches_golden_artifact"
+      ]
+    }
+  ],
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "lane_ids": [
+        "scenario-manifest",
+        "dual-mode-strict-hardened",
+        "abi-surface"
+      ],
+      "required_test_refs": [
+        "manifest_binds_e2e_reality_gate_sources",
+        "checker_accepts_contract_and_replays_e2e_gates",
+        "checker_rejects_missing_lane_artifact"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test e2e_reality_gate_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "lane_ids": [
+        "scenario-manifest",
+        "ld-preload-smoke",
+        "standalone-link-run",
+        "dual-mode-strict-hardened",
+        "abi-surface"
+      ],
+      "required_commands": [
+        "bash scripts/check_e2e_reality_gate_completion_contract.sh",
+        "bash scripts/check_e2e_scenario_manifest_catalog_completion_contract.sh",
+        "bash scripts/check_real_program_smoke_suite_completion_contract.sh",
+        "bash scripts/check_standalone_link_run_smoke_completion_contract.sh",
+        "bash scripts/check_dual_mode_e2e_completion_contract.sh",
+        "bash scripts/check_strict_hardened_evidence_e2e.sh"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "lane_ids": [
+        "scenario-manifest",
+        "ld-preload-smoke",
+        "standalone-link-run",
+        "dual-mode-strict-hardened"
+      ],
+      "required_commands": [
+        "bash scripts/check_e2e_reality_gate_completion_contract.sh",
+        "jq -s empty target/conformance/e2e_reality_gate_completion_contract/e2e_reality_gate_completion_contract.log.jsonl"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_events": [
+      "e2e_reality_sources_bound",
+      "e2e_reality_lanes_validated",
+      "e2e_reality_missing_items_bound",
+      "e2e_reality_telemetry_validated",
+      "e2e_reality_child_gates_replayed",
+      "e2e_reality_completion_contract_pass"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "event",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ]
+  }
+}
