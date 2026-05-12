@@ -1,0 +1,199 @@
+{
+  "schema_version": "symbol_drift_completion_contract.v1",
+  "original_bead": "bd-28s",
+  "completion_debt_bead": "bd-28s.1",
+  "generated_at_utc": "2026-05-12T04:46:00Z",
+  "purpose": "Bind the automated symbol drift guard's completion-debt audit items to explicit unit, e2e, and telemetry evidence without changing support-matrix semantics.",
+  "audit_source": {
+    "missing_items": [
+      {
+        "id": "tests.unit.primary",
+        "kind": "unit",
+        "description": "unit coverage for support_matrix module validity, source anchors, duplicate detection, reverse drift visibility, and status taxonomy"
+      },
+      {
+        "id": "tests.e2e.primary",
+        "kind": "e2e",
+        "description": "replayable symbol drift and docs/reality drift gates"
+      },
+      {
+        "id": "telemetry.primary",
+        "kind": "telemetry",
+        "description": "structured report/log emitted by the completion checker"
+      }
+    ]
+  },
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "reality_report": "tests/conformance/reality_report.v1.json",
+    "symbol_drift_gate": "scripts/check_symbol_drift.sh",
+    "symbol_drift_harness": "crates/frankenlibc-harness/tests/symbol_drift_test.rs",
+    "docs_drift_gate": "scripts/check_support_matrix_drift.sh",
+    "docs_drift_harness": "crates/frankenlibc-harness/tests/parity_report_drift_test.rs",
+    "completion_contract": "tests/conformance/symbol_drift_completion_contract.v1.json",
+    "completion_gate": "scripts/check_symbol_drift_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/symbol_drift_completion_contract_test.rs"
+  },
+  "source_anchors": {
+    "support_matrix": [
+      "\"symbols\"",
+      "\"Implemented\"",
+      "\"RawSyscall\""
+    ],
+    "reality_report": [
+      "\"schema_version\": \"v1\"",
+      "\"total_exported\": 4119",
+      "\"stub\": 0"
+    ],
+    "symbol_drift_gate": [
+      "check_symbol_drift.sh",
+      "Matrix symbols",
+      "ABI source",
+      "No duplicate symbols",
+      "Status distribution",
+      "check_symbol_drift: PASS"
+    ],
+    "symbol_drift_harness": [
+      "fn matrix_symbols_have_valid_modules()",
+      "fn matrix_symbols_exist_in_source()",
+      "fn abi_source_fns_have_matrix_entries()",
+      "fn no_duplicate_symbols()",
+      "fn all_statuses_valid()",
+      "fn gate_script_exists_and_executable()"
+    ],
+    "docs_drift_gate": [
+      "check_support_matrix_drift.sh",
+      "reality_report.v1.json",
+      "README and FEATURE_PARITY",
+      "log_event",
+      "check_support_matrix_drift: PASS"
+    ],
+    "docs_drift_harness": [
+      "fn canonical_reality_report_schema_is_valid()",
+      "fn support_matrix_docs_drift_guard_passes()"
+    ],
+    "completion_gate": [
+      "symbol_drift_completion.unit_binding",
+      "symbol_drift_completion.e2e_binding",
+      "symbol_drift_completion.telemetry_contract",
+      "symbol_drift_completion.validated"
+    ],
+    "completion_harness": [
+      "fn manifest_binds_all_completion_items()",
+      "fn source_anchors_and_line_refs_resolve()",
+      "fn checker_emits_report_and_jsonl()",
+      "fn checker_rejects_status_count_drift()"
+    ]
+  },
+  "symbol_drift_contract": {
+    "required_total_symbols": 4119,
+    "required_status_counts": {
+      "Implemented": 3705,
+      "RawSyscall": 414,
+      "WrapsHostLibc": 0,
+      "GlibcCallThrough": 0,
+      "Stub": 0
+    },
+    "required_reality_counts": {
+      "implemented": 3705,
+      "raw_syscall": 414,
+      "wraps_host_libc": 0,
+      "glibc_call_through": 0,
+      "stub": 0
+    },
+    "required_reality_total_exported": 4119,
+    "required_duplicate_symbols": 0,
+    "required_missing_module_symbols": 0,
+    "next_audit_threshold": 900
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "support_matrix.json:1",
+        "scripts/check_symbol_drift.sh:44",
+        "scripts/check_symbol_drift.sh:115",
+        "scripts/check_symbol_drift.sh:165",
+        "scripts/check_symbol_drift.sh:200"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/symbol_drift_test.rs:35",
+        "crates/frankenlibc-harness/tests/symbol_drift_test.rs:58",
+        "crates/frankenlibc-harness/tests/symbol_drift_test.rs:99",
+        "crates/frankenlibc-harness/tests/symbol_drift_test.rs:162",
+        "crates/frankenlibc-harness/tests/symbol_drift_test.rs:186",
+        "crates/frankenlibc-harness/tests/symbol_drift_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_symbol_drift_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test symbol_drift_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test symbol_drift_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_symbol_drift.sh:22",
+        "scripts/check_symbol_drift.sh:253",
+        "scripts/check_support_matrix_drift.sh:76",
+        "scripts/check_support_matrix_drift.sh:107",
+        "scripts/check_support_matrix_drift.sh:200"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/symbol_drift_test.rs:216",
+        "crates/frankenlibc-harness/tests/parity_report_drift_test.rs:21",
+        "crates/frankenlibc-harness/tests/parity_report_drift_test.rs:66",
+        "crates/frankenlibc-harness/tests/symbol_drift_completion_contract_test.rs:1"
+      ],
+      "required_commands": [
+        "bash scripts/check_symbol_drift.sh",
+        "bash scripts/check_symbol_drift_completion_contract.sh",
+        "rch exec -- bash scripts/check_support_matrix_drift.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test parity_report_drift_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "next_audit_threshold": 900,
+      "implementation_refs": [
+        "scripts/check_support_matrix_drift.sh:26",
+        "scripts/check_support_matrix_drift.sh:34",
+        "scripts/check_symbol_drift_completion_contract.sh:1",
+        "tests/conformance/symbol_drift_completion_contract.v1.json:1"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/symbol_drift_completion_contract_test.rs:1"
+      ],
+      "telemetry_refs": [
+        "scripts/check_symbol_drift_completion_contract.sh:1",
+        "tests/conformance/symbol_drift_completion_contract.v1.json:1"
+      ],
+      "required_events": [
+        "symbol_drift_completion.unit_binding",
+        "symbol_drift_completion.e2e_binding",
+        "symbol_drift_completion.telemetry_contract",
+        "symbol_drift_completion.validated"
+      ],
+      "required_commands": [
+        "bash scripts/check_symbol_drift_completion_contract.sh",
+        "rch exec -- cargo clippy -p frankenlibc-harness --test symbol_drift_completion_contract_test --no-deps -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "default_report_path": "target/conformance/symbol_drift_completion_contract.report.json",
+    "default_log_path": "target/conformance/symbol_drift_completion_contract.log.jsonl",
+    "pass_events": [
+      "symbol_drift_completion.unit_binding",
+      "symbol_drift_completion.e2e_binding",
+      "symbol_drift_completion.telemetry_contract",
+      "symbol_drift_completion.validated"
+    ],
+    "fail_event": "symbol_drift_completion.failed"
+  }
+}
