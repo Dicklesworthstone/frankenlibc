@@ -1,0 +1,213 @@
+{
+  "schema_version": "concurrency_signal_completion_contract.v1",
+  "manifest_id": "concurrency-signal-completion-contract",
+  "bead": "bd-2tq.6",
+  "completion_debt_bead": "bd-2tq.6.1",
+  "next_audit_score_threshold": 900,
+  "source_artifacts": [
+    {
+      "artifact_id": "signal_abi_test",
+      "path": "crates/frankenlibc-abi/tests/signal_abi_test.rs",
+      "required_needles": [
+        "signal_delivery_is_deferred_inside_critical_section",
+        "pthread_sigqueue_preserves_siginfo_and_ucontext_after_deferred_replay",
+        "sigprocmask_block_and_unblock_sigusr1"
+      ]
+    },
+    {
+      "artifact_id": "pthread_abi_test",
+      "path": "crates/frankenlibc-abi/tests/pthread_abi_test.rs",
+      "required_needles": [
+        "thread_create_join",
+        "mutex_errorcheck_double_lock_returns_edeadlk",
+        "cond_clockwait_rejects_invalid_clockid",
+        "barrier_single_thread_wait"
+      ]
+    },
+    {
+      "artifact_id": "signal_diff_test",
+      "path": "crates/frankenlibc-abi/tests/conformance_diff_signal_helpers.rs",
+      "required_needles": [
+        "diff_sigemptyset",
+        "diff_sigaddset_sigdelset_cases",
+        "signal_helpers_diff_coverage_report"
+      ]
+    },
+    {
+      "artifact_id": "signal_fixture_pack",
+      "path": "tests/conformance/signal_setjmp_async_cancellation_fixture_pack.v1.json",
+      "required_needles": [
+        "signal_mask_change",
+        "pthread_cleanup_interaction",
+        "trace_id",
+        "artifact_refs"
+      ]
+    },
+    {
+      "artifact_id": "pthread_fixture_pack",
+      "path": "tests/conformance/pthread_cancellation_robust_mutex_tls.v1.json",
+      "required_needles": [
+        "cancellation_blocking_call",
+        "robust_mutex_owner_dead",
+        "tls_destructor_iteration",
+        "artifact_refs"
+      ]
+    },
+    {
+      "artifact_id": "fuzz_gap_contract",
+      "path": "tests/conformance/fuzz_gap_abi_modules_completion_contract.v1.json",
+      "required_needles": [
+        "fuzz_signal",
+        "fuzz_pthread_mutex",
+        "fuzz_pthread_sync_misc",
+        "tests.fuzz.primary"
+      ]
+    },
+    {
+      "artifact_id": "signal_native_script",
+      "path": "scripts/check_signal_native.sh",
+      "required_needles": [
+        "signal_native",
+        "trace_id",
+        "api_family\":\"signal",
+        "artifact_refs"
+      ]
+    },
+    {
+      "artifact_id": "pthread_native_script",
+      "path": "scripts/check_pthread_extensions_native.sh",
+      "required_needles": [
+        "api_family\":\"pthread",
+        "trace_id",
+        "artifact_refs",
+        "rch exec -- cargo test -p frankenlibc-abi --test"
+      ]
+    }
+  ],
+  "completion_debt_evidence": {
+    "bead": "bd-2tq.6.1",
+    "original_bead": "bd-2tq.6",
+    "next_audit_score_threshold": 900,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.fuzz.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-abi --test signal_abi_test sigprocmask_block_and_unblock_sigusr1 -- --exact --nocapture --test-threads=1",
+        "rch exec -- cargo test -p frankenlibc-abi --test pthread_abi_test thread_create_join -- --exact --nocapture --test-threads=1"
+      ],
+      "test_groups": [
+        {
+          "artifact_id": "signal_abi_test",
+          "test_names": [
+            "signal_delivery_is_deferred_inside_critical_section",
+            "pthread_sigqueue_preserves_siginfo_and_ucontext_after_deferred_replay",
+            "sigprocmask_block_and_unblock_sigusr1"
+          ]
+        },
+        {
+          "artifact_id": "pthread_abi_test",
+          "test_names": [
+            "thread_create_join",
+            "mutex_errorcheck_double_lock_returns_edeadlk",
+            "cond_clockwait_rejects_invalid_clockid",
+            "barrier_single_thread_wait"
+          ]
+        }
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "artifact_ids": [
+        "signal_native_script",
+        "pthread_native_script",
+        "signal_fixture_pack",
+        "pthread_fixture_pack"
+      ],
+      "required_commands": [
+        "bash scripts/check_signal_native.sh",
+        "bash scripts/check_pthread_extensions_native.sh",
+        "bash scripts/check_signal_setjmp_async_cancellation_fixture_pack.sh"
+      ]
+    },
+    "fuzz_primary": {
+      "missing_item_id": "tests.fuzz.primary",
+      "contract_artifact_id": "fuzz_gap_contract",
+      "required_modules": [
+        "signal",
+        "pthread"
+      ],
+      "required_targets": [
+        "fuzz_signal",
+        "fuzz_pthread_mutex",
+        "fuzz_pthread_cond",
+        "fuzz_pthread_keys",
+        "fuzz_pthread_rwlock",
+        "fuzz_pthread_sync_misc"
+      ],
+      "required_commands": [
+        "bash scripts/check_fuzz_gap_abi_modules_completion_contract.sh"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "artifact_ids": [
+        "signal_diff_test",
+        "signal_fixture_pack",
+        "pthread_fixture_pack"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_signal_helpers -- --nocapture",
+        "bash scripts/check_signal_setjmp_async_cancellation_fixture_pack.sh"
+      ],
+      "test_groups": [
+        {
+          "artifact_id": "signal_diff_test",
+          "test_names": [
+            "diff_sigemptyset",
+            "diff_sigaddset_sigdelset_cases",
+            "signal_helpers_diff_coverage_report"
+          ]
+        }
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "report_path": "target/conformance/concurrency_signal_completion_contract.report.json",
+      "log_path": "target/conformance/concurrency_signal_completion_contract.log.jsonl",
+      "required_events": [
+        "concurrency_signal_source",
+        "concurrency_signal_tests",
+        "concurrency_signal_e2e",
+        "concurrency_signal_fuzz",
+        "concurrency_signal_conformance",
+        "concurrency_signal_telemetry",
+        "concurrency_signal_summary"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "status",
+        "bead",
+        "completion_debt_bead",
+        "artifact_refs"
+      ],
+      "required_artifact_ids": [
+        "signal_abi_test",
+        "pthread_abi_test",
+        "signal_diff_test",
+        "signal_fixture_pack",
+        "pthread_fixture_pack",
+        "fuzz_gap_contract",
+        "signal_native_script",
+        "pthread_native_script"
+      ]
+    }
+  }
+}
