@@ -1,0 +1,406 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-12T20:16:00Z",
+  "description": "Deterministic first-wave fixtures for the fcq-unistd-process-filesystem campaign. Outputs classify behavior without recording process IDs, cwd, inode, device, or timestamp metadata.",
+  "spec_reference": "POSIX.1 process/filesystem surfaces, Itanium C++ ABI atexit/finalize, GNU/glibc internal stat aliases, GNU __progname alias",
+  "campaign": {
+    "bead": "bd-qce2t.1",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "source_lines": "rank=1 current_coverage_pct=4.72 target_total=742 target_uncovered=707 first_wave_fixture_count=12",
+    "first_wave_symbols": [
+      "_Exit",
+      "_Fork",
+      "__cxa_atexit",
+      "__cxa_finalize",
+      "__fxstat",
+      "__fxstat64",
+      "__fxstatat",
+      "__fxstatat64",
+      "__gmtime_r",
+      "__lxstat",
+      "__lxstat64",
+      "__progname"
+    ],
+    "ambient_state_policy": "forbid_exact_process_or_filesystem_metadata",
+    "oracle_source": "FrankenLibC deterministic behavior classes executed through the conformance-matrix-case harness"
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "capital_exit_status_42_strict",
+      "function": "_Exit",
+      "spec_section": "C99 _Exit / POSIX _exit",
+      "inputs": {
+        "symbol": "_Exit",
+        "status": 42,
+        "expected": "EXIT_STATUS_42",
+        "ambient_state_policy": "child_process_exit_status_only",
+        "oracle_source": "forked child invokes FrankenLibC _Exit"
+      },
+      "expected_output": "symbol=_Exit;mode=strict;expected=EXIT_STATUS_42;actual=EXIT_STATUS_42;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "capital_exit_status_42_hardened",
+      "function": "_Exit",
+      "spec_section": "C99 _Exit / POSIX _exit",
+      "inputs": {
+        "symbol": "_Exit",
+        "status": 42,
+        "expected": "EXIT_STATUS_42",
+        "ambient_state_policy": "child_process_exit_status_only",
+        "oracle_source": "forked child invokes FrankenLibC _Exit"
+      },
+      "expected_output": "symbol=_Exit;mode=hardened;expected=EXIT_STATUS_42;actual=EXIT_STATUS_42;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "capital_fork_child_exit_strict",
+      "function": "_Fork",
+      "spec_section": "C23 _Fork",
+      "inputs": {
+        "symbol": "_Fork",
+        "expected": "CHILD_EXIT_0",
+        "ambient_state_policy": "child_exit_class_only",
+        "oracle_source": "parent waits for child produced by FrankenLibC _Fork"
+      },
+      "expected_output": "symbol=_Fork;mode=strict;expected=CHILD_EXIT_0;actual=CHILD_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "capital_fork_child_exit_hardened",
+      "function": "_Fork",
+      "spec_section": "C23 _Fork",
+      "inputs": {
+        "symbol": "_Fork",
+        "expected": "CHILD_EXIT_0",
+        "ambient_state_policy": "child_exit_class_only",
+        "oracle_source": "parent waits for child produced by FrankenLibC _Fork"
+      },
+      "expected_output": "symbol=_Fork;mode=hardened;expected=CHILD_EXIT_0;actual=CHILD_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "cxa_atexit_registers_and_finalizes_strict",
+      "function": "__cxa_atexit",
+      "spec_section": "Itanium C++ ABI __cxa_atexit",
+      "inputs": {
+        "symbol": "__cxa_atexit",
+        "expected": "CXA_ATEXIT_RC_0_CALLBACKS_1",
+        "ambient_state_policy": "fixture_dso_handle_only",
+        "oracle_source": "fixture-local DSO handle and callback counter"
+      },
+      "expected_output": "symbol=__cxa_atexit;mode=strict;expected=CXA_ATEXIT_RC_0_CALLBACKS_1;actual=CXA_ATEXIT_RC_0_CALLBACKS_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "cxa_atexit_registers_and_finalizes_hardened",
+      "function": "__cxa_atexit",
+      "spec_section": "Itanium C++ ABI __cxa_atexit",
+      "inputs": {
+        "symbol": "__cxa_atexit",
+        "expected": "CXA_ATEXIT_RC_0_CALLBACKS_1",
+        "ambient_state_policy": "fixture_dso_handle_only",
+        "oracle_source": "fixture-local DSO handle and callback counter"
+      },
+      "expected_output": "symbol=__cxa_atexit;mode=hardened;expected=CXA_ATEXIT_RC_0_CALLBACKS_1;actual=CXA_ATEXIT_RC_0_CALLBACKS_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "cxa_finalize_drains_once_strict",
+      "function": "__cxa_finalize",
+      "spec_section": "Itanium C++ ABI __cxa_finalize",
+      "inputs": {
+        "symbol": "__cxa_finalize",
+        "expected": "CXA_FINALIZE_CALLBACKS_2_SECOND_2",
+        "ambient_state_policy": "fixture_dso_handle_only",
+        "oracle_source": "two fixture-local callbacks and idempotent second finalize"
+      },
+      "expected_output": "symbol=__cxa_finalize;mode=strict;expected=CXA_FINALIZE_CALLBACKS_2_SECOND_2;actual=CXA_FINALIZE_CALLBACKS_2_SECOND_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "cxa_finalize_drains_once_hardened",
+      "function": "__cxa_finalize",
+      "spec_section": "Itanium C++ ABI __cxa_finalize",
+      "inputs": {
+        "symbol": "__cxa_finalize",
+        "expected": "CXA_FINALIZE_CALLBACKS_2_SECOND_2",
+        "ambient_state_policy": "fixture_dso_handle_only",
+        "oracle_source": "two fixture-local callbacks and idempotent second finalize"
+      },
+      "expected_output": "symbol=__cxa_finalize;mode=hardened;expected=CXA_FINALIZE_CALLBACKS_2_SECOND_2;actual=CXA_FINALIZE_CALLBACKS_2_SECOND_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fxstat_dev_null_class_strict",
+      "function": "__fxstat",
+      "spec_section": "GNU glibc __fxstat",
+      "inputs": {
+        "symbol": "__fxstat",
+        "version": 1,
+        "fixture_fd": "dev_null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "fixture-opened /dev/null fd without inode/device capture"
+      },
+      "expected_output": "symbol=__fxstat;mode=strict;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fxstat_dev_null_class_hardened",
+      "function": "__fxstat",
+      "spec_section": "GNU glibc __fxstat",
+      "inputs": {
+        "symbol": "__fxstat",
+        "version": 1,
+        "fixture_fd": "dev_null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "fixture-opened /dev/null fd without inode/device capture"
+      },
+      "expected_output": "symbol=__fxstat;mode=hardened;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fxstat64_dev_null_class_strict",
+      "function": "__fxstat64",
+      "spec_section": "GNU glibc __fxstat64",
+      "inputs": {
+        "symbol": "__fxstat64",
+        "version": 1,
+        "fixture_fd": "dev_null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "fixture-opened /dev/null fd without inode/device capture"
+      },
+      "expected_output": "symbol=__fxstat64;mode=strict;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fxstat64_dev_null_class_hardened",
+      "function": "__fxstat64",
+      "spec_section": "GNU glibc __fxstat64",
+      "inputs": {
+        "symbol": "__fxstat64",
+        "version": 1,
+        "fixture_fd": "dev_null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "fixture-opened /dev/null fd without inode/device capture"
+      },
+      "expected_output": "symbol=__fxstat64;mode=hardened;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fxstatat_dev_null_class_strict",
+      "function": "__fxstatat",
+      "spec_section": "GNU glibc __fxstatat",
+      "inputs": {
+        "symbol": "__fxstatat",
+        "version": 1,
+        "path": "/dev/null",
+        "flags": 0,
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "AT_FDCWD /dev/null without inode/device capture"
+      },
+      "expected_output": "symbol=__fxstatat;mode=strict;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fxstatat_dev_null_class_hardened",
+      "function": "__fxstatat",
+      "spec_section": "GNU glibc __fxstatat",
+      "inputs": {
+        "symbol": "__fxstatat",
+        "version": 1,
+        "path": "/dev/null",
+        "flags": 0,
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "AT_FDCWD /dev/null without inode/device capture"
+      },
+      "expected_output": "symbol=__fxstatat;mode=hardened;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fxstatat64_dev_null_class_strict",
+      "function": "__fxstatat64",
+      "spec_section": "GNU glibc __fxstatat64",
+      "inputs": {
+        "symbol": "__fxstatat64",
+        "version": 1,
+        "path": "/dev/null",
+        "flags": 0,
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "AT_FDCWD /dev/null without inode/device capture"
+      },
+      "expected_output": "symbol=__fxstatat64;mode=strict;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fxstatat64_dev_null_class_hardened",
+      "function": "__fxstatat64",
+      "spec_section": "GNU glibc __fxstatat64",
+      "inputs": {
+        "symbol": "__fxstatat64",
+        "version": 1,
+        "path": "/dev/null",
+        "flags": 0,
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "AT_FDCWD /dev/null without inode/device capture"
+      },
+      "expected_output": "symbol=__fxstatat64;mode=hardened;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "gmtime_r_leap_day_strict",
+      "function": "__gmtime_r",
+      "spec_section": "POSIX gmtime_r / GNU __gmtime_r alias",
+      "inputs": {
+        "symbol": "__gmtime_r",
+        "epoch": 951782400,
+        "expected": "UTC_2000-02-29T00:00:00Z",
+        "ambient_state_policy": "fixed_epoch_only",
+        "oracle_source": "UTC broken-down time from fixed epoch"
+      },
+      "expected_output": "symbol=__gmtime_r;mode=strict;expected=UTC_2000-02-29T00:00:00Z;actual=UTC_2000-02-29T00:00:00Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "gmtime_r_leap_day_hardened",
+      "function": "__gmtime_r",
+      "spec_section": "POSIX gmtime_r / GNU __gmtime_r alias",
+      "inputs": {
+        "symbol": "__gmtime_r",
+        "epoch": 951782400,
+        "expected": "UTC_2000-02-29T00:00:00Z",
+        "ambient_state_policy": "fixed_epoch_only",
+        "oracle_source": "UTC broken-down time from fixed epoch"
+      },
+      "expected_output": "symbol=__gmtime_r;mode=hardened;expected=UTC_2000-02-29T00:00:00Z;actual=UTC_2000-02-29T00:00:00Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "lxstat_dev_null_class_strict",
+      "function": "__lxstat",
+      "spec_section": "GNU glibc __lxstat",
+      "inputs": {
+        "symbol": "__lxstat",
+        "version": 1,
+        "path": "/dev/null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "/dev/null lstat without inode/device capture"
+      },
+      "expected_output": "symbol=__lxstat;mode=strict;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "lxstat_dev_null_class_hardened",
+      "function": "__lxstat",
+      "spec_section": "GNU glibc __lxstat",
+      "inputs": {
+        "symbol": "__lxstat",
+        "version": 1,
+        "path": "/dev/null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "/dev/null lstat without inode/device capture"
+      },
+      "expected_output": "symbol=__lxstat;mode=hardened;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "lxstat64_dev_null_class_strict",
+      "function": "__lxstat64",
+      "spec_section": "GNU glibc __lxstat64",
+      "inputs": {
+        "symbol": "__lxstat64",
+        "version": 1,
+        "path": "/dev/null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "/dev/null lstat without inode/device capture"
+      },
+      "expected_output": "symbol=__lxstat64;mode=strict;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "lxstat64_dev_null_class_hardened",
+      "function": "__lxstat64",
+      "spec_section": "GNU glibc __lxstat64",
+      "inputs": {
+        "symbol": "__lxstat64",
+        "version": 1,
+        "path": "/dev/null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "ambient_state_policy": "classify_mode_presence_only",
+        "oracle_source": "/dev/null lstat without inode/device capture"
+      },
+      "expected_output": "symbol=__lxstat64;mode=hardened;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "progname_short_name_strict",
+      "function": "__progname",
+      "spec_section": "GNU __progname alias",
+      "inputs": {
+        "symbol": "__progname",
+        "expected": "PROGNAME_franken_unistd_fixture",
+        "ambient_state_policy": "static_fixture_program_name_only",
+        "oracle_source": "setprogname with static lifetime fixture string"
+      },
+      "expected_output": "symbol=__progname;mode=strict;expected=PROGNAME_franken_unistd_fixture;actual=PROGNAME_franken_unistd_fixture;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "progname_short_name_hardened",
+      "function": "__progname",
+      "spec_section": "GNU __progname alias",
+      "inputs": {
+        "symbol": "__progname",
+        "expected": "PROGNAME_franken_unistd_fixture",
+        "ambient_state_policy": "static_fixture_program_name_only",
+        "oracle_source": "setprogname with static lifetime fixture string"
+      },
+      "expected_output": "symbol=__progname;mode=hardened;expected=PROGNAME_franken_unistd_fixture;actual=PROGNAME_franken_unistd_fixture;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

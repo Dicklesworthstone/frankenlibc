@@ -394,6 +394,9 @@ struct WordexpResult {
 
 static HOST_SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
 static IMPL_SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
+static UNISTD_PROCESS_FIXTURE_CXA_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
+static UNISTD_PROCESS_FIXTURE_DSO: u8 = 0;
+static UNISTD_PROCESS_FIXTURE_PROGNAME: &[u8] = b"/tmp/franken_unistd_fixture\0";
 
 unsafe extern "C" fn host_record_sigusr1(sig: c_int) {
     HOST_SIGNAL_HIT.store(sig, Ordering::SeqCst);
@@ -530,6 +533,9 @@ pub fn execute_fixture_case(
         | "authdes_getucred"
         | "authdes_pk_create"
         | "authnone_create" => execute_rpc_legacy_network_case(function, inputs, mode),
+        "_Exit" | "_Fork" | "__cxa_atexit" | "__cxa_finalize" | "__fxstat" | "__fxstat64"
+        | "__fxstatat" | "__fxstatat64" | "__gmtime_r" | "__lxstat" | "__lxstat64"
+        | "__progname" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
         "compute_relocation" => execute_compute_relocation_case(inputs, mode),
         "elf_hash" => execute_elf_hash_case(inputs, mode),
@@ -1134,6 +1140,10 @@ fn ptr_zeroed(ptr: *mut c_void, len: usize) -> bool {
 
 fn bool01(value: bool) -> u8 {
     u8::from(value)
+}
+
+unsafe extern "C" fn unistd_process_fixture_cxa_callback(_arg: *mut c_void) {
+    UNISTD_PROCESS_FIXTURE_CXA_CALLBACKS.fetch_add(1, Ordering::SeqCst);
 }
 
 unsafe extern "C" fn search_int_compare(a: *const c_void, b: *const c_void) -> c_int {
@@ -14179,6 +14189,268 @@ fn execute_write_case(
     let count = checked_write_count(inputs, data.len())?;
     let result = unsafe { frankenlibc_abi::unistd_abi::write(fd, data.as_ptr().cast(), count) };
     Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_unistd_process_filesystem_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "unistd process/filesystem fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = match function {
+        "_Exit" => capital_exit_fixture_actual(inputs)?,
+        "_Fork" => capital_fork_fixture_actual()?,
+        "__cxa_atexit" => cxa_atexit_fixture_actual()?,
+        "__cxa_finalize" => cxa_finalize_fixture_actual()?,
+        "__fxstat" | "__fxstat64" => fxstat_fixture_actual(function, inputs)?,
+        "__fxstatat" | "__fxstatat64" => fxstatat_fixture_actual(function, inputs)?,
+        "__gmtime_r" => gmtime_r_fixture_actual(inputs)?,
+        "__lxstat" | "__lxstat64" => lxstat_fixture_actual(function, inputs)?,
+        "__progname" => progname_fixture_actual()?,
+        other => {
+            return Err(format!(
+                "unsupported unistd process/filesystem fixture: {other}"
+            ));
+        }
+    };
+
+    Ok(non_host_execution(unistd_process_fixture_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn unistd_process_fixture_log(symbol: &str, mode: &str, expected: &str, actual: &str) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn capital_exit_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let status = parse_i32(inputs, "status").unwrap_or(42);
+    let child = unsafe { libc::fork() };
+    if child == 0 {
+        unsafe { frankenlibc_abi::process_abi::_Exit(status) };
+    }
+    if child < 0 {
+        return Ok(String::from("FORK_FAILED"));
+    }
+
+    let mut wait_status = 0;
+    let waited = unsafe { libc::waitpid(child, &mut wait_status, 0) };
+    if waited != child {
+        return Ok(format!("WAITPID_RC_{waited}"));
+    }
+    if libc::WIFEXITED(wait_status) {
+        return Ok(format!("EXIT_STATUS_{}", libc::WEXITSTATUS(wait_status)));
+    }
+    if libc::WIFSIGNALED(wait_status) {
+        return Ok(format!("EXIT_SIGNAL_{}", libc::WTERMSIG(wait_status)));
+    }
+    Ok(String::from("EXIT_UNKNOWN"))
+}
+
+fn capital_fork_fixture_actual() -> Result<String, String> {
+    let child = unsafe { frankenlibc_abi::unistd_abi::_Fork() };
+    if child == 0 {
+        unsafe { libc::_exit(0) };
+    }
+    if child < 0 {
+        return Ok(String::from("FORK_FAILED"));
+    }
+
+    let mut wait_status = 0;
+    let waited = unsafe { libc::waitpid(child, &mut wait_status, 0) };
+    if waited != child {
+        return Ok(format!("WAITPID_RC_{waited}"));
+    }
+    if libc::WIFEXITED(wait_status) && libc::WEXITSTATUS(wait_status) == 0 {
+        return Ok(String::from("CHILD_EXIT_0"));
+    }
+    Ok(String::from("CHILD_EXIT_NONZERO"))
+}
+
+fn unistd_process_fixture_dso_handle() -> *mut c_void {
+    (&UNISTD_PROCESS_FIXTURE_DSO as *const u8 as *mut u8).cast::<c_void>()
+}
+
+fn cxa_atexit_fixture_actual() -> Result<String, String> {
+    let dso = unistd_process_fixture_dso_handle();
+    unsafe { frankenlibc_abi::unistd_abi::__cxa_finalize(dso) };
+    UNISTD_PROCESS_FIXTURE_CXA_CALLBACKS.store(0, Ordering::SeqCst);
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::__cxa_atexit(
+            unistd_process_fixture_cxa_callback,
+            std::ptr::null_mut(),
+            dso,
+        )
+    };
+    if rc == 0 {
+        unsafe { frankenlibc_abi::unistd_abi::__cxa_finalize(dso) };
+    }
+    let callbacks = UNISTD_PROCESS_FIXTURE_CXA_CALLBACKS.load(Ordering::SeqCst);
+    Ok(format!("CXA_ATEXIT_RC_{rc}_CALLBACKS_{callbacks}"))
+}
+
+fn cxa_finalize_fixture_actual() -> Result<String, String> {
+    let dso = unistd_process_fixture_dso_handle();
+    unsafe { frankenlibc_abi::unistd_abi::__cxa_finalize(dso) };
+    UNISTD_PROCESS_FIXTURE_CXA_CALLBACKS.store(0, Ordering::SeqCst);
+    let rc1 = unsafe {
+        frankenlibc_abi::unistd_abi::__cxa_atexit(
+            unistd_process_fixture_cxa_callback,
+            std::ptr::null_mut(),
+            dso,
+        )
+    };
+    let rc2 = unsafe {
+        frankenlibc_abi::unistd_abi::__cxa_atexit(
+            unistd_process_fixture_cxa_callback,
+            std::ptr::null_mut(),
+            dso,
+        )
+    };
+    if rc1 != 0 || rc2 != 0 {
+        unsafe { frankenlibc_abi::unistd_abi::__cxa_finalize(dso) };
+        return Ok(format!("CXA_FINALIZE_REGISTER_RC_{rc1}_{rc2}"));
+    }
+    unsafe { frankenlibc_abi::unistd_abi::__cxa_finalize(dso) };
+    let callbacks_after_first = UNISTD_PROCESS_FIXTURE_CXA_CALLBACKS.load(Ordering::SeqCst);
+    unsafe { frankenlibc_abi::unistd_abi::__cxa_finalize(dso) };
+    let callbacks_after_second = UNISTD_PROCESS_FIXTURE_CXA_CALLBACKS.load(Ordering::SeqCst);
+    Ok(format!(
+        "CXA_FINALIZE_CALLBACKS_{callbacks_after_first}_SECOND_{callbacks_after_second}"
+    ))
+}
+
+fn fxstat_fixture_actual(function: &str, inputs: &serde_json::Value) -> Result<String, String> {
+    let version = parse_i32(inputs, "version").unwrap_or(1);
+    let fd = open_dev_null_fd(function)?;
+    let mut stat_buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    let rc = match function {
+        "__fxstat" => unsafe {
+            frankenlibc_abi::unistd_abi::__fxstat(version, fd, stat_buf.as_mut_ptr())
+        },
+        "__fxstat64" => unsafe {
+            frankenlibc_abi::unistd_abi::__fxstat64(version, fd, stat_buf.as_mut_ptr())
+        },
+        _ => unreachable!("validated fxstat function"),
+    };
+    close_raw_fd(fd);
+    stat_fixture_class(rc, stat_buf)
+}
+
+fn fxstatat_fixture_actual(function: &str, inputs: &serde_json::Value) -> Result<String, String> {
+    let version = parse_i32(inputs, "version").unwrap_or(1);
+    let path = inputs
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("/dev/null");
+    let flags = parse_i32(inputs, "flags").unwrap_or(0);
+    let path_c = CString::new(path).map_err(|_| "stat fixture path contains NUL".to_string())?;
+    let mut stat_buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    let rc = match function {
+        "__fxstatat" => unsafe {
+            frankenlibc_abi::unistd_abi::__fxstatat(
+                version,
+                libc::AT_FDCWD,
+                path_c.as_ptr(),
+                stat_buf.as_mut_ptr(),
+                flags,
+            )
+        },
+        "__fxstatat64" => unsafe {
+            frankenlibc_abi::unistd_abi::__fxstatat64(
+                version,
+                libc::AT_FDCWD,
+                path_c.as_ptr(),
+                stat_buf.as_mut_ptr(),
+                flags,
+            )
+        },
+        _ => unreachable!("validated fxstatat function"),
+    };
+    stat_fixture_class(rc, stat_buf)
+}
+
+fn lxstat_fixture_actual(function: &str, inputs: &serde_json::Value) -> Result<String, String> {
+    let version = parse_i32(inputs, "version").unwrap_or(1);
+    let path = inputs
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("/dev/null");
+    let path_c = CString::new(path).map_err(|_| "stat fixture path contains NUL".to_string())?;
+    let mut stat_buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    let rc = match function {
+        "__lxstat" => unsafe {
+            frankenlibc_abi::unistd_abi::__lxstat(version, path_c.as_ptr(), stat_buf.as_mut_ptr())
+        },
+        "__lxstat64" => unsafe {
+            frankenlibc_abi::unistd_abi::__lxstat64(version, path_c.as_ptr(), stat_buf.as_mut_ptr())
+        },
+        _ => unreachable!("validated lxstat function"),
+    };
+    stat_fixture_class(rc, stat_buf)
+}
+
+fn stat_fixture_class(
+    rc: c_int,
+    stat_buf: std::mem::MaybeUninit<libc::stat>,
+) -> Result<String, String> {
+    if rc != 0 {
+        return Ok(format!("STAT_RC_{rc}"));
+    }
+    let stat_buf = unsafe { stat_buf.assume_init() };
+    if stat_buf.st_mode != 0 && stat_buf.st_nlink > 0 {
+        Ok(String::from("STAT_OK_MODE_PRESENT"))
+    } else {
+        Ok(String::from("STAT_OK_MODE_MISSING"))
+    }
+}
+
+fn gmtime_r_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let epoch = inputs
+        .get("epoch")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0) as libc::time_t;
+    let mut tm_buf = std::mem::MaybeUninit::<libc::tm>::zeroed();
+    let ptr = unsafe { frankenlibc_abi::unistd_abi::__gmtime_r(&epoch, tm_buf.as_mut_ptr()) };
+    if ptr.is_null() {
+        return Ok(String::from("GMTIME_NULL"));
+    }
+    let tm = unsafe { tm_buf.assume_init() };
+    Ok(format!(
+        "UTC_{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec
+    ))
+}
+
+fn progname_fixture_actual() -> Result<String, String> {
+    unsafe {
+        frankenlibc_abi::startup_abi::setprogname(UNISTD_PROCESS_FIXTURE_PROGNAME.as_ptr().cast());
+    }
+    let ptr = frankenlibc_abi::startup_abi::__progname.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return Ok(String::from("PROGNAME_NULL"));
+    }
+    let name = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
+    Ok(format!("PROGNAME_{name}"))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
