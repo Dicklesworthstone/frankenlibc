@@ -1,0 +1,153 @@
+{
+  "schema_version": "stub_census_completion_contract.v1",
+  "manifest_id": "stub-census-completion-contract",
+  "bead": "bd-2vb",
+  "completion_debt_bead": "bd-2vb.1",
+  "next_audit_score_threshold": 900,
+  "source_artifacts": [
+    {
+      "artifact_id": "stub_census_script",
+      "path": "scripts/stub_census.sh",
+      "required_needles": [
+        "Deliverable for bd-2vb",
+        "total_todo_occurrences",
+        "reachable_stubs",
+        "missing_from_abi_and_matrix"
+      ]
+    },
+    {
+      "artifact_id": "stub_census_artifact",
+      "path": "tests/conformance/stub_census.json",
+      "required_needles": [
+        "total_todo_occurrences",
+        "total_abi_exports",
+        "reachable_stubs",
+        "matrix_inconsistencies"
+      ]
+    },
+    {
+      "artifact_id": "stub_todo_debt_census",
+      "path": "tests/conformance/stub_todo_debt_census.v1.json",
+      "required_needles": [
+        "exported_taxonomy_view",
+        "critical_source_debt",
+        "risk_ranked_debt",
+        "non_implemented_exported_symbols"
+      ]
+    },
+    {
+      "artifact_id": "stub_todo_generator",
+      "path": "scripts/generate_stub_todo_debt_census.py",
+      "required_needles": [
+        "TODO_RE",
+        "UNIMPLEMENTED_RE",
+        "scan_source_debt",
+        "risk_ranked_debt"
+      ]
+    },
+    {
+      "artifact_id": "stub_guard_script",
+      "path": "scripts/check_stub_guard.sh",
+      "required_needles": [
+        "No todo!/unimplemented!/panic!",
+        "stub_census.sh",
+        "reachable todo!",
+        "PASS: No Implemented/RawSyscall symbols have reachable stubs"
+      ]
+    },
+    {
+      "artifact_id": "stub_guard_test",
+      "path": "crates/frankenlibc-harness/tests/stub_guard_test.rs",
+      "required_needles": [
+        "no_todo_in_abi_crate",
+        "census_exists_and_no_reachable_stubs",
+        "census_is_deterministic",
+        "implemented_symbols_have_abi_exports"
+      ]
+    }
+  ],
+  "completion_debt_evidence": {
+    "bead": "bd-2vb.1",
+    "original_bead": "bd-2vb",
+    "next_audit_score_threshold": 900,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "test_source": "crates/frankenlibc-harness/tests/stub_guard_test.rs",
+      "required_test_names": [
+        "no_todo_in_abi_crate",
+        "census_exists_and_no_reachable_stubs",
+        "support_matrix_exists_and_valid",
+        "implemented_symbols_have_abi_exports"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test stub_guard_test no_todo_in_abi_crate -- --exact --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test stub_guard_test census_exists_and_no_reachable_stubs -- --exact --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test stub_guard_test support_matrix_exists_and_valid -- --exact --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test stub_guard_test implemented_symbols_have_abi_exports -- --exact --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "artifact_ids": [
+        "stub_census_script",
+        "stub_census_artifact",
+        "stub_todo_debt_census",
+        "stub_todo_generator",
+        "stub_guard_script"
+      ],
+      "required_commands": [
+        "bash scripts/stub_census.sh",
+        "bash scripts/check_stub_guard.sh",
+        "python3 scripts/generate_stub_todo_debt_census.py --check"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "report_path": "target/conformance/stub_census_completion_contract.report.json",
+      "log_path": "target/conformance/stub_census_completion_contract.log.jsonl",
+      "required_events": [
+        "stub_census_source",
+        "stub_census_inventory",
+        "stub_census_tests",
+        "stub_census_e2e",
+        "stub_census_telemetry",
+        "stub_census_summary"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "status",
+        "bead",
+        "completion_debt_bead",
+        "artifact_refs"
+      ],
+      "required_artifact_ids": [
+        "stub_census_script",
+        "stub_census_artifact",
+        "stub_todo_debt_census",
+        "stub_todo_generator",
+        "stub_guard_script",
+        "stub_guard_test"
+      ]
+    }
+  },
+  "inventory_expectations": {
+    "minimum_total_abi_exports": 4000,
+    "minimum_total_matrix_symbols": 4000,
+    "reachable_stubs": 0,
+    "matrix_inconsistencies": 0,
+    "missing_symbols": 0,
+    "exported_stub_count": 0,
+    "exported_non_implemented_count": 0,
+    "replacement_blocker_count": 0,
+    "interpose_unapproved_callthrough_count": 0,
+    "critical_source_debt_occurrence_count": 0,
+    "priority_item_count": 0
+  }
+}
