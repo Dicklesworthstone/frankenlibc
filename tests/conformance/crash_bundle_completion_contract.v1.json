@@ -1,0 +1,115 @@
+{
+  "schema_version": "crash_bundle_completion_contract.v1",
+  "manifest_id": "bd-6yd.1-crash-bundle-completion-contract",
+  "bead": "bd-6yd.1",
+  "original_bead": "bd-6yd",
+  "title": "Bind crash bundle unit, e2e, and telemetry completion evidence",
+  "completion_debt_evidence": {
+    "bead": "bd-6yd.1",
+    "original_bead": "bd-6yd",
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "next_audit_score_threshold": 800,
+    "test_sources": {
+      "spec": "tests/conformance/crash_bundle_spec.json",
+      "gate": "scripts/check_crash_bundle.sh",
+      "unit": "crates/frankenlibc-harness/tests/crash_bundle_test.rs"
+    },
+    "implementation_refs": [
+      "tests/conformance/crash_bundle_spec.json:4",
+      "tests/conformance/crash_bundle_spec.json:9",
+      "tests/conformance/crash_bundle_spec.json:44",
+      "tests/conformance/crash_bundle_spec.json:53",
+      "tests/conformance/crash_bundle_spec.json:126",
+      "tests/conformance/crash_bundle_spec.json:162",
+      "tests/conformance/crash_bundle_spec.json:191",
+      "scripts/check_crash_bundle.sh:34",
+      "scripts/check_crash_bundle.sh:69",
+      "scripts/check_crash_bundle.sh:168",
+      "scripts/check_crash_bundle.sh:215",
+      "scripts/check_crash_bundle.sh:269",
+      "scripts/check_crash_bundle.sh:340",
+      "crates/frankenlibc-harness/tests/crash_bundle_test.rs:35",
+      "crates/frankenlibc-harness/tests/crash_bundle_test.rs:56",
+      "crates/frankenlibc-harness/tests/crash_bundle_test.rs:88",
+      "crates/frankenlibc-harness/tests/crash_bundle_test.rs:118",
+      "crates/frankenlibc-harness/tests/crash_bundle_test.rs:162",
+      "crates/frankenlibc-harness/tests/crash_bundle_test.rs:196",
+      "crates/frankenlibc-harness/tests/crash_bundle_test.rs:213",
+      "crates/frankenlibc-harness/tests/crash_bundle_test.rs:242",
+      "crates/frankenlibc-harness/tests/crash_bundle_test.rs:287"
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "required_test_refs": [
+        "spec_exists_and_valid",
+        "required_artifacts_have_bounds",
+        "required_artifact_filenames_complete",
+        "determinism_rules_well_formed",
+        "reproduction_checklist_covers_essentials",
+        "evidence_snapshot_bounded_by_k_max",
+        "runner_integration_scripts_exist",
+        "summary_consistent",
+        "gate_script_exists_and_executable"
+      ],
+      "required_spec_artifacts": [
+        "bundle.meta",
+        "env.txt",
+        "proc_self_maps.txt",
+        "backtrace.txt",
+        "evidence_snapshot.jsonl",
+        "allocator_stats.json",
+        "command.shline",
+        "stdout.txt",
+        "stderr.txt"
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "gate_script": "scripts/check_crash_bundle.sh",
+      "required_stdout": "check_crash_bundle: PASS",
+      "required_gate_checks": [
+        "Crash bundle spec exists and is valid",
+        "Required artifacts have size bounds",
+        "Determinism rules",
+        "Reproduction checklist",
+        "Runner integration status",
+        "Summary statistics"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "required_artifact": "evidence_snapshot.jsonl",
+      "required_log_schema_ref": "tests/conformance/log_schema.json",
+      "required_evidence_system_ref": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+      "required_artifact_kinds": [
+        "backtrace",
+        "snapshot",
+        "log"
+      ],
+      "completion_artifacts": {
+        "report": "target/conformance/crash_bundle_completion_contract.report.json",
+        "log": "target/conformance/crash_bundle_completion_contract.log.jsonl"
+      }
+    },
+    "validation_commands": {
+      "required": [
+        "jq empty tests/conformance/crash_bundle_completion_contract.v1.json tests/conformance/crash_bundle_spec.json",
+        "bash -n scripts/check_crash_bundle_completion_contract.sh",
+        "bash scripts/check_crash_bundle_completion_contract.sh",
+        "bash scripts/check_crash_bundle.sh",
+        "cargo test -p frankenlibc-harness --test crash_bundle_test -- --nocapture",
+        "cargo test -p frankenlibc-harness --test crash_bundle_completion_contract_test -- --nocapture",
+        "cargo clippy -p frankenlibc-harness --test crash_bundle_completion_contract_test -- -D warnings"
+      ]
+    },
+    "artifact_refs": {
+      "report": "target/conformance/crash_bundle_completion_contract.report.json",
+      "log": "target/conformance/crash_bundle_completion_contract.log.jsonl"
+    },
+    "failure_signature": "crash_bundle_completion_missing_unit_e2e_or_telemetry_evidence"
+  }
+}
