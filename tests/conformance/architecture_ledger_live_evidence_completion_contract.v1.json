@@ -1,0 +1,370 @@
+{
+  "schema_version": "architecture_ledger_live_evidence_completion_contract.v1",
+  "manifest_id": "bd-0agsk.19-architecture-ledger-live-evidence-completion-contract",
+  "original_bead": "bd-0agsk",
+  "completion_debt_bead": "bd-0agsk.19",
+  "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-0agsk/scorecard.md",
+  "trace_id": "architecture_ledger_live_evidence_completion::bd-0agsk.19",
+  "source_artifacts": {
+    "issues_jsonl": ".beads/issues.jsonl",
+    "architecture_todo_completion": "tests/conformance/architecture_todo_reconciliation_completion_contract.v1.json",
+    "support_reality_completion": "tests/conformance/support_reality_regeneration_completion_contract.v1.json",
+    "support_reality_drift_completion": "tests/conformance/support_reality_drift_triage_completion_contract.v1.json",
+    "fixture_schema": "tests/conformance/fixture_schema_validation.v1.json",
+    "fixture_expected_output_policy": "tests/conformance/fixture_expected_output_schema_policy_migration.v1.json",
+    "fixture_executor_golden": "tests/conformance/fixture_executor_ownership_and_golden.v1.json",
+    "hardened_coverage": "tests/conformance/hardened_mode_coverage_inventory.v1.json",
+    "runtime_mode_evidence": "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+    "runtime_math_required_modules": "tests/runtime_math/runtime_math_required_module_gate.v1.json",
+    "tooling_boundary": "tests/conformance/tooling_dependency_boundary.v1.json",
+    "placeholder_fixture_triage": "tests/conformance/placeholder_fixture_output_triage.v1.json",
+    "contributor_quickstart": "tests/conformance/contributor_gate_quickstart.v1.json",
+    "architecture_migration_state": "tests/conformance/architecture_migration_state_report.v1.json",
+    "replacement_readiness_thresholds": "tests/conformance/replacement_readiness_acceptance_thresholds.v1.json",
+    "top_blocker_wave_plan": "tests/conformance/top_blocker_symbol_coverage_wave_plan.v1.json",
+    "golden_fixture_protocol_completion": "tests/conformance/golden_fixture_protocol_completion_contract.v1.json",
+    "golden_fixture_protocol": "tests/conformance/golden_fixture_protocol.v1.json",
+    "golden_gate": "scripts/conformance_golden_gate.sh",
+    "golden_sha256s": "tests/conformance/golden/sha256sums.txt",
+    "golden_markdown": "tests/conformance/golden/fixture_verify_strict_hardened.v1.md",
+    "golden_json": "tests/conformance/golden/fixture_verify_strict_hardened.v1.json",
+    "golden_suite_json": "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json",
+    "completion_checker": "scripts/check_architecture_ledger_live_evidence_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/architecture_ledger_live_evidence_completion_contract_test.rs"
+  },
+  "required_parent_closeout": {
+    "parent_bead": "bd-0agsk",
+    "status": "closed",
+    "required_child_beads": [
+      "bd-0agsk.1",
+      "bd-0agsk.2",
+      "bd-0agsk.3",
+      "bd-0agsk.4",
+      "bd-0agsk.5",
+      "bd-0agsk.6",
+      "bd-0agsk.7",
+      "bd-0agsk.8",
+      "bd-0agsk.9",
+      "bd-0agsk.10",
+      "bd-0agsk.11",
+      "bd-0agsk.12",
+      "bd-0agsk.13",
+      "bd-0agsk.14",
+      "bd-0agsk.15",
+      "bd-0agsk.16",
+      "bd-0agsk.17",
+      "bd-0agsk.18"
+    ],
+    "close_reason_required_tokens": [
+      "all 18 bd-0agsk.* parent-child dependents are closed",
+      "conformance_golden_gate PASS total=1817 passed=1817 failed=0",
+      "br dep cycles --no-db passed"
+    ],
+    "parent_close_reason_quote": "Closed architecture ledger live-evidence closure wave after verifying all 18 bd-0agsk.* parent-child dependents are closed and the no-db open queue contains only this container epic. Child closeouts delivered machine-checked reconciliation/gates/reports for architecture TODO evidence, support matrix/reality regeneration, fixture schema and expected-output policy, fixture executor ownership/golden invariants, residual call-through truth, hardened/runtime-mode coverage, runtime_math linkage, tooling-only boundaries, placeholder fixture triage, contributor quickstart, migration-state evidence, readiness thresholds, and top-blocker wave planning. Follow-up broad golden drift bead bd-25vof is also closed with conformance_golden_gate PASS total=1817 passed=1817 failed=0. Validation for parent close: jq audit of bd-0agsk.* statuses; br show bd-0agsk --no-db --json; br ready/list --no-db showed no implementation beads remaining; br dep cycles --no-db passed.",
+    "resolution_policy": "Quoted WIP/draft/TODO wording is treated only as stale source-ledger wording. Completion is proven by closed child beads and checked artifacts, not by the theater words themselves."
+  },
+  "completion_debt_evidence": {
+    "missing_items": [
+      "tests.golden.primary",
+      "tests.conformance.primary",
+      "migrations.primary",
+      "theater.todo_wording.primary"
+    ],
+    "implementation_refs": [
+      {
+        "id": "architecture-todo-completion-binds-ledger-migration-and-theater",
+        "path": "tests/conformance/architecture_todo_reconciliation_completion_contract.v1.json",
+        "required_text": [
+          "\"schema_version\": \"architecture_todo_reconciliation_completion_contract.v1\"",
+          "\"tests.conformance.primary\"",
+          "\"migrations.primary\"",
+          "\"theater.todo_wording.primary\"",
+          "\"report_only claim status forbids replacement-level promotion\""
+        ]
+      },
+      {
+        "id": "golden-protocol-binds-fixed-golden-gate",
+        "path": "tests/conformance/golden_fixture_protocol_completion_contract.v1.json",
+        "required_text": [
+          "\"tests.golden.primary\"",
+          "\"scripts/conformance_golden_gate.sh\"",
+          "\"tests/conformance/golden/sha256sums.txt\"",
+          "\"fixed_timestamp\": \"1970-01-01T00:00:00Z\""
+        ]
+      },
+      {
+        "id": "migration-state-report-binds-current-main-branch-and-no-promotion",
+        "path": "tests/conformance/architecture_migration_state_report.v1.json",
+        "required_text": [
+          "\"generated_by_bead\": \"bd-0agsk.16\"",
+          "\"default_branch\": \"main\"",
+          "\"replacement_claim\": \"not_promoted\"",
+          "\"strict_status\": \"green\"",
+          "\"hardened_status\": \"green\""
+        ]
+      },
+      {
+        "id": "top-blocker-wave-plan-keeps-follow-up-work-concrete",
+        "path": "tests/conformance/top_blocker_symbol_coverage_wave_plan.v1.json",
+        "required_text": [
+          "\"generated_by_bead\": \"bd-0agsk.18\"",
+          "\"canonical_command\": \"scripts/check_top_blocker_symbol_coverage_wave_plan.sh --validate-only\"",
+          "rch exec -- cargo test -p frankenlibc-harness --test libc_map_export_golden_test"
+        ]
+      },
+      {
+        "id": "completion-checker-emits-aggregate-proof",
+        "path": "scripts/check_architecture_ledger_live_evidence_completion_contract.sh",
+        "required_text": [
+          "architecture_ledger_live_evidence_completion_contract.v1",
+          "architecture_ledger_live_evidence_golden_validated",
+          "architecture_ledger_live_evidence_conformance_validated",
+          "architecture_ledger_live_evidence_migration_validated",
+          "architecture_ledger_live_evidence_theater_validated"
+        ]
+      }
+    ],
+    "child_evidence_artifacts": [
+      {
+        "id": "architecture_todo_completion",
+        "bead": "bd-0agsk.1",
+        "path": "tests/conformance/architecture_todo_reconciliation_completion_contract.v1.json",
+        "schema_version": "architecture_todo_reconciliation_completion_contract.v1",
+        "covers": ["tests.conformance.primary", "migrations.primary", "theater.todo_wording.primary"]
+      },
+      {
+        "id": "support_reality_completion",
+        "bead": "bd-0agsk.3",
+        "path": "tests/conformance/support_reality_regeneration_completion_contract.v1.json",
+        "schema_version": "support_reality_regeneration_completion_contract.v1",
+        "covers": ["tests.conformance.primary"]
+      },
+      {
+        "id": "support_reality_drift_completion",
+        "bead": "bd-0agsk.4",
+        "path": "tests/conformance/support_reality_drift_triage_completion_contract.v1.json",
+        "schema_version": "v1",
+        "covers": ["tests.conformance.primary"]
+      },
+      {
+        "id": "fixture_schema",
+        "bead": "bd-0agsk.6",
+        "path": "tests/conformance/fixture_schema_validation.v1.json",
+        "schema_version": "fixture_schema_validation.v1",
+        "generated_by_bead": "bd-0agsk.6",
+        "covers": ["tests.conformance.primary"]
+      },
+      {
+        "id": "fixture_expected_output_policy",
+        "bead": "bd-0agsk.5",
+        "path": "tests/conformance/fixture_expected_output_schema_policy_migration.v1.json",
+        "schema_version": "v1",
+        "covers": ["tests.conformance.primary", "migrations.primary"]
+      },
+      {
+        "id": "fixture_executor_golden",
+        "bead": "bd-0agsk.7",
+        "path": "tests/conformance/fixture_executor_ownership_and_golden.v1.json",
+        "schema_version": "fixture_executor_ownership_and_golden.v1",
+        "generated_by_bead": "bd-0agsk.7",
+        "covers": ["tests.golden.primary", "tests.conformance.primary"]
+      },
+      {
+        "id": "hardened_coverage",
+        "bead": "bd-0agsk.10",
+        "path": "tests/conformance/hardened_mode_coverage_inventory.v1.json",
+        "schema_version": "hardened_mode_coverage_inventory.v1",
+        "generated_by_bead": "bd-0agsk.10",
+        "covers": ["tests.conformance.primary"]
+      },
+      {
+        "id": "runtime_mode_evidence",
+        "bead": "bd-0agsk.11",
+        "path": "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json",
+        "schema_version": "runtime_mode_evidence_logging_coverage.v1",
+        "generated_by_bead": "bd-0agsk.11",
+        "covers": ["tests.conformance.primary"]
+      },
+      {
+        "id": "runtime_math_required_modules",
+        "bead": "bd-0agsk.12",
+        "path": "tests/runtime_math/runtime_math_required_module_gate.v1.json",
+        "schema_version": "runtime_math_required_module_gate.v1",
+        "generated_by_bead": "bd-0agsk.12",
+        "covers": ["tests.conformance.primary"]
+      },
+      {
+        "id": "tooling_boundary",
+        "bead": "bd-0agsk.13",
+        "path": "tests/conformance/tooling_dependency_boundary.v1.json",
+        "schema_version": "tooling_dependency_boundary.v1",
+        "generated_by_bead": "bd-0agsk.13",
+        "covers": ["tests.conformance.primary"]
+      },
+      {
+        "id": "placeholder_fixture_triage",
+        "bead": "bd-0agsk.14",
+        "path": "tests/conformance/placeholder_fixture_output_triage.v1.json",
+        "schema_version": "placeholder_fixture_output_triage.v1",
+        "generated_by_bead": "bd-0agsk.14",
+        "covers": ["tests.conformance.primary", "theater.todo_wording.primary"]
+      },
+      {
+        "id": "architecture_migration_state",
+        "bead": "bd-0agsk.16",
+        "path": "tests/conformance/architecture_migration_state_report.v1.json",
+        "schema_version": "architecture_migration_state_report.v1",
+        "generated_by_bead": "bd-0agsk.16",
+        "covers": ["migrations.primary", "theater.todo_wording.primary"]
+      },
+      {
+        "id": "replacement_readiness_thresholds",
+        "bead": "bd-0agsk.17",
+        "path": "tests/conformance/replacement_readiness_acceptance_thresholds.v1.json",
+        "schema_version": "replacement_readiness_acceptance_thresholds.v1",
+        "generated_by_bead": "bd-0agsk.17",
+        "covers": ["tests.conformance.primary", "migrations.primary"]
+      },
+      {
+        "id": "top_blocker_wave_plan",
+        "bead": "bd-0agsk.18",
+        "path": "tests/conformance/top_blocker_symbol_coverage_wave_plan.v1.json",
+        "schema_version": "top_blocker_symbol_coverage_wave_plan.v1",
+        "generated_by_bead": "bd-0agsk.18",
+        "covers": ["tests.conformance.primary", "migrations.primary", "theater.todo_wording.primary"]
+      },
+      {
+        "id": "golden_fixture_protocol_completion",
+        "bead": "bd-15n.3",
+        "path": "tests/conformance/golden_fixture_protocol_completion_contract.v1.json",
+        "schema_version": "golden_fixture_protocol_completion_contract.v1",
+        "covers": ["tests.golden.primary", "tests.conformance.primary"]
+      }
+    ],
+    "golden_primary": {
+      "missing_item_id": "tests.golden.primary",
+      "required_artifacts": [
+        "tests/conformance/golden_fixture_protocol_completion_contract.v1.json",
+        "tests/conformance/golden_fixture_protocol.v1.json",
+        "scripts/conformance_golden_gate.sh",
+        "tests/conformance/golden/sha256sums.txt",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.md",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.json",
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json"
+      ],
+      "required_test_refs": [
+        {"source": "golden_protocol_harness", "name": "manifest_binds_all_completion_debt_evidence_classes"},
+        {"source": "golden_protocol_harness", "name": "checker_validates_golden_fixture_protocol_contract"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_golden_binding"}
+      ],
+      "required_commands": [
+        "bash scripts/check_golden_fixture_protocol_completion_contract.sh",
+        "bash scripts/conformance_golden_gate.sh",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test golden_fixture_protocol_completion_contract_test -- --nocapture"
+      ]
+    },
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "minimum_child_artifacts": 14,
+      "required_artifacts": [
+        "tests/conformance/architecture_todo_reconciliation_completion_contract.v1.json",
+        "tests/conformance/support_reality_regeneration_completion_contract.v1.json",
+        "tests/conformance/support_reality_drift_triage_completion_contract.v1.json",
+        "tests/conformance/fixture_schema_validation.v1.json",
+        "tests/conformance/replacement_readiness_acceptance_thresholds.v1.json",
+        "tests/conformance/top_blocker_symbol_coverage_wave_plan.v1.json"
+      ],
+      "required_test_refs": [
+        {"source": "architecture_todo_harness", "name": "contract_binds_architecture_source_gate_and_missing_items"},
+        {"source": "support_reality_harness", "name": "checker_validates_support_reality_regeneration_contract"},
+        {"source": "completion_harness", "name": "checker_validates_architecture_ledger_live_evidence_contract"}
+      ],
+      "required_commands": [
+        "bash scripts/check_architecture_todo_reconciliation_completion_contract.sh",
+        "bash scripts/check_support_reality_regeneration_completion_contract.sh",
+        "bash scripts/check_architecture_ledger_live_evidence_completion_contract.sh"
+      ]
+    },
+    "migrations_primary": {
+      "missing_item_id": "migrations.primary",
+      "required_artifacts": [
+        "tests/conformance/architecture_todo_reconciliation_completion_contract.v1.json",
+        "tests/conformance/fixture_expected_output_schema_policy_migration.v1.json",
+        "tests/conformance/architecture_migration_state_report.v1.json",
+        "tests/conformance/replacement_readiness_acceptance_thresholds.v1.json",
+        "tests/conformance/top_blocker_symbol_coverage_wave_plan.v1.json"
+      ],
+      "required_invariants": [
+        "branch_reference_policy.default_branch is main",
+        "replacement_claim remains not_promoted",
+        "architecture ledger rows stay mapped to artifacts or tracker evidence",
+        "top blocker wave plan keeps remaining work as concrete follow-up beads"
+      ],
+      "required_test_refs": [
+        {"source": "architecture_todo_harness", "name": "checker_rejects_source_artifact_count_drift"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_child_closeout_binding"}
+      ]
+    },
+    "theater_resolution": {
+      "missing_item_id": "theater.todo_wording.primary",
+      "resolution_policy": "Quoted WIP/draft/TODO wording is treated only as stale source-ledger wording. Completion is proven by closed child beads and checked artifacts, not by the theater words themselves.",
+      "forbidden_completion_claims": [
+        "wip_is_done",
+        "draft_is_done",
+        "todo_word_is_completion",
+        "report_only_promotes_replacement_level"
+      ],
+      "required_source_quote_tokens": [
+        "WIP/draft/TODO",
+        "pending and in-progress TODO rows",
+        "report_only claim status forbids replacement-level promotion"
+      ],
+      "required_test_refs": [
+        {"source": "architecture_todo_harness", "name": "checker_rejects_missing_theater_resolution"},
+        {"source": "completion_harness", "name": "checker_rejects_theater_resolution_drift"}
+      ]
+    },
+    "test_sources": {
+      "architecture_todo_harness": "crates/frankenlibc-harness/tests/architecture_todo_reconciliation_completion_contract_test.rs",
+      "support_reality_harness": "crates/frankenlibc-harness/tests/support_reality_regeneration_completion_contract_test.rs",
+      "golden_protocol_harness": "crates/frankenlibc-harness/tests/golden_fixture_protocol_completion_contract_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/architecture_ledger_live_evidence_completion_contract_test.rs"
+    }
+  },
+  "telemetry_contract": {
+    "required_report_fields": [
+      "schema_version",
+      "manifest_id",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_commit",
+      "summary",
+      "events",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "source_commit",
+      "missing_item_id",
+      "child_bead_count",
+      "child_artifact_count",
+      "artifact_refs",
+      "failure_signature"
+    ],
+    "required_events": [
+      "architecture_ledger_live_evidence_summary",
+      "architecture_ledger_live_evidence_golden_validated",
+      "architecture_ledger_live_evidence_conformance_validated",
+      "architecture_ledger_live_evidence_migration_validated",
+      "architecture_ledger_live_evidence_theater_validated",
+      "architecture_ledger_live_evidence_contract_pass",
+      "architecture_ledger_live_evidence_contract_fail"
+    ]
+  }
+}
