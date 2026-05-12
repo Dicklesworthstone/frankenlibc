@@ -1,0 +1,288 @@
+{
+  "schema_version": "fixture_coverage_prioritizer_completion_contract.v1",
+  "bead_id": "bd-bp8fl.4.1.1",
+  "original_bead": "bd-bp8fl.4.1",
+  "trace_id": "bd-bp8fl.4.1.1::fixture-coverage-prioritizer::completion::v1",
+  "description": "Completion contract binding the fixture coverage prioritizer artifact, generator, gate, unit coverage, E2E/conformance replay, and structured telemetry to bd-bp8fl.4.1.1.",
+  "source_artifacts": [
+    {
+      "id": "prioritizer_artifact",
+      "kind": "conformance_artifact",
+      "path": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+      "evidence": "Machine-readable fixture coverage campaign priorities, first-wave fixtures, deferred modules, and structured telemetry schema."
+    },
+    {
+      "id": "prioritizer_generator",
+      "kind": "generator",
+      "path": "scripts/generate_fixture_coverage_prioritizer.py",
+      "evidence": "Deterministic generator with self-tests for ranking weights, stale fixture inventories, duplicate rows, and deterministic ordering."
+    },
+    {
+      "id": "prioritizer_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_fixture_coverage_prioritizer.sh",
+      "evidence": "CI gate that regenerates the prioritizer, validates current coverage/support/workload inputs, and emits report/log artifacts."
+    },
+    {
+      "id": "symbol_fixture_coverage",
+      "kind": "coverage_input",
+      "path": "tests/conformance/symbol_fixture_coverage.v1.json",
+      "evidence": "Current per-family target/covered/uncovered fixture coverage source."
+    },
+    {
+      "id": "per_symbol_fixture_tests",
+      "kind": "coverage_input",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "evidence": "Current per-symbol fixture availability source for first-wave fixture selection."
+    },
+    {
+      "id": "feature_gap_groups",
+      "kind": "priority_input",
+      "path": "tests/conformance/feature_parity_gap_groups.v1.json",
+      "evidence": "Live feature-parity gap grouping input with symbol/source/evidence/priority axes."
+    },
+    {
+      "id": "prioritizer_harness_test",
+      "kind": "unit_test",
+      "path": "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs",
+      "evidence": "Rust harness tests for generator self-test/check, artifact shape, campaign/deferred summary math, priority order, and gate report/log output."
+    },
+    {
+      "id": "e2e_suite",
+      "kind": "e2e_reference",
+      "path": "scripts/e2e_suite.sh",
+      "evidence": "Deterministic E2E suite reference recorded by each first-wave campaign."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/fixture_coverage_prioritizer_completion_contract.v1.json",
+      "evidence": "Machine-readable binding for bd-bp8fl.4.1.1 missing unit, E2E, conformance, and telemetry obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_fixture_coverage_prioritizer_completion_contract.sh",
+      "evidence": "Fail-closed validator for source bindings, current prioritizer summary, base gate replay, structured telemetry, and completion harness coverage."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_completion_contract_test.rs",
+      "evidence": "Rust harness test validating the completion contract, checker report/logs, and negative drift signatures."
+    }
+  ],
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "required_prioritizer_summary": {
+      "campaign_count": 18,
+      "deferred_module_count": 18,
+      "selected_target_uncovered_symbols": 3332,
+      "deferred_target_uncovered_symbols": 382,
+      "all_uncovered_target_symbols": 3714,
+      "total_first_wave_fixture_count": 196,
+      "highest_priority_campaign": "fcq-unistd-process-filesystem",
+      "lowest_priority_campaign": "fcq-rpc-legacy-network"
+    },
+    "required_top_campaigns": [
+      {
+        "rank": 1,
+        "campaign_id": "fcq-unistd-process-filesystem",
+        "module": "unistd_abi",
+        "priority_score": 2550,
+        "first_wave_fixture_count": 12
+      },
+      {
+        "rank": 2,
+        "campaign_id": "fcq-string-memory-hotpaths",
+        "module": "string_abi",
+        "priority_score": 2509,
+        "first_wave_fixture_count": 12
+      },
+      {
+        "rank": 3,
+        "campaign_id": "fcq-stdio-libio",
+        "module": "stdio_abi",
+        "priority_score": 2447,
+        "first_wave_fixture_count": 12
+      },
+      {
+        "rank": 4,
+        "campaign_id": "fcq-pthread-sync",
+        "module": "pthread_abi",
+        "priority_score": 2414,
+        "first_wave_fixture_count": 12
+      },
+      {
+        "rank": 5,
+        "campaign_id": "fcq-malloc-membrane",
+        "module": "malloc_abi",
+        "priority_score": 2367,
+        "first_wave_fixture_count": 12
+      }
+    ],
+    "required_generator_anchors": [
+      "REQUIRED_LOG_FIELDS",
+      "CAMPAIGN_POLICIES",
+      "def first_wave_symbols",
+      "def build_campaign",
+      "def build_deferred",
+      "def build_payload",
+      "priority_score",
+      "generate_fixture_coverage_prioritizer: self-test PASS"
+    ],
+    "required_gate_checks": [
+      "json_parse",
+      "top_level_shape",
+      "inputs_and_feature_gap_refs",
+      "required_log_fields",
+      "campaign_schema",
+      "deferred_module_inventory",
+      "priority_order",
+      "workload_domain_coverage",
+      "summary_counts"
+    ],
+    "required_log_fields": [
+      "trace_id",
+      "bead_id",
+      "scenario_id",
+      "runtime_mode",
+      "replacement_level",
+      "api_family",
+      "symbol",
+      "oracle_kind",
+      "expected",
+      "actual",
+      "errno",
+      "decision_path",
+      "healing_action",
+      "latency_ns",
+      "symbol_family",
+      "score",
+      "rank",
+      "coverage_state",
+      "risk_factors",
+      "artifact_refs",
+      "source_commit",
+      "target_dir",
+      "failure_signature"
+    ],
+    "required_harness_tests": [
+      "generator_self_test_and_canonical_check_pass",
+      "artifact_exists_and_has_required_shape",
+      "feature_gap_input_is_live_and_grouped_for_prioritization",
+      "campaign_stats_match_fixture_coverage_inputs",
+      "deferred_modules_cover_every_unselected_uncovered_family",
+      "priority_scores_and_summary_are_consistent",
+      "gate_script_passes_and_emits_structured_report_and_log"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "scripts/generate_fixture_coverage_prioritizer.py",
+        "scripts/check_fixture_coverage_prioritizer_completion_contract.sh",
+        "tests/conformance/fixture_coverage_prioritizer.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "python3 scripts/generate_fixture_coverage_prioritizer.py --self-test",
+        "cargo test -p frankenlibc-harness --test fixture_coverage_prioritizer_test -- --nocapture",
+        "cargo test -p frankenlibc-harness --test fixture_coverage_prioritizer_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "implementation_refs": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh",
+        "tests/conformance/fixture_coverage_prioritizer.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_fixture_coverage_prioritizer.sh",
+        "bash scripts/check_fixture_coverage_prioritizer_completion_contract.sh"
+      ]
+    },
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "implementation_refs": [
+        "tests/conformance/fixture_coverage_prioritizer.v1.json",
+        "tests/conformance/symbol_fixture_coverage.v1.json",
+        "tests/conformance/per_symbol_fixture_tests.v1.json",
+        "tests/conformance/feature_parity_gap_groups.v1.json"
+      ],
+      "test_refs": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "python3 scripts/generate_fixture_coverage_prioritizer.py --check --output tests/conformance/fixture_coverage_prioritizer.v1.json",
+        "bash scripts/check_fixture_coverage_prioritizer.sh"
+      ]
+    },
+    {
+      "missing_item_id": "telemetry.primary",
+      "implementation_refs": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/check_fixture_coverage_prioritizer_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs",
+        "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_fixture_coverage_prioritizer.sh",
+        "bash scripts/check_fixture_coverage_prioritizer_completion_contract.sh"
+      ]
+    }
+  ],
+  "required_validation_commands": [
+    "jq empty tests/conformance/fixture_coverage_prioritizer_completion_contract.v1.json tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "python3 scripts/generate_fixture_coverage_prioritizer.py --self-test",
+    "python3 scripts/generate_fixture_coverage_prioritizer.py --check --output tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "bash -n scripts/check_fixture_coverage_prioritizer_completion_contract.sh",
+    "bash scripts/check_fixture_coverage_prioritizer_completion_contract.sh",
+    "bash scripts/check_fixture_coverage_prioritizer.sh",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_completion_contract_test.rs",
+    "cargo test -p frankenlibc-harness --test fixture_coverage_prioritizer_completion_contract_test -- --nocapture",
+    "cargo test -p frankenlibc-harness --test fixture_coverage_prioritizer_test -- --nocapture",
+    "cargo clippy -p frankenlibc-harness --test fixture_coverage_prioritizer_completion_contract_test -- -D warnings"
+  ],
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_fixture_coverage_prioritizer_sources",
+      "checker_accepts_fixture_coverage_prioritizer_completion_contract",
+      "checker_emits_structured_fixture_coverage_telemetry"
+    ],
+    "negative": [
+      "checker_rejects_missing_e2e_binding",
+      "checker_rejects_prioritizer_summary_drift",
+      "checker_rejects_missing_telemetry_binding"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/fixture_coverage_prioritizer_completion_contract.v1.json",
+      "scripts/check_fixture_coverage_prioritizer_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_completion_contract_test.rs",
+      "tests/conformance/fixture_coverage_prioritizer.v1.json",
+      "scripts/generate_fixture_coverage_prioritizer.py",
+      "scripts/check_fixture_coverage_prioritizer.sh",
+      "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs"
+    ]
+  }
+}
