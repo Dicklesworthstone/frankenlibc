@@ -1,0 +1,217 @@
+{
+  "schema_version": "decision_card_evidence_ledger_completion_contract.v1",
+  "original_bead": "bd-3h1u.2",
+  "completion_debt_bead": "bd-3h1u.2.1",
+  "generated_at_utc": "2026-05-12T06:45:00Z",
+  "purpose": "Bind the EvidenceLedger galaxy-brain decision-card work to explicit golden-export and telemetry proof surfaces for the bd-3h1u.2 completion-debt audit items.",
+  "audit_reference": {
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-3h1u.2/scorecard.md",
+    "audit_score": 470,
+    "score_threshold": 800,
+    "missing_items": [
+      {
+        "id": "tests.golden.primary",
+        "kind": "golden",
+        "description": "golden test required by bead body"
+      },
+      {
+        "id": "telemetry.primary",
+        "kind": "telemetry",
+        "description": "telemetry required by bead body"
+      }
+    ]
+  },
+  "completion_debt_evidence": {
+    "missing_items_closed": [
+      "tests.golden.primary",
+      "telemetry.primary"
+    ],
+    "next_audit_score_threshold": 800
+  },
+  "source_artifacts": [
+    {
+      "id": "runtime_math_evidence",
+      "path": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+      "required_needles": [
+        "pub struct DecisionCardV1",
+        "pub fn export_decision_cards_json(&self) -> String",
+        "fn decision_card_export_is_valid_json()",
+        "fn decision_card_query_latency_smoke_budget()",
+        "decision_card_query_latency_smoke_budget: sample={}",
+        "fn decision_card_journal_append_overhead_smoke_budget()",
+        "decision_card_journal_append_overhead_smoke_budget: sample={}",
+        "fn decision_card_journal_replays_after_restart()"
+      ]
+    },
+    {
+      "id": "runtime_math_mod",
+      "path": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "required_needles": [
+        "fn decision_card_export_json_roundtrip_preserves_payload()",
+        "fn deterministic_replay_produces_identical_decisions_and_evidence()"
+      ]
+    },
+    {
+      "id": "unified_evidence_ledger",
+      "path": "crates/frankenlibc-membrane/src/evidence_ledger.rs",
+      "required_needles": [
+        "pub fn export_jsonl(&self) -> String",
+        "pub fn otlp_export(&self) -> OtlpExport",
+        "fn evidence_ledger_contract_binds_completion_debt_items()",
+        "fn jsonl_and_otlp_exports_cover_completion_contract_fields()",
+        "fn evidence_ledger_contract_checker_accepts_contract()",
+        "fn evidence_ledger_contract_checker_rejects_stale_test_binding()"
+      ]
+    },
+    {
+      "id": "evidence_ledger_contract",
+      "path": "tests/conformance/evidence_ledger_contract.v1.json",
+      "required_needles": [
+        "evidence_ledger_contract.v1",
+        "telemetry_contract",
+        "evidence_ledger_contract_validated",
+        "evidence_ledger_contract_failed"
+      ]
+    },
+    {
+      "id": "evidence_ledger_checker",
+      "path": "scripts/check_evidence_ledger_contract.sh",
+      "required_needles": [
+        "evidence_ledger_contract_validated",
+        "evidence_ledger_contract_failed",
+        "evidence_ledger::contract::validate"
+      ]
+    },
+    {
+      "id": "completion_checker",
+      "path": "scripts/check_decision_card_evidence_ledger_completion_contract.sh",
+      "required_needles": [
+        "decision_card_evidence.source_artifacts_validated",
+        "decision_card_evidence.golden_validated",
+        "decision_card_evidence.telemetry_validated",
+        "decision_card_evidence.evidence_ledger_gate_replayed",
+        "decision_card_evidence.completion_contract_validated",
+        "decision_card_evidence.completion_contract_failed"
+      ]
+    },
+    {
+      "id": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/decision_card_evidence_ledger_completion_contract_test.rs",
+      "required_needles": [
+        "contract_anchors_golden_and_telemetry_items",
+        "source_artifacts_bind_existing_decision_card_surfaces",
+        "golden_contract_binds_decision_card_export_and_replay_tests",
+        "telemetry_contract_replays_unified_evidence_ledger_gate",
+        "checker_accepts_contract_and_emits_telemetry",
+        "checker_rejects_missing_golden_export_binding"
+      ]
+    }
+  ],
+  "implementation_refs": [
+    "crates/frankenlibc-membrane/src/runtime_math/evidence.rs:456",
+    "crates/frankenlibc-membrane/src/runtime_math/evidence.rs:1782",
+    "crates/frankenlibc-membrane/src/runtime_math/evidence.rs:3446",
+    "crates/frankenlibc-membrane/src/runtime_math/evidence.rs:3962",
+    "crates/frankenlibc-membrane/src/runtime_math/evidence.rs:4031",
+    "crates/frankenlibc-membrane/src/runtime_math/evidence.rs:4112",
+    "crates/frankenlibc-membrane/src/runtime_math/mod.rs:7262",
+    "crates/frankenlibc-membrane/src/runtime_math/mod.rs:7292",
+    "crates/frankenlibc-membrane/src/evidence_ledger.rs:427",
+    "crates/frankenlibc-membrane/src/evidence_ledger.rs:1457",
+    "crates/frankenlibc-membrane/src/evidence_ledger.rs:1502",
+    "crates/frankenlibc-membrane/src/evidence_ledger.rs:1558"
+  ],
+  "golden_primary": {
+    "missing_item_id": "tests.golden.primary",
+    "description": "Decision-card golden export contract for galaxy-brain card JSON, replay determinism, journal replay, and latency/append telemetry smoke evidence.",
+    "required_export_schema": "decision_cards.v1",
+    "required_export_fields": [
+      "schema",
+      "count",
+      "cards",
+      "decision_id",
+      "trace_id",
+      "decision_type",
+      "mode",
+      "symbol",
+      "context_hash",
+      "reason_hash",
+      "outcome_hash",
+      "counterfactual_hash"
+    ],
+    "required_runtime_math_tests": [
+      "decision_card_export_is_valid_json",
+      "decision_card_export_json_roundtrip_preserves_payload",
+      "deterministic_replay_produces_identical_decisions_and_evidence",
+      "decision_card_journal_replays_after_restart"
+    ],
+    "required_telemetry_smoke_tests": [
+      "decision_card_query_latency_smoke_budget",
+      "decision_card_journal_append_overhead_smoke_budget"
+    ],
+    "required_stdout_prefixes": [
+      "decision_card_query_latency_smoke_budget: sample=",
+      "decision_card_journal_append_overhead_smoke_budget: sample="
+    ]
+  },
+  "telemetry_primary": {
+    "missing_item_id": "telemetry.primary",
+    "description": "Structured completion telemetry for the decision-card binder plus replay of the existing EvidenceLedger JSONL/OTLP contract gate.",
+    "default_report_path": "target/conformance/decision_card_evidence_ledger_completion_contract.report.json",
+    "default_log_path": "target/conformance/decision_card_evidence_ledger_completion_contract.log.jsonl",
+    "required_completion_events": [
+      "decision_card_evidence.source_artifacts_validated",
+      "decision_card_evidence.golden_validated",
+      "decision_card_evidence.telemetry_validated",
+      "decision_card_evidence.evidence_ledger_gate_replayed",
+      "decision_card_evidence.completion_contract_validated",
+      "decision_card_evidence.completion_contract_failed"
+    ],
+    "required_evidence_ledger_events": [
+      "evidence_ledger_contract_validated",
+      "evidence_ledger_contract_failed"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "original_bead",
+      "completion_debt_bead",
+      "source_commit",
+      "status",
+      "failure_signature",
+      "source_count",
+      "implementation_ref_count",
+      "runtime_math_test_count",
+      "telemetry_smoke_test_count",
+      "completion_event_count",
+      "evidence_ledger_report",
+      "evidence_ledger_log",
+      "artifact_refs"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "original_bead",
+      "completion_debt_bead",
+      "event",
+      "status",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs",
+      "failure_signature"
+    ]
+  },
+  "required_validation_commands": [
+    "jq empty tests/conformance/decision_card_evidence_ledger_completion_contract.v1.json",
+    "bash -n scripts/check_decision_card_evidence_ledger_completion_contract.sh",
+    "bash scripts/check_decision_card_evidence_ledger_completion_contract.sh",
+    "rch exec -- cargo test -p frankenlibc-harness --test decision_card_evidence_ledger_completion_contract_test -- --nocapture",
+    "rch exec -- cargo test -p frankenlibc-membrane decision_card --lib -- --nocapture --test-threads=1",
+    "rch exec -- cargo test -p frankenlibc-membrane evidence_ledger_contract --lib -- --nocapture --test-threads=1",
+    "rch exec -- cargo clippy -p frankenlibc-harness --test decision_card_evidence_ledger_completion_contract_test -- -D warnings"
+  ]
+}
