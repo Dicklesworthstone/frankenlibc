@@ -1,0 +1,260 @@
+{
+  "schema_version": "replacement_guard_recheck_completion_contract.v1",
+  "bead_id": "bd-bp8fl.6.5.1",
+  "original_bead": "bd-bp8fl.6.5",
+  "trace_id": "bd-bp8fl.6.5.1::replacement-guard-recheck::completion::v1",
+  "description": "Completion contract binding the current replacement-profile zero-callthrough guard, replacement levels gate, host dependency inventory, unit coverage, E2E/conformance replay, and telemetry to bd-bp8fl.6.5.1.",
+  "source_artifacts": [
+    {
+      "id": "replacement_profile",
+      "kind": "profile_artifact",
+      "path": "tests/conformance/replacement_profile.json",
+      "evidence": "Canonical replacement profile and current direct call-through census used by the guard."
+    },
+    {
+      "id": "zero_unapproved_fixtures",
+      "kind": "fixture_pack",
+      "path": "tests/conformance/replacement_zero_unapproved_fixtures.v1.json",
+      "evidence": "Fixture pack binding interpose/replacement expectations to call-through family coverage."
+    },
+    {
+      "id": "replacement_levels",
+      "kind": "conformance_artifact",
+      "path": "tests/conformance/replacement_levels.json",
+      "evidence": "Replacement level contract and current L0 status used by level gates."
+    },
+    {
+      "id": "host_dependency_inventory",
+      "kind": "inventory_artifact",
+      "path": "tests/conformance/host_libc_dependency_inventory.v1.json",
+      "evidence": "Host dependency inventory source consumed by the inventory gate."
+    },
+    {
+      "id": "replacement_guard_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_replacement_guard.sh",
+      "evidence": "Guard that scans current ABI source and enforces interpose/replacement call-through policy."
+    },
+    {
+      "id": "replacement_levels_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_replacement_levels.sh",
+      "evidence": "Gate validating replacement level definitions, support-matrix assessment, and L1 objective artifacts."
+    },
+    {
+      "id": "host_dependency_gate",
+      "kind": "e2e_gate",
+      "path": "scripts/check_host_libc_dependency_inventory.sh",
+      "evidence": "Gate validating current host dependency inventory and L2/L3 blocker classification."
+    },
+    {
+      "id": "replacement_guard_harness_test",
+      "kind": "unit_test",
+      "path": "crates/frankenlibc-harness/tests/replacement_guard_test.rs",
+      "evidence": "Rust harness tests for profile shape, source scan reality, guard diagnostics, fixture alignment, and standalone guard outcome."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/replacement_guard_recheck_completion_contract.v1.json",
+      "evidence": "Machine-readable binding for bd-bp8fl.6.5.1 missing unit, E2E, conformance, and telemetry obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_replacement_guard_recheck_completion_contract.sh",
+      "evidence": "Fail-closed validator for source bindings, current replacement guard outcomes, level/inventory gate replay, telemetry, and harness coverage."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/replacement_guard_recheck_completion_contract_test.rs",
+      "evidence": "Rust harness test validating the completion contract, checker report/logs, and negative drift signatures."
+    }
+  ],
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "required_replacement_profile": {
+      "profile_version": 1,
+      "generated_bead": "bd-130",
+      "total_call_throughs": 0,
+      "callthrough_family_count": 0,
+      "fixture_count": 0,
+      "interpose_allowed_count": 0,
+      "replacement_forbidden_count": 0,
+      "replacement_level_count": 4,
+      "current_level": "L0"
+    },
+    "required_guard_modes": [
+      {
+        "mode": "interpose",
+        "expected_exit": 0,
+        "expected_ok": true,
+        "total_call_throughs": 0,
+        "violations": 0,
+        "mutex_forbidden_count": 0
+      },
+      {
+        "mode": "replacement",
+        "expected_exit": 0,
+        "expected_ok": true,
+        "total_call_throughs": 0,
+        "violations": 0,
+        "mutex_forbidden_count": 0
+      }
+    ],
+    "required_gate_markers": [
+      "check_replacement_guard: PASS",
+      "check_replacement_levels: PASS",
+      "\"status\": \"pass\""
+    ],
+    "required_log_fields": [
+      "trace_id",
+      "bead_id",
+      "scenario_id",
+      "mode",
+      "gate_name",
+      "decision_path",
+      "module",
+      "line",
+      "symbol",
+      "callthrough_detected",
+      "policy_rule",
+      "verdict",
+      "status",
+      "reason",
+      "artifact_ref",
+      "artifact_refs"
+    ],
+    "required_harness_tests": [
+      "profile_exists_and_valid",
+      "guard_script_exists_and_executable",
+      "interpose_allowlist_covers_all_call_through_modules",
+      "no_pthread_mutex_call_throughs_in_replacement_paths",
+      "no_pthread_calls_outside_pthread_abi",
+      "call_through_census_matches_reality",
+      "replacement_profile_has_both_modes",
+      "raw_syscalls_are_not_flagged",
+      "callthrough_families_match_support_matrix",
+      "fixture_pack_covers_all_callthrough_families_in_both_modes",
+      "guard_emits_symbol_module_path_diagnostics",
+      "standalone_build_matches_replacement_guard_outcome"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "tests/conformance/replacement_profile.json",
+        "tests/conformance/replacement_zero_unapproved_fixtures.v1.json",
+        "scripts/check_replacement_guard_recheck_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/replacement_guard_test.rs",
+        "crates/frankenlibc-harness/tests/replacement_guard_recheck_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "cargo test -p frankenlibc-harness --test replacement_guard_test -- --nocapture",
+        "cargo test -p frankenlibc-harness --test replacement_guard_recheck_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "implementation_refs": [
+        "scripts/check_replacement_guard.sh",
+        "scripts/check_replacement_levels.sh",
+        "scripts/check_host_libc_dependency_inventory.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/replacement_guard_test.rs",
+        "crates/frankenlibc-harness/tests/replacement_guard_recheck_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_replacement_guard.sh interpose",
+        "bash scripts/check_replacement_guard.sh replacement",
+        "bash scripts/check_replacement_levels.sh",
+        "bash scripts/check_host_libc_dependency_inventory.sh"
+      ]
+    },
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "implementation_refs": [
+        "tests/conformance/replacement_profile.json",
+        "tests/conformance/replacement_zero_unapproved_fixtures.v1.json",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/host_libc_dependency_inventory.v1.json"
+      ],
+      "test_refs": [
+        "scripts/check_replacement_guard.sh",
+        "scripts/check_replacement_levels.sh",
+        "scripts/check_host_libc_dependency_inventory.sh",
+        "crates/frankenlibc-harness/tests/replacement_guard_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_replacement_guard.sh interpose",
+        "bash scripts/check_replacement_guard.sh replacement",
+        "bash scripts/check_replacement_levels.sh",
+        "bash scripts/check_host_libc_dependency_inventory.sh"
+      ]
+    },
+    {
+      "missing_item_id": "telemetry.primary",
+      "implementation_refs": [
+        "scripts/check_replacement_guard.sh",
+        "scripts/check_replacement_levels.sh",
+        "scripts/check_host_libc_dependency_inventory.sh",
+        "scripts/check_replacement_guard_recheck_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/replacement_guard_test.rs",
+        "crates/frankenlibc-harness/tests/replacement_guard_recheck_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_replacement_guard_recheck_completion_contract.sh"
+      ]
+    }
+  ],
+  "required_validation_commands": [
+    "jq empty tests/conformance/replacement_guard_recheck_completion_contract.v1.json tests/conformance/replacement_profile.json tests/conformance/replacement_zero_unapproved_fixtures.v1.json",
+    "bash -n scripts/check_replacement_guard_recheck_completion_contract.sh",
+    "bash scripts/check_replacement_guard_recheck_completion_contract.sh",
+    "bash scripts/check_replacement_guard.sh interpose",
+    "bash scripts/check_replacement_guard.sh replacement",
+    "bash scripts/check_replacement_levels.sh",
+    "bash scripts/check_host_libc_dependency_inventory.sh",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/replacement_guard_recheck_completion_contract_test.rs",
+    "cargo test -p frankenlibc-harness --test replacement_guard_recheck_completion_contract_test -- --nocapture",
+    "cargo test -p frankenlibc-harness --test replacement_guard_test -- --nocapture",
+    "cargo clippy -p frankenlibc-harness --test replacement_guard_recheck_completion_contract_test -- -D warnings"
+  ],
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_replacement_guard_recheck_sources",
+      "checker_accepts_replacement_guard_recheck_completion_contract",
+      "checker_emits_structured_replacement_guard_telemetry"
+    ],
+    "negative": [
+      "checker_rejects_missing_e2e_binding",
+      "checker_rejects_replacement_profile_drift",
+      "checker_rejects_missing_telemetry_binding"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/replacement_guard_recheck_completion_contract.v1.json",
+      "scripts/check_replacement_guard_recheck_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/replacement_guard_recheck_completion_contract_test.rs",
+      "tests/conformance/replacement_profile.json",
+      "tests/conformance/replacement_zero_unapproved_fixtures.v1.json",
+      "scripts/check_replacement_guard.sh",
+      "scripts/check_replacement_levels.sh",
+      "scripts/check_host_libc_dependency_inventory.sh",
+      "crates/frankenlibc-harness/tests/replacement_guard_test.rs"
+    ]
+  }
+}
