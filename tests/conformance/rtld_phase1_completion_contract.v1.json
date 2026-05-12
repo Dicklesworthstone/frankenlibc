@@ -1,0 +1,264 @@
+{
+  "schema_version": "rtld_phase1_completion_contract.v1",
+  "bead": "bd-1j4.2",
+  "completion_debt_bead": "bd-1j4.2.1",
+  "description": "Completion-debt evidence binding for RTLD phase-1 ELF loading, relocation, symbol resolution, conformance, fuzz, and telemetry obligations.",
+  "completion_debt_evidence": {
+    "bead": "bd-1j4.2.1",
+    "original_bead": "bd-1j4.2",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-1j4.2/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "artifacts": {
+      "core_relocation": "crates/frankenlibc-core/src/elf/relocation.rs",
+      "core_loader": "crates/frankenlibc-core/src/elf/loader.rs",
+      "core_symbol": "crates/frankenlibc-core/src/elf/symbol.rs",
+      "core_loader_tests": "crates/frankenlibc-core/tests/elf_loader_test.rs",
+      "elf_loader_fixture": "tests/conformance/fixtures/elf_loader.json",
+      "loader_edges_fixture": "tests/conformance/fixtures/loader_edges.json",
+      "elf_loader_conformance": "crates/frankenlibc-harness/tests/elf_loader_conformance_test.rs",
+      "loader_edges_conformance": "crates/frankenlibc-harness/tests/loader_edges_conformance_test.rs",
+      "loader_audit_manifest": "tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json",
+      "loader_audit_gate": "scripts/check_loader_dlfcn_relocation_tls_audit.sh",
+      "loader_audit_test": "crates/frankenlibc-harness/tests/loader_dlfcn_relocation_tls_audit_test.rs",
+      "fuzz_elf_loader": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_elf_loader.rs",
+      "fuzz_elf_loader_corpus": "crates/frankenlibc-fuzz/corpus/fuzz_elf_loader",
+      "completion_contract": "tests/conformance/rtld_phase1_completion_contract.v1.json",
+      "completion_gate": "scripts/check_rtld_phase1_completion_contract.sh",
+      "completion_harness": "crates/frankenlibc-harness/tests/rtld_phase1_completion_contract_test.rs"
+    },
+    "directory_artifacts": [
+      "fuzz_elf_loader_corpus"
+    ],
+    "implementation_refs": [
+      "crates/frankenlibc-core/src/elf/relocation.rs:7",
+      "crates/frankenlibc-core/src/elf/relocation.rs:134",
+      "crates/frankenlibc-core/src/elf/relocation.rs:269",
+      "crates/frankenlibc-core/src/elf/loader.rs:63",
+      "crates/frankenlibc-core/src/elf/loader.rs:86",
+      "crates/frankenlibc-core/src/elf/loader.rs:396",
+      "crates/frankenlibc-core/src/elf/loader.rs:440",
+      "tests/conformance/fixtures/elf_loader.json:24",
+      "tests/conformance/fixtures/elf_loader.json:32",
+      "tests/conformance/fixtures/elf_loader.json:40",
+      "tests/conformance/fixtures/elf_loader.json:48",
+      "tests/conformance/fixtures/elf_loader.json:56",
+      "tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json:69",
+      "tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json:271",
+      "scripts/check_loader_dlfcn_relocation_tls_audit.sh:28",
+      "crates/frankenlibc-harness/tests/elf_loader_conformance_test.rs:472",
+      "crates/frankenlibc-harness/tests/elf_loader_conformance_test.rs:606",
+      "crates/frankenlibc-harness/tests/elf_loader_conformance_test.rs:644",
+      "crates/frankenlibc-harness/tests/loader_dlfcn_relocation_tls_audit_test.rs:188",
+      "crates/frankenlibc-harness/tests/loader_dlfcn_relocation_tls_audit_test.rs:283",
+      "crates/frankenlibc-fuzz/fuzz_targets/fuzz_elf_loader.rs:2",
+      "scripts/check_rtld_phase1_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/rtld_phase1_completion_contract_test.rs:1"
+    ],
+    "source_needles": {
+      "core_relocation": [
+        "R_X86_64_NONE",
+        "R_X86_64_64",
+        "R_X86_64_PC32",
+        "R_X86_64_GLOB_DAT",
+        "R_X86_64_JUMP_SLOT",
+        "R_X86_64_RELATIVE",
+        "pub fn compute_relocation",
+        "pub fn parse_relocations"
+      ],
+      "core_loader": [
+        "pub fn has_unsupported_relocations",
+        "pub fn lookup_symbol_versioned",
+        "pub fn apply_relocations",
+        "resolver.lookup_versioned"
+      ],
+      "core_symbol": [
+        "pub fn parse_symbols",
+        "pub fn get_string",
+        "pub fn is_undefined",
+        "pub fn is_function"
+      ],
+      "fuzz_elf_loader": [
+        "fuzz_raw_views",
+        "fuzz_normalized_loader",
+        "compute_relocation",
+        "parse_relocations",
+        "ElfLoader"
+      ]
+    },
+    "missing_item_bindings": [
+      {
+        "missing_item_id": "tests.unit.primary",
+        "evidence_section": "unit_primary"
+      },
+      {
+        "missing_item_id": "tests.e2e.primary",
+        "evidence_section": "e2e_primary"
+      },
+      {
+        "missing_item_id": "tests.fuzz.primary",
+        "evidence_section": "fuzz_primary"
+      },
+      {
+        "missing_item_id": "tests.conformance.primary",
+        "evidence_section": "conformance_primary"
+      },
+      {
+        "missing_item_id": "telemetry.primary",
+        "evidence_section": "telemetry_primary"
+      }
+    ],
+    "unit_primary": {
+      "description": "Unit coverage pins phase-1 relocation support, relocation arithmetic, symbol version lookup, undefined symbol iteration, and relocation result accounting.",
+      "commands": [
+        "rch exec -- cargo test -p frankenlibc-core elf::relocation --lib -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-core elf::loader --lib -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-core --test elf_loader_test relocation_parsing -- --nocapture"
+      ],
+      "required_test_refs": [
+        {
+          "source": "core_relocation",
+          "name": "test_compute_relative"
+        },
+        {
+          "source": "core_relocation",
+          "name": "test_compute_glob_dat"
+        },
+        {
+          "source": "core_relocation",
+          "name": "test_relocation_type_support"
+        },
+        {
+          "source": "core_loader",
+          "name": "test_lookup_symbol_versioned_prefers_matching_version"
+        },
+        {
+          "source": "core_loader",
+          "name": "test_apply_relocations_passes_symbol_version_to_resolver"
+        },
+        {
+          "source": "core_loader_tests",
+          "name": "symbol_lookup_works"
+        },
+        {
+          "source": "core_loader_tests",
+          "name": "relocation_parsing"
+        },
+        {
+          "source": "core_loader_tests",
+          "name": "relocation_stats_collection"
+        }
+      ]
+    },
+    "e2e_primary": {
+      "description": "Loader/dlfcn audit gate supplies replayable strict/hardened L0 dynamic-loader boundary scenarios with structured diagnostics.",
+      "commands": [
+        "bash scripts/check_loader_dlfcn_relocation_tls_audit.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test loader_dlfcn_relocation_tls_audit_test -- --nocapture"
+      ],
+      "required_artifacts": [
+        "loader_audit_manifest",
+        "loader_audit_gate",
+        "loader_audit_test"
+      ],
+      "required_fixture_kinds": [
+        "dlopen_success",
+        "dlopen_failure",
+        "dlsym_version_lookup",
+        "tls_symbol_access",
+        "relocation_startup",
+        "missing_symbol",
+        "audit_boundary",
+        "dlclose_error"
+      ]
+    },
+    "fuzz_primary": {
+      "description": "Structure-aware ELF fuzzing drives raw parser rejection paths plus normalized loader/symbol/relocation application.",
+      "commands": [
+        "cargo fuzz run fuzz_elf_loader",
+        "rch exec -- cargo test -p frankenlibc-fuzz --no-run"
+      ],
+      "corpus_requirements": [
+        {
+          "artifact": "fuzz_elf_loader_corpus",
+          "min_seed_files": 4
+        }
+      ]
+    },
+    "conformance_primary": {
+      "description": "Fixture-driven conformance pins ELF loader cases, binary readelf parity, loader edge semantics, and loader/dlfcn relocation audit rows.",
+      "commands": [
+        "bash scripts/check_rtld_phase1_completion_contract.sh",
+        "bash scripts/check_loader_dlfcn_relocation_tls_audit.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test elf_loader_conformance_test -- --nocapture"
+      ],
+      "elf_loader_fixture": "elf_loader_fixture",
+      "loader_audit_manifest": "loader_audit_manifest",
+      "required_elf_loader_cases": [
+        "reloc_r_x86_64_none",
+        "reloc_r_x86_64_64",
+        "reloc_r_x86_64_relative",
+        "reloc_r_x86_64_glob_dat",
+        "reloc_r_x86_64_jump_slot",
+        "symbol_binding_global",
+        "program_flags_rwx"
+      ],
+      "min_elf_loader_cases": 17,
+      "min_binary_fixtures": 3,
+      "min_loader_audit_rows": 8,
+      "required_test_refs": [
+        {
+          "source": "elf_loader_conformance",
+          "name": "elf_loader_covers_relocations"
+        },
+        {
+          "source": "elf_loader_conformance",
+          "name": "elf_loader_fixture_executes_with_host_parity_via_harness_matrix"
+        },
+        {
+          "source": "elf_loader_conformance",
+          "name": "elf_loader_binary_fixtures_match_readelf"
+        },
+        {
+          "source": "loader_audit_test",
+          "name": "manifest_defines_loader_dlfcn_schema_and_required_coverage"
+        },
+        {
+          "source": "loader_audit_test",
+          "name": "gate_emits_pass_report_and_structured_logs"
+        }
+      ]
+    },
+    "telemetry_primary": {
+      "description": "The completion checker emits deterministic report JSON plus JSONL rows for source refs, missing-item bindings, fuzz corpus, ELF fixture cases, loader audit rows, and final pass/fail state.",
+      "report_path": "target/conformance/rtld_phase1_completion_contract.report.json",
+      "log_path": "target/conformance/rtld_phase1_completion_contract.log.jsonl",
+      "required_events": [
+        "rtld_phase1.source_ref",
+        "rtld_phase1.missing_item_bound",
+        "rtld_phase1.fuzz_corpus_bound",
+        "rtld_phase1.elf_loader_case_bound",
+        "rtld_phase1.loader_audit_bound",
+        "rtld_phase1.completion_contract_validated"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "missing_items",
+        "artifact_refs",
+        "unit_test_ref_count",
+        "e2e_artifact_count",
+        "conformance_test_ref_count",
+        "elf_loader_case_count",
+        "loader_audit_row_count",
+        "fuzz_corpus_seed_count",
+        "failure_signature"
+      ]
+    }
+  }
+}
