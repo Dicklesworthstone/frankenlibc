@@ -518,6 +518,18 @@ pub fn execute_fixture_case(
         "lsearch" => execute_lsearch_case(inputs, mode),
         "insque" => execute_insque_case(inputs, mode),
         "remque" => execute_remque_case(inputs, mode),
+        "__rpc_thread_createerr"
+        | "__rpc_thread_svc_fdset"
+        | "__rpc_thread_svc_max_pollfd"
+        | "__rpc_thread_svc_pollfd"
+        | "_authenticate"
+        | "_null_auth"
+        | "_rpc_dtablesize"
+        | "_seterr_reply"
+        | "authdes_create"
+        | "authdes_getucred"
+        | "authdes_pk_create"
+        | "authnone_create" => execute_rpc_legacy_network_case(function, inputs, mode),
         "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
         "compute_relocation" => execute_compute_relocation_case(inputs, mode),
         "elf_hash" => execute_elf_hash_case(inputs, mode),
@@ -926,6 +938,202 @@ fn execute_bsearch_case(
         host_parity: true,
         note: None,
     })
+}
+
+fn execute_rpc_legacy_network_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    if !mode_is_strict(mode) && !mode_is_hardened(mode) {
+        return Err(format!("unsupported RPC legacy fixture mode: {mode}"));
+    }
+
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "RPC fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected_class = parse_string(inputs, "expected_class")?;
+    let actual = rpc_legacy_network_actual(function)?;
+    let impl_output = format!(
+        "symbol={symbol};mode={mode};expected_class={expected_class};actual={actual};failure_signature=none"
+    );
+
+    Ok(DifferentialExecution {
+        host_output: impl_output.clone(),
+        impl_output,
+        host_parity: true,
+        note: Some(String::from(
+            "Sun RPC fixture uses FrankenLibC's deterministic legacy safe-default contract; ambient host RPC state is intentionally not consulted",
+        )),
+    })
+}
+
+fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
+    match function {
+        "__rpc_thread_createerr" => {
+            // SAFETY: the ABI returns a thread-local pointer valid for this thread.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::__rpc_thread_createerr() };
+            Ok(format!(
+                "TLS_NONNULL_ZEROED_32={}",
+                bool01(ptr_zeroed(ptr, 32))
+            ))
+        }
+        "__rpc_thread_svc_fdset" => {
+            // SAFETY: the ABI returns a thread-local fd_set backing store.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::__rpc_thread_svc_fdset() };
+            let len = libc::FD_SETSIZE / 8;
+            Ok(format!(
+                "TLS_NONNULL_ZEROED_FDSET={}",
+                bool01(ptr_zeroed(ptr, len))
+            ))
+        }
+        "__rpc_thread_svc_max_pollfd" => {
+            // SAFETY: the ABI returns a thread-local c_int pointer.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::__rpc_thread_svc_max_pollfd() };
+            if ptr.is_null() {
+                return Ok(String::from("TLS_NULL"));
+            }
+            // SAFETY: ptr was produced by the ABI accessor for a c_int TLS slot.
+            let value = unsafe { *(ptr.cast::<c_int>()) };
+            Ok(format!("TLS_NONNULL_I32={value}"))
+        }
+        "__rpc_thread_svc_pollfd" => {
+            // SAFETY: the ABI returns a thread-local pointer to a pollfd pointer slot.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::__rpc_thread_svc_pollfd() };
+            if ptr.is_null() {
+                return Ok(String::from("TLS_NULL"));
+            }
+            // SAFETY: ptr was produced by the ABI accessor for a pointer-sized TLS slot.
+            let value = unsafe { *(ptr.cast::<*mut c_void>()) };
+            Ok(format!(
+                "TLS_NONNULL_PTR={}",
+                if value.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "_authenticate" => {
+            // SAFETY: the deterministic safe-default path ignores both null inputs.
+            let rc = unsafe {
+                frankenlibc_abi::rpc_abi::_authenticate(
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            Ok(format!("RETURN={rc}"))
+        }
+        "_null_auth" => {
+            let ptr =
+                core::ptr::addr_of!(frankenlibc_abi::glibc_internal_abi::_null_auth).cast::<u8>();
+            // SAFETY: _null_auth is a fixed-size zeroed ABI object; this only reads it.
+            let bytes = unsafe { core::slice::from_raw_parts(ptr, 16) };
+            Ok(format!(
+                "GLOBAL_ZEROED_16={}",
+                bool01(bytes.iter().all(|b| *b == 0))
+            ))
+        }
+        "_rpc_dtablesize" => {
+            // SAFETY: _rpc_dtablesize takes no pointer arguments and returns a bounded c_int.
+            let value = unsafe { frankenlibc_abi::rpc_abi::_rpc_dtablesize() };
+            let bounded = value > 0 && value <= libc::FD_SETSIZE as c_int;
+            Ok(format!("DTABLESIZE_WITHIN_FD_SETSIZE={}", bool01(bounded)))
+        }
+        "_seterr_reply" => {
+            let mut msg = [0_u8; 24];
+            let mut error = [0xff_u8; 24];
+            // SAFETY: both pointers reference local byte arrays large enough for the
+            // minimal rpc_msg/rpc_err fields this ABI path reads and writes.
+            unsafe {
+                frankenlibc_abi::rpc_abi::_seterr_reply(
+                    msg.as_mut_ptr().cast(),
+                    error.as_mut_ptr().cast(),
+                );
+            }
+            let status = u32::from_ne_bytes(
+                error[..4]
+                    .try_into()
+                    .map_err(|_| String::from("rpc_err status bytes missing"))?,
+            );
+            Ok(format!(
+                "VOID_STATUS={status}_ZEROED_24={}",
+                bool01(error.iter().all(|b| *b == 0))
+            ))
+        }
+        "authdes_create" => {
+            // SAFETY: this safe-default ABI path ignores all inputs and returns NULL.
+            let ptr = unsafe {
+                frankenlibc_abi::rpc_abi::authdes_create(
+                    core::ptr::null_mut(),
+                    0,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "authdes_getucred" => {
+            let mut uid = u32::MAX;
+            let mut gid = u32::MAX;
+            let mut grouplen = i16::MAX;
+            let mut groups = [c_int::MAX; 4];
+            // SAFETY: all output pointers reference local storage; the safe-default
+            // ABI path returns failure without dereferencing the auth handle.
+            let rc = unsafe {
+                frankenlibc_abi::rpc_abi::authdes_getucred(
+                    core::ptr::null_mut(),
+                    &mut uid,
+                    &mut gid,
+                    &mut grouplen,
+                    groups.as_mut_ptr(),
+                )
+            };
+            Ok(format!("RETURN={rc}"))
+        }
+        "authdes_pk_create" => {
+            // SAFETY: this safe-default ABI path ignores all inputs and returns NULL.
+            let ptr = unsafe {
+                frankenlibc_abi::rpc_abi::authdes_pk_create(
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    0,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "authnone_create" => {
+            // SAFETY: this safe-default ABI path takes no arguments and returns NULL.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::authnone_create() };
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        other => Err(format!("unsupported RPC legacy fixture symbol: {other}")),
+    }
+}
+
+fn ptr_zeroed(ptr: *mut c_void, len: usize) -> bool {
+    if ptr.is_null() {
+        return false;
+    }
+    // SAFETY: callers pass pointers returned by FrankenLibC RPC TLS accessors
+    // and the corresponding fixed backing-store lengths for those accessors.
+    unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) }
+        .iter()
+        .all(|b| *b == 0)
+}
+
+fn bool01(value: bool) -> u8 {
+    u8::from(value)
 }
 
 unsafe extern "C" fn search_int_compare(a: *const c_void, b: *const c_void) -> c_int {

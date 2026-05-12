@@ -1,0 +1,422 @@
+{
+  "version": "v1",
+  "family": "rpc/legacy-network",
+  "captured_at": "2026-05-12T00:00:00Z",
+  "description": "Deterministic first-wave fixtures for legacy Sun RPC compatibility symbols. The cases bind FrankenLibC's native TLS accessors and safe-default client/auth behavior without network access or host RPC state.",
+  "spec_reference": "glibc Sun RPC compatibility surface; FrankenLibC rpc_abi deterministic safe-default contract",
+  "campaign": {
+    "bead": "bd-mu4lw.1",
+    "campaign_id": "fcq-rpc-legacy-network",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "source_lines": "941-963",
+    "first_wave_symbols": [
+      "__rpc_thread_createerr",
+      "__rpc_thread_svc_fdset",
+      "__rpc_thread_svc_max_pollfd",
+      "__rpc_thread_svc_pollfd",
+      "_authenticate",
+      "_null_auth",
+      "_rpc_dtablesize",
+      "_seterr_reply",
+      "authdes_create",
+      "authdes_getucred",
+      "authdes_pk_create",
+      "authnone_create"
+    ],
+    "network_access": "forbidden",
+    "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected_class",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "__rpc_thread_createerr_tls_accessor_strict",
+      "function": "__rpc_thread_createerr",
+      "spec_section": "glibc Sun RPC thread-local rpc_createerr compatibility",
+      "inputs": {
+        "symbol": "__rpc_thread_createerr",
+        "expected_class": "tls-accessor",
+        "strict_behavior": "returns non-null per-thread rpc_createerr storage",
+        "hardened_behavior": "same deterministic TLS accessor; no repair path",
+        "safe_default_rationale": "thread-local compatibility storage is native and does not require host RPC runtime state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=__rpc_thread_createerr;mode=strict;expected_class=tls-accessor;actual=TLS_NONNULL_ZEROED_32=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__rpc_thread_createerr_tls_accessor_hardened",
+      "function": "__rpc_thread_createerr",
+      "spec_section": "glibc Sun RPC thread-local rpc_createerr compatibility",
+      "inputs": {
+        "symbol": "__rpc_thread_createerr",
+        "expected_class": "tls-accessor",
+        "strict_behavior": "returns non-null per-thread rpc_createerr storage",
+        "hardened_behavior": "same deterministic TLS accessor; no repair path",
+        "safe_default_rationale": "thread-local compatibility storage is native and does not require host RPC runtime state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=__rpc_thread_createerr;mode=hardened;expected_class=tls-accessor;actual=TLS_NONNULL_ZEROED_32=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__rpc_thread_svc_fdset_tls_accessor_strict",
+      "function": "__rpc_thread_svc_fdset",
+      "spec_section": "glibc Sun RPC thread-local svc_fdset compatibility",
+      "inputs": {
+        "symbol": "__rpc_thread_svc_fdset",
+        "expected_class": "tls-accessor",
+        "strict_behavior": "returns non-null zeroed per-thread fd_set storage",
+        "hardened_behavior": "same deterministic TLS accessor; no repair path",
+        "safe_default_rationale": "thread-local compatibility storage is native and does not require host RPC runtime state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=__rpc_thread_svc_fdset;mode=strict;expected_class=tls-accessor;actual=TLS_NONNULL_ZEROED_FDSET=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__rpc_thread_svc_fdset_tls_accessor_hardened",
+      "function": "__rpc_thread_svc_fdset",
+      "spec_section": "glibc Sun RPC thread-local svc_fdset compatibility",
+      "inputs": {
+        "symbol": "__rpc_thread_svc_fdset",
+        "expected_class": "tls-accessor",
+        "strict_behavior": "returns non-null zeroed per-thread fd_set storage",
+        "hardened_behavior": "same deterministic TLS accessor; no repair path",
+        "safe_default_rationale": "thread-local compatibility storage is native and does not require host RPC runtime state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=__rpc_thread_svc_fdset;mode=hardened;expected_class=tls-accessor;actual=TLS_NONNULL_ZEROED_FDSET=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__rpc_thread_svc_max_pollfd_tls_accessor_strict",
+      "function": "__rpc_thread_svc_max_pollfd",
+      "spec_section": "glibc Sun RPC thread-local svc_max_pollfd compatibility",
+      "inputs": {
+        "symbol": "__rpc_thread_svc_max_pollfd",
+        "expected_class": "tls-accessor",
+        "strict_behavior": "returns non-null per-thread integer storage initialized to zero",
+        "hardened_behavior": "same deterministic TLS accessor; no repair path",
+        "safe_default_rationale": "thread-local compatibility storage is native and does not require host RPC runtime state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=__rpc_thread_svc_max_pollfd;mode=strict;expected_class=tls-accessor;actual=TLS_NONNULL_I32=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__rpc_thread_svc_max_pollfd_tls_accessor_hardened",
+      "function": "__rpc_thread_svc_max_pollfd",
+      "spec_section": "glibc Sun RPC thread-local svc_max_pollfd compatibility",
+      "inputs": {
+        "symbol": "__rpc_thread_svc_max_pollfd",
+        "expected_class": "tls-accessor",
+        "strict_behavior": "returns non-null per-thread integer storage initialized to zero",
+        "hardened_behavior": "same deterministic TLS accessor; no repair path",
+        "safe_default_rationale": "thread-local compatibility storage is native and does not require host RPC runtime state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=__rpc_thread_svc_max_pollfd;mode=hardened;expected_class=tls-accessor;actual=TLS_NONNULL_I32=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__rpc_thread_svc_pollfd_tls_accessor_strict",
+      "function": "__rpc_thread_svc_pollfd",
+      "spec_section": "glibc Sun RPC thread-local svc_pollfd compatibility",
+      "inputs": {
+        "symbol": "__rpc_thread_svc_pollfd",
+        "expected_class": "tls-accessor",
+        "strict_behavior": "returns non-null per-thread pointer slot initialized to NULL",
+        "hardened_behavior": "same deterministic TLS accessor; no repair path",
+        "safe_default_rationale": "thread-local compatibility storage is native and does not require host RPC runtime state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=__rpc_thread_svc_pollfd;mode=strict;expected_class=tls-accessor;actual=TLS_NONNULL_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__rpc_thread_svc_pollfd_tls_accessor_hardened",
+      "function": "__rpc_thread_svc_pollfd",
+      "spec_section": "glibc Sun RPC thread-local svc_pollfd compatibility",
+      "inputs": {
+        "symbol": "__rpc_thread_svc_pollfd",
+        "expected_class": "tls-accessor",
+        "strict_behavior": "returns non-null per-thread pointer slot initialized to NULL",
+        "hardened_behavior": "same deterministic TLS accessor; no repair path",
+        "safe_default_rationale": "thread-local compatibility storage is native and does not require host RPC runtime state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=__rpc_thread_svc_pollfd;mode=hardened;expected_class=tls-accessor;actual=TLS_NONNULL_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "_authenticate_safe_default_strict",
+      "function": "_authenticate",
+      "spec_section": "glibc Sun RPC server authentication compatibility",
+      "inputs": {
+        "symbol": "_authenticate",
+        "expected_class": "safe-default-failure",
+        "strict_behavior": "returns 0 failure without consulting host RPC state",
+        "hardened_behavior": "same deterministic failure result; no repair path",
+        "safe_default_rationale": "legacy RPC authentication is intentionally unsupported and fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=_authenticate;mode=strict;expected_class=safe-default-failure;actual=RETURN=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "_authenticate_safe_default_hardened",
+      "function": "_authenticate",
+      "spec_section": "glibc Sun RPC server authentication compatibility",
+      "inputs": {
+        "symbol": "_authenticate",
+        "expected_class": "safe-default-failure",
+        "strict_behavior": "returns 0 failure without consulting host RPC state",
+        "hardened_behavior": "same deterministic failure result; no repair path",
+        "safe_default_rationale": "legacy RPC authentication is intentionally unsupported and fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=_authenticate;mode=hardened;expected_class=safe-default-failure;actual=RETURN=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "_null_auth_global_zero_strict",
+      "function": "_null_auth",
+      "spec_section": "glibc Sun RPC null auth global compatibility",
+      "inputs": {
+        "symbol": "_null_auth",
+        "expected_class": "global-zero-auth",
+        "strict_behavior": "exposes zeroed opaque_auth storage",
+        "hardened_behavior": "same zeroed compatibility storage; no repair path",
+        "safe_default_rationale": "null authentication has no ambient network dependency",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+      },
+      "expected_output": "symbol=_null_auth;mode=strict;expected_class=global-zero-auth;actual=GLOBAL_ZEROED_16=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "_null_auth_global_zero_hardened",
+      "function": "_null_auth",
+      "spec_section": "glibc Sun RPC null auth global compatibility",
+      "inputs": {
+        "symbol": "_null_auth",
+        "expected_class": "global-zero-auth",
+        "strict_behavior": "exposes zeroed opaque_auth storage",
+        "hardened_behavior": "same zeroed compatibility storage; no repair path",
+        "safe_default_rationale": "null authentication has no ambient network dependency",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+      },
+      "expected_output": "symbol=_null_auth;mode=hardened;expected_class=global-zero-auth;actual=GLOBAL_ZEROED_16=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "_rpc_dtablesize_fdset_clamp_strict",
+      "function": "_rpc_dtablesize",
+      "spec_section": "glibc Sun RPC descriptor table sizing compatibility",
+      "inputs": {
+        "symbol": "_rpc_dtablesize",
+        "expected_class": "resource-limit-clamp",
+        "strict_behavior": "returns a positive descriptor bound clamped to FD_SETSIZE",
+        "hardened_behavior": "same deterministic descriptor bound; no repair path",
+        "safe_default_rationale": "descriptor sizing is local process metadata and does not require RPC runtime state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=_rpc_dtablesize;mode=strict;expected_class=resource-limit-clamp;actual=DTABLESIZE_WITHIN_FD_SETSIZE=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "_rpc_dtablesize_fdset_clamp_hardened",
+      "function": "_rpc_dtablesize",
+      "spec_section": "glibc Sun RPC descriptor table sizing compatibility",
+      "inputs": {
+        "symbol": "_rpc_dtablesize",
+        "expected_class": "resource-limit-clamp",
+        "strict_behavior": "returns a positive descriptor bound clamped to FD_SETSIZE",
+        "hardened_behavior": "same deterministic descriptor bound; no repair path",
+        "safe_default_rationale": "descriptor sizing is local process metadata and does not require RPC runtime state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=_rpc_dtablesize;mode=hardened;expected_class=resource-limit-clamp;actual=DTABLESIZE_WITHIN_FD_SETSIZE=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "_seterr_reply_success_zeroing_strict",
+      "function": "_seterr_reply",
+      "spec_section": "glibc Sun RPC reply error extraction compatibility",
+      "inputs": {
+        "symbol": "_seterr_reply",
+        "expected_class": "void-error-zeroing",
+        "strict_behavior": "zeroes rpc_err storage for an accepted success reply",
+        "hardened_behavior": "same deterministic local zeroing; no repair path",
+        "safe_default_rationale": "reply decoding is local byte-structure handling and does not require network access",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=_seterr_reply;mode=strict;expected_class=void-error-zeroing;actual=VOID_STATUS=0_ZEROED_24=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "_seterr_reply_success_zeroing_hardened",
+      "function": "_seterr_reply",
+      "spec_section": "glibc Sun RPC reply error extraction compatibility",
+      "inputs": {
+        "symbol": "_seterr_reply",
+        "expected_class": "void-error-zeroing",
+        "strict_behavior": "zeroes rpc_err storage for an accepted success reply",
+        "hardened_behavior": "same deterministic local zeroing; no repair path",
+        "safe_default_rationale": "reply decoding is local byte-structure handling and does not require network access",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=_seterr_reply;mode=hardened;expected_class=void-error-zeroing;actual=VOID_STATUS=0_ZEROED_24=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "authdes_create_safe_default_strict",
+      "function": "authdes_create",
+      "spec_section": "glibc Sun RPC DES auth creation compatibility",
+      "inputs": {
+        "symbol": "authdes_create",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL because DES RPC auth is unsupported",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "DES-backed legacy RPC auth is intentionally unsupported and fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authdes_create;mode=strict;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "authdes_create_safe_default_hardened",
+      "function": "authdes_create",
+      "spec_section": "glibc Sun RPC DES auth creation compatibility",
+      "inputs": {
+        "symbol": "authdes_create",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL because DES RPC auth is unsupported",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "DES-backed legacy RPC auth is intentionally unsupported and fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authdes_create;mode=hardened;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "authdes_getucred_safe_default_strict",
+      "function": "authdes_getucred",
+      "spec_section": "glibc Sun RPC DES auth credential compatibility",
+      "inputs": {
+        "symbol": "authdes_getucred",
+        "expected_class": "safe-default-failure",
+        "strict_behavior": "returns 0 failure because DES credentials are unsupported",
+        "hardened_behavior": "same deterministic failure result; no repair path",
+        "safe_default_rationale": "DES-backed legacy RPC auth is intentionally unsupported and fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authdes_getucred;mode=strict;expected_class=safe-default-failure;actual=RETURN=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "authdes_getucred_safe_default_hardened",
+      "function": "authdes_getucred",
+      "spec_section": "glibc Sun RPC DES auth credential compatibility",
+      "inputs": {
+        "symbol": "authdes_getucred",
+        "expected_class": "safe-default-failure",
+        "strict_behavior": "returns 0 failure because DES credentials are unsupported",
+        "hardened_behavior": "same deterministic failure result; no repair path",
+        "safe_default_rationale": "DES-backed legacy RPC auth is intentionally unsupported and fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authdes_getucred;mode=hardened;expected_class=safe-default-failure;actual=RETURN=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "authdes_pk_create_safe_default_strict",
+      "function": "authdes_pk_create",
+      "spec_section": "glibc Sun RPC DES public-key auth creation compatibility",
+      "inputs": {
+        "symbol": "authdes_pk_create",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL because DES RPC auth is unsupported",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "DES-backed legacy RPC auth is intentionally unsupported and fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authdes_pk_create;mode=strict;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "authdes_pk_create_safe_default_hardened",
+      "function": "authdes_pk_create",
+      "spec_section": "glibc Sun RPC DES public-key auth creation compatibility",
+      "inputs": {
+        "symbol": "authdes_pk_create",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL because DES RPC auth is unsupported",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "DES-backed legacy RPC auth is intentionally unsupported and fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authdes_pk_create;mode=hardened;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "authnone_create_safe_default_strict",
+      "function": "authnone_create",
+      "spec_section": "glibc Sun RPC null auth creation compatibility",
+      "inputs": {
+        "symbol": "authnone_create",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL because no RPC auth runtime is present",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "legacy RPC auth creation is intentionally unsupported and fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authnone_create;mode=strict;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "authnone_create_safe_default_hardened",
+      "function": "authnone_create",
+      "spec_section": "glibc Sun RPC null auth creation compatibility",
+      "inputs": {
+        "symbol": "authnone_create",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL because no RPC auth runtime is present",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "legacy RPC auth creation is intentionally unsupported and fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authnone_create;mode=hardened;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
