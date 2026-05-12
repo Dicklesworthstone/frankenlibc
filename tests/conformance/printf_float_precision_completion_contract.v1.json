@@ -1,0 +1,153 @@
+{
+  "schema_version": "printf_float_precision_completion_contract.v1",
+  "bead_id": "bd-h7ede.1",
+  "original_bead": "bd-h7ede",
+  "trace_id": "bd-h7ede.1::printf-float-precision::completion::v1",
+  "description": "Completion contract binding the printf float precision cap, unit tests, and printf conformance harness evidence to bd-h7ede.1.",
+  "source_artifacts": [
+    {
+      "id": "printf_core",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-core/src/stdio/printf.rs",
+      "evidence": "format_float precision cap and regression unit tests preventing Rust formatting panics for precision >= 65536."
+    },
+    {
+      "id": "printf_conformance_fixture",
+      "kind": "conformance_fixture",
+      "path": "tests/conformance/fixtures/printf_conformance.json",
+      "evidence": "Printf fixture corpus with integer, float, string, flag, length modifier, snprintf, and host-parity cases."
+    },
+    {
+      "id": "printf_conformance_harness_test",
+      "kind": "conformance_test",
+      "path": "crates/frankenlibc-harness/tests/printf_conformance_conformance_test.rs",
+      "evidence": "Harness tests validating printf fixture schema, float/specifier coverage, case count, in-process execution, and harness-matrix parity."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/printf_float_precision_completion_contract.v1.json",
+      "evidence": "Machine-readable binding for bd-h7ede.1 missing unit and conformance obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_printf_float_precision_completion_contract.sh",
+      "evidence": "Fail-closed validator for precision-cap implementation anchors, unit/conformance bindings, fixture shape, and completion harness coverage."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/printf_float_precision_completion_contract_test.rs",
+      "evidence": "Rust harness test validating the completion contract, checker report/logs, and negative drift signatures."
+    }
+  ],
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.conformance.primary"
+    ],
+    "required_precision_cap": {
+      "cap": 65535,
+      "first_panicking_precision": 65536,
+      "required_output_len_at_cap": 65537,
+      "pathological_precision_case": "usize::MAX / 2"
+    },
+    "required_implementation_anchors": [
+      "Formatting argument out of range",
+      "precision.min(65_535)",
+      "format_float_does_not_panic_on_huge_precision",
+      "format_float_still_honors_precision_up_to_cap",
+      "65_536usize",
+      "100_000",
+      "usize::MAX / 2",
+      "format_float(1.5_f64",
+      "assert_eq!(buf.len(), 65_537)"
+    ],
+    "required_conformance_fixture": {
+      "version": "v1",
+      "family": "printf_conformance",
+      "minimum_case_count": 50,
+      "current_case_count": 186,
+      "required_case_names": [
+        "sprintf_f_precision",
+        "sprintf_f_precision_zero",
+        "sprintf_e_precision",
+        "sprintf_star_precision",
+        "sprintf_e_width_precision"
+      ]
+    },
+    "required_harness_tests": [
+      "printf_conformance_fixture_exists",
+      "printf_conformance_fixture_valid_schema",
+      "printf_conformance_covers_float_specifiers",
+      "printf_conformance_case_count_stable",
+      "printf_conformance_fixture_cases_match_execute_fixture_case",
+      "printf_conformance_fixture_executes_with_host_parity_via_harness_matrix"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "crates/frankenlibc-core/src/stdio/printf.rs",
+        "scripts/check_printf_float_precision_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-core/src/stdio/printf.rs",
+        "crates/frankenlibc-harness/tests/printf_float_precision_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "cargo test -p frankenlibc-core --lib format_float -- --nocapture",
+        "cargo test -p frankenlibc-harness --test printf_float_precision_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "implementation_refs": [
+        "tests/conformance/fixtures/printf_conformance.json",
+        "crates/frankenlibc-harness/tests/printf_conformance_conformance_test.rs"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/printf_conformance_conformance_test.rs",
+        "crates/frankenlibc-harness/tests/printf_float_precision_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "cargo test -p frankenlibc-harness --test printf_conformance_conformance_test -- --nocapture",
+        "cargo test -p frankenlibc-harness --test printf_float_precision_completion_contract_test -- --nocapture"
+      ]
+    }
+  ],
+  "required_validation_commands": [
+    "jq empty tests/conformance/printf_float_precision_completion_contract.v1.json tests/conformance/fixtures/printf_conformance.json",
+    "bash -n scripts/check_printf_float_precision_completion_contract.sh",
+    "bash scripts/check_printf_float_precision_completion_contract.sh",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/printf_float_precision_completion_contract_test.rs",
+    "cargo test -p frankenlibc-core --lib format_float -- --nocapture",
+    "cargo test -p frankenlibc-harness --test printf_conformance_conformance_test -- --nocapture",
+    "cargo test -p frankenlibc-harness --test printf_float_precision_completion_contract_test -- --nocapture",
+    "cargo clippy -p frankenlibc-harness --test printf_float_precision_completion_contract_test -- -D warnings"
+  ],
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_printf_float_precision_sources",
+      "checker_accepts_printf_float_precision_completion_contract",
+      "checker_emits_structured_printf_precision_telemetry"
+    ],
+    "negative": [
+      "checker_rejects_missing_unit_binding",
+      "checker_rejects_precision_cap_drift",
+      "checker_rejects_missing_conformance_binding"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/printf_float_precision_completion_contract.v1.json",
+      "scripts/check_printf_float_precision_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/printf_float_precision_completion_contract_test.rs",
+      "crates/frankenlibc-core/src/stdio/printf.rs",
+      "tests/conformance/fixtures/printf_conformance.json",
+      "crates/frankenlibc-harness/tests/printf_conformance_conformance_test.rs"
+    ]
+  }
+}
