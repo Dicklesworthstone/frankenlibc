@@ -1,14 +1,14 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-05-07T12:38:05Z",
+  "generated_at": "2026-05-12T20:38:37Z",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 403,
+    "symbols_with_fixtures": 427,
     "coverage_pct": 10,
-    "total_fixture_files": 58,
-    "total_fixture_cases": 1283,
-    "total_families": 48
+    "total_fixture_files": 60,
+    "total_fixture_cases": 1333,
+    "total_families": 49
   },
   "module_coverage": {
     "c11threads_abi": {
@@ -138,8 +138,8 @@
     },
     "rpc_abi": {
       "total": 159,
-      "covered": 0,
-      "pct": 0
+      "covered": 12,
+      "pct": 8
     },
     "runtime_policy": {
       "total": 1,
@@ -203,8 +203,8 @@
     },
     "unistd_abi": {
       "total": 742,
-      "covered": 33,
-      "pct": 4
+      "covered": 45,
+      "pct": 6
     },
     "wchar_abi": {
       "total": 146,
@@ -287,8 +287,9 @@
       ]
     },
     "dlfcn": {
-      "function_count": 3,
+      "function_count": 4,
       "functions": [
+        "dlclose",
         "dlerror",
         "dlopen",
         "dlsym"
@@ -556,6 +557,23 @@
       "function_count": 1,
       "functions": [
         "getrlimit"
+      ]
+    },
+    "rpc": {
+      "function_count": 12,
+      "functions": [
+        "__rpc_thread_createerr",
+        "__rpc_thread_svc_fdset",
+        "__rpc_thread_svc_max_pollfd",
+        "__rpc_thread_svc_pollfd",
+        "_authenticate",
+        "_null_auth",
+        "_rpc_dtablesize",
+        "_seterr_reply",
+        "authdes_create",
+        "authdes_getucred",
+        "authdes_pk_create",
+        "authnone_create"
       ]
     },
     "scanf": {
@@ -837,8 +855,20 @@
       ]
     },
     "unistd": {
-      "function_count": 14,
+      "function_count": 26,
       "functions": [
+        "_Exit",
+        "_Fork",
+        "__cxa_atexit",
+        "__cxa_finalize",
+        "__fxstat",
+        "__fxstat64",
+        "__fxstatat",
+        "__fxstatat64",
+        "__gmtime_r",
+        "__lxstat",
+        "__lxstat64",
+        "__progname",
         "access",
         "close",
         "getcwd",
@@ -989,9 +1019,10 @@
     },
     "dlfcn_ops": {
       "file": "dlfcn_ops.json",
-      "sha256": "5de9df85bb4ce626ceafa3fe9dea15c7c719c5ec6c52fa12740689753bb73c02",
-      "case_count": 7,
+      "sha256": "d7e36c136aa49ee7ce5747b6f847af9a18a71f698351fcba54cda3d5fa492896",
+      "case_count": 9,
       "functions": [
+        "dlclose",
         "dlerror",
         "dlopen",
         "dlsym"
@@ -1412,6 +1443,28 @@
       ],
       "families": [
         "resource"
+      ]
+    },
+    "rpc_legacy_network": {
+      "file": "rpc_legacy_network.json",
+      "sha256": "dd2a1b48ef36b203b8b278c3e6d1904a98316d82720be70027413935d17fcb34",
+      "case_count": 24,
+      "functions": [
+        "__rpc_thread_createerr",
+        "__rpc_thread_svc_fdset",
+        "__rpc_thread_svc_max_pollfd",
+        "__rpc_thread_svc_pollfd",
+        "_authenticate",
+        "_null_auth",
+        "_rpc_dtablesize",
+        "_seterr_reply",
+        "authdes_create",
+        "authdes_getucred",
+        "authdes_pk_create",
+        "authnone_create"
+      ],
+      "families": [
+        "rpc"
       ]
     },
     "scanf_conformance": {
@@ -1847,6 +1900,28 @@
         "pipe",
         "read",
         "write"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem": {
+      "file": "unistd_process_filesystem.json",
+      "sha256": "1860e862df90c84ab4e4d22a67b08849290793935e49f25cda333459bf9e53e5",
+      "case_count": 24,
+      "functions": [
+        "_Exit",
+        "_Fork",
+        "__cxa_atexit",
+        "__cxa_finalize",
+        "__fxstat",
+        "__fxstat64",
+        "__fxstatat",
+        "__fxstatat64",
+        "__gmtime_r",
+        "__lxstat",
+        "__lxstat64",
+        "__progname"
       ],
       "families": [
         "unistd"

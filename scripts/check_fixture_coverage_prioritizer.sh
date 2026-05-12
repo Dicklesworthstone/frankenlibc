@@ -118,6 +118,26 @@ REQUIRED_DEFERRED_FIELDS = [
     "deferral_reason",
     "next_step",
 ]
+COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIRST_WAVE = [
+    "_Exit",
+    "_Fork",
+    "__cxa_atexit",
+    "__cxa_finalize",
+    "__fxstat",
+    "__fxstat64",
+    "__fxstatat",
+    "__fxstatat64",
+    "__gmtime_r",
+    "__lxstat",
+    "__lxstat64",
+    "__progname",
+]
+COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIXTURE = Path(
+    "tests/conformance/fixtures/unistd_process_filesystem.json"
+)
+COMPLETED_UNISTD_PROCESS_FILESYSTEM_HARNESS = Path(
+    "crates/frankenlibc-harness/tests/unistd_process_filesystem_conformance_test.rs"
+)
 
 def load_json(path):
     try:
@@ -291,6 +311,77 @@ for campaign in campaigns:
     selected_target_uncovered += campaign.get("target_uncovered", 0)
 
 checks["campaign_schema"] = "pass" if campaign_ok else "fail"
+
+completed_unistd_ok = True
+fixture_path = root / COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIXTURE
+harness_path = root / COMPLETED_UNISTD_PROCESS_FILESYSTEM_HARNESS
+fixture = load_json(fixture_path) if fixture_path.exists() else None
+if not fixture_path.exists():
+    completed_unistd_ok = False
+    errors.append(f"completed unistd first wave fixture missing: {COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIXTURE}")
+if not harness_path.exists():
+    completed_unistd_ok = False
+    errors.append(f"completed unistd first wave harness missing: {COMPLETED_UNISTD_PROCESS_FILESYSTEM_HARNESS}")
+else:
+    harness_text = harness_path.read_text(encoding="utf-8")
+    for needle in [
+        "unistd_process_filesystem_fixture_covers_first_wave_symbols_in_both_modes",
+        "unistd_process_filesystem_fixture_executes_via_isolated_harness",
+        "failure_signature",
+    ]:
+        if needle not in harness_text:
+            completed_unistd_ok = False
+            errors.append(f"completed unistd first wave harness missing needle: {needle}")
+
+if isinstance(fixture, dict):
+    declared = fixture.get("campaign", {}).get("first_wave_symbols", [])
+    if declared != COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIRST_WAVE:
+        completed_unistd_ok = False
+        errors.append("completed unistd first wave fixture symbols drifted")
+    cases = fixture.get("cases", [])
+    symbols_in_cases = sorted({case.get("function") for case in cases if isinstance(case, dict)})
+    missing_fixture_symbols = sorted(set(COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIRST_WAVE) - set(symbols_in_cases))
+    if missing_fixture_symbols:
+        completed_unistd_ok = False
+        errors.append("completed unistd first wave fixture is missing cases for: " + ", ".join(missing_fixture_symbols))
+
+per_symbol_by_symbol = {row.get("symbol"): row for row in per_symbol_rows if row.get("module") == "unistd_abi"}
+for symbol in COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIRST_WAVE:
+    row = per_symbol_by_symbol.get(symbol)
+    if row is None:
+        completed_unistd_ok = False
+        errors.append(f"completed unistd first wave symbol missing from per-symbol report: {symbol}")
+        continue
+    if row.get("has_fixtures") is not True:
+        completed_unistd_ok = False
+        errors.append(f"completed unistd first wave symbol lacks fixture accounting: {symbol}")
+    if row.get("case_count", 0) < 2:
+        completed_unistd_ok = False
+        errors.append(f"completed unistd first wave symbol lacks strict+hardened cases: {symbol}")
+    if "unistd_process_filesystem.json" not in row.get("fixture_files", []):
+        completed_unistd_ok = False
+        errors.append(f"completed unistd first wave symbol lacks fixture file backlink: {symbol}")
+    if set(row.get("modes_tested", [])) != {"strict", "hardened"}:
+        completed_unistd_ok = False
+        errors.append(f"completed unistd first wave symbol lacks strict+hardened mode accounting: {symbol}")
+
+unistd_campaign = next((campaign for campaign in campaigns if campaign.get("campaign_id") == "fcq-unistd-process-filesystem"), None)
+if unistd_campaign is None:
+    completed_unistd_ok = False
+    errors.append("fcq-unistd-process-filesystem campaign missing after first-wave completion")
+else:
+    stale_symbols = sorted(set(COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIRST_WAVE) & set(unistd_campaign.get("first_wave_symbols", [])))
+    if stale_symbols:
+        completed_unistd_ok = False
+        errors.append("completed unistd first wave symbols still appear in next first-wave claim: " + ", ".join(stale_symbols))
+    if unistd_campaign.get("target_covered", 0) < 47:
+        completed_unistd_ok = False
+        errors.append("fcq-unistd-process-filesystem target_covered did not advance to at least 47")
+    if float(unistd_campaign.get("current_coverage_pct", 0.0)) < 6.33:
+        completed_unistd_ok = False
+        errors.append("fcq-unistd-process-filesystem current_coverage_pct did not advance to at least 6.33")
+
+checks["completed_unistd_first_wave_guard"] = "pass" if completed_unistd_ok else "fail"
 
 raw_deferred_modules = artifact.get("deferred_modules", [])
 deferred_modules = raw_deferred_modules if isinstance(raw_deferred_modules, list) else []

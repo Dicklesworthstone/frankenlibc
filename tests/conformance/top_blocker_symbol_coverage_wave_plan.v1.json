@@ -97,28 +97,28 @@
       "module_family": "unistd_abi",
       "track": "unistd/syscall",
       "title": "unistd/process/filesystem syscall fixture wave",
-      "current_coverage_pct": 4.72,
-      "expected_coverage_after_first_wave_pct": 6.33,
+      "current_coverage_pct": 6.33,
+      "expected_coverage_after_first_wave_pct": 7.95,
       "target_total": 742,
-      "target_covered": 35,
-      "target_uncovered": 707,
+      "target_covered": 47,
+      "target_uncovered": 695,
       "candidate_status_counts": {
-        "Implemented": 10,
-        "RawSyscall": 2
+        "Implemented": 11,
+        "RawSyscall": 1
       },
       "first_wave_symbols": [
-        "_Exit",
-        "_Fork",
-        "__cxa_atexit",
-        "__cxa_finalize",
-        "__fxstat",
-        "__fxstat64",
-        "__fxstatat",
-        "__fxstatat64",
-        "__gmtime_r",
-        "__lxstat",
-        "__lxstat64",
-        "__progname"
+        "__sched_cpualloc",
+        "__sched_cpucount",
+        "__sched_cpufree",
+        "__sched_rr_get_interval",
+        "__sched_setparam",
+        "__stack_chk_fail",
+        "__stack_chk_guard",
+        "__xpg_basename",
+        "__xstat",
+        "__xstat64",
+        "add_key",
+        "addmntent"
       ],
       "implementation_surface": [
         "crates/frankenlibc-abi/src/unistd_abi.rs",
@@ -127,6 +127,7 @@
         "crates/frankenlibc-core/src/process/"
       ],
       "fixture_files": [
+        "tests/conformance/fixtures/unistd_process_filesystem.json",
         "tests/conformance/fixtures/unistd_ops.json",
         "tests/conformance/fixtures/process_ops.json",
         "tests/conformance/fixtures/startup_ops.json"

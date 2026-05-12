@@ -3,26 +3,26 @@
   "campaigns": [
     {
       "campaign_id": "fcq-unistd-process-filesystem",
-      "current_coverage_pct": 4.72,
+      "current_coverage_pct": 6.33,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 6.33,
+      "expected_coverage_after_first_wave_pct": 7.95,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "_Exit",
-        "_Fork",
-        "__cxa_atexit",
-        "__cxa_finalize",
-        "__fxstat",
-        "__fxstat64",
-        "__fxstatat",
-        "__fxstatat64",
-        "__gmtime_r",
-        "__lxstat",
-        "__lxstat64",
-        "__progname"
+        "__sched_cpualloc",
+        "__sched_cpucount",
+        "__sched_cpufree",
+        "__sched_rr_get_interval",
+        "__sched_setparam",
+        "__stack_chk_fail",
+        "__stack_chk_guard",
+        "__xpg_basename",
+        "__xstat",
+        "__xstat64",
+        "add_key",
+        "addmntent"
       ],
       "module": "unistd_abi",
       "next_step": "Add strict/hardened fixtures for process, stat-family, and exit-path symbols before broad syscall tail work.",
@@ -46,9 +46,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "process control, filesystem metadata, cwd, exec, exit, and low-level unistd wrappers",
-      "target_covered": 35,
+      "target_covered": 47,
       "target_total": 742,
-      "target_uncovered": 707,
+      "target_uncovered": 695,
       "title": "unistd/process/filesystem syscall fixture wave",
       "workload_domains": [
         "shell_coreutils",
@@ -939,25 +939,25 @@
     },
     {
       "campaign_id": "fcq-rpc-legacy-network",
-      "current_coverage_pct": 0.0,
+      "current_coverage_pct": 7.55,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 7.55,
+      "expected_coverage_after_first_wave_pct": 15.09,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "__rpc_thread_createerr",
-        "__rpc_thread_svc_fdset",
-        "__rpc_thread_svc_max_pollfd",
-        "__rpc_thread_svc_pollfd",
-        "_authenticate",
-        "_null_auth",
-        "_rpc_dtablesize",
-        "_seterr_reply",
-        "authdes_create",
-        "authdes_getucred",
-        "authdes_pk_create",
-        "authnone_create"
+        "authunix_create",
+        "authunix_create_default",
+        "bindresvport",
+        "callrpc",
+        "cbc_crypt",
+        "clnt_broadcast",
+        "clnt_create",
+        "clnt_pcreateerror",
+        "clnt_perrno",
+        "clnt_perror",
+        "clnt_spcreateerror",
+        "clnt_sperrno"
       ],
       "module": "rpc_abi",
       "next_step": "Add deterministic compatibility/unsupported fixtures before claiming RPC-related coverage.",
@@ -970,20 +970,20 @@
         "unsupported_claim"
       ],
       "scores": {
-        "coverage_gap_score": 159,
+        "coverage_gap_score": 147,
         "feature_gap_risk_score": 0,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 4,
         "parity_risk_score": 3,
-        "priority_score": 1159,
+        "priority_score": 1147,
         "semantic_risk_score": 0,
         "workload_risk_score": 2
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "sunrpc/auth/xdr compatibility and deterministic unsupported behavior",
-      "target_covered": 0,
+      "target_covered": 12,
       "target_total": 159,
-      "target_uncovered": 159,
+      "target_uncovered": 147,
       "title": "legacy RPC compatibility fixture wave",
       "workload_domains": [
         "resolver_nss",
@@ -1302,7 +1302,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3714,
+    "all_uncovered_target_symbols": 3690,
     "campaign_count": 18,
     "covered_modules": [
       "dlfcn_abi",
@@ -1341,7 +1341,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3332,
+    "selected_target_uncovered_symbols": 3308,
     "total_first_wave_fixture_count": 196
   }
 }

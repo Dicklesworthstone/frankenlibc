@@ -75,6 +75,20 @@ const EXPECTED_INPUTS: &[(&str, &str)] = &[
         "tests/conformance/feature_parity_gap_groups.v1.json",
     ),
 ];
+const COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIRST_WAVE: &[&str] = &[
+    "_Exit",
+    "_Fork",
+    "__cxa_atexit",
+    "__cxa_finalize",
+    "__fxstat",
+    "__fxstat64",
+    "__fxstatat",
+    "__fxstatat64",
+    "__gmtime_r",
+    "__lxstat",
+    "__lxstat64",
+    "__progname",
+];
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -299,6 +313,119 @@ fn campaign_stats_match_fixture_coverage_inputs() {
 }
 
 #[test]
+fn completed_unistd_first_wave_claim_has_fixture_and_harness_evidence() {
+    let root = workspace_root();
+    let artifact = load_prioritizer();
+    let fixture =
+        load_json(&root.join("tests/conformance/fixtures/unistd_process_filesystem.json"));
+    let per_symbol = load_json(&root.join("tests/conformance/per_symbol_fixture_tests.v1.json"));
+    let harness_path =
+        root.join("crates/frankenlibc-harness/tests/unistd_process_filesystem_conformance_test.rs");
+    let harness =
+        std::fs::read_to_string(&harness_path).expect("unistd harness should be readable");
+
+    let declared: Vec<_> = fixture["campaign"]["first_wave_symbols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|symbol| symbol.as_str().unwrap())
+        .collect();
+    assert_eq!(declared, COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIRST_WAVE);
+
+    let fixture_cases: HashSet<_> = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|case| case["function"].as_str().unwrap())
+        .collect();
+    let rows: HashMap<_, _> = per_symbol["per_symbol_report"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["module"].as_str() == Some("unistd_abi"))
+        .map(|row| (row["symbol"].as_str().unwrap(), row))
+        .collect();
+
+    for symbol in COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIRST_WAVE {
+        assert!(
+            fixture_cases.contains(symbol),
+            "fixture is missing completed first-wave case for {symbol}"
+        );
+        let row = rows
+            .get(symbol)
+            .unwrap_or_else(|| panic!("per-symbol row missing for {symbol}"));
+        assert_eq!(
+            row["has_fixtures"].as_bool(),
+            Some(true),
+            "{symbol} must have fixture accounting"
+        );
+        assert!(
+            row["case_count"].as_u64().unwrap() >= 2,
+            "{symbol} must have strict+hardened cases"
+        );
+        let files: HashSet<_> = row["fixture_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|file| file.as_str().unwrap())
+            .collect();
+        assert!(
+            files.contains("unistd_process_filesystem.json"),
+            "{symbol} must link to the unistd process/filesystem fixture"
+        );
+        let modes: HashSet<_> = row["modes_tested"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|mode| mode.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            modes,
+            HashSet::from(["strict", "hardened"]),
+            "{symbol} must have both runtime modes"
+        );
+    }
+
+    for needle in [
+        "unistd_process_filesystem_fixture_covers_first_wave_symbols_in_both_modes",
+        "unistd_process_filesystem_fixture_executes_via_isolated_harness",
+        "failure_signature",
+    ] {
+        assert!(
+            harness.contains(needle),
+            "harness missing required guard needle {needle}"
+        );
+    }
+
+    let unistd_campaign = artifact["campaigns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|campaign| campaign["campaign_id"].as_str() == Some("fcq-unistd-process-filesystem"))
+        .expect("unistd campaign should remain present");
+    let next_first_wave: HashSet<_> = unistd_campaign["first_wave_symbols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|symbol| symbol.as_str().unwrap())
+        .collect();
+    for symbol in COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIRST_WAVE {
+        assert!(
+            !next_first_wave.contains(symbol),
+            "completed symbol {symbol} must not remain in the next first-wave claim"
+        );
+    }
+    assert!(
+        unistd_campaign["target_covered"].as_u64().unwrap() >= 47,
+        "unistd target_covered must advance after first-wave fixture landing"
+    );
+    assert!(
+        unistd_campaign["current_coverage_pct"].as_f64().unwrap() >= 6.33,
+        "unistd coverage pct must advance after first-wave fixture landing"
+    );
+}
+
+#[test]
 fn deferred_modules_cover_every_unselected_uncovered_family() {
     let root = workspace_root();
     let artifact = load_prioritizer();
@@ -508,6 +635,7 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         "required_log_fields",
         "inputs_and_feature_gap_refs",
         "campaign_schema",
+        "completed_unistd_first_wave_guard",
         "deferred_module_inventory",
         "priority_order",
         "workload_domain_coverage",

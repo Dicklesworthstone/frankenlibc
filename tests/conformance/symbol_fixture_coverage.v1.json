@@ -1275,37 +1275,25 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 35,
+      "covered_symbols": 47,
       "milestone_beads": [],
       "module": "unistd_abi",
       "recommended_bead": null,
       "severity": "high",
-      "severity_score": 70702,
+      "severity_score": 69502,
       "status_breakdown": {
         "Implemented": 478,
         "RawSyscall": 264
       },
-      "target_coverage_pct": 4.72,
-      "target_covered": 35,
+      "target_coverage_pct": 6.33,
+      "target_covered": 47,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
       "target_total": 742,
-      "target_uncovered": 707,
+      "target_uncovered": 695,
       "target_uncovered_symbols": [
-        "_Exit",
-        "_Fork",
-        "__cxa_atexit",
-        "__cxa_finalize",
-        "__fxstat",
-        "__fxstat64",
-        "__fxstatat",
-        "__fxstatat64",
-        "__gmtime_r",
-        "__lxstat",
-        "__lxstat64",
-        "__progname",
         "__sched_cpualloc",
         "__sched_cpucount",
         "__sched_cpufree",
@@ -2004,7 +1992,7 @@
       ],
       "total_symbols": 742,
       "track": "unistd/syscall",
-      "uncovered_symbols": 707,
+      "uncovered_symbols": 695,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -2605,36 +2593,24 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 0,
+      "covered_symbols": 12,
       "milestone_beads": [],
       "module": "rpc_abi",
       "recommended_bead": null,
-      "severity": "critical",
-      "severity_score": 15903,
+      "severity": "high",
+      "severity_score": 14702,
       "status_breakdown": {
         "Implemented": 159
       },
-      "target_coverage_pct": 0.0,
-      "target_covered": 0,
+      "target_coverage_pct": 7.55,
+      "target_covered": 12,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
       "target_total": 159,
-      "target_uncovered": 159,
+      "target_uncovered": 147,
       "target_uncovered_symbols": [
-        "__rpc_thread_createerr",
-        "__rpc_thread_svc_fdset",
-        "__rpc_thread_svc_max_pollfd",
-        "__rpc_thread_svc_pollfd",
-        "_authenticate",
-        "_null_auth",
-        "_rpc_dtablesize",
-        "_seterr_reply",
-        "authdes_create",
-        "authdes_getucred",
-        "authdes_pk_create",
-        "authnone_create",
         "authunix_create",
         "authunix_create_default",
         "bindresvport",
@@ -2785,7 +2761,7 @@
       ],
       "total_symbols": 159,
       "track": "rpc",
-      "uncovered_symbols": 159,
+      "uncovered_symbols": 147,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -4774,9 +4750,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1284,
-    "fixture_json_files": 58,
-    "fixture_json_unique_functions": 420,
+    "fixture_json_cases": 1332,
+    "fixture_json_files": 60,
+    "fixture_json_unique_functions": 444,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4797,7 +4773,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 422
+    "unique_fixture_functions_total": 446
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -6070,20 +6046,8 @@
       "module": "unistd_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_uncovered_count": 707,
+      "target_uncovered_count": 695,
       "target_uncovered_symbols": [
-        "_Exit",
-        "_Fork",
-        "__cxa_atexit",
-        "__cxa_finalize",
-        "__fxstat",
-        "__fxstat64",
-        "__fxstatat",
-        "__fxstatat64",
-        "__gmtime_r",
-        "__lxstat",
-        "__lxstat64",
-        "__progname",
         "__sched_cpualloc",
         "__sched_cpucount",
         "__sched_cpufree",
@@ -7369,21 +7333,9 @@
       "milestone_beads": [],
       "module": "rpc_abi",
       "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 159,
+      "severity": "high",
+      "target_uncovered_count": 147,
       "target_uncovered_symbols": [
-        "__rpc_thread_createerr",
-        "__rpc_thread_svc_fdset",
-        "__rpc_thread_svc_max_pollfd",
-        "__rpc_thread_svc_pollfd",
-        "_authenticate",
-        "_null_auth",
-        "_rpc_dtablesize",
-        "_seterr_reply",
-        "authdes_create",
-        "authdes_getucred",
-        "authdes_pk_create",
-        "authnone_create",
         "authunix_create",
         "authunix_create_default",
         "bindresvport",
@@ -8966,34 +8918,34 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 9.34,
-      "covered": 346,
+      "coverage_pct": 9.93,
+      "covered": 368,
       "total": 3705,
-      "uncovered": 3359
+      "uncovered": 3337
     },
     "RawSyscall": {
-      "coverage_pct": 14.25,
-      "covered": 59,
+      "coverage_pct": 14.73,
+      "covered": 61,
       "total": 414,
-      "uncovered": 355
+      "uncovered": 353
     }
   },
   "summary": {
-    "coverage_pct": 9.83,
-    "covered_exported_symbols": 405,
-    "target_coverage_pct": 9.83,
-    "target_covered_symbols": 405,
+    "coverage_pct": 10.42,
+    "covered_exported_symbols": 429,
+    "target_coverage_pct": 10.42,
+    "target_covered_symbols": 429,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3714,
+    "target_uncovered_symbols": 3690,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3714,
-    "uncovered_target_families": 6,
+    "uncovered_exported_symbols": 3690,
+    "uncovered_target_families": 5,
     "weak_family_threshold_pct": 80.0,
-    "weak_target_families": 29
+    "weak_target_families": 30
   },
   "symbols": [
     {
@@ -45273,13 +45225,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -45287,13 +45248,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -45301,13 +45271,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -45315,13 +45294,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -45329,13 +45317,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -45343,13 +45340,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -45357,13 +45363,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -45371,13 +45386,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -45385,13 +45409,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -45399,13 +45432,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -45413,13 +45455,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -45427,13 +45478,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -57512,13 +57572,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "O1",
       "status": "RawSyscall",
@@ -57526,13 +57595,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "O1",
       "status": "RawSyscall",
@@ -57540,13 +57618,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -57554,13 +57641,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -57568,13 +57664,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -57582,13 +57687,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -57596,13 +57710,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -57610,13 +57733,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -57624,13 +57756,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -57638,13 +57779,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -57652,13 +57802,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -57666,13 +57825,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -70578,176 +70746,6 @@
       "workload_ids": []
     },
     {
-      "module": "rpc_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 159,
-      "target_uncovered_symbols": [
-        "__rpc_thread_createerr",
-        "__rpc_thread_svc_fdset",
-        "__rpc_thread_svc_max_pollfd",
-        "__rpc_thread_svc_pollfd",
-        "_authenticate",
-        "_null_auth",
-        "_rpc_dtablesize",
-        "_seterr_reply",
-        "authdes_create",
-        "authdes_getucred",
-        "authdes_pk_create",
-        "authnone_create",
-        "authunix_create",
-        "authunix_create_default",
-        "bindresvport",
-        "callrpc",
-        "cbc_crypt",
-        "clnt_broadcast",
-        "clnt_create",
-        "clnt_pcreateerror",
-        "clnt_perrno",
-        "clnt_perror",
-        "clnt_spcreateerror",
-        "clnt_sperrno",
-        "clnt_sperror",
-        "clntraw_create",
-        "clnttcp_create",
-        "clntudp_bufcreate",
-        "clntudp_create",
-        "clntunix_create",
-        "des_setparity",
-        "ecb_crypt",
-        "get_myaddress",
-        "getnetname",
-        "getpublickey",
-        "getrpcport",
-        "getsecretkey",
-        "host2netname",
-        "key_decryptsession",
-        "key_decryptsession_pk",
-        "key_encryptsession",
-        "key_encryptsession_pk",
-        "key_gendes",
-        "key_get_conv",
-        "key_secretkey_is_set",
-        "key_setnet",
-        "key_setsecret",
-        "netname2host",
-        "netname2user",
-        "passwd2des",
-        "pmap_getmaps",
-        "pmap_getport",
-        "pmap_rmtcall",
-        "pmap_set",
-        "pmap_unset",
-        "registerrpc",
-        "rexecoptions",
-        "rpc_createerr",
-        "rtime",
-        "svc_exit",
-        "svc_fdset",
-        "svc_getreq",
-        "svc_getreq_common",
-        "svc_getreq_poll",
-        "svc_getreqset",
-        "svc_max_pollfd",
-        "svc_pollfd",
-        "svc_register",
-        "svc_run",
-        "svc_sendreply",
-        "svc_unregister",
-        "svcauthdes_stats",
-        "svcerr_auth",
-        "svcerr_decode",
-        "svcerr_noproc",
-        "svcerr_noprog",
-        "svcerr_progvers",
-        "svcerr_systemerr",
-        "svcerr_weakauth",
-        "svcfd_create",
-        "svcraw_create",
-        "svctcp_create",
-        "svcudp_bufcreate",
-        "svcudp_create",
-        "svcudp_enablecache",
-        "svcunix_create",
-        "svcunixfd_create",
-        "user2netname",
-        "xdecrypt",
-        "xdr_accepted_reply",
-        "xdr_array",
-        "xdr_authdes_cred",
-        "xdr_authdes_verf",
-        "xdr_authunix_parms",
-        "xdr_bool",
-        "xdr_bytes",
-        "xdr_callhdr",
-        "xdr_callmsg",
-        "xdr_char",
-        "xdr_cryptkeyarg",
-        "xdr_cryptkeyarg2",
-        "xdr_cryptkeyres",
-        "xdr_des_block",
-        "xdr_double",
-        "xdr_enum",
-        "xdr_float",
-        "xdr_free",
-        "xdr_getcredres",
-        "xdr_hyper",
-        "xdr_int",
-        "xdr_int16_t",
-        "xdr_int32_t",
-        "xdr_int64_t",
-        "xdr_int8_t",
-        "xdr_key_netstarg",
-        "xdr_key_netstres",
-        "xdr_keybuf",
-        "xdr_keystatus",
-        "xdr_long",
-        "xdr_longlong_t",
-        "xdr_netnamestr",
-        "xdr_netobj",
-        "xdr_opaque",
-        "xdr_opaque_auth",
-        "xdr_pmap",
-        "xdr_pmaplist",
-        "xdr_pointer",
-        "xdr_quad_t",
-        "xdr_reference",
-        "xdr_rejected_reply",
-        "xdr_replymsg",
-        "xdr_rmtcall_args",
-        "xdr_rmtcallres",
-        "xdr_short",
-        "xdr_sizeof",
-        "xdr_string",
-        "xdr_u_char",
-        "xdr_u_hyper",
-        "xdr_u_int",
-        "xdr_u_long",
-        "xdr_u_longlong_t",
-        "xdr_u_quad_t",
-        "xdr_u_short",
-        "xdr_uint16_t",
-        "xdr_uint32_t",
-        "xdr_uint64_t",
-        "xdr_uint8_t",
-        "xdr_union",
-        "xdr_unixcred",
-        "xdr_vector",
-        "xdr_void",
-        "xdr_wrapstring",
-        "xdrmem_create",
-        "xdrrec_create",
-        "xdrrec_endofrecord",
-        "xdrrec_eof",
-        "xdrrec_skiprecord",
-        "xdrstdio_create",
-        "xencrypt"
-      ],
-      "track": "rpc",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "module": "runtime_policy",
       "recommended_bead": null,
       "severity": "critical",
@@ -73184,6 +73182,165 @@
       "workload_ids": []
     },
     {
+      "module": "rpc_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "target_coverage_pct": 7.55,
+      "target_uncovered_count": 147,
+      "target_uncovered_symbols": [
+        "authunix_create",
+        "authunix_create_default",
+        "bindresvport",
+        "callrpc",
+        "cbc_crypt",
+        "clnt_broadcast",
+        "clnt_create",
+        "clnt_pcreateerror",
+        "clnt_perrno",
+        "clnt_perror",
+        "clnt_spcreateerror",
+        "clnt_sperrno",
+        "clnt_sperror",
+        "clntraw_create",
+        "clnttcp_create",
+        "clntudp_bufcreate",
+        "clntudp_create",
+        "clntunix_create",
+        "des_setparity",
+        "ecb_crypt",
+        "get_myaddress",
+        "getnetname",
+        "getpublickey",
+        "getrpcport",
+        "getsecretkey",
+        "host2netname",
+        "key_decryptsession",
+        "key_decryptsession_pk",
+        "key_encryptsession",
+        "key_encryptsession_pk",
+        "key_gendes",
+        "key_get_conv",
+        "key_secretkey_is_set",
+        "key_setnet",
+        "key_setsecret",
+        "netname2host",
+        "netname2user",
+        "passwd2des",
+        "pmap_getmaps",
+        "pmap_getport",
+        "pmap_rmtcall",
+        "pmap_set",
+        "pmap_unset",
+        "registerrpc",
+        "rexecoptions",
+        "rpc_createerr",
+        "rtime",
+        "svc_exit",
+        "svc_fdset",
+        "svc_getreq",
+        "svc_getreq_common",
+        "svc_getreq_poll",
+        "svc_getreqset",
+        "svc_max_pollfd",
+        "svc_pollfd",
+        "svc_register",
+        "svc_run",
+        "svc_sendreply",
+        "svc_unregister",
+        "svcauthdes_stats",
+        "svcerr_auth",
+        "svcerr_decode",
+        "svcerr_noproc",
+        "svcerr_noprog",
+        "svcerr_progvers",
+        "svcerr_systemerr",
+        "svcerr_weakauth",
+        "svcfd_create",
+        "svcraw_create",
+        "svctcp_create",
+        "svcudp_bufcreate",
+        "svcudp_create",
+        "svcudp_enablecache",
+        "svcunix_create",
+        "svcunixfd_create",
+        "user2netname",
+        "xdecrypt",
+        "xdr_accepted_reply",
+        "xdr_array",
+        "xdr_authdes_cred",
+        "xdr_authdes_verf",
+        "xdr_authunix_parms",
+        "xdr_bool",
+        "xdr_bytes",
+        "xdr_callhdr",
+        "xdr_callmsg",
+        "xdr_char",
+        "xdr_cryptkeyarg",
+        "xdr_cryptkeyarg2",
+        "xdr_cryptkeyres",
+        "xdr_des_block",
+        "xdr_double",
+        "xdr_enum",
+        "xdr_float",
+        "xdr_free",
+        "xdr_getcredres",
+        "xdr_hyper",
+        "xdr_int",
+        "xdr_int16_t",
+        "xdr_int32_t",
+        "xdr_int64_t",
+        "xdr_int8_t",
+        "xdr_key_netstarg",
+        "xdr_key_netstres",
+        "xdr_keybuf",
+        "xdr_keystatus",
+        "xdr_long",
+        "xdr_longlong_t",
+        "xdr_netnamestr",
+        "xdr_netobj",
+        "xdr_opaque",
+        "xdr_opaque_auth",
+        "xdr_pmap",
+        "xdr_pmaplist",
+        "xdr_pointer",
+        "xdr_quad_t",
+        "xdr_reference",
+        "xdr_rejected_reply",
+        "xdr_replymsg",
+        "xdr_rmtcall_args",
+        "xdr_rmtcallres",
+        "xdr_short",
+        "xdr_sizeof",
+        "xdr_string",
+        "xdr_u_char",
+        "xdr_u_hyper",
+        "xdr_u_int",
+        "xdr_u_long",
+        "xdr_u_longlong_t",
+        "xdr_u_quad_t",
+        "xdr_u_short",
+        "xdr_uint16_t",
+        "xdr_uint32_t",
+        "xdr_uint64_t",
+        "xdr_uint8_t",
+        "xdr_union",
+        "xdr_unixcred",
+        "xdr_vector",
+        "xdr_void",
+        "xdr_wrapstring",
+        "xdrmem_create",
+        "xdrrec_create",
+        "xdrrec_endofrecord",
+        "xdrrec_eof",
+        "xdrrec_skiprecord",
+        "xdrstdio_create",
+        "xencrypt"
+      ],
+      "track": "rpc",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "module": "setjmp_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -73700,21 +73857,9 @@
       "module": "unistd_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 4.72,
-      "target_uncovered_count": 707,
+      "target_coverage_pct": 6.33,
+      "target_uncovered_count": 695,
       "target_uncovered_symbols": [
-        "_Exit",
-        "_Fork",
-        "__cxa_atexit",
-        "__cxa_finalize",
-        "__fxstat",
-        "__fxstat64",
-        "__fxstatat",
-        "__fxstatat64",
-        "__gmtime_r",
-        "__lxstat",
-        "__lxstat64",
-        "__progname",
         "__sched_cpualloc",
         "__sched_cpucount",
         "__sched_cpufree",
