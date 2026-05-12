@@ -1,0 +1,138 @@
+{
+  "schema_version": "resume_stash_conflict_completion_contract.v1",
+  "bead_id": "bd-jirj3.1",
+  "original_bead": "bd-jirj3",
+  "source_artifacts": [
+    {
+      "id": "original_tracker_row",
+      "path": ".beads/issues.jsonl"
+    },
+    {
+      "id": "perf_regression_prevention_artifact",
+      "path": "tests/conformance/perf_regression_prevention.v1.json"
+    },
+    {
+      "id": "uncovered_hotpath_manifest",
+      "path": "tests/conformance/uncovered_hotpath_benchmark_manifest.v1.json"
+    },
+    {
+      "id": "completion_contract",
+      "path": "tests/conformance/resume_stash_conflict_completion_contract.v1.json"
+    },
+    {
+      "id": "completion_gate",
+      "path": "scripts/check_resume_stash_conflict_completion_contract.sh"
+    },
+    {
+      "id": "completion_harness_test",
+      "path": "crates/frankenlibc-harness/tests/resume_stash_conflict_completion_contract_test.rs"
+    }
+  ],
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.conformance.primary"
+    ],
+    "conflict_marker_prefixes": [
+      "<<<<<<<",
+      ">>>>>>>",
+      "|||||||"
+    ],
+    "tracked_text_extensions": [
+      ".c",
+      ".h",
+      ".json",
+      ".jsonl",
+      ".map",
+      ".md",
+      ".py",
+      ".rs",
+      ".sh",
+      ".toml",
+      ".txt",
+      ".yaml",
+      ".yml"
+    ],
+    "json_artifact_roots": [
+      "tests/conformance",
+      "tests/cve_arena",
+      "tests/release",
+      "tests/runtime_math"
+    ],
+    "required_events": [
+      "source_artifacts_validated",
+      "git_index_validated",
+      "conflict_markers_absent",
+      "json_artifacts_validated",
+      "missing_item_bindings_validated",
+      "test_surfaces_validated",
+      "resume_stash_conflict_completion_contract_validated"
+    ],
+    "failure_signatures": [
+      "missing_source_artifact",
+      "unmerged_index_entries",
+      "conflict_marker_found",
+      "malformed_json_artifact",
+      "missing_conformance_binding",
+      "missing_test_surface"
+    ],
+    "conflict_marker_probe_paths": [],
+    "json_artifact_probe_paths": []
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "implementation_refs": [
+        {
+          "path": "scripts/check_resume_stash_conflict_completion_contract.sh",
+          "require_terms": [
+            "git ls-files -u",
+            "conflict_marker_found",
+            "json_artifacts_validated",
+            "resume_stash_conflict_completion_contract_validated"
+          ]
+        }
+      ],
+      "test_refs": [
+        {
+          "path": "crates/frankenlibc-harness/tests/resume_stash_conflict_completion_contract_test.rs",
+          "required_tests": [
+            "contract_binds_resume_stash_conflict_conformance_sources",
+            "checker_accepts_clean_resume_stash_contract",
+            "checker_rejects_missing_conformance_binding",
+            "checker_rejects_conflict_marker_probe"
+          ]
+        }
+      ],
+      "commands": [
+        "bash scripts/check_resume_stash_conflict_completion_contract.sh",
+        "cargo test -p frankenlibc-harness --test resume_stash_conflict_completion_contract_test -- --nocapture"
+      ],
+      "expected_status": "pass"
+    }
+  ],
+  "report_contract": {
+    "report_path": "target/conformance/resume_stash_conflict_completion_contract.report.json",
+    "log_path": "target/conformance/resume_stash_conflict_completion_contract.log.jsonl",
+    "required_report_fields": [
+      "schema_version",
+      "bead_id",
+      "original_bead",
+      "trace_id",
+      "source_commit",
+      "status",
+      "summary",
+      "artifact_refs",
+      "errors"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "bead_id",
+      "event",
+      "status",
+      "source_commit",
+      "failure_signature",
+      "artifact_refs"
+    ]
+  }
+}
