@@ -1,0 +1,299 @@
+{
+  "schema_version": "extreme_optimization_loop_completion_contract.v1",
+  "manifest_id": "bd-3fb.1-extreme-optimization-loop-completion-contract",
+  "original_bead": "bd-3fb",
+  "completion_debt_bead": "bd-3fb.1",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "audit_score": 670,
+  "next_audit_score_threshold": 800,
+  "description": "Completion-debt evidence binding for the extreme optimization loop: baseline contracts, hot-path profiles, runtime/golden drift gates, optimization proof ledger, regression-prevention telemetry, and deterministic rch-only validation commands.",
+  "source_artifacts": {
+    "perf_baseline_spec": {
+      "path": "tests/conformance/perf_baseline_spec.json",
+      "expected_schema": "1"
+    },
+    "perf_baseline_suite_contract": {
+      "path": "tests/conformance/perf_baseline_suite_completion_contract.v1.json",
+      "expected_schema": "perf_baseline_suite_completion_contract.v1"
+    },
+    "perf_baseline_suite_checker": {
+      "path": "scripts/check_perf_baseline_suite_completion_contract.sh",
+      "required_text": [
+        "PASS: perf baseline suite completion contract",
+        "perf_baseline_suite_completion_contract_pass"
+      ]
+    },
+    "perf_baseline_suite_test": {
+      "path": "crates/frankenlibc-harness/tests/perf_baseline_suite_completion_contract_test.rs"
+    },
+    "hot_path_profile_contract": {
+      "path": "tests/conformance/hot_path_profile_completion_contract.v1.json",
+      "expected_schema": "hot_path_profile_completion_contract.v1"
+    },
+    "hot_path_profile_report": {
+      "path": "tests/conformance/hot_path_profile_report.v1.json",
+      "expected_schema": "v1"
+    },
+    "hot_path_profile_checker": {
+      "path": "scripts/check_hot_path_profile_completion_contract.sh",
+      "required_text": [
+        "Hot path profile completion contract: PASS",
+        "hot_path_profile_completion_contract_pass"
+      ]
+    },
+    "hot_path_profile_test": {
+      "path": "crates/frankenlibc-harness/tests/hot_path_profile_completion_contract_test.rs"
+    },
+    "runtime_hot_path_perf_golden_contract": {
+      "path": "tests/conformance/runtime_hot_path_perf_golden_completion_contract.v1.json",
+      "expected_schema": "runtime_hot_path_perf_golden_completion_contract.v1"
+    },
+    "runtime_hot_path_perf_golden_checker": {
+      "path": "scripts/check_runtime_hot_path_perf_golden_completion_contract.sh",
+      "required_text": [
+        "runtime_hot_path_perf_golden_completion_contract: PASS",
+        "runtime_hot_path_perf_golden_completion_contract_pass"
+      ]
+    },
+    "runtime_hot_path_perf_golden_test": {
+      "path": "crates/frankenlibc-harness/tests/runtime_hot_path_perf_golden_completion_contract_test.rs"
+    },
+    "golden_fixture_protocol": {
+      "path": "tests/conformance/golden_fixture_protocol.v1.json",
+      "expected_schema": "v1"
+    },
+    "optimization_proof_ledger": {
+      "path": "tests/conformance/optimization_proof_ledger.v1.json",
+      "expected_schema": "1"
+    },
+    "optimization_proof_ledger_contract": {
+      "path": "tests/conformance/optimization_proof_ledger_completion_contract.v1.json",
+      "expected_schema": "v1"
+    },
+    "optimization_proof_ledger_checker": {
+      "path": "scripts/check_optimization_proof_ledger_completion_contract.sh",
+      "required_text": [
+        "optimization_proof_ledger_completion_contract",
+        "optimization_proof_ledger_completion_summary"
+      ]
+    },
+    "optimization_proof_ledger_test": {
+      "path": "crates/frankenlibc-harness/tests/optimization_proof_ledger_completion_contract_test.rs"
+    },
+    "perf_regression_prevention": {
+      "path": "tests/conformance/perf_regression_prevention.v1.json",
+      "expected_schema": "v1"
+    },
+    "perf_regression_prevention_contract": {
+      "path": "tests/conformance/perf_regression_prevention_completion_contract.v1.json",
+      "expected_schema": "perf_regression_prevention_completion_contract.v1"
+    },
+    "perf_regression_prevention_checker": {
+      "path": "scripts/check_perf_regression_prevention_completion_contract.sh",
+      "required_text": [
+        "PASS: perf regression prevention completion contract",
+        "perf_regression_prevention_completion_contract_pass"
+      ]
+    },
+    "perf_regression_prevention_test": {
+      "path": "crates/frankenlibc-harness/tests/perf_regression_prevention_completion_contract_test.rs"
+    },
+    "completion_checker": {
+      "path": "scripts/check_extreme_optimization_loop_completion_contract.sh"
+    },
+    "completion_test": {
+      "path": "crates/frankenlibc-harness/tests/extreme_optimization_loop_completion_contract_test.rs"
+    }
+  },
+  "proof_lanes": [
+    {
+      "id": "baselines",
+      "missing_items": [
+        "tests.unit.primary",
+        "tests.e2e.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "perf_baseline_spec",
+        "perf_baseline_suite_contract"
+      ],
+      "checker_artifact": "perf_baseline_suite_checker",
+      "checker_command": "bash scripts/check_perf_baseline_suite_completion_contract.sh",
+      "test_artifact": "perf_baseline_suite_test",
+      "required_test_refs": [
+        "manifest_binds_unit_e2e_and_telemetry_evidence",
+        "checker_validates_existing_baseline_gate",
+        "checker_emits_report_and_jsonl"
+      ]
+    },
+    {
+      "id": "profiles",
+      "missing_items": [
+        "tests.unit.primary",
+        "tests.e2e.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "hot_path_profile_contract",
+        "hot_path_profile_report"
+      ],
+      "checker_artifact": "hot_path_profile_checker",
+      "checker_command": "bash scripts/check_hot_path_profile_completion_contract.sh",
+      "test_artifact": "hot_path_profile_test",
+      "required_test_refs": [
+        "manifest_binds_unit_e2e_and_profile_evidence",
+        "checker_validates_profile_pipeline_contract",
+        "checker_emits_report_and_jsonl"
+      ]
+    },
+    {
+      "id": "goldens",
+      "missing_items": [
+        "tests.golden.primary",
+        "tests.e2e.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "runtime_hot_path_perf_golden_contract",
+        "golden_fixture_protocol"
+      ],
+      "checker_artifact": "runtime_hot_path_perf_golden_checker",
+      "checker_command": "bash scripts/check_runtime_hot_path_perf_golden_completion_contract.sh",
+      "test_artifact": "runtime_hot_path_perf_golden_test",
+      "required_test_refs": [
+        "manifest_binds_runtime_hot_path_golden_evidence",
+        "checker_validates_runtime_hot_path_perf_golden_contract",
+        "checker_emits_report_and_jsonl"
+      ]
+    },
+    {
+      "id": "proof-ledger",
+      "missing_items": [
+        "tests.unit.primary",
+        "tests.e2e.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "optimization_proof_ledger",
+        "optimization_proof_ledger_contract"
+      ],
+      "checker_artifact": "optimization_proof_ledger_checker",
+      "checker_command": "bash scripts/check_optimization_proof_ledger_completion_contract.sh",
+      "test_artifact": "optimization_proof_ledger_test",
+      "required_test_refs": [
+        "manifest_anchors_completion_debt",
+        "ledger_contract_binds_checked_in_ledger",
+        "checker_accepts_manifest_and_emits_report"
+      ]
+    },
+    {
+      "id": "regressions",
+      "missing_items": [
+        "tests.unit.primary",
+        "tests.e2e.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "perf_regression_prevention",
+        "perf_regression_prevention_contract"
+      ],
+      "checker_artifact": "perf_regression_prevention_checker",
+      "checker_command": "bash scripts/check_perf_regression_prevention_completion_contract.sh",
+      "test_artifact": "perf_regression_prevention_test",
+      "required_test_refs": [
+        "manifest_binds_unit_e2e_and_telemetry_evidence",
+        "checker_validates_generated_perf_report",
+        "checker_emits_report_and_jsonl"
+      ]
+    }
+  ],
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "lane_ids": [
+        "baselines",
+        "profiles",
+        "proof-ledger",
+        "regressions"
+      ],
+      "required_test_refs": [
+        "manifest_binds_extreme_optimization_sources",
+        "checker_accepts_contract_and_replays_child_gates",
+        "checker_rejects_missing_lane_artifact"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test extreme_optimization_loop_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "lane_ids": [
+        "baselines",
+        "profiles",
+        "goldens",
+        "proof-ledger",
+        "regressions"
+      ],
+      "required_commands": [
+        "bash scripts/check_extreme_optimization_loop_completion_contract.sh",
+        "bash scripts/check_perf_baseline_suite_completion_contract.sh",
+        "bash scripts/check_hot_path_profile_completion_contract.sh",
+        "bash scripts/check_runtime_hot_path_perf_golden_completion_contract.sh",
+        "bash scripts/check_optimization_proof_ledger_completion_contract.sh",
+        "bash scripts/check_perf_regression_prevention_completion_contract.sh"
+      ]
+    },
+    {
+      "id": "tests.golden.primary",
+      "kind": "golden",
+      "lane_ids": [
+        "goldens"
+      ],
+      "required_artifacts": [
+        "runtime_hot_path_perf_golden_contract",
+        "golden_fixture_protocol"
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test runtime_hot_path_perf_golden_completion_contract_test -- --nocapture",
+        "bash scripts/check_runtime_hot_path_perf_golden_completion_contract.sh"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "lane_ids": [
+        "baselines",
+        "profiles",
+        "goldens",
+        "proof-ledger",
+        "regressions"
+      ],
+      "required_commands": [
+        "bash scripts/check_extreme_optimization_loop_completion_contract.sh",
+        "jq -s empty target/conformance/extreme_optimization_loop_completion_contract/extreme_optimization_loop_completion_contract.log.jsonl"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_events": [
+      "extreme_optimization_sources_bound",
+      "extreme_optimization_lanes_validated",
+      "extreme_optimization_missing_items_bound",
+      "extreme_optimization_telemetry_validated",
+      "extreme_optimization_child_gates_replayed",
+      "extreme_optimization_completion_contract_pass"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "event",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ]
+  }
+}

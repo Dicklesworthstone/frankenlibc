@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.3",
-  "generated_at_utc": "2026-05-07T12:40:19Z",
-  "source_commit": "fead0378",
+  "generated_at_utc": "2026-05-12T10:42:29Z",
+  "source_commit": "975122f5",
   "purpose": "Rank the next optimization targets from measured hot-path profiles, host raw baselines, and missing profile slots.",
   "inputs": {
     "benchmark_coverage_inventory": "tests/conformance/benchmark_coverage_inventory.v1.json",
@@ -20,7 +20,7 @@
     "perf_baseline": "2e5d1aaaf442a4a6380a8c8ef851ff340974f71210b4041b8399021a308af28d",
     "perf_baseline_spec": "6a7fced48f32a9c9ee38a5a8654f408c1a56a034bac6e5fc484d98c39b2af6b3",
     "profile_pipeline": "1f6a3dda0d7fb2569477f2a4dfea8a1c2f28c1e0d6ec2256e3e1beb656df85dd",
-    "symbol_latency_baseline": "90b5c85925dad27d69b0f2b49c4651dfa725c80c758f85ef7208c1e5fe062c67"
+    "symbol_latency_baseline": "5dcdcace475e6ee32303c38f53091fd2d7b1ddf287d4ee733e60c0109f56cddf"
   },
   "required_profile_fields": [
     "profile_id",
@@ -6757,5 +6757,5 @@
     "target_report": "target/conformance/hot_path_profile_report.report.json",
     "target_log": "target/conformance/hot_path_profile_report.log.jsonl"
   },
-  "artifact_hash": "d6fb0a0cdfb621b7afc1c0d851e1e35f5c794d7725c4baf2b78bd0853abbc45b"
+  "artifact_hash": "c7b61fe4c8b065421a1ff6f5d5335683fb8f19eb4b4e53bc585317c442197a61"
 }
