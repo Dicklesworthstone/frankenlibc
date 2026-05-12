@@ -1,0 +1,271 @@
+{
+  "schema_version": "evidence_symbol_records_completion_contract.v1",
+  "original_bead": "bd-oai.3",
+  "completion_debt_bead": "bd-oai.3.1",
+  "trace_id": "bd-oai-3-1-evidence-symbol-records-completion-v1",
+  "generated_utc": "2026-05-12T12:30:00Z",
+  "purpose": "Completion-debt contract for dual-mode evidence symbol records with RaptorQ-inspired redundancy. It binds the fixed-size evidence record format, systematic source symbols, repair-symbol decode path, hash-chain integrity, e2e repair-chain evidence, and structured checker telemetry to the missing unit, e2e, and telemetry audit items.",
+  "source_artifacts": {
+    "evidence_impl": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+    "evidence_format_doc": "crates/frankenlibc-membrane/src/runtime_math/evidence_symbol_record_format.md",
+    "evidence_decoder": "crates/frankenlibc-harness/src/evidence_decode.rs",
+    "dual_mode_e2e": "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs",
+    "completion_contract": "tests/conformance/evidence_symbol_records_completion_contract.v1.json",
+    "completion_checker": "scripts/check_evidence_symbol_records_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/evidence_symbol_records_completion_contract_test.rs"
+  },
+  "source_anchors": {
+    "evidence_impl": [
+      "pub const EVIDENCE_SYMBOL_SIZE_T: usize = 128;",
+      "pub const EVIDENCE_RECORD_SIZE: usize = 256;",
+      "pub const FLAG_SYSTEMATIC: u16 = 1 << 0;",
+      "pub const FLAG_REPAIR: u16 = 1 << 1;",
+      "pub struct EvidenceSymbolRecord",
+      "pub fn verify_payload_hash_v1(&self) -> bool",
+      "pub fn verify_chain_hash_v1(&self, prev_chain_hash: u64) -> bool",
+      "pub fn build_v1(",
+      "pub fn validate_basic(&self) -> Result<(), EvidenceRecordError>",
+      "pub fn decode_decision_payload_v1(",
+      "pub fn loss_fraction_max_ppm_v1(k_source: u16, r_repair: u16) -> u32",
+      "pub fn derive_repair_schedule_v1(",
+      "pub struct SystematicEvidenceLog",
+      "pub const K_MAX: u16 = 256;",
+      "pub fn record_decision(",
+      "pub fn snapshot_sorted(&self) -> Vec<EvidenceSymbolRecord>",
+      "fn decision_card_journal_replays_after_restart()"
+    ],
+    "evidence_format_doc": [
+      "# EvidenceSymbolRecord Format (v1)",
+      "v1 is fixed at **256 bytes**",
+      "Header: 64 bytes",
+      "Payload: `T = 128` bytes",
+      "Auth tag: 32 bytes",
+      "epoch_id",
+      "K_source",
+      "repair symbol count",
+      "payload_hash",
+      "chain_hash"
+    ],
+    "evidence_decoder": [
+      "pub fn decode_evidence_file(",
+      "pub struct DecodeReport",
+      "pub struct EpochDecodeProof",
+      "pub enum DecodeStatus",
+      "structural_errors: 0,",
+      "payload_hash_mismatches: 0,",
+      "chain_hash_mismatches: 0,",
+      "verified_repairs: 0,",
+      "let sched = derive_repair_schedule_v1(proof.seed, proof.k_source, esi);",
+      "fn peel_decode(",
+      "fn decode_epoch_success_when_no_loss_and_hashes_ok()",
+      "fn decode_epoch_recovers_missing_systematic_but_chain_reports_gaps()",
+      "fn loss_simulation_drop_within_r_recovers_all_sources()",
+      "fn corruption_bitflip_is_detected_and_corrupt_record_is_ignored()"
+    ],
+    "dual_mode_e2e": [
+      "fn e2e_hardened_repair_evidence_chain_is_complete_and_gapless()",
+      "fn e2e_hash_linked_repair_chain_verifies_record_integrity()",
+      "record.verify_payload_hash_v1()",
+      "record.verify_chain_hash_v1(prev_chain_hash)",
+      "fn e2e_framework_decision_cards_export_contains_all_decisions()"
+    ],
+    "completion_contract": [
+      "evidence_symbol_records_completion_contract.v1",
+      "bd-oai-3-1-evidence-symbol-records-completion-v1",
+      "evidence_symbol_record_contract",
+      "sample_decode_proofs",
+      "telemetry_contract"
+    ],
+    "completion_checker": [
+      "evidence_symbol_records_source_gate",
+      "evidence_symbol_records_layout_gate",
+      "evidence_symbol_records_redundancy_gate",
+      "evidence_symbol_records_sample_gate",
+      "evidence_symbol_records_telemetry_gate",
+      "evidence_symbol_records_completion_contract_validated"
+    ],
+    "completion_harness": [
+      "manifest_binds_unit_e2e_and_telemetry_items",
+      "source_anchors_cover_record_decoder_and_e2e_surfaces",
+      "sample_decode_proofs_model_redundancy_and_corruption_paths",
+      "checker_accepts_contract_and_emits_telemetry",
+      "checker_rejects_record_size_drift",
+      "checker_rejects_missing_source_anchor"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "evidence": [
+        "EvidenceSymbolRecord layout/build/validate/hash tests",
+        "SystematicEvidenceLog unit tests",
+        "evidence decoder unit tests",
+        "completion harness fail-closed tests"
+      ],
+      "required_test_refs": [
+        "evidence_symbol_record_v1_roundtrip",
+        "decision_payload_decoder_roundtrips_loss_and_rejects_bad_versions",
+        "decision_card_journal_replays_after_restart",
+        "decode_epoch_success_when_no_loss_and_hashes_ok",
+        "decode_epoch_counts_payload_hash_mismatch_on_tamper",
+        "corruption_bitflip_is_detected_and_corrupt_record_is_ignored",
+        "manifest_binds_unit_e2e_and_telemetry_items",
+        "checker_rejects_record_size_drift"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "evidence": [
+        "dual-mode repair evidence chain e2e",
+        "hash-linked record integrity e2e",
+        "RaptorQ repair schedule decode-loss simulation",
+        "completion checker report/log e2e"
+      ],
+      "required_test_refs": [
+        "e2e_hardened_repair_evidence_chain_is_complete_and_gapless",
+        "e2e_hash_linked_repair_chain_verifies_record_integrity",
+        "e2e_framework_decision_cards_export_contains_all_decisions",
+        "decode_epoch_recovers_missing_systematic_but_chain_reports_gaps",
+        "loss_simulation_drop_within_r_recovers_all_sources",
+        "checker_accepts_contract_and_emits_telemetry"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "evidence": [
+        "target/conformance/evidence_symbol_records_completion_contract.report.json",
+        "target/conformance/evidence_symbol_records_completion_contract.log.jsonl"
+      ],
+      "required_test_refs": [
+        "checker_accepts_contract_and_emits_telemetry"
+      ]
+    }
+  ],
+  "evidence_symbol_record_contract": {
+    "record_magic": "EVR1",
+    "payload_magic": "EVP1",
+    "record_size_bytes": 256,
+    "header_size_bytes": 64,
+    "payload_size_t_bytes": 128,
+    "auth_tag_size_bytes": 32,
+    "reserved_size_bytes": 32,
+    "max_k_source": 256,
+    "systematic_flag_bit": 0,
+    "repair_flag_bit": 1,
+    "auth_tag_flag_bit": 2,
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_integrity_checks": [
+      "validate_basic",
+      "verify_payload_hash_v1",
+      "verify_chain_hash_v1"
+    ],
+    "required_decoder_statuses": [
+      "Success",
+      "Partial",
+      "Failed"
+    ],
+    "required_record_fields": [
+      "epoch_id",
+      "seqno",
+      "seed",
+      "family",
+      "mode",
+      "action",
+      "profile",
+      "esi",
+      "k_source",
+      "r_repair",
+      "symbol_size_t",
+      "payload_hash",
+      "chain_hash"
+    ],
+    "raptorq_redundancy_model": {
+      "repair_schedule": "deterministic_xor_repair_schedule_v1",
+      "repair_symbols_required": true,
+      "repair_esi_starts_at_k_source": true,
+      "loss_fraction_ppm_function": "loss_fraction_max_ppm_v1",
+      "decode_algorithm": "peeling_decode",
+      "corrupt_payloads_ignored": true
+    }
+  },
+  "sample_decode_proofs": [
+    {
+      "label": "clean_full_epoch",
+      "epoch_id": 1229782938247303441,
+      "k_source": 16,
+      "r_repair": 64,
+      "records_total": 80,
+      "systematic_records": 16,
+      "repair_records": 64,
+      "decoded_systematic": 16,
+      "missing_systematic": 0,
+      "payload_hash_mismatches": 0,
+      "chain_hash_mismatches": 0,
+      "repair_payload_mismatches": 0,
+      "status": "Success"
+    },
+    {
+      "label": "systematic_loss_recovered_by_repairs",
+      "epoch_id": 11072869122414935809,
+      "k_source": 16,
+      "r_repair": 96,
+      "records_total": 109,
+      "systematic_records": 13,
+      "repair_records": 96,
+      "decoded_systematic": 16,
+      "missing_systematic": 0,
+      "payload_hash_mismatches": 0,
+      "chain_hash_mismatches": 3,
+      "repair_payload_mismatches": 0,
+      "status": "Partial"
+    },
+    {
+      "label": "payload_corruption_detected",
+      "epoch_id": 14627333968688430876,
+      "k_source": 8,
+      "r_repair": 32,
+      "records_total": 40,
+      "systematic_records": 8,
+      "repair_records": 32,
+      "decoded_systematic": 7,
+      "missing_systematic": 1,
+      "payload_hash_mismatches": 1,
+      "chain_hash_mismatches": 1,
+      "repair_payload_mismatches": 0,
+      "status": "Partial"
+    }
+  ],
+  "telemetry_contract": {
+    "report_env": "FRANKENLIBC_EVIDENCE_SYMBOL_RECORDS_COMPLETION_REPORT",
+    "log_env": "FRANKENLIBC_EVIDENCE_SYMBOL_RECORDS_COMPLETION_LOG",
+    "required_events": [
+      "evidence_symbol_records_source_gate",
+      "evidence_symbol_records_layout_gate",
+      "evidence_symbol_records_redundancy_gate",
+      "evidence_symbol_records_sample_gate",
+      "evidence_symbol_records_telemetry_gate",
+      "evidence_symbol_records_completion_contract_validated"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "status",
+      "artifact_refs",
+      "bead_id",
+      "source_commit"
+    ]
+  },
+  "validation_commands": [
+    "bash scripts/check_evidence_symbol_records_completion_contract.sh",
+    "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,TMPDIR CARGO_TARGET_DIR=/data/tmp/frankenlibc-rch-bd-oai3-1 TMPDIR=/data/tmp/frankenlibc-bd-oai3-1-tmp rch exec -- cargo test -p frankenlibc-harness --test evidence_symbol_records_completion_contract_test -- --nocapture",
+    "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,TMPDIR CARGO_TARGET_DIR=/data/tmp/frankenlibc-rch-bd-oai3-1 TMPDIR=/data/tmp/frankenlibc-bd-oai3-1-tmp rch exec -- cargo test -p frankenlibc-membrane --test runtime_math_dual_mode_e2e_test e2e_hash_linked_repair_chain_verifies_record_integrity -- --nocapture",
+    "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,TMPDIR CARGO_TARGET_DIR=/data/tmp/frankenlibc-rch-bd-oai3-1 TMPDIR=/data/tmp/frankenlibc-bd-oai3-1-tmp rch exec -- cargo test -p frankenlibc-harness evidence_decode --lib -- --nocapture"
+  ]
+}
