@@ -3,6 +3,21 @@
   "artifact_id": "architecture-todo-reconciliation-2026-05-06",
   "source_ledger": "docs/architecture_investigation_todo.md",
   "source_ledger_last_updated": "2026-02-13",
+  "source_ledger_policy": {
+    "status": "archived_historical_snapshot",
+    "archive_notice_required_tokens": [
+      "Archived historical investigation ledger",
+      "do not treat unchecked rows below as live backlog",
+      "Live tracker truth is `br ready --no-db --json`",
+      "tests/conformance/architecture_ledger_live_evidence_completion_contract.v1.json"
+    ],
+    "live_truth_artifacts": [
+      ".beads/issues.jsonl",
+      "tests/conformance/architecture_ledger_live_evidence_completion_contract.v1.json",
+      "scripts/check_architecture_ledger_live_evidence_completion_contract.sh"
+    ],
+    "row_status_policy": "Rows remain a 2026-02-13 investigation snapshot; live status is resolved through br plus the bd-0agsk.19 live-evidence closeout contract."
+  },
   "generated_by_bead": "bd-0agsk.1",
   "generated_at_utc": "2026-05-06T11:39:00Z",
   "claim_status": "report_only",

@@ -2,6 +2,12 @@
 
 Last updated: 2026-02-13
 
+> Archived historical investigation ledger. The checkbox state below is preserved
+> as the 2026-02-13 investigation snapshot; do not treat unchecked rows below as live backlog.
+> Live tracker truth is `br ready --no-db --json`,
+> `br list --status open --no-db --json`, and
+> `tests/conformance/architecture_ledger_live_evidence_completion_contract.v1.json`.
+
 This ledger tracks investigation follow-ups and migration work discovered during deep codebase architecture analysis.
 
 Status keys:

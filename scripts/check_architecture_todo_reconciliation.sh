@@ -146,6 +146,33 @@ promotion = artifact.get("promotion_policy", {})
 if promotion.get("replacement_level_change") != "forbidden":
     fail("promotion_policy", "replacement_level_change must be forbidden")
 
+source_ledger_policy = artifact.get("source_ledger_policy")
+if not isinstance(source_ledger_policy, dict):
+    fail("source_ledger_policy", "source_ledger_policy must be an object")
+if source_ledger_policy.get("status") != "archived_historical_snapshot":
+    fail("source_ledger_policy_status", "source_ledger_policy.status must be archived_historical_snapshot")
+ledger_full_text = "\n".join(ledger_text)
+archive_tokens = source_ledger_policy.get("archive_notice_required_tokens")
+if not isinstance(archive_tokens, list) or not archive_tokens:
+    fail("source_ledger_archive_tokens", "archive_notice_required_tokens must be a non-empty array")
+for token in archive_tokens or []:
+    if not isinstance(token, str) or not token:
+        fail("source_ledger_archive_token", "archive notice tokens must be non-empty strings")
+    elif token not in ledger_full_text:
+        fail("source_ledger_archive_notice_missing", f"ledger archive notice missing token: {token}")
+live_truth_artifacts = source_ledger_policy.get("live_truth_artifacts")
+if not isinstance(live_truth_artifacts, list) or not live_truth_artifacts:
+    fail("source_ledger_live_truth_artifacts", "live_truth_artifacts must be a non-empty array")
+for path_text in live_truth_artifacts or []:
+    if not isinstance(path_text, str) or not path_text:
+        fail("source_ledger_live_truth_artifact", "live_truth_artifacts entries must be non-empty strings")
+        continue
+    path = pathlib.Path(path_text)
+    if path.is_absolute() or ".." in path.parts:
+        fail("source_ledger_live_truth_artifact_path", f"live truth artifact must stay under workspace root: {path_text}")
+    if not (root_path / path).exists():
+        fail("source_ledger_live_truth_artifact_missing", f"live truth artifact missing: {path_text}")
+
 row_re = re.compile(r"^\s*-\s*\[(?P<status>[x~ !])\]\s+`(?P<id>(?:TODO|NEXT)-[0-9A-Za-z]+)`")
 ledger_rows = {}
 for line_number, raw_line in enumerate(ledger_text, start=1):
@@ -443,6 +470,7 @@ checks = {
     "classification_counts_consistent": "pass",
     "target_beads_known": "pass",
     "promotion_policy_report_only": "pass",
+    "source_ledger_archived": "pass",
     "completion_debt_evidence_bound": "pass",
     "close_reason_wording_resolution_bound": "pass",
 }
@@ -490,6 +518,7 @@ report = {
         "mapped_rows": len(mapped_ids),
         "new_bead_count": len(new_bead_ids),
         "scan_finding_count": len(artifact.get("scan_findings", [])),
+        "source_ledger_policy": source_ledger_policy.get("status"),
     },
     "close_reason_wording_resolution": {
         "status": wording.get("status"),

@@ -135,6 +135,19 @@ fn artifact_has_required_report_only_shape() {
         artifact["promotion_policy"]["replacement_level_change"].as_str(),
         Some("forbidden")
     );
+    assert_eq!(
+        artifact["source_ledger_policy"]["status"].as_str(),
+        Some("archived_historical_snapshot")
+    );
+    let archive_tokens = artifact["source_ledger_policy"]["archive_notice_required_tokens"]
+        .as_array()
+        .expect("archive notice tokens");
+    assert!(
+        archive_tokens
+            .iter()
+            .any(|token| token.as_str() == Some("Archived historical investigation ledger")),
+        "archive notice must require the historical-ledger marker"
+    );
 
     let counts = &artifact["ledger_counts"];
     let row_count = counts["row_count"].as_u64().expect("row_count");
@@ -346,6 +359,7 @@ fn checker_passes_and_emits_report_and_log() {
         "classification_counts_consistent",
         "target_beads_known",
         "promotion_policy_report_only",
+        "source_ledger_archived",
         "completion_debt_evidence_bound",
         "close_reason_wording_resolution_bound",
     ] {
@@ -419,6 +433,29 @@ fn checker_fails_on_row_count_drift() {
         stderr.contains("row_count_mismatch") || stderr.contains("row_count_arithmetic"),
         "unexpected stderr: {stderr}"
     );
+}
+
+#[test]
+fn checker_fails_when_archive_notice_is_not_in_ledger() {
+    let _guard = lock_script();
+    let root = workspace_root();
+    let artifact_path = root.join("tests/conformance/architecture_todo_reconciliation.v1.json");
+    let mut artifact = load_json(&artifact_path);
+    artifact["source_ledger_policy"]["archive_notice_required_tokens"] =
+        serde_json::json!(["definitely missing archive notice token"]);
+    let mutation_path = write_mutation(&root, "missing_archive_notice", &artifact);
+
+    let output = run_checker(&root, Some(&mutation_path));
+    assert!(
+        !output.status.success(),
+        "checker should fail when the archive notice token is missing"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("source_ledger_archive_notice_missing"),
+        "unexpected stderr: {stderr}"
+    );
+    assert_failure_outputs(&root, "source_ledger_archive_notice_missing");
 }
 
 #[test]
