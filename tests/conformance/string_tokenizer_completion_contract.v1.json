@@ -1,0 +1,124 @@
+{
+  "schema": "string_tokenizer_completion_contract.v1",
+  "manifest_id": "bd-5if6f.1-string-tokenizer-conformance-contract",
+  "bead": "bd-5if6f.1",
+  "original_bead": "bd-5if6f",
+  "title": "String tokenizer bounded delimiter scan conformance completion contract",
+  "completion_debt_evidence": {
+    "bead": "bd-5if6f.1",
+    "original_bead": "bd-5if6f",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "audit_score": 470,
+    "next_audit_score_threshold": 800,
+    "missing_items": [
+      "tests.conformance.primary"
+    ],
+    "missing_item_contracts": {
+      "tests.conformance.primary": {
+        "type": "conformance",
+        "description": "Bounded strtok/strtok_r/strsep delimiter scans must be bound to passing ABI, differential, and fixture-harness conformance proof."
+      }
+    },
+    "test_sources": {
+      "abi_regression": "crates/frankenlibc-abi/tests/string_abi_test.rs",
+      "differential": "crates/frankenlibc-abi/tests/conformance_diff_string_mut.rs",
+      "fixture_harness": "crates/frankenlibc-harness/tests/string_strtok_conformance_test.rs",
+      "fixture": "tests/conformance/fixtures/string_strtok.json"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-abi/src/string_abi.rs:24",
+      "crates/frankenlibc-abi/src/string_abi.rs:2745",
+      "crates/frankenlibc-abi/src/string_abi.rs:2815",
+      "crates/frankenlibc-abi/src/string_abi.rs:2823",
+      "crates/frankenlibc-abi/src/string_abi.rs:2885",
+      "crates/frankenlibc-abi/src/string_abi.rs:2967",
+      "crates/frankenlibc-abi/src/string_abi.rs:2987",
+      "crates/frankenlibc-abi/src/string_abi.rs:4426",
+      "crates/frankenlibc-abi/src/string_abi.rs:4474",
+      "crates/frankenlibc-abi/src/string_abi.rs:4486",
+      "crates/frankenlibc-abi/tests/string_abi_test.rs:711",
+      "crates/frankenlibc-abi/tests/string_abi_test.rs:725",
+      "crates/frankenlibc-abi/tests/string_abi_test.rs:755",
+      "crates/frankenlibc-abi/tests/conformance_diff_string_mut.rs:693",
+      "crates/frankenlibc-harness/tests/string_strtok_conformance_test.rs:241"
+    ],
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "next_audit_score_threshold": 800,
+      "required_symbols": [
+        "strtok",
+        "strtok_r",
+        "strsep"
+      ],
+      "required_scenarios": [
+        "strtok rejects a tracked unterminated delimiter without mutating the source buffer",
+        "strtok_r rejects a tracked unterminated delimiter and leaves saveptr null",
+        "strsep rejects a tracked unterminated delimiter and preserves stringp",
+        "strtok_r differential cases compare token streams against host libc",
+        "string_strtok fixtures execute through the isolated conformance harness in strict and hardened modes"
+      ],
+      "required_test_refs": [
+        {
+          "source": "abi_regression",
+          "name": "strtok_rejects_tracked_unterminated_delimiter"
+        },
+        {
+          "source": "abi_regression",
+          "name": "strtok_r_rejects_tracked_unterminated_delimiter"
+        },
+        {
+          "source": "abi_regression",
+          "name": "strsep_rejects_tracked_unterminated_delimiter"
+        },
+        {
+          "source": "differential",
+          "name": "diff_strtok_r_cases"
+        },
+        {
+          "source": "fixture_harness",
+          "name": "string_strtok_fixture_executes_via_isolated_harness"
+        }
+      ],
+      "required_fixture_cases": [
+        "strtok_basic_first",
+        "strtok_comma_delim",
+        "strtok_leading_delims",
+        "strtok_no_delim_found",
+        "strtok_all_delims",
+        "strtok_r_basic_first",
+        "strtok_r_comma_delim",
+        "strtok_r_empty"
+      ],
+      "required_commands": [
+        "cargo test -p frankenlibc-abi --test string_abi_test tracked_unterminated_delimiter -- --nocapture --test-threads=1",
+        "cargo test -p frankenlibc-abi --test conformance_diff_string_mut diff_strtok_r_cases -- --nocapture --test-threads=1",
+        "cargo test -p frankenlibc-harness --test string_strtok_conformance_test -- --nocapture",
+        "cargo test -p frankenlibc-harness --test string_tokenizer_completion_contract_test -- --nocapture"
+      ],
+      "required_report_fields": [
+        "schema",
+        "bead",
+        "original_bead",
+        "status",
+        "source_commit",
+        "missing_items_bound",
+        "required_symbols",
+        "required_scenarios",
+        "required_test_refs",
+        "required_fixture_cases",
+        "implementation_refs",
+        "artifact_refs",
+        "failure_signature"
+      ],
+      "required_events": [
+        "string_tokenizer_completion_contract_validated",
+        "string_tokenizer_completion_contract_failed"
+      ]
+    },
+    "artifact_refs": [
+      "target/conformance/string_tokenizer_completion_contract.report.json",
+      "target/conformance/string_tokenizer_completion_contract.log.jsonl"
+    ],
+    "failure_signature": "string_tokenizer_unbounded_delimiter_scan_or_missing_conformance_evidence"
+  }
+}
