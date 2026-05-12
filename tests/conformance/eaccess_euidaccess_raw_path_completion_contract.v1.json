@@ -1,0 +1,160 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "eaccess-euidaccess-raw-path-completion-contract",
+  "bead": "bd-2vv.26",
+  "completion_debt_bead": "bd-2vv.26.1",
+  "generated_utc": "2026-05-12T05:45:00Z",
+  "purpose": "Completion-debt contract for the eaccess/euidaccess raw-path promotion. This binds the ABI implementation, core access-mode validator, raw syscall veneer, support matrix status, and existing unit tests to the audit-required unit evidence item.",
+  "source_artifacts": [
+    {
+      "artifact_id": "abi_unistd_raw_path",
+      "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "required_needles": [
+        "pub unsafe extern \"C\" fn eaccess",
+        "faccessat(libc::AT_FDCWD, path, mode, libc::AT_EACCESS)",
+        "pub unsafe extern \"C\" fn euidaccess",
+        "unsafe { eaccess(path, mode) }"
+      ],
+      "forbidden_needles": [
+        "RTLD_NEXT, c\"eaccess\"",
+        "RTLD_NEXT, c\"euidaccess\""
+      ]
+    },
+    {
+      "artifact_id": "abi_unistd_unit_tests",
+      "path": "crates/frankenlibc-abi/tests/unistd_abi_test.rs",
+      "required_needles": [
+        "euidaccess_null_path_sets_efault",
+        "euidaccess_existing_path_matches_eaccess",
+        "euidaccess_missing_path_fails_with_enoent",
+        "faccessat_at_eaccess_checks_existence"
+      ]
+    },
+    {
+      "artifact_id": "core_unistd_validator",
+      "path": "crates/frankenlibc-core/src/unistd/mod.rs",
+      "required_needles": [
+        "pub fn valid_access_mode",
+        "valid_access_mode_f_ok",
+        "valid_access_mode_single_bits",
+        "valid_access_mode_combinations",
+        "valid_access_mode_rejects_invalid"
+      ]
+    },
+    {
+      "artifact_id": "core_syscall_veneer_tests",
+      "path": "crates/frankenlibc-core/tests/syscall_veneer_test.rs",
+      "required_needles": [
+        "sys_faccessat2",
+        "AT_EACCESS",
+        "faccessat2_at_eaccess_checks_current_directory"
+      ]
+    },
+    {
+      "artifact_id": "support_matrix_status",
+      "path": "tests/conformance/support_matrix_maintenance_report.v1.json",
+      "required_needles": [
+        "\"eaccess\": \"RawSyscall\"",
+        "\"euidaccess\": \"RawSyscall\""
+      ]
+    }
+  ],
+  "raw_path_expectations": {
+    "symbols": [
+      "eaccess",
+      "euidaccess"
+    ],
+    "expected_support_status": "RawSyscall",
+    "eaccess_route": "faccessat(AT_FDCWD, path, mode, AT_EACCESS)",
+    "euidaccess_route": "eaccess(path, mode)",
+    "forbidden_runtime_delegation": [
+      "dlsym(RTLD_NEXT, eaccess)",
+      "dlsym(RTLD_NEXT, euidaccess)"
+    ],
+    "errno_contract": {
+      "null_path": "EFAULT",
+      "missing_path": "ENOENT",
+      "existing_path": "success"
+    }
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-2vv.26.1",
+    "original_bead": "bd-2vv.26",
+    "next_audit_score_threshold": 800,
+    "missing_items_closed": [
+      "tests.unit.primary"
+    ],
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "source": "abi_unistd_unit_tests",
+          "name": "euidaccess_null_path_sets_efault"
+        },
+        {
+          "source": "abi_unistd_unit_tests",
+          "name": "euidaccess_existing_path_matches_eaccess"
+        },
+        {
+          "source": "abi_unistd_unit_tests",
+          "name": "euidaccess_missing_path_fails_with_enoent"
+        },
+        {
+          "source": "abi_unistd_unit_tests",
+          "name": "faccessat_at_eaccess_checks_existence"
+        },
+        {
+          "source": "core_unistd_validator",
+          "name": "valid_access_mode_f_ok"
+        },
+        {
+          "source": "core_unistd_validator",
+          "name": "valid_access_mode_single_bits"
+        },
+        {
+          "source": "core_unistd_validator",
+          "name": "valid_access_mode_combinations"
+        },
+        {
+          "source": "core_unistd_validator",
+          "name": "valid_access_mode_rejects_invalid"
+        },
+        {
+          "source": "core_syscall_veneer_tests",
+          "name": "faccessat2_at_eaccess_checks_current_directory"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_accepts_contract_and_emits_report"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_unit_test_ref"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-abi --test unistd_abi_test euidaccess -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test unistd_abi_test faccessat_at_eaccess_checks_existence -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-core valid_access_mode -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-core --test syscall_veneer_test faccessat2_at_eaccess_checks_current_directory -- --nocapture"
+      ]
+    }
+  },
+  "report_contract": {
+    "report_env": "FRANKENLIBC_EACCESS_EUIDACCESS_REPORT",
+    "log_env": "FRANKENLIBC_EACCESS_EUIDACCESS_LOG",
+    "required_events": [
+      "eaccess_euidaccess_source",
+      "eaccess_euidaccess_unit_binding",
+      "eaccess_euidaccess_completion_summary"
+    ],
+    "required_report_fields": [
+      "status",
+      "bead_id",
+      "completion_debt_bead",
+      "source_count",
+      "missing_items_closed",
+      "test_refs",
+      "errors"
+    ]
+  }
+}
