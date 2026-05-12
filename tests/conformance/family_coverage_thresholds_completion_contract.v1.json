@@ -1,0 +1,482 @@
+{
+  "schema_version": "family_coverage_thresholds_completion_contract.v1",
+  "bead": "bd-bp8fl.4.3",
+  "completion_debt_bead": "bd-bp8fl.4.3.1",
+  "description": "Completion-debt evidence binding for per-family fixture coverage thresholds: generator input validation, canonical threshold artifact, source gate, harness coverage, and structured telemetry.",
+  "next_audit_score_threshold": 800,
+  "audit": {
+    "pass_id": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.4.3/scorecard.md",
+    "missing_items": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ]
+  },
+  "source_paths": {
+    "generator": "scripts/generate_family_coverage_thresholds.py",
+    "source_gate": "scripts/check_family_coverage_thresholds.sh",
+    "canonical_artifact": "tests/conformance/family_coverage_thresholds.v1.json",
+    "symbol_fixture_coverage": "tests/conformance/symbol_fixture_coverage.v1.json",
+    "per_symbol_fixture_tests": "tests/conformance/per_symbol_fixture_tests.v1.json",
+    "coverage_snapshot": "tests/conformance/conformance_coverage_snapshot.v1.json",
+    "coverage_baseline": "tests/conformance/conformance_coverage_baseline.v1.json",
+    "fixture_coverage_prioritizer": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "existing_harness": "crates/frankenlibc-harness/tests/family_coverage_thresholds_test.rs",
+    "completion_contract": "tests/conformance/family_coverage_thresholds_completion_contract.v1.json",
+    "completion_checker": "scripts/check_family_coverage_thresholds_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/family_coverage_thresholds_completion_contract_test.rs"
+  },
+  "implementation_refs": [
+    {
+      "kind": "generator_log_contract",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 24,
+      "anchor": "REQUIRED_LOG_FIELDS"
+    },
+    {
+      "kind": "generator_input_paths",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 37,
+      "anchor": "INPUT_PATHS"
+    },
+    {
+      "kind": "generator_input_error",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 61,
+      "anchor": "class ThresholdInputError"
+    },
+    {
+      "kind": "generator_campaign_index",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 128,
+      "anchor": "def _campaign_index"
+    },
+    {
+      "kind": "generator_stale_symbol_universe",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 226,
+      "anchor": "stale symbol universe totals"
+    },
+    {
+      "kind": "generator_threshold_policy",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 263,
+      "anchor": "def _thresholds_for"
+    },
+    {
+      "kind": "generator_family_record",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 316,
+      "anchor": "def _family_record"
+    },
+    {
+      "kind": "generator_build_records",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 499,
+      "anchor": "def build_from_data"
+    },
+    {
+      "kind": "generator_required_log_fields_artifact",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 564,
+      "anchor": "\"required_log_fields\""
+    },
+    {
+      "kind": "generator_coverage_model",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 565,
+      "anchor": "\"coverage_model\""
+    },
+    {
+      "kind": "generator_threshold_policy_artifact",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 577,
+      "anchor": "\"threshold_policy\""
+    },
+    {
+      "kind": "generator_summary",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 589,
+      "anchor": "\"summary\""
+    },
+    {
+      "kind": "generator_threshold_records",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 605,
+      "anchor": "\"threshold_records\""
+    },
+    {
+      "kind": "generator_gap_rows",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 606,
+      "anchor": "\"gaps_requiring_fixture_beads\""
+    },
+    {
+      "kind": "generator_self_test",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 762,
+      "anchor": "def self_test"
+    },
+    {
+      "kind": "generator_emit_logs",
+      "path": "scripts/generate_family_coverage_thresholds.py",
+      "line": 838,
+      "anchor": "if args.emit_logs"
+    },
+    {
+      "kind": "source_gate_regenerate",
+      "path": "scripts/check_family_coverage_thresholds.sh",
+      "line": 22,
+      "anchor": "python3 \"${GEN}\" --output \"${REGENERATED}\""
+    },
+    {
+      "kind": "source_gate_required_schema",
+      "path": "scripts/check_family_coverage_thresholds.sh",
+      "line": 42,
+      "anchor": "required_top"
+    },
+    {
+      "kind": "source_gate_record_fields",
+      "path": "scripts/check_family_coverage_thresholds.sh",
+      "line": 72,
+      "anchor": "required_record"
+    },
+    {
+      "kind": "source_gate_family_inventory",
+      "path": "scripts/check_family_coverage_thresholds.sh",
+      "line": 97,
+      "anchor": "expected_families"
+    },
+    {
+      "kind": "source_gate_gap_match",
+      "path": "scripts/check_family_coverage_thresholds.sh",
+      "line": 125,
+      "anchor": "gaps_requiring_fixture_beads"
+    },
+    {
+      "kind": "source_gate_log_fields",
+      "path": "scripts/check_family_coverage_thresholds.sh",
+      "line": 130,
+      "anchor": "required_logs"
+    },
+    {
+      "kind": "canonical_summary",
+      "path": "tests/conformance/family_coverage_thresholds.v1.json",
+      "line": 333,
+      "anchor": "\"summary\""
+    },
+    {
+      "kind": "canonical_purpose",
+      "path": "tests/conformance/family_coverage_thresholds.v1.json",
+      "line": 367,
+      "anchor": "Per-family fixture coverage thresholds for exported symbol families"
+    },
+    {
+      "kind": "canonical_threshold_records",
+      "path": "tests/conformance/family_coverage_thresholds.v1.json",
+      "line": 447,
+      "anchor": "\"threshold_records\""
+    },
+    {
+      "kind": "existing_harness_shape_counts",
+      "path": "crates/frankenlibc-harness/tests/family_coverage_thresholds_test.rs",
+      "line": 32,
+      "anchor": "fn artifact_shape_and_counts_are_consistent"
+    },
+    {
+      "kind": "existing_harness_family_inventory",
+      "path": "crates/frankenlibc-harness/tests/family_coverage_thresholds_test.rs",
+      "line": 90,
+      "anchor": "fn every_target_family_has_threshold_record"
+    },
+    {
+      "kind": "existing_harness_evidence_axes",
+      "path": "crates/frankenlibc-harness/tests/family_coverage_thresholds_test.rs",
+      "line": 114,
+      "anchor": "fn threshold_records_expose_required_evidence_axes"
+    },
+    {
+      "kind": "existing_harness_gap_match",
+      "path": "crates/frankenlibc-harness/tests/family_coverage_thresholds_test.rs",
+      "line": 175,
+      "anchor": "fn gaps_match_failing_threshold_records"
+    },
+    {
+      "kind": "existing_harness_generator_check",
+      "path": "crates/frankenlibc-harness/tests/family_coverage_thresholds_test.rs",
+      "line": 197,
+      "anchor": "fn generator_self_test_and_canonical_check_pass"
+    },
+    {
+      "kind": "existing_harness_shell_gate",
+      "path": "crates/frankenlibc-harness/tests/family_coverage_thresholds_test.rs",
+      "line": 232,
+      "anchor": "fn shell_gate_passes_and_emits_report"
+    },
+    {
+      "kind": "completion_checker",
+      "path": "scripts/check_family_coverage_thresholds_completion_contract.sh",
+      "line": 1,
+      "anchor": "family_coverage_thresholds_completion_contract"
+    },
+    {
+      "kind": "completion_harness",
+      "path": "crates/frankenlibc-harness/tests/family_coverage_thresholds_completion_contract_test.rs",
+      "line": 1,
+      "anchor": "bd-bp8fl.4.3.1"
+    }
+  ],
+  "source_anchors": {
+    "generator": [
+      "REQUIRED_LOG_FIELDS",
+      "INPUT_PATHS",
+      "class ThresholdInputError",
+      "def _campaign_index",
+      "stale symbol universe totals",
+      "def _thresholds_for",
+      "def _family_record",
+      "def build_from_data",
+      "\"required_log_fields\"",
+      "\"coverage_model\"",
+      "\"threshold_policy\"",
+      "\"threshold_records\"",
+      "\"gaps_requiring_fixture_beads\"",
+      "def self_test",
+      "if args.emit_logs"
+    ],
+    "source_gate": [
+      "python3 \"${GEN}\" --self-test",
+      "python3 \"${GEN}\" --emit-logs",
+      "required_top",
+      "required_record",
+      "expected_families",
+      "gaps_requiring_fixture_beads",
+      "required_logs",
+      "top_failed_families"
+    ],
+    "canonical_artifact": [
+      "\"schema_version\": \"v1\"",
+      "\"bead\": \"bd-bp8fl.4.3\"",
+      "\"threshold_policy\"",
+      "\"summary\"",
+      "\"threshold_records\"",
+      "\"gaps_requiring_fixture_beads\"",
+      "\"artifact_hash\""
+    ],
+    "existing_harness": [
+      "fn artifact_shape_and_counts_are_consistent",
+      "fn every_target_family_has_threshold_record",
+      "fn threshold_records_expose_required_evidence_axes",
+      "fn gaps_match_failing_threshold_records",
+      "fn generator_self_test_and_canonical_check_pass",
+      "fn shell_gate_passes_and_emits_report"
+    ],
+    "completion_checker": [
+      "EXPECTED_MISSING_ITEMS",
+      "validate_manifest",
+      "validate_threshold_artifact",
+      "validate_source_gate",
+      "family_coverage_thresholds_completion_summary"
+    ],
+    "completion_harness": [
+      "manifest_binds_unit_e2e_conformance_and_telemetry_items",
+      "checker_passes_and_emits_structured_report",
+      "checker_rejects_missing_conformance_binding"
+    ]
+  },
+  "threshold_artifact_contract": {
+    "expected_schema_version": "v1",
+    "expected_bead": "bd-bp8fl.4.3",
+    "expected_family_count": 40,
+    "expected_pass_count": 0,
+    "expected_fail_count": 40,
+    "expected_not_applicable_count": 0,
+    "expected_claim_gate_decision": "blocked",
+    "expected_target_total_symbols": 4119,
+    "expected_target_covered_symbols": 405,
+    "expected_target_uncovered_symbols": 3714,
+    "required_record_keys": [
+      "family_id",
+      "threshold_id",
+      "symbol_count",
+      "fixture_count",
+      "coverage",
+      "thresholds",
+      "mode_coverage",
+      "replacement_level_coverage",
+      "hard_parts_risk",
+      "user_workload_exposure",
+      "freshness_state",
+      "decision",
+      "failure_signature",
+      "artifact_refs"
+    ],
+    "required_coverage_keys": [
+      "target_coverage_pct",
+      "direct_coverage_pct",
+      "isolated_coverage_pct",
+      "strict_mode_coverage_pct",
+      "hardened_mode_coverage_pct",
+      "dual_mode_coverage_pct",
+      "l0_replacement_pct",
+      "l1_replacement_pct",
+      "l2_replacement_pct",
+      "l3_replacement_pct"
+    ],
+    "required_replacement_levels": [
+      "L0",
+      "L1",
+      "L2",
+      "L3"
+    ],
+    "required_log_fields": [
+      "trace_id",
+      "bead_id",
+      "family_id",
+      "threshold_id",
+      "expected_coverage",
+      "actual_coverage",
+      "decision",
+      "artifact_refs",
+      "source_commit",
+      "failure_signature"
+    ]
+  },
+  "completion_coverage": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "generator_input_error",
+        "generator_stale_symbol_universe",
+        "generator_threshold_policy",
+        "generator_self_test"
+      ],
+      "test_refs": [
+        {
+          "source": "existing_harness",
+          "name": "generator_self_test_and_canonical_check_pass"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_e2e_conformance_and_telemetry_items"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_conformance_binding"
+        }
+      ],
+      "validation_commands": [
+        "python3 scripts/generate_family_coverage_thresholds.py --self-test",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-BeigePeak-bd-bp8fl-4-3-1-family rch exec -- cargo test -p frankenlibc-harness --test family_coverage_thresholds_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "source_gate_regenerate",
+        "source_gate_required_schema",
+        "source_gate_family_inventory",
+        "source_gate_gap_match"
+      ],
+      "test_refs": [
+        {
+          "source": "existing_harness",
+          "name": "shell_gate_passes_and_emits_report"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_passes_and_emits_structured_report"
+        }
+      ],
+      "validation_commands": [
+        "bash scripts/check_family_coverage_thresholds.sh",
+        "bash scripts/check_family_coverage_thresholds_completion_contract.sh"
+      ]
+    },
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "canonical_summary",
+        "canonical_threshold_records",
+        "generator_build_records",
+        "generator_gap_rows",
+        "existing_harness_shape_counts",
+        "existing_harness_family_inventory",
+        "existing_harness_evidence_axes",
+        "existing_harness_gap_match"
+      ],
+      "test_refs": [
+        {
+          "source": "existing_harness",
+          "name": "artifact_shape_and_counts_are_consistent"
+        },
+        {
+          "source": "existing_harness",
+          "name": "every_target_family_has_threshold_record"
+        },
+        {
+          "source": "existing_harness",
+          "name": "threshold_records_expose_required_evidence_axes"
+        },
+        {
+          "source": "existing_harness",
+          "name": "gaps_match_failing_threshold_records"
+        }
+      ],
+      "validation_commands": [
+        "jq empty tests/conformance/family_coverage_thresholds.v1.json tests/conformance/family_coverage_thresholds_completion_contract.v1.json",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-BeigePeak-bd-bp8fl-4-3-1-source rch exec -- cargo test -p frankenlibc-harness --test family_coverage_thresholds_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "telemetry.primary",
+      "status": "covered",
+      "implementation_refs": [
+        "generator_log_contract",
+        "generator_required_log_fields_artifact",
+        "generator_emit_logs",
+        "source_gate_log_fields",
+        "completion_checker"
+      ],
+      "test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "checker_passes_and_emits_structured_report"
+        }
+      ],
+      "validation_commands": [
+        "bash -n scripts/check_family_coverage_thresholds_completion_contract.sh",
+        "CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-BeigePeak-bd-bp8fl-4-3-1-clippy rch exec -- cargo clippy -p frankenlibc-harness --test family_coverage_thresholds_completion_contract_test -- -D warnings"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "completion_report": "target/conformance/family_coverage_thresholds_completion_contract.report.json",
+    "completion_log": "target/conformance/family_coverage_thresholds_completion_contract.log.jsonl",
+    "source_report": "target/conformance/family_coverage_thresholds.report.json",
+    "source_log": "target/conformance/family_coverage_thresholds.log.jsonl",
+    "required_completion_events": [
+      "family_coverage_thresholds_completion_contract_validated",
+      "family_coverage_thresholds_artifact_validated",
+      "family_coverage_thresholds_source_gate_validated",
+      "family_coverage_thresholds_completion_summary"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "level",
+      "event",
+      "bead_id",
+      "runtime_mode",
+      "outcome",
+      "artifact_refs",
+      "source_commit",
+      "failure_signature"
+    ]
+  }
+}

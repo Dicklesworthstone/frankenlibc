@@ -1,5 +1,5 @@
 {
-  "artifact_hash": "bf65763adcf19ec2c9cc466154f2ccc43df8c3ece847cb482a992408615b2c17",
+  "artifact_hash": "6471f5a89906be5125299b75ff49eb55b4c5e208215277b9b5411c0231ad0f15",
   "bead": "bd-bp8fl.4.3",
   "coverage_model": {
     "direct_coverage_source": "symbol_fixture_coverage symbols with fixture_sources containing fixture_json",
@@ -187,7 +187,7 @@
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:19.15<threshold:90.0|direct:19.15<threshold:50.0|isolated:6.38<threshold:20.0|dual_mode:18.44<threshold:20.0",
+      "failure_signature": "coverage_threshold:target:19.15<threshold:90.0|direct:19.15<threshold:40.0|isolated:6.38<threshold:20.0|dual_mode:18.44<threshold:20.0",
       "family_id": "pthread_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
       "target_uncovered": 114,
@@ -203,7 +203,7 @@
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:27.27<threshold:90.0|direct:27.27<threshold:50.0|isolated:18.18<threshold:20.0",
+      "failure_signature": "coverage_threshold:target:27.27<threshold:90.0|direct:27.27<threshold:40.0|isolated:18.18<threshold:20.0",
       "family_id": "resolv_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
       "target_uncovered": 8,
@@ -283,7 +283,7 @@
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:23.02<threshold:90.0|direct:23.02<threshold:50.0|isolated:18.25<threshold:20.0|dual_mode:17.46<threshold:20.0",
+      "failure_signature": "coverage_threshold:target:23.02<threshold:85.0|direct:23.02<threshold:25.0",
       "family_id": "stdio_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
       "target_uncovered": 97,
@@ -340,16 +340,16 @@
   ],
   "input_digests": {
     "conformance_coverage_baseline": "0fa209fc51a8e89d30cdd88e420cfed07e941f6178e3b58938f34646efbefaa0",
-    "conformance_coverage_snapshot": "b6e8fbdca69502b31db48256d7df1f5718ffbbb8ba63a3dad1b3cbd28c72abf7",
-    "fixture_coverage_prioritizer": "2c922fd8e0650a6837cfd525a6a60ebe4a296cab5234f6df7e3c8e88c2739a67",
+    "conformance_coverage_snapshot": "e50e4039a226eb146017a22305eebc481aa03889725aa8fd7b7f89fc1e00a714",
+    "fixture_coverage_prioritizer": "6beb9e4a5902c88d40dde7b8149877ae075f89fb6b28180782f43de43d48fa2d",
     "hard_parts_e2e_failure_matrix": "d0a737d4a3f83545b68c83d497e1694383b0eb5706da3da646e2cbc1e678b2da",
     "hard_parts_truth_table": "2d237a85cb6525977851b314ebe1ef54480799f940b58baabd8f82c37b71fbed",
     "per_symbol_fixture_tests": "1bb376d24b8cf8e2e4374b674d08be162df8e37349a5d828d51830e59a6e6ecd",
-    "replacement_levels": "08b543d5ceb1c5d51959467145b2e661ee731e0a2ec073ae73c9b344b954e0c6",
+    "replacement_levels": "8887da6abc1f8b12cf57612992cb7dfc80a917f64950b83fe28df28d626b5c3b",
     "support_matrix": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d",
-    "symbol_fixture_coverage": "96919d7be221e59f176a9ff74a0d06a1e09c9532e4de86c2921dfea09385a847",
+    "symbol_fixture_coverage": "6211103403e9d2cd527fa7f3ea462218b82cb66cc260d43e7aae10d9e6dcec64",
     "user_workload_acceptance_matrix": "e1522428db6fb6f63c2a51cab24ec930cdcd52e8efdbe128794600d5e0336910",
-    "workload_matrix": "bd7a6bb698667ce9dc9a502ff18e1c99527e26742c990ebe1c7718afebe7ec0e"
+    "workload_matrix": "04f77e974c045a0016ffbe5abd7e602a94b44291c57084400751524acbc5b9ca"
   },
   "inputs": {
     "conformance_coverage_baseline": "tests/conformance/conformance_coverage_baseline.v1.json",
@@ -707,7 +707,7 @@
       "failure_signature": "coverage_threshold:target:71.43<threshold:90.0|isolated:0.0<threshold:20.0",
       "family_id": "dlfcn_abi",
       "fixture_count": {
-        "fixture_cases": 13,
+        "fixture_cases": 15,
         "fixture_file_refs": [
           "dlfcn_ops.json",
           "loader_edges.json"
@@ -775,17 +775,14 @@
       },
       "track": "rtld/dlfcn",
       "user_workload_exposure": {
-        "blocked_workload_count": 2,
+        "blocked_workload_count": 0,
         "prioritizer_rank": 8,
         "workload_domains": [
           "build_tools",
           "language_runtimes",
           "startup_linking"
         ],
-        "workload_ids": [
-          "wl-002",
-          "wl-004"
-        ]
+        "workload_ids": []
       }
     },
     {
@@ -1901,7 +1898,7 @@
       },
       "track": "locale",
       "user_workload_exposure": {
-        "blocked_workload_count": 2,
+        "blocked_workload_count": 0,
         "prioritizer_rank": 13,
         "workload_domains": [
           "language_runtimes",
@@ -1909,10 +1906,7 @@
           "package_manager",
           "shell_coreutils"
         ],
-        "workload_ids": [
-          "wl-002",
-          "wl-006"
-        ]
+        "workload_ids": []
       }
     },
     {
@@ -2439,7 +2433,7 @@
         "target_coverage_pct": 19.15
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:19.15<threshold:90.0|direct:19.15<threshold:50.0|isolated:6.38<threshold:20.0|dual_mode:18.44<threshold:20.0",
+      "failure_signature": "coverage_threshold:target:19.15<threshold:90.0|direct:19.15<threshold:40.0|isolated:6.38<threshold:20.0|dual_mode:18.44<threshold:20.0",
       "family_id": "pthread_abi",
       "fixture_count": {
         "fixture_cases": 88,
@@ -2510,27 +2504,22 @@
       },
       "threshold_id": "fct-pthread_abi-v1",
       "thresholds": {
-        "min_direct_coverage_pct": 50.0,
+        "min_direct_coverage_pct": 40.0,
         "min_dual_mode_coverage_pct": 20.0,
         "min_isolated_coverage_pct": 20.0,
         "min_target_coverage_pct": 90.0,
-        "reason": "base threshold: weak target families must reach 80% coverage; hard-parts family: higher direct, isolated, and dual-mode proof; high user-workload exposure; prioritizer risk score selected this family for first-wave attention"
+        "reason": "base threshold: weak target families must reach 80% coverage; hard-parts family: higher direct, isolated, and dual-mode proof; prioritizer risk score selected this family for first-wave attention"
       },
       "track": "threading",
       "user_workload_exposure": {
-        "blocked_workload_count": 4,
+        "blocked_workload_count": 0,
         "prioritizer_rank": 4,
         "workload_domains": [
           "language_runtimes",
           "performance_sensitive",
           "threaded_services"
         ],
-        "workload_ids": [
-          "wl-002",
-          "wl-003",
-          "wl-005",
-          "wl-010"
-        ]
+        "workload_ids": []
       }
     },
     {
@@ -2650,7 +2639,7 @@
         "target_coverage_pct": 27.27
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:27.27<threshold:90.0|direct:27.27<threshold:50.0|isolated:18.18<threshold:20.0",
+      "failure_signature": "coverage_threshold:target:27.27<threshold:90.0|direct:27.27<threshold:40.0|isolated:18.18<threshold:20.0",
       "family_id": "resolv_abi",
       "fixture_count": {
         "fixture_cases": 9,
@@ -2716,15 +2705,15 @@
       },
       "threshold_id": "fct-resolv_abi-v1",
       "thresholds": {
-        "min_direct_coverage_pct": 50.0,
+        "min_direct_coverage_pct": 40.0,
         "min_dual_mode_coverage_pct": 20.0,
         "min_isolated_coverage_pct": 20.0,
         "min_target_coverage_pct": 90.0,
-        "reason": "base threshold: weak target families must reach 80% coverage; hard-parts family: higher direct, isolated, and dual-mode proof; high user-workload exposure; prioritizer risk score selected this family for first-wave attention"
+        "reason": "base threshold: weak target families must reach 80% coverage; hard-parts family: higher direct, isolated, and dual-mode proof; prioritizer risk score selected this family for first-wave attention"
       },
       "track": "resolver",
       "user_workload_exposure": {
-        "blocked_workload_count": 4,
+        "blocked_workload_count": 0,
         "prioritizer_rank": 7,
         "workload_domains": [
           "language_runtimes",
@@ -2732,12 +2721,7 @@
           "resolver_nss",
           "threaded_services"
         ],
-        "workload_ids": [
-          "wl-002",
-          "wl-003",
-          "wl-004",
-          "wl-005"
-        ]
+        "workload_ids": []
       }
     },
     {
@@ -3611,7 +3595,7 @@
         "target_coverage_pct": 23.02
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:23.02<threshold:90.0|direct:23.02<threshold:50.0|isolated:18.25<threshold:20.0|dual_mode:17.46<threshold:20.0",
+      "failure_signature": "coverage_threshold:target:23.02<threshold:85.0|direct:23.02<threshold:25.0",
       "family_id": "stdio_abi",
       "fixture_count": {
         "fixture_cases": 347,
@@ -3677,15 +3661,15 @@
       },
       "threshold_id": "fct-stdio_abi-v1",
       "thresholds": {
-        "min_direct_coverage_pct": 50.0,
-        "min_dual_mode_coverage_pct": 20.0,
-        "min_isolated_coverage_pct": 20.0,
-        "min_target_coverage_pct": 90.0,
-        "reason": "base threshold: weak target families must reach 80% coverage; high user-workload exposure; prioritizer risk score selected this family for first-wave attention"
+        "min_direct_coverage_pct": 25.0,
+        "min_dual_mode_coverage_pct": 15.0,
+        "min_isolated_coverage_pct": 10.0,
+        "min_target_coverage_pct": 85.0,
+        "reason": "base threshold: weak target families must reach 80% coverage; prioritizer risk score selected this family for first-wave attention"
       },
       "track": "stdio",
       "user_workload_exposure": {
-        "blocked_workload_count": 7,
+        "blocked_workload_count": 0,
         "prioritizer_rank": 3,
         "workload_domains": [
           "build_tools",
@@ -3693,15 +3677,7 @@
           "shell_coreutils",
           "stdio_libio"
         ],
-        "workload_ids": [
-          "wl-001",
-          "wl-002",
-          "wl-003",
-          "wl-004",
-          "wl-006",
-          "wl-007",
-          "wl-009"
-        ]
+        "workload_ids": []
       }
     },
     {
