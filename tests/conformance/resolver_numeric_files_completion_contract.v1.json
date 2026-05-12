@@ -1,0 +1,318 @@
+{
+  "schema_version": "resolver_numeric_files_completion_contract.v1",
+  "bead": "bd-66s",
+  "completion_debt_bead": "bd-66s.1",
+  "description": "Completion-debt evidence binding for getaddrinfo/getnameinfo numeric and files-backend resolver behavior.",
+  "completion_debt_evidence": {
+    "bead": "bd-66s.1",
+    "original_bead": "bd-66s",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-66s/scorecard.md",
+    "next_audit_score_threshold": 800,
+    "artifacts": {
+      "core_resolver": "crates/frankenlibc-core/src/resolv/mod.rs",
+      "abi_resolver": "crates/frankenlibc-abi/src/resolv_abi.rs",
+      "abi_resolver_tests": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+      "resolver_fixture": "tests/conformance/fixtures/resolver.json",
+      "resolver_conformance": "crates/frankenlibc-harness/tests/resolver_conformance_test.rs",
+      "integration_fixture": "tests/integration/fixture_nss.c",
+      "c_fixture_spec": "tests/conformance/c_fixture_spec.json",
+      "c_fixture_suite_test": "crates/frankenlibc-harness/tests/c_fixture_suite_test.rs",
+      "hard_parts_manifest": "tests/conformance/resolver_nss_hard_parts.v1.json",
+      "hard_parts_gate": "scripts/check_resolver_nss_hard_parts.sh",
+      "completion_contract": "tests/conformance/resolver_numeric_files_completion_contract.v1.json",
+      "completion_gate": "scripts/check_resolver_numeric_files_completion_contract.sh",
+      "completion_harness": "crates/frankenlibc-harness/tests/resolver_numeric_files_completion_contract_test.rs"
+    },
+    "gates": {
+      "completion_contract": "scripts/check_resolver_numeric_files_completion_contract.sh",
+      "resolver_hard_parts": "scripts/check_resolver_nss_hard_parts.sh",
+      "c_fixture_suite": "scripts/check_c_fixture_suite.sh"
+    },
+    "test_sources": {
+      "core_resolver": "crates/frankenlibc-core/src/resolv/mod.rs",
+      "abi_resolver_tests": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+      "resolver_conformance": "crates/frankenlibc-harness/tests/resolver_conformance_test.rs",
+      "c_fixture_suite_test": "crates/frankenlibc-harness/tests/c_fixture_suite_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/resolver_numeric_files_completion_contract_test.rs"
+    },
+    "implementation_refs": [
+      "crates/frankenlibc-core/src/resolv/mod.rs:538",
+      "crates/frankenlibc-core/src/resolv/mod.rs:645",
+      "crates/frankenlibc-core/src/resolv/mod.rs:656",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1091",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1197",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1324",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1391",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1514",
+      "tests/conformance/fixtures/resolver.json:139",
+      "tests/conformance/fixtures/resolver.json:202",
+      "tests/integration/fixture_nss.c:103",
+      "tests/conformance/c_fixture_spec.json:182"
+    ],
+    "missing_item_bindings": [
+      {
+        "missing_item_id": "tests.unit.primary",
+        "evidence_section": "unit_primary"
+      },
+      {
+        "missing_item_id": "tests.e2e.primary",
+        "evidence_section": "e2e_primary"
+      },
+      {
+        "missing_item_id": "telemetry.primary",
+        "evidence_section": "telemetry_primary"
+      }
+    ],
+    "required_symbols": [
+      {
+        "symbol": "getaddrinfo",
+        "family": "resolver",
+        "evidence_kinds": [
+          "numeric_ipv4",
+          "numeric_ipv6",
+          "hosts_files_backend",
+          "freeaddrinfo_cleanup"
+        ],
+        "abi_ref": "crates/frankenlibc-abi/src/resolv_abi.rs:1091",
+        "core_refs": [
+          "crates/frankenlibc-core/src/resolv/mod.rs:538",
+          "crates/frankenlibc-core/src/resolv/mod.rs:645"
+        ],
+        "required_modes": [
+          "strict",
+          "hardened"
+        ],
+        "fixture_cases": [
+          "getaddrinfo_hosts_file_subset",
+          "getaddrinfo_hosts_file_subset_hardened",
+          "getaddrinfo_numeric_ipv4",
+          "getaddrinfo_numeric_ipv6",
+          "freeaddrinfo_numeric_ipv4_strict",
+          "freeaddrinfo_numeric_ipv4_hardened"
+        ],
+        "unit_test_refs": [
+          {
+            "source": "core_resolver",
+            "name": "getaddrinfo_numeric_ipv4"
+          },
+          {
+            "source": "core_resolver",
+            "name": "getaddrinfo_numeric_ipv6"
+          },
+          {
+            "source": "core_resolver",
+            "name": "getaddrinfo_with_hosts_ipv4_lookup"
+          },
+          {
+            "source": "core_resolver",
+            "name": "getaddrinfo_with_hosts_case_insensitive_alias"
+          }
+        ],
+        "abi_test_refs": [
+          {
+            "source": "abi_resolver_tests",
+            "name": "getaddrinfo_numeric_ipv4_resolves"
+          },
+          {
+            "source": "abi_resolver_tests",
+            "name": "getaddrinfo_numeric_ipv6_resolves"
+          },
+          {
+            "source": "abi_resolver_tests",
+            "name": "getaddrinfo_uses_overridden_hosts_backend"
+          }
+        ]
+      },
+      {
+        "symbol": "getnameinfo",
+        "family": "resolver",
+        "evidence_kinds": [
+          "numeric_ipv4",
+          "numeric_ipv6",
+          "invalid_family",
+          "overflow_guards"
+        ],
+        "abi_ref": "crates/frankenlibc-abi/src/resolv_abi.rs:1391",
+        "core_refs": [
+          "crates/frankenlibc-core/src/resolv/mod.rs:656"
+        ],
+        "required_modes": [
+          "strict",
+          "hardened"
+        ],
+        "unit_test_refs": [
+          {
+            "source": "core_resolver",
+            "name": "getnameinfo_ipv4"
+          },
+          {
+            "source": "core_resolver",
+            "name": "getnameinfo_ipv6"
+          },
+          {
+            "source": "core_resolver",
+            "name": "getnameinfo_too_short"
+          },
+          {
+            "source": "core_resolver",
+            "name": "getnameinfo_unknown_family"
+          }
+        ],
+        "abi_test_refs": [
+          {
+            "source": "abi_resolver_tests",
+            "name": "getnameinfo_ipv4_formats_numeric"
+          },
+          {
+            "source": "abi_resolver_tests",
+            "name": "getnameinfo_ipv6_formats_numeric"
+          },
+          {
+            "source": "abi_resolver_tests",
+            "name": "getnameinfo_unsupported_family_returns_eai_family"
+          },
+          {
+            "source": "abi_resolver_tests",
+            "name": "getnameinfo_rejects_tracked_short_host_buffer"
+          },
+          {
+            "source": "abi_resolver_tests",
+            "name": "getnameinfo_rejects_tracked_short_service_buffer"
+          }
+        ]
+      }
+    ],
+    "unit_primary": {
+      "missing_item_id": "tests.unit.primary",
+      "description": "Unit evidence binds core and ABI tests for numeric getaddrinfo/getnameinfo and hosts-file getaddrinfo.",
+      "required_test_refs": [
+        {
+          "source": "core_resolver",
+          "name": "getaddrinfo_numeric_ipv4"
+        },
+        {
+          "source": "core_resolver",
+          "name": "getaddrinfo_numeric_ipv6"
+        },
+        {
+          "source": "core_resolver",
+          "name": "getaddrinfo_with_hosts_ipv4_lookup"
+        },
+        {
+          "source": "core_resolver",
+          "name": "getaddrinfo_with_hosts_case_insensitive_alias"
+        },
+        {
+          "source": "core_resolver",
+          "name": "getnameinfo_ipv4"
+        },
+        {
+          "source": "core_resolver",
+          "name": "getnameinfo_ipv6"
+        },
+        {
+          "source": "abi_resolver_tests",
+          "name": "getaddrinfo_numeric_ipv4_resolves"
+        },
+        {
+          "source": "abi_resolver_tests",
+          "name": "getaddrinfo_uses_overridden_hosts_backend"
+        },
+        {
+          "source": "abi_resolver_tests",
+          "name": "getnameinfo_ipv4_formats_numeric"
+        },
+        {
+          "source": "abi_resolver_tests",
+          "name": "getnameinfo_ipv6_formats_numeric"
+        },
+        {
+          "source": "completion_harness",
+          "name": "contract_binds_resolver_numeric_files_unit_e2e_and_telemetry"
+        }
+      ]
+    },
+    "e2e_primary": {
+      "missing_item_id": "tests.e2e.primary",
+      "description": "E2E evidence binds the C fixture suite strict+hardened NSS/resolver smoke entry and resolver fixture replay.",
+      "required_test_refs": [
+        {
+          "source": "resolver_conformance",
+          "name": "resolver_covers_getaddrinfo"
+        },
+        {
+          "source": "resolver_conformance",
+          "name": "resolver_fixture_executes_via_harness"
+        },
+        {
+          "source": "c_fixture_suite_test",
+          "name": "all_fixture_sources_exist"
+        },
+        {
+          "source": "c_fixture_suite_test",
+          "name": "fixtures_have_required_fields"
+        },
+        {
+          "source": "c_fixture_suite_test",
+          "name": "acceptance_symbols_covered"
+        }
+      ],
+      "fixture_id": "fixture_nss",
+      "required_covered_symbols": [
+        "getaddrinfo",
+        "freeaddrinfo"
+      ],
+      "required_mode_expectations": [
+        "strict",
+        "hardened"
+      ],
+      "validation_commands": [
+        "bash scripts/check_resolver_numeric_files_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test resolver_numeric_files_completion_contract_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo -- --nocapture --test-threads=1",
+        "rch exec -- cargo test -p frankenlibc-harness --test c_fixture_suite_test -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "missing_item_id": "telemetry.primary",
+      "description": "Telemetry evidence binds resolver runtime observations, stage-outcome accounting, DNS metrics snapshots, and structured hard-parts logs.",
+      "telemetry_refs": [
+        "crates/frankenlibc-abi/src/resolv_abi.rs:75",
+        "crates/frankenlibc-abi/src/resolv_abi.rs:105",
+        "crates/frankenlibc-abi/src/resolv_abi.rs:331",
+        "crates/frankenlibc-abi/src/resolv_abi.rs:842",
+        "crates/frankenlibc-abi/src/resolv_abi.rs:1324",
+        "crates/frankenlibc-abi/src/resolv_abi.rs:1514",
+        "tests/conformance/resolver_nss_hard_parts.v1.json:18",
+        "scripts/check_resolver_nss_hard_parts.sh:28",
+        "scripts/check_resolver_nss_hard_parts.sh:445"
+      ],
+      "structured_log_contract": {
+        "required_events": [
+          "resolver_numeric_files_completion_contract_validated",
+          "resolver_numeric_files_symbol_bound",
+          "resolver_numeric_files_completion_summary"
+        ],
+        "forbidden_events": [
+          "resolver_numeric_files_completion_contract_failed"
+        ],
+        "required_fields": [
+          "timestamp",
+          "trace_id",
+          "event",
+          "completion_debt_bead",
+          "original_bead",
+          "source_commit",
+          "status",
+          "api_family",
+          "symbol",
+          "evidence_kinds",
+          "artifact_refs",
+          "test_refs",
+          "failure_signature"
+        ]
+      }
+    }
+  }
+}
