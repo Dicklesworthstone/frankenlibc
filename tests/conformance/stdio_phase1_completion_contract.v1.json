@@ -1,0 +1,197 @@
+{
+  "schema_version": "stdio_phase1_completion_contract.v1",
+  "manifest_id": "bd-2vv-3-1-1-stdio-phase1-completion-contract",
+  "bead": "bd-2vv.3.1",
+  "completion_debt_bead": "bd-2vv.3.1.1",
+  "purpose": "Bind existing stdio Phase 1 ABI tests, strict+hardened C fixture E2E evidence, and structured trace/artifact telemetry to the bd-2vv.3.1.1 unit, E2E, and telemetry completion-debt obligations.",
+  "source_artifacts": {
+    "abi_stdio": "crates/frankenlibc-abi/src/stdio_abi.rs",
+    "abi_stdio_test": "crates/frankenlibc-abi/tests/stdio_abi_test.rs",
+    "c_fixture_spec": "tests/conformance/c_fixture_spec.json",
+    "e2e_runner": "scripts/c_fixture_suite.sh",
+    "e2e_stdio_fixture": "tests/integration/fixture_stdio.c",
+    "support_matrix": "support_matrix.json",
+    "completion_checker": "scripts/check_stdio_phase1_completion_contract.sh",
+    "completion_test": "crates/frankenlibc-harness/tests/stdio_phase1_completion_contract_test.rs"
+  },
+  "completion_debt_evidence": {
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "original_bead": "bd-2vv.3.1",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-2vv.3.1/scorecard.md",
+    "audit_score": 470,
+    "next_audit_score_threshold": 800,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ]
+  },
+  "target_symbols": [
+    "fopen",
+    "fclose",
+    "fflush",
+    "fread",
+    "fwrite",
+    "fgetc",
+    "fputc",
+    "fgets",
+    "fputs",
+    "ungetc",
+    "fileno",
+    "setvbuf",
+    "setbuf"
+  ],
+  "unit_primary": {
+    "description": "ABI tests pin Phase 1 stream lifecycle, byte I/O, character I/O, line reads, buffering, file descriptor exposure, invalid modes, and null/zero-length safe defaults.",
+    "required_test_refs": [
+      {
+        "artifact": "abi_stdio_test",
+        "name": "fopen_fputs_fflush_fclose_round_trip"
+      },
+      {
+        "artifact": "abi_stdio_test",
+        "name": "fputc_fgetc_and_ungetc_behave_consistently"
+      },
+      {
+        "artifact": "abi_stdio_test",
+        "name": "fwrite_then_fread_round_trip_matches_bytes"
+      },
+      {
+        "artifact": "abi_stdio_test",
+        "name": "fgets_reads_a_line_and_nul_terminates"
+      },
+      {
+        "artifact": "abi_stdio_test",
+        "name": "fileno_and_setvbuf_contracts_hold"
+      },
+      {
+        "artifact": "abi_stdio_test",
+        "name": "rejects_invalid_open_mode_and_null_stream_handles"
+      },
+      {
+        "artifact": "abi_stdio_test",
+        "name": "null_and_zero_length_io_paths_are_safe_defaults"
+      },
+      {
+        "artifact": "abi_stdio_test",
+        "name": "fgets_rejects_invalid_destination_or_size"
+      },
+      {
+        "artifact": "completion_test",
+        "name": "checker_accepts_contract_and_emits_report_log"
+      }
+    ],
+    "required_commands": [
+      "rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test fopen_fputs_fflush_fclose_round_trip -- --nocapture",
+      "rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test fputc_fgetc_and_ungetc_behave_consistently -- --nocapture",
+      "rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test fwrite_then_fread_round_trip_matches_bytes -- --nocapture",
+      "rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test fgets_reads_a_line_and_nul_terminates -- --nocapture",
+      "rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test fileno_and_setvbuf_contracts_hold -- --nocapture",
+      "rch exec -- cargo test -p frankenlibc-harness --test stdio_phase1_completion_contract_test -- --nocapture"
+    ]
+  },
+  "e2e_primary": {
+    "fixture_id": "fixture_stdio",
+    "fixture_source": "tests/integration/fixture_stdio.c",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_artifacts": [
+      "c_fixture_spec",
+      "e2e_runner",
+      "e2e_stdio_fixture"
+    ],
+    "required_commands": [
+      "rch exec -- env BEAD_ID=bd-2vv.3.1.1 FIXTURE_FILTER=fixture_stdio.c bash scripts/c_fixture_suite.sh"
+    ],
+    "expected_stdout_contains": "fixture_stdio: PASS"
+  },
+  "telemetry_primary": {
+    "report_path": "target/conformance/stdio_phase1_completion_contract.report.json",
+    "log_path": "target/conformance/stdio_phase1_completion_contract.log.jsonl",
+    "required_completion_events": [
+      "stdio_phase1_completion.source_artifacts",
+      "stdio_phase1_completion.unit_bindings",
+      "stdio_phase1_completion.e2e_binding",
+      "stdio_phase1_completion.telemetry_contract",
+      "stdio_phase1_completion.completion_contract_validated"
+    ],
+    "required_fixture_events": [
+      "fixture_result",
+      "run_summary"
+    ],
+    "required_log_fields": [
+      "trace_id",
+      "mode",
+      "api_family",
+      "symbol",
+      "decision_path",
+      "healing_action",
+      "errno",
+      "latency_ns",
+      "artifact_refs"
+    ],
+    "required_report_fields": [
+      "schema_version",
+      "status",
+      "bead",
+      "source_bead",
+      "missing_items_closed",
+      "target_symbols",
+      "unit_bindings",
+      "e2e_bindings",
+      "telemetry_events",
+      "source_summary",
+      "errors"
+    ]
+  },
+  "required_source_contract": {
+    "support_matrix": {
+      "expected_module": "stdio_abi",
+      "expected_status": "Implemented"
+    },
+    "c_fixture_spec": {
+      "expected_fixture_id": "fixture_stdio",
+      "expected_source": "tests/integration/fixture_stdio.c",
+      "expected_stdout_contains": "fixture_stdio: PASS"
+    },
+    "source_markers": {
+      "abi_stdio": [
+        "pub unsafe extern \"C\" fn fopen",
+        "pub unsafe extern \"C\" fn fclose",
+        "pub unsafe extern \"C\" fn fflush",
+        "pub unsafe extern \"C\" fn fread",
+        "pub unsafe extern \"C\" fn fwrite",
+        "pub unsafe extern \"C\" fn fgetc",
+        "pub unsafe extern \"C\" fn fputc",
+        "pub unsafe extern \"C\" fn fgets",
+        "pub unsafe extern \"C\" fn fputs",
+        "pub unsafe extern \"C\" fn ungetc",
+        "pub unsafe extern \"C\" fn fileno",
+        "pub unsafe extern \"C\" fn setvbuf",
+        "pub unsafe extern \"C\" fn setbuf"
+      ],
+      "e2e_runner": [
+        "LD_PRELOAD",
+        "FRANKENLIBC_MODE",
+        "FIXTURE_FILTER",
+        "trace.jsonl",
+        "artifact_index.json",
+        "fixture_result",
+        "run_summary",
+        "latency_ns",
+        "artifact_refs"
+      ],
+      "e2e_stdio_fixture": [
+        "test_fopen_fileno_setvbuf_setbuf",
+        "test_fputs_fputc_fflush_and_fread_roundtrip",
+        "test_fgets_fgetc_ungetc_sequence",
+        "test_invalid_mode_and_ungetc_eof",
+        "test_setvbuf_rejects_post_io_change",
+        "test_fread_fwrite_zero_size_contract",
+        "fixture_stdio: PASS"
+      ]
+    }
+  }
+}
