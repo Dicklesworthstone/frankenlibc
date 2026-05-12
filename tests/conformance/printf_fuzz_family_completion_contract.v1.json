@@ -1,0 +1,275 @@
+{
+  "schema_version": "printf_fuzz_family_completion_contract.v1",
+  "manifest_id": "printf-fuzz-family-completion-contract",
+  "bead": "bd-1oz.3",
+  "completion_debt_bead": "bd-1oz.3.1",
+  "generated_utc": "2026-05-12T00:00:00Z",
+  "purpose": "Bind the printf-family fuzz target implementation, nightly runner scheduling, seed corpora, and fail-closed harness tests to the bd-1oz.3.1 unit, e2e, and fuzz completion-debt items.",
+  "audit_reference": {
+    "pass": "2026-05-10T-pass3-cumulative-patches",
+    "scorecard_path": "beads_compliance_audit/passes/2026-05-10T-pass3-cumulative-patches/beads/bd-1oz.3.1/scorecard.md",
+    "score_before": 640,
+    "score_threshold": 800
+  },
+  "runtime_target": {
+    "max_seconds": 45,
+    "external_services_allowed": false,
+    "coverage_artifacts": [
+      "target/conformance/printf_fuzz_family_completion_contract.report.json",
+      "target/conformance/printf_fuzz_family_completion_contract.log.jsonl"
+    ],
+    "allowed_command_prefixes": [
+      "bash scripts/check_printf_fuzz_family_completion_contract.sh",
+      "bash scripts/fuzz_nightly.sh --target-group printf-family --list-targets",
+      "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test printf_fuzz_family_completion_contract_test",
+      "rch exec -- env CARGO_TARGET_DIR=<target> cargo check --manifest-path crates/frankenlibc-fuzz/Cargo.toml --bins"
+    ],
+    "forbidden_command_substrings": [
+      "cargo check",
+      "cargo test",
+      "cargo clippy",
+      "git reset --hard",
+      "git clean -fd",
+      "rm -rf"
+    ]
+  },
+  "source_artifacts": [
+    {
+      "artifact_id": "fuzz_cargo_manifest",
+      "kind": "fuzz_manifest",
+      "path": "crates/frankenlibc-fuzz/Cargo.toml",
+      "required_line_refs": [
+        "crates/frankenlibc-fuzz/Cargo.toml:34",
+        "crates/frankenlibc-fuzz/Cargo.toml:39",
+        "crates/frankenlibc-fuzz/Cargo.toml:329"
+      ],
+      "required_needles": [
+        "name = \"fuzz_printf\"",
+        "name = \"fuzz_printf_adversarial\"",
+        "name = \"fuzz_asprintf\""
+      ]
+    },
+    {
+      "artifact_id": "fuzz_printf_target",
+      "kind": "fuzz_target",
+      "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs",
+      "required_line_refs": [
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:223",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:234",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:547"
+      ],
+      "required_needles": [
+        "fuzz_asprintf_matches_snprintf",
+        "fuzz_percent_n_abi",
+        "fuzz_snprintf_abi",
+        "fuzz_sprintf_hardened_truncation"
+      ]
+    },
+    {
+      "artifact_id": "fuzz_printf_adversarial_target",
+      "kind": "fuzz_target",
+      "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs",
+      "required_line_refs": [
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs:52",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs:210",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs:244",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs:293",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs:320"
+      ],
+      "required_needles": [
+        "adv_percent_n_refusal",
+        "adv_overflow_width_literal",
+        "adv_positional_out_of_range",
+        "adv_percent_storm",
+        "check_guards"
+      ]
+    },
+    {
+      "artifact_id": "fuzz_asprintf_target",
+      "kind": "fuzz_target",
+      "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs",
+      "required_line_refs": [
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:29",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:58",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:75",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:81"
+      ],
+      "required_needles": [
+        "sanitize_format",
+        "asprintf",
+        "libc::strlen",
+        "libc::free"
+      ]
+    },
+    {
+      "artifact_id": "nightly_runner",
+      "kind": "e2e_gate",
+      "path": "scripts/fuzz_nightly.sh",
+      "required_line_refs": [
+        "scripts/fuzz_nightly.sh:9",
+        "scripts/fuzz_nightly.sh:38",
+        "scripts/fuzz_nightly.sh:70",
+        "scripts/fuzz_nightly.sh:99",
+        "scripts/fuzz_nightly.sh:120",
+        "scripts/fuzz_nightly.sh:129"
+      ],
+      "required_needles": [
+        "PRINTF_FAMILY_TARGETS",
+        "printf-family",
+        "--list-targets",
+        "fuzz_printf_adversarial",
+        "fuzz_asprintf"
+      ]
+    },
+    {
+      "artifact_id": "completion_checker",
+      "kind": "completion_gate",
+      "path": "scripts/check_printf_fuzz_family_completion_contract.sh",
+      "required_line_refs": [
+        "scripts/check_printf_fuzz_family_completion_contract.sh:32",
+        "scripts/check_printf_fuzz_family_completion_contract.sh:121",
+        "scripts/check_printf_fuzz_family_completion_contract.sh:192",
+        "scripts/check_printf_fuzz_family_completion_contract.sh:228",
+        "scripts/check_printf_fuzz_family_completion_contract.sh:301",
+        "scripts/check_printf_fuzz_family_completion_contract.sh:323"
+      ],
+      "required_needles": [
+        "REQUIRED_TARGETS",
+        "validate_source_artifacts",
+        "validate_runner_targets",
+        "validate_target_contracts",
+        "validate_missing_item_bindings"
+      ]
+    },
+    {
+      "artifact_id": "completion_harness_test",
+      "kind": "unit_test",
+      "path": "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs",
+      "required_line_refs": [
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:94",
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:144",
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:180",
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:206",
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:233"
+      ],
+      "required_needles": [
+        "manifest_binds_printf_fuzz_family_completion_items",
+        "checker_validates_printf_fuzz_family_contract",
+        "nightly_runner_lists_only_printf_family_targets",
+        "checker_rejects_missing_runner_target_binding",
+        "checker_rejects_missing_corpus_seed_binding"
+      ]
+    }
+  ],
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "description": "The harness unit tests bind the manifest schema, source artifacts, and positive/negative checker behavior to bd-1oz.3.1.",
+      "required_test_names": [
+        "manifest_binds_printf_fuzz_family_completion_items",
+        "checker_validates_printf_fuzz_family_contract"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "description": "The list-only e2e path proves the nightly runner schedules the printf-family target group without invoking cargo locally.",
+      "required_test_names": [
+        "nightly_runner_lists_only_printf_family_targets",
+        "checker_rejects_missing_runner_target_binding"
+      ]
+    },
+    {
+      "id": "tests.fuzz.primary",
+      "description": "The checker validates cargo-fuzz registration, source invariants, and required seed corpora for every printf-family fuzz target.",
+      "required_test_names": [
+        "checker_validates_printf_fuzz_family_contract",
+        "checker_rejects_missing_corpus_seed_binding"
+      ]
+    }
+  ],
+  "required_targets": [
+    {
+      "target": "fuzz_printf",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs",
+      "required_source_needles": [
+        "fuzz_snprintf_abi",
+        "fuzz_sprintf_hardened_truncation",
+        "fuzz_asprintf_matches_snprintf",
+        "fuzz_percent_n_abi"
+      ],
+      "evidence_line_refs": [
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:223",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:234",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:547"
+      ],
+      "corpus": {
+        "path": "crates/frankenlibc-fuzz/corpus/fuzz_printf",
+        "min_seed_count": 7,
+        "required_seeds": [
+          "seed_empty",
+          "seed_signed",
+          "seed_unsigned",
+          "seed_float",
+          "seed_string",
+          "seed_pointer",
+          "seed_complex_spec"
+        ]
+      }
+    },
+    {
+      "target": "fuzz_printf_adversarial",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs",
+      "required_source_needles": [
+        "adv_percent_n_refusal",
+        "adv_overflow_width_literal",
+        "adv_positional_out_of_range",
+        "adv_percent_storm"
+      ],
+      "evidence_line_refs": [
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs:210",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs:244",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs:293",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs:320"
+      ],
+      "corpus": {
+        "path": "crates/frankenlibc-fuzz/corpus/fuzz_printf_adversarial",
+        "min_seed_count": 3,
+        "required_seeds": [
+          "seed_percent_n",
+          "seed_positional_width",
+          "seed_percent_storm"
+        ]
+      }
+    },
+    {
+      "target": "fuzz_asprintf",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs",
+      "required_source_needles": [
+        "sanitize_format",
+        "asprintf",
+        "libc::strlen",
+        "libc::free"
+      ],
+      "evidence_line_refs": [
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:29",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:58",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:75",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:81"
+      ],
+      "corpus": {
+        "path": "crates/frankenlibc-fuzz/corpus/fuzz_asprintf",
+        "min_seed_count": 8,
+        "required_seeds": [
+          "seed_huge_width",
+          "seed_long_long_hex",
+          "seed_negative",
+          "seed_no_specifiers",
+          "seed_percent_literal",
+          "seed_star_width",
+          "seed_two_d",
+          "seed_widths"
+        ]
+      }
+    }
+  ]
+}

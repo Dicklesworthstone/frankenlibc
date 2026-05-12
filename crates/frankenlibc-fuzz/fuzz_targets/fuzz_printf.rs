@@ -90,10 +90,7 @@ fn make_spec(input: &PrintfFuzzInput) -> FormatSpec {
         _ => Precision::Fixed(0),
     };
 
-    let conversions = [
-        b'd', b'i', b'o', b'u', b'x', b'X', b'f', b'F', b'e', b'E', b'g', b'G', b'a', b'A', b'c',
-        b's', b'p', b'n',
-    ];
+    let conversions = *b"diouxXfFeEgGaAcspn";
     let conversion = conversions[(input.conversion as usize) % conversions.len()];
 
     let lengths = [

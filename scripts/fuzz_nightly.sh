@@ -6,13 +6,14 @@
 #
 # Usage:
 #   scripts/fuzz_nightly.sh [--duration SECS] [--fail-on-crash] [--artifacts-dir DIR]
-#                            [--target-group all|phase1|phase2]
+#                            [--target-group all|phase1|phase2|printf-family]
+#                            [--list-targets]
 #
 # Environment:
 #   FUZZ_DURATION     - Per-target duration in seconds (default: 60)
 #   FUZZ_FAIL_CRASH   - Exit non-zero if any crash found (default: 1)
 #   FUZZ_ARTIFACTS    - Directory for crash artifacts (default: artifacts/fuzz)
-#   FUZZ_TARGET_GROUP - all | phase1 | phase2 (default: all)
+#   FUZZ_TARGET_GROUP - all | phase1 | phase2 | printf-family (default: all)
 #
 # Bead: bd-1oz.7
 
@@ -27,6 +28,7 @@ DURATION="${FUZZ_DURATION:-60}"
 FAIL_ON_CRASH="${FUZZ_FAIL_CRASH:-1}"
 ARTIFACTS_DIR="${FUZZ_ARTIFACTS:-artifacts/fuzz}"
 TARGET_GROUP="${FUZZ_TARGET_GROUP:-all}"
+LIST_TARGETS=0
 
 # All registered fuzz targets
 ALL_TARGETS=(
@@ -34,6 +36,8 @@ ALL_TARGETS=(
     fuzz_malloc
     fuzz_membrane
     fuzz_printf
+    fuzz_printf_adversarial
+    fuzz_asprintf
     fuzz_resolver
     fuzz_regex
     fuzz_scanf
@@ -63,6 +67,12 @@ PHASE2_TARGETS=(
     fuzz_runtime_math
 )
 
+PRINTF_FAMILY_TARGETS=(
+    fuzz_printf
+    fuzz_printf_adversarial
+    fuzz_asprintf
+)
+
 # Parse CLI arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -86,6 +96,10 @@ while [[ $# -gt 0 ]]; do
             TARGET_GROUP="$2"
             shift 2
             ;;
+        --list-targets)
+            LIST_TARGETS=1
+            shift
+            ;;
         *)
             echo "Unknown option: $1" >&2
             exit 2
@@ -103,11 +117,19 @@ case "${TARGET_GROUP}" in
     phase2)
         TARGETS=("${PHASE2_TARGETS[@]}")
         ;;
+    printf-family)
+        TARGETS=("${PRINTF_FAMILY_TARGETS[@]}")
+        ;;
     *)
         echo "Unknown target group: ${TARGET_GROUP}" >&2
         exit 2
         ;;
 esac
+
+if [ "${LIST_TARGETS}" = "1" ]; then
+    printf '%s\n' "${TARGETS[@]}"
+    exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # Setup
