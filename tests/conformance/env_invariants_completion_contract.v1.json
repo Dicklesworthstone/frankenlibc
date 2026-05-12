@@ -1,0 +1,205 @@
+{
+  "schema_version": "env_invariants_completion_contract.v1",
+  "bead_id": "bd-747.1",
+  "original_bead": "bd-747",
+  "trace_id": "bd-747.1::env-invariants::completion::v1",
+  "description": "Completion contract binding getenv/setenv/unsetenv implementation, invalid-input tests, strict/hardened e2e-style ABI tests, fuzz shadow-model coverage, and telemetry markers to bd-747.1.",
+  "source_artifacts": [
+    {
+      "id": "core_env_validation",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-core/src/stdlib/env.rs",
+      "evidence": "Safe validators for env names, values, entry matching, and value extraction with inline unit tests."
+    },
+    {
+      "id": "abi_env_functions",
+      "kind": "implementation",
+      "path": "crates/frankenlibc-abi/src/stdlib_abi.rs",
+      "evidence": "ABI getenv, secure_getenv, setenv, unsetenv, getenv_r, putenv, and clearenv surfaces with runtime-policy observations and errno behavior."
+    },
+    {
+      "id": "metamorphic_env_tests",
+      "kind": "e2e_test",
+      "path": "crates/frankenlibc-abi/tests/metamorphic_getenv.rs",
+      "evidence": "Process-global env mutation tests for getenv, secure_getenv, setenv overwrite flags, unsetenv, empty values, and repeatable round trips."
+    },
+    {
+      "id": "secure_getenv_diff_tests",
+      "kind": "conformance_test",
+      "path": "crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs",
+      "evidence": "Differential normal-execution secure_getenv coverage against host glibc."
+    },
+    {
+      "id": "stdlib_env_regressions",
+      "kind": "unit_test",
+      "path": "crates/frankenlibc-abi/tests/stdlib_abi_test.rs",
+      "evidence": "ABI regressions for unterminated names/values, clearenv, system env inheritance, and getenv_r errno contracts."
+    },
+    {
+      "id": "env_fuzz_shadow_model",
+      "kind": "fuzz_target",
+      "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_env.rs",
+      "evidence": "Stateful fuzz target with a shadow BTreeMap oracle, malformed-name operations, process-global lock, and final getenv sweep."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/env_invariants_completion_contract.v1.json",
+      "evidence": "Machine-readable binding for bd-747.1 missing unit, e2e, and telemetry obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_env_invariants_completion_contract.sh",
+      "evidence": "Fail-closed checker for implementation anchors, tests, fuzz shadow model, and structured telemetry/log output."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/env_invariants_completion_contract_test.rs",
+      "evidence": "Rust harness test validating the completion contract, checker report/logs, and negative drift signatures."
+    }
+  ],
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "required_symbols": [
+      "getenv",
+      "secure_getenv",
+      "setenv",
+      "unsetenv"
+    ],
+    "required_unit_tests": [
+      "valid_name_normal",
+      "invalid_name_empty",
+      "invalid_name_contains_equals",
+      "invalid_name_contains_nul",
+      "valid_value_normal",
+      "invalid_value_nul",
+      "entry_matches_prefix_attack",
+      "entry_value_normal"
+    ],
+    "required_e2e_tests": [
+      "metamorphic_setenv_then_getenv_returns_value",
+      "metamorphic_unsetenv_then_getenv_returns_null",
+      "metamorphic_setenv_overwrite_zero_preserves_existing",
+      "metamorphic_setenv_overwrite_one_replaces_value",
+      "metamorphic_setenv_unsetenv_round_trip_repeatable",
+      "metamorphic_setenv_empty_string_sets_empty",
+      "diff_secure_getenv_existing_variable_in_normal_execution",
+      "diff_secure_getenv_nonexistent_variable_returns_null"
+    ],
+    "required_regression_tests": [
+      "clearenv_removes_newly_set_variable",
+      "getenv_rejects_tracked_unterminated_name",
+      "setenv_rejects_unterminated_name_and_value",
+      "unsetenv_rejects_unterminated_name",
+      "getenv_r_returns_zero_and_copies_value",
+      "getenv_r_undersized_buffer_sets_erange"
+    ],
+    "required_fuzz_anchors": [
+      "enum EnvOp",
+      "SetMalformed",
+      "BTreeMap<Vec<u8>, Vec<u8>>",
+      "ENV_LOCK",
+      "reset_env();",
+      "Final sweep"
+    ],
+    "required_telemetry_markers": [
+      "runtime_policy::observe(ApiFamily::Stdlib",
+      "getenv_metamorphic_coverage_report",
+      "secure_getenv_diff_coverage_report",
+      "libc getenv + setenv + unsetenv + secure_getenv",
+      "libc secure_getenv"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "crates/frankenlibc-core/src/stdlib/env.rs",
+        "crates/frankenlibc-abi/src/stdlib_abi.rs",
+        "scripts/check_env_invariants_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-core/src/stdlib/env.rs",
+        "crates/frankenlibc-abi/tests/stdlib_abi_test.rs",
+        "crates/frankenlibc-harness/tests/env_invariants_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "cargo test -p frankenlibc-core stdlib::env",
+        "cargo test -p frankenlibc-abi --test stdlib_abi_test getenv",
+        "cargo test -p frankenlibc-harness --test env_invariants_completion_contract_test"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "implementation_refs": [
+        "crates/frankenlibc-abi/src/stdlib_abi.rs",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_env.rs",
+        "scripts/check_env_invariants_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-abi/tests/metamorphic_getenv.rs",
+        "crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs",
+        "crates/frankenlibc-harness/tests/env_invariants_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "cargo test -p frankenlibc-abi --test metamorphic_getenv -- --nocapture",
+        "cargo test -p frankenlibc-abi --test conformance_diff_secure_getenv -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "telemetry.primary",
+      "implementation_refs": [
+        "crates/frankenlibc-abi/src/stdlib_abi.rs",
+        "crates/frankenlibc-abi/tests/metamorphic_getenv.rs",
+        "crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs",
+        "scripts/check_env_invariants_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/env_invariants_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_env_invariants_completion_contract.sh"
+      ]
+    }
+  ],
+  "required_validation_commands": [
+    "jq empty tests/conformance/env_invariants_completion_contract.v1.json",
+    "bash -n scripts/check_env_invariants_completion_contract.sh",
+    "bash scripts/check_env_invariants_completion_contract.sh",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/env_invariants_completion_contract_test.rs",
+    "cargo test -p frankenlibc-harness --test env_invariants_completion_contract_test -- --nocapture",
+    "cargo test -p frankenlibc-core stdlib::env",
+    "cargo test -p frankenlibc-abi --test metamorphic_getenv -- --nocapture",
+    "cargo test -p frankenlibc-abi --test conformance_diff_secure_getenv -- --nocapture",
+    "cargo test -p frankenlibc-abi --test stdlib_abi_test getenv -- --nocapture",
+    "cargo clippy -p frankenlibc-harness --test env_invariants_completion_contract_test -- -D warnings"
+  ],
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_env_invariant_sources",
+      "checker_accepts_env_invariants_completion_contract",
+      "checker_emits_structured_env_telemetry"
+    ],
+    "negative": [
+      "checker_rejects_missing_e2e_binding",
+      "checker_rejects_missing_fuzz_anchor",
+      "checker_rejects_missing_telemetry_binding"
+    ]
+  },
+  "closeout_expectation": {
+    "close_reason_must_cite": [
+      "tests/conformance/env_invariants_completion_contract.v1.json",
+      "scripts/check_env_invariants_completion_contract.sh",
+      "crates/frankenlibc-harness/tests/env_invariants_completion_contract_test.rs",
+      "crates/frankenlibc-abi/tests/metamorphic_getenv.rs",
+      "crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs",
+      "crates/frankenlibc-fuzz/fuzz_targets/fuzz_env.rs"
+    ]
+  }
+}
