@@ -1,0 +1,157 @@
+{
+  "schema_version": "symbol_logging_completion_contract.v1",
+  "original_bead": "bd-ldj.8",
+  "completion_debt_bead": "bd-ldj.8.1",
+  "trace_id": "bd-ldj-8-1-symbol-logging-completion-v1",
+  "generated_utc": "2026-05-12T11:55:00Z",
+  "purpose": "Completion-debt contract for per-symbol runtime_decision logging. It binds existing entrypoint trace propagation, decision explainability checks, and structured log schema requirements to conformance and telemetry evidence.",
+  "source_artifacts": {
+    "runtime_policy": "crates/frankenlibc-abi/src/runtime_policy.rs",
+    "decision_report": "crates/frankenlibc-harness/src/report.rs",
+    "structured_schema": "tests/conformance/log_schema.json",
+    "structured_log_tests": "crates/frankenlibc-harness/tests/structured_log_test.rs"
+  },
+  "source_anchors": {
+    "runtime_policy": [
+      "pub(crate) fn entrypoint_scope(symbol: &'static str) -> EntrypointTraceGuard",
+      "pub(crate) struct DecisionExplainability",
+      "pub fn trace_id(self) -> String",
+      "pub fn span_id(self) -> String",
+      "pub fn parent_span_id(self) -> String",
+      "fn bd_33p_2_completion_debt_unit_trace_ids_are_joinable()"
+    ],
+    "decision_report": [
+      "pub struct DecisionTraceReport",
+      "pub fn from_jsonl_str(jsonl: &str) -> Self",
+      "decision_trace_report_accepts_complete_decision_chain",
+      "decision_trace_report_rejects_unjoinable_decision_rows"
+    ],
+    "structured_schema": [
+      "On runtime_decision events (event=runtime_decision), always include controller_id, decision_action, and risk_inputs object.",
+      "\"span_id\"",
+      "\"parent_span_id\"",
+      "\"decision_id\"",
+      "\"risk_inputs\""
+    ],
+    "structured_log_tests": [
+      "bd_33p_2_completion_debt_e2e_failure_trace_chain_is_joinable",
+      "bd_33p_2_completion_debt_e2e_rejects_missing_parent_span"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.conformance.primary",
+      "evidence": [
+        "sample_runtime_decision_rows",
+        "decision_report source anchors",
+        "structured schema runtime_decision fields"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "evidence": [
+        "target/conformance/symbol_logging_completion_contract.report.json",
+        "target/conformance/symbol_logging_completion_contract.log.jsonl"
+      ]
+    }
+  ],
+  "symbol_logging_contract": {
+    "runtime_event": "runtime_decision",
+    "minimum_sample_rows": 2,
+    "required_symbols": [
+      "malloc",
+      "free"
+    ],
+    "decision_action_vocabulary": [
+      "Allow",
+      "FullValidate",
+      "Repair",
+      "Deny"
+    ],
+    "required_runtime_decision_fields": [
+      "timestamp",
+      "trace_id",
+      "span_id",
+      "parent_span_id",
+      "level",
+      "event",
+      "symbol",
+      "decision",
+      "decision_id",
+      "policy_id",
+      "evidence_seqno",
+      "controller_id",
+      "decision_action",
+      "risk_inputs"
+    ],
+    "required_risk_input_fields": [
+      "requested_bytes",
+      "bloom_negative"
+    ],
+    "expected_controller_id": "runtime_math_kernel.v1"
+  },
+  "sample_runtime_decision_rows": [
+    {
+      "timestamp": "2026-05-12T11:55:00Z",
+      "trace_id": "abi::malloc::0000000000000001",
+      "span_id": "abi::malloc::decision::0000000000000001",
+      "parent_span_id": "abi::malloc::entry::0000000000000001",
+      "level": "info",
+      "event": "runtime_decision",
+      "symbol": "malloc",
+      "decision": "FullValidate",
+      "decision_id": 1,
+      "policy_id": 42,
+      "evidence_seqno": 9,
+      "controller_id": "runtime_math_kernel.v1",
+      "decision_action": "FullValidate",
+      "risk_inputs": {
+        "requested_bytes": 64,
+        "bloom_negative": false
+      }
+    },
+    {
+      "timestamp": "2026-05-12T11:55:01Z",
+      "trace_id": "abi::free::0000000000000002",
+      "span_id": "abi::free::decision::0000000000000002",
+      "parent_span_id": "abi::free::entry::0000000000000002",
+      "level": "error",
+      "event": "runtime_decision",
+      "symbol": "free",
+      "decision": "Deny",
+      "decision_id": 2,
+      "policy_id": 7,
+      "evidence_seqno": 11,
+      "controller_id": "runtime_math_kernel.v1",
+      "decision_action": "Deny",
+      "risk_inputs": {
+        "requested_bytes": 0,
+        "bloom_negative": true
+      }
+    }
+  ],
+  "telemetry_contract": {
+    "report_env": "FRANKENLIBC_SYMBOL_LOGGING_REPORT",
+    "log_env": "FRANKENLIBC_SYMBOL_LOGGING_LOG",
+    "required_events": [
+      "symbol_logging_source_gate",
+      "symbol_logging_sample_gate",
+      "symbol_logging_report_gate",
+      "symbol_logging_telemetry_gate",
+      "symbol_logging_completion_contract_validated"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "status",
+      "artifact_refs"
+    ]
+  },
+  "validation_commands": [
+    "bash scripts/check_symbol_logging_completion_contract.sh",
+    "rch exec -- cargo test -p frankenlibc-harness --test symbol_logging_completion_contract_test -- --nocapture",
+    "rch exec -- cargo test -p frankenlibc-harness decision_trace_report --lib -- --nocapture",
+    "rch exec -- cargo test -p frankenlibc-abi runtime_policy::tests::bd_33p_2_completion_debt_unit_trace_ids_are_joinable --lib -- --nocapture"
+  ]
+}
