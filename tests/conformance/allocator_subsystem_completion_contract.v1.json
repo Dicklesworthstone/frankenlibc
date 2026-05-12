@@ -1,0 +1,437 @@
+{
+  "schema_version": "allocator_subsystem_completion_contract.v1",
+  "manifest_id": "bd-2x5.7-allocator-subsystem-completion-contract",
+  "generated_utc": "2026-05-12T11:45:00Z",
+  "description": "Completion-debt evidence binding for the bd-2x5 allocator subsystem parent: generational arena, membrane allocator invariants, deterministic fault sequences, strict/hardened allocator E2E, conformance fixture coverage, and structured telemetry.",
+  "original_bead": "bd-2x5",
+  "completion_debt_bead": "bd-2x5.7",
+  "audit_pass": "2026-05-10T03-16-16Z",
+  "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-2x5/scorecard.md",
+  "next_audit_score_threshold": 800,
+  "source_artifacts": {
+    "arena_rs": {
+      "path": "crates/frankenlibc-membrane/src/arena.rs",
+      "required_text": [
+        "Generation",
+        "QuarantineEntry",
+        "free_promotes_slot_to_quarantined_with_new_generation"
+      ]
+    },
+    "fingerprint_rs": {
+      "path": "crates/frankenlibc-membrane/src/fingerprint.rs",
+      "required_text": [
+        "Fingerprint",
+        "CANARY",
+        "canary_detects_corruption"
+      ]
+    },
+    "ptr_validator_rs": {
+      "path": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "required_text": [
+        "pub fn free",
+        "double_free_reported",
+        "validation_log_export_includes_trace_and_decision_ids"
+      ]
+    },
+    "allocator_sequences_test": {
+      "path": "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs",
+      "required_text": [
+        "deterministic_allocator_membrane_sequences_hold_core_invariants",
+        "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives",
+        "concurrent_double_free_detection_basic_10k_16t_10pct"
+      ]
+    },
+    "arena_quarantine_manifest": {
+      "path": "tests/conformance/arena_quarantine_drain_invariants.v1.json",
+      "expected_schema": "v1",
+      "required_text": [
+        "quarantine",
+        "drain",
+        "bd-66wz.1"
+      ]
+    },
+    "arena_quarantine_test": {
+      "path": "crates/frankenlibc-harness/tests/arena_quarantine_drain_invariants_test.rs",
+      "required_text": [
+        "manifest_policy_pins_required_invariants",
+        "primary_unit_test_function_exists_in_arena_rs"
+      ]
+    },
+    "tsm_arena_integrity_contract": {
+      "path": "tests/conformance/tsm_arena_integrity_completion_contract.v1.json",
+      "expected_schema": "v1",
+      "required_text": [
+        "tests.unit.primary",
+        "tests.e2e.primary",
+        "telemetry_contract"
+      ]
+    },
+    "tsm_arena_integrity_checker": {
+      "path": "scripts/check_tsm_arena_integrity_completion_contract.sh",
+      "required_text": [
+        "tsm_arena_integrity_completion_contract",
+        "completion_tests"
+      ]
+    },
+    "tsm_arena_integrity_test": {
+      "path": "crates/frankenlibc-harness/tests/tsm_arena_integrity_completion_contract_test.rs",
+      "required_text": [
+        "manifest_anchors_completion_debt",
+        "unit_primary_binds_arena_fingerprint_and_validator_tests",
+        "e2e_primary_binds_public_pipeline_tests"
+      ]
+    },
+    "unit_property_contract": {
+      "path": "tests/conformance/allocator_membrane_unit_property_contract.v1.json",
+      "expected_schema": "allocator_membrane_unit_property_contract.v1",
+      "required_text": [
+        "tests.unit.primary",
+        "telemetry.primary",
+        "validation_log_export_includes_trace_and_decision_ids"
+      ]
+    },
+    "unit_property_checker": {
+      "path": "scripts/check_allocator_membrane_unit_property_contract.sh",
+      "required_text": [
+        "ALLOCATOR_MEMBRANE_CONTRACT_ERRORS",
+        "allocator_membrane_unit_property_contract_validated"
+      ]
+    },
+    "unit_property_test": {
+      "path": "crates/frankenlibc-harness/tests/allocator_membrane_unit_property_contract_test.rs",
+      "required_text": [
+        "manifest_binds_allocator_unit_and_property_evidence",
+        "checker_emits_report_and_log",
+        "checker_rejects_stale_property_test_binding"
+      ]
+    },
+    "deterministic_sequence_contract": {
+      "path": "tests/conformance/allocator_membrane_deterministic_sequence_completion_contract.v1.json",
+      "expected_schema": "allocator_membrane_deterministic_sequence_completion_contract.v1",
+      "required_text": [
+        "deterministic_replay",
+        "double_free_detection",
+        "tests.unit.primary"
+      ]
+    },
+    "deterministic_sequence_checker": {
+      "path": "scripts/check_allocator_membrane_deterministic_sequence_completion_contract.sh",
+      "required_text": [
+        "allocator_membrane_deterministic_sequence_completion_contract",
+        "fixed_seeds"
+      ]
+    },
+    "deterministic_sequence_test": {
+      "path": "crates/frankenlibc-harness/tests/allocator_membrane_deterministic_sequence_completion_contract_test.rs",
+      "required_text": [
+        "manifest_binds_deterministic_sequence_unit_and_property_evidence",
+        "checker_emits_report_and_log",
+        "checker_rejects_missing_sequence_property_marker"
+      ]
+    },
+    "membrane_invariant_contract": {
+      "path": "tests/conformance/allocator_membrane_invariant_completion_contract.v1.json",
+      "expected_schema": "allocator_membrane_invariant_completion_contract.v1",
+      "required_text": [
+        "tests.unit.primary",
+        "telemetry.primary",
+        "concurrent_double_free_detection_basic_10k_16t_10pct"
+      ]
+    },
+    "membrane_invariant_checker": {
+      "path": "scripts/check_allocator_membrane_invariant_completion_contract.sh",
+      "required_text": [
+        "ALLOCATOR_MEMBRANE_INVARIANT_CONTRACT_ERRORS",
+        "allocator_membrane_invariant_completion_contract_validated"
+      ]
+    },
+    "membrane_invariant_test": {
+      "path": "crates/frankenlibc-harness/tests/allocator_membrane_invariant_completion_contract_test.rs",
+      "required_text": [
+        "manifest_binds_allocator_membrane_unit_and_telemetry_evidence",
+        "checker_emits_report_and_log",
+        "checker_rejects_missing_unit_binding"
+      ]
+    },
+    "allocator_e2e_contract": {
+      "path": "tests/conformance/allocator_e2e_completion_contract.v1.json",
+      "expected_schema": "allocator_e2e_completion_contract.v1",
+      "required_text": [
+        "tests.e2e.primary",
+        "fixture_malloc_stress",
+        "allocator_e2e_completion_contract_pass"
+      ]
+    },
+    "allocator_e2e_checker": {
+      "path": "scripts/check_allocator_e2e_completion_contract.sh",
+      "required_text": [
+        "PASS: allocator E2E completion contract",
+        "allocator_e2e_completion_contract_pass"
+      ]
+    },
+    "allocator_e2e_test": {
+      "path": "crates/frankenlibc-harness/tests/allocator_e2e_completion_contract_test.rs",
+      "required_text": [
+        "manifest_binds_e2e_and_conformance_completion_evidence",
+        "checker_validates_allocator_e2e_completion_contract",
+        "checker_rejects_unknown_telemetry_event"
+      ]
+    },
+    "allocator_e2e_conformance_contract": {
+      "path": "tests/conformance/allocator_e2e_conformance_completion_contract.v1.json",
+      "expected_schema": "allocator_e2e_conformance_completion_contract.v1",
+      "required_text": [
+        "allocator_completion_source_binding",
+        "allocator_completion_conformance_binding",
+        "allocator_completion_summary"
+      ]
+    },
+    "allocator_e2e_conformance_checker": {
+      "path": "scripts/check_allocator_e2e_conformance_completion_contract.sh",
+      "required_text": [
+        "check_allocator_e2e_conformance_completion_contract",
+        "allocator_completion_summary"
+      ]
+    },
+    "allocator_e2e_conformance_test": {
+      "path": "crates/frankenlibc-harness/tests/allocator_e2e_conformance_completion_contract_test.rs",
+      "required_text": [
+        "manifest_binds_allocator_e2e_and_conformance_sources",
+        "checker_accepts_allocator_completion_contract",
+        "checker_rejects_missing_completion_obligation"
+      ]
+    },
+    "allocator_fixture": {
+      "path": "tests/conformance/fixtures/allocator.json",
+      "required_text": [
+        "malloc_basic",
+        "calloc_basic",
+        "realloc_null_is_malloc"
+      ]
+    },
+    "allocator_e2e_script": {
+      "path": "scripts/check_allocator_e2e.sh",
+      "required_text": [
+        "fixture_malloc_stress",
+        "FRANKENLIBC_MODE",
+        "LD_PRELOAD",
+        "allocator_e2e: PASS"
+      ]
+    },
+    "completion_checker": {
+      "path": "scripts/check_allocator_subsystem_completion_contract.sh",
+      "required_text": [
+        "allocator_subsystem_completion_contract",
+        "allocator_subsystem_child_gates_replayed"
+      ]
+    },
+    "completion_test": {
+      "path": "crates/frankenlibc-harness/tests/allocator_subsystem_completion_contract_test.rs",
+      "required_text": [
+        "manifest_binds_allocator_subsystem_sources",
+        "checker_accepts_contract_and_replays_allocator_gates",
+        "checker_rejects_missing_required_telemetry_event"
+      ]
+    }
+  },
+  "proof_lanes": [
+    {
+      "id": "arena-generational-core",
+      "description": "Generational arena, quarantine drain, fingerprint/canary, and validator pipeline evidence.",
+      "missing_items": [
+        "tests.unit.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "arena_rs",
+        "fingerprint_rs",
+        "ptr_validator_rs",
+        "arena_quarantine_manifest",
+        "arena_quarantine_test",
+        "tsm_arena_integrity_contract",
+        "tsm_arena_integrity_checker",
+        "tsm_arena_integrity_test"
+      ],
+      "checker_commands": [
+        "bash scripts/check_tsm_arena_integrity_completion_contract.sh"
+      ],
+      "test_artifact": "tsm_arena_integrity_test",
+      "required_test_refs": [
+        "manifest_anchors_completion_debt",
+        "unit_primary_binds_arena_fingerprint_and_validator_tests",
+        "e2e_primary_binds_public_pipeline_tests",
+        "checker_accepts_manifest_and_emits_report"
+      ]
+    },
+    {
+      "id": "allocator-membrane-unit-property",
+      "description": "Allocator membrane unit and property evidence for generations, UAF, double-free, canary corruption, and foreign-pointer paths.",
+      "missing_items": [
+        "tests.unit.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "unit_property_contract",
+        "unit_property_checker",
+        "unit_property_test",
+        "membrane_invariant_contract",
+        "membrane_invariant_checker",
+        "membrane_invariant_test"
+      ],
+      "checker_commands": [
+        "bash scripts/check_allocator_membrane_unit_property_contract.sh",
+        "bash scripts/check_allocator_membrane_invariant_completion_contract.sh"
+      ],
+      "test_artifact": "membrane_invariant_test",
+      "required_test_refs": [
+        "manifest_binds_allocator_membrane_unit_and_telemetry_evidence",
+        "checker_emits_report_and_log",
+        "checker_rejects_missing_unit_binding"
+      ]
+    },
+    {
+      "id": "deterministic-fault-sequences",
+      "description": "Replayable allocator/membrane state-transition sequences and adversarial fault matrix evidence.",
+      "missing_items": [
+        "tests.unit.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "allocator_sequences_test",
+        "deterministic_sequence_contract",
+        "deterministic_sequence_checker",
+        "deterministic_sequence_test"
+      ],
+      "checker_commands": [
+        "bash scripts/check_allocator_membrane_deterministic_sequence_completion_contract.sh"
+      ],
+      "test_artifact": "deterministic_sequence_test",
+      "required_test_refs": [
+        "manifest_binds_deterministic_sequence_unit_and_property_evidence",
+        "checker_emits_report_and_log",
+        "checker_rejects_missing_sequence_property_marker"
+      ]
+    },
+    {
+      "id": "allocator-e2e-strict-hardened",
+      "description": "Strict and hardened allocator E2E fixture execution, LD_PRELOAD parity, stress fixture, and report/log telemetry.",
+      "missing_items": [
+        "tests.e2e.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "allocator_e2e_contract",
+        "allocator_e2e_checker",
+        "allocator_e2e_test",
+        "allocator_e2e_script"
+      ],
+      "checker_commands": [
+        "bash scripts/check_allocator_e2e_completion_contract.sh"
+      ],
+      "test_artifact": "allocator_e2e_test",
+      "required_test_refs": [
+        "manifest_binds_e2e_and_conformance_completion_evidence",
+        "checker_validates_allocator_e2e_completion_contract",
+        "checker_emits_allocator_completion_report_and_jsonl"
+      ]
+    },
+    {
+      "id": "allocator-conformance-fixture",
+      "description": "Allocator conformance fixture, isolated harness execution, and source-binding telemetry.",
+      "missing_items": [
+        "tests.e2e.primary",
+        "telemetry.primary"
+      ],
+      "artifact_ids": [
+        "allocator_e2e_conformance_contract",
+        "allocator_e2e_conformance_checker",
+        "allocator_e2e_conformance_test",
+        "allocator_fixture"
+      ],
+      "checker_commands": [
+        "bash scripts/check_allocator_e2e_conformance_completion_contract.sh"
+      ],
+      "test_artifact": "allocator_e2e_conformance_test",
+      "required_test_refs": [
+        "manifest_binds_allocator_e2e_and_conformance_sources",
+        "checker_accepts_allocator_completion_contract",
+        "checker_rejects_missing_completion_obligation"
+      ]
+    }
+  ],
+  "missing_item_bindings": [
+    {
+      "id": "tests.unit.primary",
+      "kind": "unit",
+      "lane_ids": [
+        "arena-generational-core",
+        "allocator-membrane-unit-property",
+        "deterministic-fault-sequences"
+      ],
+      "required_commands": [
+        "RCH_FORCE_REMOTE=true CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-StormyCardinal-2x57 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test allocator_subsystem_completion_contract_test -- --nocapture"
+      ],
+      "required_test_refs": [
+        "manifest_binds_allocator_subsystem_sources"
+      ]
+    },
+    {
+      "id": "tests.e2e.primary",
+      "kind": "e2e",
+      "lane_ids": [
+        "allocator-e2e-strict-hardened",
+        "allocator-conformance-fixture",
+        "arena-generational-core"
+      ],
+      "required_commands": [
+        "bash scripts/check_allocator_e2e_completion_contract.sh",
+        "bash scripts/check_allocator_e2e_conformance_completion_contract.sh",
+        "RCH_FORCE_REMOTE=true CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-StormyCardinal-2x57 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test allocator_subsystem_completion_contract_test -- --nocapture"
+      ],
+      "required_test_refs": [
+        "checker_accepts_contract_and_replays_allocator_gates"
+      ]
+    },
+    {
+      "id": "telemetry.primary",
+      "kind": "telemetry",
+      "lane_ids": [
+        "arena-generational-core",
+        "allocator-membrane-unit-property",
+        "deterministic-fault-sequences",
+        "allocator-e2e-strict-hardened",
+        "allocator-conformance-fixture"
+      ],
+      "required_commands": [
+        "bash scripts/check_allocator_subsystem_completion_contract.sh",
+        "RCH_FORCE_REMOTE=true CARGO_TARGET_DIR=/data/projects/.cargo-target-frankenlibc-StormyCardinal-2x57 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-harness --test allocator_subsystem_completion_contract_test -- --nocapture"
+      ],
+      "required_test_refs": [
+        "checker_rejects_missing_required_telemetry_event"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "required_events": [
+      "allocator_subsystem_sources_bound",
+      "allocator_subsystem_lanes_validated",
+      "allocator_subsystem_missing_items_bound",
+      "allocator_subsystem_telemetry_validated",
+      "allocator_subsystem_child_gates_replayed",
+      "allocator_subsystem_completion_contract_pass",
+      "allocator_subsystem_completion_contract_fail"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "event",
+      "source_bead",
+      "completion_debt_bead",
+      "status",
+      "artifact_refs",
+      "failure_signature",
+      "details"
+    ],
+    "report_path": "target/conformance/allocator_subsystem_completion_contract.report.json",
+    "log_path": "target/conformance/allocator_subsystem_completion_contract.log.jsonl"
+  }
+}
