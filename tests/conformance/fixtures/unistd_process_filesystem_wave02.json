@@ -1,0 +1,420 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-12T00:00:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the refreshed fcq-unistd-process-filesystem wave-02 symbols. Outputs classify CPU-set helpers, scheduler status, stack-protector behavior, basename/stat classes, keyring denial, and mount-entry error handling without recording ambient inode numbers, device ids, process ids, addresses, key serials, temporary paths, host mount paths, or filesystem timestamps.",
+  "spec_reference": "POSIX.1 process/filesystem and scheduling surfaces, GNU/glibc internal sched/stat/basename/stack-protector aliases, Linux keyring add_key, and GNU mount-entry addmntent semantics",
+  "campaign": {
+    "bead": "bd-pz1g1.1",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-02-unistd-process-filesystem",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata",
+    "first_wave_symbols": [
+      "__sched_cpualloc",
+      "__sched_cpucount",
+      "__sched_cpufree",
+      "__sched_rr_get_interval",
+      "__sched_setparam",
+      "__stack_chk_fail",
+      "__stack_chk_guard",
+      "__xpg_basename",
+      "__xstat",
+      "__xstat64",
+      "add_key",
+      "addmntent"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "sched_cpualloc_zeroed_class_strict",
+      "function": "__sched_cpualloc",
+      "spec_section": "GNU __sched_cpualloc CPU-set allocation helper",
+      "inputs": {
+        "symbol": "__sched_cpualloc",
+        "scenario": "allocate_16_cpu_set_without_pointer_capture",
+        "cpu_count": 16,
+        "expected": "CPUALLOC_NON_NULL_ZEROED_128",
+        "oracle_source": "FrankenLibC __sched_cpualloc size and zero-fill class",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__sched_cpualloc;mode=strict;expected=CPUALLOC_NON_NULL_ZEROED_128;actual=CPUALLOC_NON_NULL_ZEROED_128;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sched_cpualloc_zeroed_class_hardened",
+      "function": "__sched_cpualloc",
+      "spec_section": "GNU __sched_cpualloc CPU-set allocation helper",
+      "inputs": {
+        "symbol": "__sched_cpualloc",
+        "scenario": "allocate_16_cpu_set_without_pointer_capture",
+        "cpu_count": 16,
+        "expected": "CPUALLOC_NON_NULL_ZEROED_128",
+        "oracle_source": "FrankenLibC __sched_cpualloc size and zero-fill class",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__sched_cpualloc;mode=hardened;expected=CPUALLOC_NON_NULL_ZEROED_128;actual=CPUALLOC_NON_NULL_ZEROED_128;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sched_cpucount_mask_bits_strict",
+      "function": "__sched_cpucount",
+      "spec_section": "GNU __sched_cpucount CPU-set bit counter",
+      "inputs": {
+        "symbol": "__sched_cpucount",
+        "scenario": "count_bits_in_two_byte_cpu_mask",
+        "mask_bytes": [161, 15],
+        "expected": "CPUCOUNT_7",
+        "oracle_source": "FrankenLibC __sched_cpucount deterministic byte mask",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__sched_cpucount;mode=strict;expected=CPUCOUNT_7;actual=CPUCOUNT_7;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sched_cpucount_mask_bits_hardened",
+      "function": "__sched_cpucount",
+      "spec_section": "GNU __sched_cpucount CPU-set bit counter",
+      "inputs": {
+        "symbol": "__sched_cpucount",
+        "scenario": "count_bits_in_two_byte_cpu_mask",
+        "mask_bytes": [161, 15],
+        "expected": "CPUCOUNT_7",
+        "oracle_source": "FrankenLibC __sched_cpucount deterministic byte mask",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__sched_cpucount;mode=hardened;expected=CPUCOUNT_7;actual=CPUCOUNT_7;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sched_cpufree_allocated_set_strict",
+      "function": "__sched_cpufree",
+      "spec_section": "GNU __sched_cpufree CPU-set release helper",
+      "inputs": {
+        "symbol": "__sched_cpufree",
+        "scenario": "free_fixture_allocated_cpu_set_without_pointer_capture",
+        "cpu_count": 16,
+        "expected": "CPUFREE_FREED_ALLOCATED_SET",
+        "oracle_source": "FrankenLibC __sched_cpualloc followed by __sched_cpufree",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__sched_cpufree;mode=strict;expected=CPUFREE_FREED_ALLOCATED_SET;actual=CPUFREE_FREED_ALLOCATED_SET;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sched_cpufree_allocated_set_hardened",
+      "function": "__sched_cpufree",
+      "spec_section": "GNU __sched_cpufree CPU-set release helper",
+      "inputs": {
+        "symbol": "__sched_cpufree",
+        "scenario": "free_fixture_allocated_cpu_set_without_pointer_capture",
+        "cpu_count": 16,
+        "expected": "CPUFREE_FREED_ALLOCATED_SET",
+        "oracle_source": "FrankenLibC __sched_cpualloc followed by __sched_cpufree",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__sched_cpufree;mode=hardened;expected=CPUFREE_FREED_ALLOCATED_SET;actual=CPUFREE_FREED_ALLOCATED_SET;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sched_rr_get_interval_current_process_strict",
+      "function": "__sched_rr_get_interval",
+      "spec_section": "POSIX sched_rr_get_interval / GNU __sched_rr_get_interval alias",
+      "inputs": {
+        "symbol": "__sched_rr_get_interval",
+        "scenario": "classify_current_process_rr_interval_status",
+        "pid": 0,
+        "expected": "SCHED_RR_INTERVAL_RC_0",
+        "oracle_source": "FrankenLibC __sched_rr_get_interval return-class only",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__sched_rr_get_interval;mode=strict;expected=SCHED_RR_INTERVAL_RC_0;actual=SCHED_RR_INTERVAL_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sched_rr_get_interval_current_process_hardened",
+      "function": "__sched_rr_get_interval",
+      "spec_section": "POSIX sched_rr_get_interval / GNU __sched_rr_get_interval alias",
+      "inputs": {
+        "symbol": "__sched_rr_get_interval",
+        "scenario": "classify_current_process_rr_interval_status",
+        "pid": 0,
+        "expected": "SCHED_RR_INTERVAL_RC_0",
+        "oracle_source": "FrankenLibC __sched_rr_get_interval return-class only",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__sched_rr_get_interval;mode=hardened;expected=SCHED_RR_INTERVAL_RC_0;actual=SCHED_RR_INTERVAL_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sched_setparam_priority_zero_strict",
+      "function": "__sched_setparam",
+      "spec_section": "POSIX sched_setparam / GNU __sched_setparam alias",
+      "inputs": {
+        "symbol": "__sched_setparam",
+        "scenario": "set_current_process_zero_priority",
+        "pid": 0,
+        "sched_priority": 0,
+        "expected": "SCHED_SETPARAM_RC_0",
+        "oracle_source": "FrankenLibC __sched_setparam return-class only",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__sched_setparam;mode=strict;expected=SCHED_SETPARAM_RC_0;actual=SCHED_SETPARAM_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sched_setparam_priority_zero_hardened",
+      "function": "__sched_setparam",
+      "spec_section": "POSIX sched_setparam / GNU __sched_setparam alias",
+      "inputs": {
+        "symbol": "__sched_setparam",
+        "scenario": "set_current_process_zero_priority",
+        "pid": 0,
+        "sched_priority": 0,
+        "expected": "SCHED_SETPARAM_RC_0",
+        "oracle_source": "FrankenLibC __sched_setparam return-class only",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__sched_setparam;mode=hardened;expected=SCHED_SETPARAM_RC_0;actual=SCHED_SETPARAM_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "stack_chk_fail_aborts_child_strict",
+      "function": "__stack_chk_fail",
+      "spec_section": "GNU stack protector __stack_chk_fail abort contract",
+      "inputs": {
+        "symbol": "__stack_chk_fail",
+        "scenario": "forked_child_aborts_without_parent_termination",
+        "expected": "STACK_CHK_ABORT_SIGNAL",
+        "oracle_source": "forked child invokes FrankenLibC __stack_chk_fail",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__stack_chk_fail;mode=strict;expected=STACK_CHK_ABORT_SIGNAL;actual=STACK_CHK_ABORT_SIGNAL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "stack_chk_fail_aborts_child_hardened",
+      "function": "__stack_chk_fail",
+      "spec_section": "GNU stack protector __stack_chk_fail abort contract",
+      "inputs": {
+        "symbol": "__stack_chk_fail",
+        "scenario": "forked_child_aborts_without_parent_termination",
+        "expected": "STACK_CHK_ABORT_SIGNAL",
+        "oracle_source": "forked child invokes FrankenLibC __stack_chk_fail",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__stack_chk_fail;mode=hardened;expected=STACK_CHK_ABORT_SIGNAL;actual=STACK_CHK_ABORT_SIGNAL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "stack_chk_guard_low_byte_strict",
+      "function": "__stack_chk_guard",
+      "spec_section": "GNU stack protector __stack_chk_guard terminator canary convention",
+      "inputs": {
+        "symbol": "__stack_chk_guard",
+        "scenario": "classify_low_byte_without_leaking_guard_value",
+        "expected": "STACK_GUARD_LOW_BYTE_ZERO",
+        "oracle_source": "FrankenLibC __stack_chk_guard low-byte class",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__stack_chk_guard;mode=strict;expected=STACK_GUARD_LOW_BYTE_ZERO;actual=STACK_GUARD_LOW_BYTE_ZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "stack_chk_guard_low_byte_hardened",
+      "function": "__stack_chk_guard",
+      "spec_section": "GNU stack protector __stack_chk_guard terminator canary convention",
+      "inputs": {
+        "symbol": "__stack_chk_guard",
+        "scenario": "classify_low_byte_without_leaking_guard_value",
+        "expected": "STACK_GUARD_LOW_BYTE_ZERO",
+        "oracle_source": "FrankenLibC __stack_chk_guard low-byte class",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__stack_chk_guard;mode=hardened;expected=STACK_GUARD_LOW_BYTE_ZERO;actual=STACK_GUARD_LOW_BYTE_ZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "xpg_basename_trailing_slashes_strict",
+      "function": "__xpg_basename",
+      "spec_section": "XSI basename / GNU __xpg_basename path component semantics",
+      "inputs": {
+        "symbol": "__xpg_basename",
+        "scenario": "basename_strips_prefix_and_trailing_slashes",
+        "path": "/opt/franken/bin/tool///",
+        "expected": "BASENAME_tool",
+        "oracle_source": "FrankenLibC __xpg_basename mutable path fixture",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__xpg_basename;mode=strict;expected=BASENAME_tool;actual=BASENAME_tool;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "xpg_basename_trailing_slashes_hardened",
+      "function": "__xpg_basename",
+      "spec_section": "XSI basename / GNU __xpg_basename path component semantics",
+      "inputs": {
+        "symbol": "__xpg_basename",
+        "scenario": "basename_strips_prefix_and_trailing_slashes",
+        "path": "/opt/franken/bin/tool///",
+        "expected": "BASENAME_tool",
+        "oracle_source": "FrankenLibC __xpg_basename mutable path fixture",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__xpg_basename;mode=hardened;expected=BASENAME_tool;actual=BASENAME_tool;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "xstat_dev_null_class_strict",
+      "function": "__xstat",
+      "spec_section": "GNU glibc __xstat stat alias",
+      "inputs": {
+        "symbol": "__xstat",
+        "scenario": "stat_dev_null_mode_presence_class",
+        "version": 1,
+        "path": "/dev/null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "oracle_source": "FrankenLibC __xstat classifies mode presence only",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__xstat;mode=strict;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "xstat_dev_null_class_hardened",
+      "function": "__xstat",
+      "spec_section": "GNU glibc __xstat stat alias",
+      "inputs": {
+        "symbol": "__xstat",
+        "scenario": "stat_dev_null_mode_presence_class",
+        "version": 1,
+        "path": "/dev/null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "oracle_source": "FrankenLibC __xstat classifies mode presence only",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__xstat;mode=hardened;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "xstat64_dev_null_class_strict",
+      "function": "__xstat64",
+      "spec_section": "GNU glibc __xstat64 stat alias",
+      "inputs": {
+        "symbol": "__xstat64",
+        "scenario": "stat64_dev_null_mode_presence_class",
+        "version": 1,
+        "path": "/dev/null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "oracle_source": "FrankenLibC __xstat64 classifies mode presence only",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__xstat64;mode=strict;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "xstat64_dev_null_class_hardened",
+      "function": "__xstat64",
+      "spec_section": "GNU glibc __xstat64 stat alias",
+      "inputs": {
+        "symbol": "__xstat64",
+        "scenario": "stat64_dev_null_mode_presence_class",
+        "version": 1,
+        "path": "/dev/null",
+        "expected": "STAT_OK_MODE_PRESENT",
+        "oracle_source": "FrankenLibC __xstat64 classifies mode presence only",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=__xstat64;mode=hardened;expected=STAT_OK_MODE_PRESENT;actual=STAT_OK_MODE_PRESENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "add_key_null_args_strict",
+      "function": "add_key",
+      "spec_section": "Linux add_key syscall wrapper invalid argument denial",
+      "inputs": {
+        "symbol": "add_key",
+        "scenario": "null_type_description_payload_no_key_serial_capture",
+        "expected": "ADD_KEY_RC_-1",
+        "oracle_source": "FrankenLibC add_key null-pointer denial class",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=add_key;mode=strict;expected=ADD_KEY_RC_-1;actual=ADD_KEY_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "add_key_null_args_hardened",
+      "function": "add_key",
+      "spec_section": "Linux add_key syscall wrapper invalid argument denial",
+      "inputs": {
+        "symbol": "add_key",
+        "scenario": "null_type_description_payload_no_key_serial_capture",
+        "expected": "ADD_KEY_RC_-1",
+        "oracle_source": "FrankenLibC add_key null-pointer denial class",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=add_key;mode=hardened;expected=ADD_KEY_RC_-1;actual=ADD_KEY_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "addmntent_null_stream_strict",
+      "function": "addmntent",
+      "spec_section": "GNU addmntent null stream error contract",
+      "inputs": {
+        "symbol": "addmntent",
+        "scenario": "null_stream_and_null_entry_no_mount_path_capture",
+        "expected": "ADDMNTENT_RC_1",
+        "oracle_source": "FrankenLibC addmntent null stream error class",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=addmntent;mode=strict;expected=ADDMNTENT_RC_1;actual=ADDMNTENT_RC_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "addmntent_null_stream_hardened",
+      "function": "addmntent",
+      "spec_section": "GNU addmntent null stream error contract",
+      "inputs": {
+        "symbol": "addmntent",
+        "scenario": "null_stream_and_null_entry_no_mount_path_capture",
+        "expected": "ADDMNTENT_RC_1",
+        "oracle_source": "FrankenLibC addmntent null stream error class",
+        "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata"
+      },
+      "expected_output": "symbol=addmntent;mode=hardened;expected=ADDMNTENT_RC_1;actual=ADDMNTENT_RC_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

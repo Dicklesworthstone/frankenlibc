@@ -550,9 +550,30 @@ pub fn execute_fixture_case(
         | "authdes_getucred"
         | "authdes_pk_create"
         | "authnone_create" => execute_rpc_legacy_network_case(function, inputs, mode),
-        "_Exit" | "_Fork" | "__cxa_atexit" | "__cxa_finalize" | "__fxstat" | "__fxstat64"
-        | "__fxstatat" | "__fxstatat64" | "__gmtime_r" | "__lxstat" | "__lxstat64"
-        | "__progname" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        "_Exit"
+        | "_Fork"
+        | "__cxa_atexit"
+        | "__cxa_finalize"
+        | "__fxstat"
+        | "__fxstat64"
+        | "__fxstatat"
+        | "__fxstatat64"
+        | "__gmtime_r"
+        | "__lxstat"
+        | "__lxstat64"
+        | "__progname"
+        | "__sched_cpualloc"
+        | "__sched_cpucount"
+        | "__sched_cpufree"
+        | "__sched_rr_get_interval"
+        | "__sched_setparam"
+        | "__stack_chk_fail"
+        | "__stack_chk_guard"
+        | "__xpg_basename"
+        | "__xstat"
+        | "__xstat64"
+        | "add_key"
+        | "addmntent" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
         | "_IO_peekc_locked" | "_IO_putc" => {
@@ -14504,6 +14525,17 @@ fn execute_unistd_process_filesystem_case(
         "__gmtime_r" => gmtime_r_fixture_actual(inputs)?,
         "__lxstat" | "__lxstat64" => lxstat_fixture_actual(function, inputs)?,
         "__progname" => progname_fixture_actual()?,
+        "__sched_cpualloc" => sched_cpualloc_fixture_actual(inputs)?,
+        "__sched_cpucount" => sched_cpucount_fixture_actual(inputs)?,
+        "__sched_cpufree" => sched_cpufree_fixture_actual(inputs)?,
+        "__sched_rr_get_interval" => sched_rr_get_interval_fixture_actual(inputs)?,
+        "__sched_setparam" => sched_setparam_fixture_actual(inputs)?,
+        "__stack_chk_fail" => stack_chk_fail_fixture_actual()?,
+        "__stack_chk_guard" => stack_chk_guard_fixture_actual()?,
+        "__xpg_basename" => xpg_basename_fixture_actual(inputs)?,
+        "__xstat" | "__xstat64" => xstat_fixture_actual(function, inputs)?,
+        "add_key" => add_key_fixture_actual()?,
+        "addmntent" => addmntent_fixture_actual()?,
         other => {
             return Err(format!(
                 "unsupported unistd process/filesystem fixture: {other}"
@@ -14741,6 +14773,170 @@ fn progname_fixture_actual() -> Result<String, String> {
     }
     let name = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
     Ok(format!("PROGNAME_{name}"))
+}
+
+fn sched_cpualloc_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let count = parse_i32(inputs, "cpu_count").unwrap_or(16);
+    if count <= 0 {
+        return Ok(String::from("CPUALLOC_INVALID_COUNT"));
+    }
+    let expected_size = (count as usize).div_ceil(8).max(128);
+    let ptr = unsafe { frankenlibc_abi::unistd_abi::__sched_cpualloc(count) };
+    if ptr.is_null() {
+        return Ok(String::from("CPUALLOC_NULL"));
+    }
+    let zeroed = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), expected_size) }
+        .iter()
+        .all(|&byte| byte == 0);
+    unsafe { frankenlibc_abi::unistd_abi::__sched_cpufree(ptr) };
+    if zeroed {
+        Ok(format!("CPUALLOC_NON_NULL_ZEROED_{expected_size}"))
+    } else {
+        Ok(format!("CPUALLOC_NON_NULL_DIRTY_{expected_size}"))
+    }
+}
+
+fn sched_cpucount_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let bytes = inputs
+        .get("mask_bytes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "missing mask_bytes array".to_string())?
+        .iter()
+        .map(|value| {
+            value
+                .as_u64()
+                .filter(|&byte| byte <= u8::MAX as u64)
+                .map(|byte| byte as u8)
+                .ok_or_else(|| "mask_bytes entries must be byte values".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let count = unsafe {
+        frankenlibc_abi::unistd_abi::__sched_cpucount(bytes.len(), bytes.as_ptr().cast())
+    };
+    Ok(format!("CPUCOUNT_{count}"))
+}
+
+fn sched_cpufree_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let count = parse_i32(inputs, "cpu_count").unwrap_or(16);
+    if count <= 0 {
+        return Ok(String::from("CPUFREE_INVALID_COUNT"));
+    }
+    let ptr = unsafe { frankenlibc_abi::unistd_abi::__sched_cpualloc(count) };
+    if ptr.is_null() {
+        return Ok(String::from("CPUFREE_ALLOC_NULL"));
+    }
+    unsafe { frankenlibc_abi::unistd_abi::__sched_cpufree(ptr) };
+    Ok(String::from("CPUFREE_FREED_ALLOCATED_SET"))
+}
+
+fn sched_rr_get_interval_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let pid = parse_i32(inputs, "pid").unwrap_or(0);
+    let mut interval = std::mem::MaybeUninit::<libc::timespec>::zeroed();
+    let rc =
+        unsafe { frankenlibc_abi::unistd_abi::__sched_rr_get_interval(pid, interval.as_mut_ptr()) };
+    if rc == 0 {
+        Ok(String::from("SCHED_RR_INTERVAL_RC_0"))
+    } else {
+        Ok(format!("SCHED_RR_INTERVAL_RC_{rc}"))
+    }
+}
+
+fn sched_setparam_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let pid = parse_i32(inputs, "pid").unwrap_or(0);
+    let priority = parse_i32(inputs, "sched_priority").unwrap_or(0);
+    let param = libc::sched_param {
+        sched_priority: priority,
+    };
+    let rc = unsafe { frankenlibc_abi::unistd_abi::__sched_setparam(pid, &param) };
+    Ok(format!("SCHED_SETPARAM_RC_{rc}"))
+}
+
+fn stack_chk_fail_fixture_actual() -> Result<String, String> {
+    let child = unsafe { libc::fork() };
+    if child == 0 {
+        unsafe { frankenlibc_abi::fortify_abi::__stack_chk_fail() };
+    }
+    if child < 0 {
+        return Ok(String::from("STACK_CHK_FORK_FAILED"));
+    }
+
+    let mut wait_status = 0;
+    let waited = unsafe { libc::waitpid(child, &mut wait_status, 0) };
+    if waited != child {
+        return Ok(format!("STACK_CHK_WAITPID_RC_{waited}"));
+    }
+    if libc::WIFSIGNALED(wait_status) && libc::WTERMSIG(wait_status) == libc::SIGABRT {
+        return Ok(String::from("STACK_CHK_ABORT_SIGNAL"));
+    }
+    if libc::WIFSIGNALED(wait_status) {
+        return Ok(String::from("STACK_CHK_OTHER_SIGNAL"));
+    }
+    if libc::WIFEXITED(wait_status) {
+        return Ok(format!("STACK_CHK_EXIT_{}", libc::WEXITSTATUS(wait_status)));
+    }
+    Ok(String::from("STACK_CHK_UNKNOWN_STATUS"))
+}
+
+fn stack_chk_guard_fixture_actual() -> Result<String, String> {
+    let guard = frankenlibc_abi::unistd_abi::__stack_chk_guard.load(Ordering::Acquire);
+    if guard & 0xff == 0 {
+        Ok(String::from("STACK_GUARD_LOW_BYTE_ZERO"))
+    } else {
+        Ok(String::from("STACK_GUARD_LOW_BYTE_NONZERO"))
+    }
+}
+
+fn xpg_basename_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let path = parse_string(inputs, "path")?;
+    let mut path_bytes = CString::new(path)
+        .map_err(|_| "basename path contains NUL".to_string())?
+        .into_bytes_with_nul();
+    let ptr =
+        unsafe { frankenlibc_abi::unistd_abi::__xpg_basename(path_bytes.as_mut_ptr().cast()) };
+    if ptr.is_null() {
+        return Ok(String::from("BASENAME_NULL"));
+    }
+    let name = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
+    Ok(format!("BASENAME_{name}"))
+}
+
+fn xstat_fixture_actual(function: &str, inputs: &serde_json::Value) -> Result<String, String> {
+    let version = parse_i32(inputs, "version").unwrap_or(1);
+    let path = inputs
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("/dev/null");
+    let path_c = CString::new(path).map_err(|_| "stat fixture path contains NUL".to_string())?;
+    let mut stat_buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    let rc = match function {
+        "__xstat" => unsafe {
+            frankenlibc_abi::unistd_abi::__xstat(version, path_c.as_ptr(), stat_buf.as_mut_ptr())
+        },
+        "__xstat64" => unsafe {
+            frankenlibc_abi::unistd_abi::__xstat64(version, path_c.as_ptr(), stat_buf.as_mut_ptr())
+        },
+        _ => unreachable!("validated xstat function"),
+    };
+    stat_fixture_class(rc, stat_buf)
+}
+
+fn add_key_fixture_actual() -> Result<String, String> {
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::add_key(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            0,
+        )
+    };
+    Ok(format!("ADD_KEY_RC_{rc}"))
+}
+
+fn addmntent_fixture_actual() -> Result<String, String> {
+    let rc =
+        unsafe { frankenlibc_abi::unistd_abi::addmntent(std::ptr::null_mut(), std::ptr::null()) };
+    Ok(format!("ADDMNTENT_RC_{rc}"))
 }
 
 fn execute_stdio_libio_symbols_case(
