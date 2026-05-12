@@ -1,0 +1,238 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "sos-thread-safety-completion-contract",
+  "bead": "bd-2ste.2",
+  "completion_debt_bead": "bd-2ste.2.1",
+  "generated_utc": "2026-05-12T06:05:00Z",
+  "purpose": "Completion-debt contract for the thread-safety SOS certificate that guards concurrent allocator integrity. This binds the checked-in certificate artifact, runtime evaluator, architecture-independence checks, allocator concurrency evidence, and checker telemetry to the audit-required unit, e2e, and telemetry evidence items.",
+  "certificate_artifact": {
+    "artifact_id": "sos_thread_safety_certificate_task",
+    "path": "crates/frankenlibc-membrane/artifacts/sos/thread_safety_certificate.task",
+    "expected_solver_family": "mosek",
+    "expected_certificate": "thread_safety",
+    "expected_dimension": 5,
+    "expected_monomial_degree": 2,
+    "expected_barrier_budget_milli": 900000,
+    "required_variables": [
+      "thread_pressure",
+      "writer_overflow",
+      "owner_conflict",
+      "free_list_skew",
+      "epoch_lag"
+    ]
+  },
+  "source_artifacts": [
+    {
+      "artifact_id": "sos_build_pipeline",
+      "path": "crates/frankenlibc-membrane/build.rs",
+      "required_needles": [
+        "THREAD_SAFETY_TASK_PATH",
+        "GENERATED_THREAD_SAFETY_RS_PATH",
+        "parse_sos_task",
+        "verify_psd_cholesky",
+        "write_soundness_report"
+      ]
+    },
+    {
+      "artifact_id": "sos_barrier_runtime",
+      "path": "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs",
+      "required_needles": [
+        "Thread-Safety Certificate (Concurrent Allocation Integrity)",
+        "THREAD_SAFETY_CERTIFICATE",
+        "evaluate_thread_safety_barrier",
+        "certificate_hash_matches_static_thread_safety_artifact",
+        "thread_safety_certificate_tamper_is_detected",
+        "proof_thread_safety_quadratic_form_nonnegative_exhaustive",
+        "proof_barrier_separation_thread_safety",
+        "proof_all_certificates_have_valid_integrity"
+      ]
+    },
+    {
+      "artifact_id": "sos_arch_independence",
+      "path": "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs",
+      "required_needles": [
+        "thread_safety_barrier_golden_values_arch_independent",
+        "overflow_saturation_is_arch_independent",
+        "no_arch_specific_compilation_in_sos_barrier",
+        "evaluate_thread_safety_barrier"
+      ]
+    },
+    {
+      "artifact_id": "allocator_concurrency_evidence",
+      "path": "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs",
+      "required_needles": [
+        "deterministic_allocator_membrane_sequences_hold_core_invariants",
+        "concurrent_double_free_detection_basic_10k_16t_10pct",
+        "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives",
+        "heap_integrity_failures"
+      ]
+    }
+  ],
+  "runtime_expectations": {
+    "certificate_id": "thread_safety",
+    "input_basis": [
+      "thread_count",
+      "concurrent_writers",
+      "arena_owner_conflict",
+      "free_list_skew_ppm",
+      "allocation_epoch_lag_ppm"
+    ],
+    "safe_profile": {
+      "thread_count": 16,
+      "concurrent_writers": 1,
+      "arena_owner_conflict": false,
+      "free_list_skew_ppm": 60000,
+      "allocation_epoch_lag_ppm": 40000,
+      "expected_relation": "barrier_value_positive"
+    },
+    "violation_profile": {
+      "thread_count": 700,
+      "concurrent_writers": 4,
+      "arena_owner_conflict": true,
+      "free_list_skew_ppm": 900000,
+      "allocation_epoch_lag_ppm": 920000,
+      "expected_relation": "barrier_value_negative"
+    },
+    "matrix_properties": [
+      "symmetric",
+      "positive_diagonal",
+      "positive_semidefinite",
+      "hash_tamper_evident",
+      "architecture_independent_integer_eval"
+    ]
+  },
+  "telemetry_contract": {
+    "report_env": "FRANKENLIBC_SOS_THREAD_SAFETY_REPORT",
+    "log_env": "FRANKENLIBC_SOS_THREAD_SAFETY_LOG",
+    "required_events": [
+      "sos_thread_safety_certificate_source",
+      "sos_thread_safety_certificate_task",
+      "sos_thread_safety_runtime_binding",
+      "sos_thread_safety_completion_summary"
+    ],
+    "required_log_fields": [
+      "event",
+      "status",
+      "timestamp",
+      "artifact_refs",
+      "bead_id",
+      "completion_debt_bead",
+      "matrix_dimension",
+      "barrier_budget_milli",
+      "missing_items_closed"
+    ]
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-2ste.2.1",
+    "original_bead": "bd-2ste.2",
+    "next_audit_score_threshold": 800,
+    "missing_items_closed": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "telemetry.primary"
+    ],
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "source": "sos_barrier_runtime",
+          "name": "certificate_hash_matches_static_thread_safety_artifact"
+        },
+        {
+          "source": "sos_barrier_runtime",
+          "name": "thread_safety_certificate_tamper_is_detected"
+        },
+        {
+          "source": "sos_barrier_runtime",
+          "name": "thread_safety_gram_matrix_is_positive_semidefinite"
+        },
+        {
+          "source": "sos_barrier_runtime",
+          "name": "thread_safety_barrier_safe_nominal_profile"
+        },
+        {
+          "source": "sos_barrier_runtime",
+          "name": "thread_safety_barrier_violates_on_conflicting_writers"
+        },
+        {
+          "source": "sos_barrier_runtime",
+          "name": "thread_safety_barrier_monotone_in_writer_pressure"
+        },
+        {
+          "source": "sos_barrier_runtime",
+          "name": "proof_thread_safety_quadratic_form_nonnegative_exhaustive"
+        },
+        {
+          "source": "sos_barrier_runtime",
+          "name": "proof_cholesky_stability_thread_safety"
+        },
+        {
+          "source": "sos_barrier_runtime",
+          "name": "proof_barrier_separation_thread_safety"
+        },
+        {
+          "source": "sos_barrier_runtime",
+          "name": "proof_all_certificates_have_valid_integrity"
+        },
+        {
+          "source": "sos_barrier_runtime",
+          "name": "proof_gram_matrix_symmetry"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-membrane certificate_hash_matches_static_thread_safety_artifact -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-membrane thread_safety_barrier_safe_nominal_profile -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-membrane proof_thread_safety_quadratic_form_nonnegative_exhaustive -- --nocapture"
+      ]
+    },
+    "e2e_primary": {
+      "required_test_refs": [
+        {
+          "source": "sos_arch_independence",
+          "name": "thread_safety_barrier_golden_values_arch_independent"
+        },
+        {
+          "source": "sos_arch_independence",
+          "name": "overflow_saturation_is_arch_independent"
+        },
+        {
+          "source": "sos_arch_independence",
+          "name": "no_arch_specific_compilation_in_sos_barrier"
+        },
+        {
+          "source": "allocator_concurrency_evidence",
+          "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"
+        },
+        {
+          "source": "allocator_concurrency_evidence",
+          "name": "concurrent_double_free_detection_basic_10k_16t_10pct"
+        },
+        {
+          "source": "allocator_concurrency_evidence",
+          "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"
+        }
+      ],
+      "required_commands": [
+        "rch exec -- cargo test -p frankenlibc-membrane --test sos_barrier_arch_independence_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-membrane --test allocator_membrane_invariants_sequences_test concurrent_double_free_detection_basic_10k_16t_10pct -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "report_path": "target/conformance/sos_thread_safety_completion_contract.report.json",
+      "log_path": "target/conformance/sos_thread_safety_completion_contract.log.jsonl",
+      "required_test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "checker_accepts_contract_and_emits_telemetry"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_telemetry_item"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_non_symmetric_gram_matrix"
+        }
+      ]
+    }
+  }
+}
