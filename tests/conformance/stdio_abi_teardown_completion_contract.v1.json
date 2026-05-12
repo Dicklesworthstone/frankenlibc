@@ -1,0 +1,98 @@
+{
+  "schema_version": "stdio_abi_teardown_completion_contract.v1",
+  "manifest_id": "bd-ypst.1-stdio-abi-teardown-completion-contract",
+  "generated_utc": "2026-05-12T16:42:00Z",
+  "bead_id": "bd-ypst.1",
+  "original_bead": "bd-ypst",
+  "trace_id": "bd-ypst.1::stdio-abi-teardown::completion::v1",
+  "description": "Completion-debt evidence binding for the stdio ABI teardown SIGSEGV fix. This contract proves the host libio exit-list patch is wired before stdio registry initialization and that the stdio ABI conformance surface remains replayable.",
+  "source_artifacts": {
+    "stdio_abi": "crates/frankenlibc-abi/src/stdio_abi.rs",
+    "io_internal_abi": "crates/frankenlibc-abi/src/io_internal_abi.rs",
+    "stdio_abi_test": "crates/frankenlibc-abi/tests/stdio_abi_test.rs",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
+    "completion_checker": "scripts/check_stdio_abi_teardown_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/stdio_abi_teardown_completion_contract_test.rs"
+  },
+  "completion_contract": {
+    "missing_item_ids": [
+      "tests.conformance.primary"
+    ],
+    "implementation_markers": {
+      "stdio_abi": [
+        "static HOST_LIBIO_EXIT_PATCHED: AtomicBool = AtomicBool::new(false);",
+        "fn ensure_host_libio_exit_safe()",
+        "if !runtime_policy::is_runtime_ready()",
+        "compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)",
+        "unsafe { io_internal_abi::bootstrap_host_libio_exports() };",
+        "fn registry() -> &'static Mutex<StreamRegistry>",
+        "ensure_host_libio_exit_safe();",
+        "pub(crate) fn init_host_stdio_streams()"
+      ],
+      "io_internal_abi": [
+        "Bootstrap hook: patch glibc's internal `_IO_list_all` to prevent exit crash.",
+        "pub(crate) unsafe fn bootstrap_host_libio_exports()",
+        "crate::host_resolve::resolve_host_symbol_raw(\"_IO_list_all\")",
+        "let glibc_list_ptr = ptr as *mut *mut c_void;",
+        "unsafe { *glibc_list_ptr = ptr::null_mut() };",
+        "pub static mut _IO_list_all: *mut c_void = std::ptr::null_mut();",
+        "pub unsafe extern \"C\" fn _IO_list_all_get()"
+      ],
+      "version_script": [
+        "_IO_list_all;",
+        "_IO_list_lock;",
+        "_IO_list_resetlock;",
+        "_IO_list_unlock;"
+      ]
+    },
+    "test_contract": {
+      "minimum_test_count": 99,
+      "required_ignore_count": 25,
+      "required_test_functions": [
+        "fprintf_writes_to_native_tmpfile_handle",
+        "vfprintf_writes_to_native_tmpfile_handle",
+        "tmpfile64_alias_uses_unlinked_update_stream",
+        "io_internal_fopen_fputs_fflush_fgets_fclose_round_trip",
+        "fclose_closes_fd"
+      ],
+      "required_remote_commands": [
+        "cargo test -p frankenlibc-abi --test stdio_abi_test -- --nocapture",
+        "cargo test -p frankenlibc-harness --test stdio_abi_teardown_completion_contract_test -- --nocapture",
+        "cargo clippy -p frankenlibc-harness --test stdio_abi_teardown_completion_contract_test -- -D warnings"
+      ]
+    }
+  },
+  "missing_item_bindings": [
+    {
+      "id": "tests.conformance.primary",
+      "kind": "conformance",
+      "implementation_refs": [
+        "crates/frankenlibc-abi/src/stdio_abi.rs",
+        "crates/frankenlibc-abi/src/io_internal_abi.rs",
+        "crates/frankenlibc-abi/version_scripts/libc.map"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-abi/tests/stdio_abi_test.rs",
+        "crates/frankenlibc-harness/tests/stdio_abi_teardown_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "stdio_abi_test::fclose_closes_fd",
+        "stdio_abi_test::io_internal_fopen_fputs_fflush_fgets_fclose_round_trip",
+        "stdio_abi_teardown_completion_contract_test::checker_accepts_stdio_abi_teardown_completion_contract"
+      ]
+    }
+  ],
+  "telemetry_contract": {
+    "report_schema_version": "stdio_abi_teardown_completion_contract.report.v1",
+    "required_events": [
+      "stdio_abi_teardown.sources_validated",
+      "stdio_abi_teardown.implementation_markers_validated",
+      "stdio_abi_teardown.test_surface_validated",
+      "stdio_abi_teardown.bindings_validated",
+      "stdio_abi_teardown.completion_contract_pass"
+    ],
+    "forbidden_pass_events": [
+      "stdio_abi_teardown.completion_contract_fail"
+    ]
+  }
+}
