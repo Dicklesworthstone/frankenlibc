@@ -1,0 +1,307 @@
+{
+  "schema_version": "trace_weighted_stub_ranking_completion_contract.v1",
+  "bead": "bd-1x3.2",
+  "completion_debt_bead": "bd-1x3.2.1",
+  "description": "Completion-debt evidence binding for trace-weighted stub ranking, replacement wave planning, conformance artifact inputs, deterministic malformed-artifact seed replay, and structured telemetry.",
+  "completion_debt_evidence": {
+    "bead": "bd-1x3.2.1",
+    "original_bead": "bd-1x3.2",
+    "audit_pass": "2026-05-10T03-16-16Z",
+    "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-1x3.2/scorecard.md",
+    "next_audit_score_threshold": 900,
+    "artifacts": {
+      "stub_priority_generator": "scripts/generate_stub_priority_ranking.py",
+      "stub_priority_gate": "scripts/check_stub_priority.sh",
+      "stub_priority_harness": "crates/frankenlibc-harness/tests/stub_priority_test.rs",
+      "stub_priority_ranking": "tests/conformance/stub_priority_ranking.json",
+      "workload_wave_generator": "scripts/generate_workload_api_wave_plan.py",
+      "workload_wave_gate": "scripts/check_workload_api_wave_plan.sh",
+      "workload_wave_harness": "crates/frankenlibc-harness/tests/workload_api_wave_plan_test.rs",
+      "workload_wave_plan": "tests/conformance/workload_api_wave_plan.v1.json",
+      "support_matrix": "support_matrix.json",
+      "workload_matrix": "tests/conformance/workload_matrix.json",
+      "callthrough_census": "tests/conformance/callthrough_census.v1.json",
+      "stub_debt_census": "tests/conformance/stub_todo_debt_census.v1.json",
+      "waiver_policy": "tests/conformance/stub_regression_waiver_policy.v1.json",
+      "conformance_fixtures": "tests/conformance/fixtures",
+      "completion_contract": "tests/conformance/trace_weighted_stub_ranking_completion_contract.v1.json",
+      "completion_gate": "scripts/check_trace_weighted_stub_ranking_completion_contract.sh",
+      "completion_harness": "crates/frankenlibc-harness/tests/trace_weighted_stub_ranking_completion_contract_test.rs"
+    },
+    "directory_artifacts": [
+      "conformance_fixtures"
+    ],
+    "implementation_refs": [
+      "scripts/generate_stub_priority_ranking.py:83",
+      "scripts/generate_stub_priority_ranking.py:115",
+      "scripts/generate_stub_priority_ranking.py:117",
+      "scripts/generate_stub_priority_ranking.py:184",
+      "scripts/generate_stub_priority_ranking.py:201",
+      "scripts/generate_stub_priority_ranking.py:297",
+      "scripts/check_stub_priority.sh:31",
+      "scripts/check_stub_priority.sh:420",
+      "crates/frankenlibc-harness/tests/stub_priority_test.rs:47",
+      "crates/frankenlibc-harness/tests/stub_priority_test.rs:67",
+      "crates/frankenlibc-harness/tests/stub_priority_test.rs:94",
+      "crates/frankenlibc-harness/tests/stub_priority_test.rs:187",
+      "crates/frankenlibc-harness/tests/stub_priority_test.rs:220",
+      "crates/frankenlibc-harness/tests/stub_priority_test.rs:283",
+      "scripts/generate_workload_api_wave_plan.py:81",
+      "scripts/generate_workload_api_wave_plan.py:145",
+      "scripts/generate_workload_api_wave_plan.py:202",
+      "scripts/generate_workload_api_wave_plan.py:258",
+      "scripts/generate_workload_api_wave_plan.py:303",
+      "scripts/generate_workload_api_wave_plan.py:383",
+      "scripts/generate_workload_api_wave_plan.py:421",
+      "scripts/generate_workload_api_wave_plan.py:492",
+      "scripts/check_workload_api_wave_plan.sh:52",
+      "scripts/check_workload_api_wave_plan.sh:161",
+      "scripts/check_workload_api_wave_plan.sh:333",
+      "scripts/check_workload_api_wave_plan.sh:381",
+      "crates/frankenlibc-harness/tests/workload_api_wave_plan_test.rs:40",
+      "crates/frankenlibc-harness/tests/workload_api_wave_plan_test.rs:81",
+      "crates/frankenlibc-harness/tests/workload_api_wave_plan_test.rs:187",
+      "tests/conformance/stub_priority_ranking.json:1",
+      "tests/conformance/workload_api_wave_plan.v1.json:1",
+      "scripts/check_trace_weighted_stub_ranking_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/trace_weighted_stub_ranking_completion_contract_test.rs:1"
+    ],
+    "missing_item_bindings": [
+      {
+        "missing_item_id": "tests.unit.primary",
+        "evidence_section": "unit_primary"
+      },
+      {
+        "missing_item_id": "tests.e2e.primary",
+        "evidence_section": "e2e_primary"
+      },
+      {
+        "missing_item_id": "tests.fuzz.primary",
+        "evidence_section": "fuzz_primary"
+      },
+      {
+        "missing_item_id": "tests.conformance.primary",
+        "evidence_section": "conformance_primary"
+      },
+      {
+        "missing_item_id": "telemetry.primary",
+        "evidence_section": "telemetry_primary"
+      }
+    ],
+    "unit_primary": {
+      "description": "Unit and checker tests bind the static priority ranking, workload-weighted wave plan, burn-down accounting, scoring formulas, and completion gate behavior.",
+      "commands": [
+        "rch exec -- cargo test -p frankenlibc-harness --test trace_weighted_stub_ranking_completion_contract_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test stub_priority_test -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-harness --test workload_api_wave_plan_test -- --nocapture"
+      ],
+      "required_test_refs": [
+        {
+          "source": "stub_priority_harness",
+          "name": "ranking_exists_and_valid"
+        },
+        {
+          "source": "stub_priority_harness",
+          "name": "ranked_symbols_match_support_matrix"
+        },
+        {
+          "source": "stub_priority_harness",
+          "name": "scores_match_formula"
+        },
+        {
+          "source": "stub_priority_harness",
+          "name": "burn_down_consistent"
+        },
+        {
+          "source": "stub_priority_harness",
+          "name": "summary_consistent"
+        },
+        {
+          "source": "workload_wave_harness",
+          "name": "artifact_exists_and_has_required_shape"
+        },
+        {
+          "source": "workload_wave_harness",
+          "name": "summary_counts_match_rows_and_hooks_present"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_all_bd1x32_completion_items"
+        }
+      ]
+    },
+    "e2e_primary": {
+      "description": "The checked gates replay the full generator-to-artifact path for priority ranking and workload wave planning, including source-input hashes and deterministic report/log emission.",
+      "commands": [
+        "bash scripts/check_stub_priority.sh",
+        "bash scripts/check_workload_api_wave_plan.sh",
+        "bash scripts/check_trace_weighted_stub_ranking_completion_contract.sh"
+      ],
+      "required_artifacts": [
+        "stub_priority_generator",
+        "stub_priority_gate",
+        "stub_priority_ranking",
+        "workload_wave_generator",
+        "workload_wave_gate",
+        "workload_wave_plan"
+      ],
+      "required_test_refs": [
+        {
+          "source": "stub_priority_harness",
+          "name": "gate_script_passes"
+        },
+        {
+          "source": "workload_wave_harness",
+          "name": "gate_script_passes_and_emits_artifacts"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_passes_and_emits_report_log"
+        }
+      ]
+    },
+    "fuzz_primary": {
+      "description": "The completion gate replays deterministic malformed-artifact seeds against ranking and wave-plan validators to prove fail-closed behavior for schema, summary, hook, fixture, and policy drift.",
+      "commands": [
+        "bash scripts/check_trace_weighted_stub_ranking_completion_contract.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test trace_weighted_stub_ranking_completion_contract_test checker_rejects_missing_fuzz_seed_binding -- --exact --nocapture"
+      ],
+      "minimum_seed_count": 10,
+      "deterministic_seed_replay": [
+        {
+          "seed_id": "ranking_schema_zero",
+          "artifact": "stub_priority_ranking",
+          "mutation": "schema_version_zero",
+          "expected_failure_signature": "ranking_schema_invalid"
+        },
+        {
+          "seed_id": "ranking_missing_tiers",
+          "artifact": "stub_priority_ranking",
+          "mutation": "remove_symbol_tiers",
+          "expected_failure_signature": "ranking_tiers_missing"
+        },
+        {
+          "seed_id": "ranking_burn_down_total_mismatch",
+          "artifact": "stub_priority_ranking",
+          "mutation": "increment_burn_down_total",
+          "expected_failure_signature": "ranking_burn_down_mismatch"
+        },
+        {
+          "seed_id": "ranking_summary_total_mismatch",
+          "artifact": "stub_priority_ranking",
+          "mutation": "increment_summary_total",
+          "expected_failure_signature": "ranking_summary_mismatch"
+        },
+        {
+          "seed_id": "wave_plan_wrong_uplift",
+          "artifact": "workload_wave_plan",
+          "mutation": "wrong_uplift_bead",
+          "expected_failure_signature": "wave_plan_uplift_invalid"
+        },
+        {
+          "seed_id": "wave_plan_candidate_without_rows",
+          "artifact": "workload_wave_plan",
+          "mutation": "candidate_count_without_rows",
+          "expected_failure_signature": "wave_plan_candidate_rows_missing"
+        },
+        {
+          "seed_id": "wave_plan_missing_threading_hook",
+          "artifact": "workload_wave_plan",
+          "mutation": "clear_threading_hook",
+          "expected_failure_signature": "wave_plan_hook_missing"
+        },
+        {
+          "seed_id": "wave_plan_allow_downgrade",
+          "artifact": "workload_wave_plan",
+          "mutation": "allow_downgrade_default",
+          "expected_failure_signature": "wave_plan_downgrade_policy_invalid"
+        },
+        {
+          "seed_id": "wave_plan_fixture_count_zero",
+          "artifact": "workload_wave_plan",
+          "mutation": "zero_trace_fixture_count",
+          "expected_failure_signature": "wave_plan_fixture_count_invalid"
+        },
+        {
+          "seed_id": "wave_plan_top_n_mismatch",
+          "artifact": "workload_wave_plan",
+          "mutation": "increment_top_n",
+          "expected_failure_signature": "wave_plan_summary_mismatch"
+        }
+      ]
+    },
+    "conformance_primary": {
+      "description": "Conformance evidence binds ranking artifacts to support_matrix/workload_matrix truth and binds wave planning to fixture-derived call-frequency inputs, callthrough census, stub debt census, and downgrade policy.",
+      "commands": [
+        "bash scripts/check_stub_priority.sh",
+        "bash scripts/check_workload_api_wave_plan.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test workload_api_wave_plan_test -- --nocapture"
+      ],
+      "required_artifacts": [
+        "support_matrix",
+        "workload_matrix",
+        "callthrough_census",
+        "stub_debt_census",
+        "waiver_policy",
+        "conformance_fixtures",
+        "stub_priority_ranking",
+        "workload_wave_plan"
+      ],
+      "minimum_fixture_count": 40,
+      "required_fixture_manifest_field": "inputs.trace_fixtures_dir.fixture_count",
+      "required_test_refs": [
+        {
+          "source": "stub_priority_harness",
+          "name": "ranked_symbols_match_support_matrix"
+        },
+        {
+          "source": "workload_wave_harness",
+          "name": "summary_counts_match_rows_and_hooks_present"
+        },
+        {
+          "source": "workload_wave_harness",
+          "name": "gate_script_passes_and_emits_artifacts"
+        }
+      ]
+    },
+    "telemetry_primary": {
+      "description": "Structured report and JSONL telemetry expose the source refs, missing-item bindings, deterministic seed replays, conformance artifacts, consumed gate logs, and final completion status.",
+      "commands": [
+        "bash scripts/check_workload_api_wave_plan.sh",
+        "bash scripts/check_trace_weighted_stub_ranking_completion_contract.sh",
+        "rch exec -- cargo clippy -p frankenlibc-harness --test trace_weighted_stub_ranking_completion_contract_test -- -D warnings"
+      ],
+      "required_events": [
+        "trace_weighted_stub_ranking_completion.source_ref",
+        "trace_weighted_stub_ranking_completion.missing_item_bound",
+        "trace_weighted_stub_ranking_completion.deterministic_fuzz_seed_replayed",
+        "trace_weighted_stub_ranking_completion.conformance_artifact_bound",
+        "trace_weighted_stub_ranking_completion.telemetry_bound",
+        "trace_weighted_stub_ranking_completion.validated"
+      ],
+      "fail_event": "trace_weighted_stub_ranking_completion.failed",
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "bead_id",
+        "completion_debt_bead",
+        "original_bead",
+        "source_commit",
+        "status",
+        "scenario_id",
+        "api_family",
+        "symbol",
+        "outcome",
+        "latency_ns",
+        "failure_signature",
+        "artifact_refs"
+      ],
+      "consumed_gate_events": [
+        "workload_api_wave_plan_check"
+      ],
+      "default_report_path": "target/conformance/trace_weighted_stub_ranking_completion_contract.report.json",
+      "default_log_path": "target/conformance/trace_weighted_stub_ranking_completion_contract.log.jsonl"
+    }
+  }
+}

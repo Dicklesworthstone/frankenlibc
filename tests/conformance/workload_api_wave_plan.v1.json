@@ -7,7 +7,7 @@
   "inputs": {
     "workload_matrix": {
       "path": "tests/conformance/workload_matrix.json",
-      "sha256": "bd7a6bb698667ce9dc9a502ff18e1c99527e26742c990ebe1c7718afebe7ec0e"
+      "sha256": "04f77e974c045a0016ffbe5abd7e602a94b44291c57084400751524acbc5b9ca"
     },
     "support_matrix": {
       "path": "support_matrix.json",
@@ -19,7 +19,7 @@
     },
     "stub_todo_debt_census": {
       "path": "tests/conformance/stub_todo_debt_census.v1.json",
-      "sha256": "346e777b2c8a5d7105d8e8c770922905d6825b5735954e6f03acebf5d3fe4bc5"
+      "sha256": "3d3f399bc2965972730847ed9bc6e7950fe22b788a24a161824ae0a4917763f9"
     },
     "stub_regression_waiver_policy": {
       "path": "tests/conformance/stub_regression_waiver_policy.v1.json",
@@ -27,7 +27,7 @@
     },
     "trace_fixtures_dir": {
       "path": "tests/conformance/fixtures",
-      "fixture_count": 56
+      "fixture_count": 58
     }
   },
   "scoring": {
