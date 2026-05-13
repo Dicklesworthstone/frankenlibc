@@ -729,7 +729,19 @@ pub fn execute_fixture_case(
         | "dcngettext"
         | "dn_comp"
         | "dn_expand"
-        | "dn_skipname" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        | "dn_skipname"
+        | "dngettext"
+        | "eaccess"
+        | "encrypt"
+        | "encrypt_r"
+        | "endaliasent"
+        | "endfsent"
+        | "endhostent"
+        | "endmntent"
+        | "endnetent"
+        | "endnetgrent"
+        | "endprotoent"
+        | "endrpcent" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
         | "_IO_peekc_locked" | "_IO_putc" | "_IO_puts" | "_IO_seekoff" | "_IO_seekpos"
@@ -16380,6 +16392,18 @@ fn execute_unistd_process_filesystem_case(
         "dn_comp" => dn_comp_fixture_actual()?,
         "dn_expand" => dn_expand_fixture_actual()?,
         "dn_skipname" => dn_skipname_fixture_actual()?,
+        "dngettext" => dngettext_fixture_actual()?,
+        "eaccess" => eaccess_fixture_actual()?,
+        "encrypt" => encrypt_fixture_actual()?,
+        "encrypt_r" => encrypt_r_fixture_actual()?,
+        "endaliasent" => endaliasent_fixture_actual()?,
+        "endfsent" => endfsent_fixture_actual()?,
+        "endhostent" => endhostent_fixture_actual()?,
+        "endmntent" => endmntent_fixture_actual()?,
+        "endnetent" => endnetent_fixture_actual()?,
+        "endnetgrent" => endnetgrent_fixture_actual()?,
+        "endprotoent" => endprotoent_fixture_actual()?,
+        "endrpcent" => endrpcent_fixture_actual()?,
         other => {
             return Err(format!(
                 "unsupported unistd process/filesystem fixture: {other}"
@@ -17635,6 +17659,111 @@ fn dn_skipname_fixture_actual() -> Result<String, String> {
     } else {
         Ok(format!("DN_SKIPNAME_RC_{rc}"))
     }
+}
+
+fn dngettext_fixture_actual() -> Result<String, String> {
+    let domain =
+        CString::new("fixture").map_err(|_| "dngettext domain contains NUL".to_string())?;
+    let singular =
+        CString::new("single").map_err(|_| "dngettext singular contains NUL".to_string())?;
+    let plural = CString::new("plural").map_err(|_| "dngettext plural contains NUL".to_string())?;
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::dngettext(
+            domain.as_ptr(),
+            singular.as_ptr(),
+            plural.as_ptr(),
+            2,
+        )
+    };
+    if ptr == plural.as_ptr().cast_mut() {
+        Ok(String::from("DNGETTEXT_PLURAL_PASSTHROUGH"))
+    } else if ptr.is_null() {
+        Ok(String::from("DNGETTEXT_NULL"))
+    } else {
+        Ok(String::from("DNGETTEXT_OTHER_CLASS"))
+    }
+}
+
+fn eaccess_fixture_actual() -> Result<String, String> {
+    // SAFETY: A null path exercises the deterministic failure class and cannot
+    // inspect host filesystem state.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::eaccess(std::ptr::null(), libc::F_OK) };
+    Ok(format!("EACCESS_NULL_RC_{rc}"))
+}
+
+fn encrypt_fixture_actual() -> Result<String, String> {
+    let mut block = [0 as c_char; 64];
+    let before = block;
+    // SAFETY: The fixture passes a live fixed-size DES bit block and records
+    // only whether the current ABI no-op contract leaves it unchanged.
+    unsafe { frankenlibc_abi::unistd_abi::encrypt(block.as_mut_ptr(), 0) };
+    if block == before {
+        Ok(String::from("ENCRYPT_NOOP_BLOCK_UNCHANGED"))
+    } else {
+        Ok(String::from("ENCRYPT_BLOCK_CHANGED"))
+    }
+}
+
+fn encrypt_r_fixture_actual() -> Result<String, String> {
+    let mut block = [0 as c_char; 64];
+    let before = block;
+    let mut data = [0_u8; 384];
+    // SAFETY: The fixture-owned block and scratch area remain valid for the
+    // duration of the call; no raw encrypted block contents are recorded.
+    unsafe {
+        frankenlibc_abi::unistd_abi::encrypt_r(
+            block.as_mut_ptr(),
+            0,
+            data.as_mut_ptr().cast::<c_void>(),
+        )
+    };
+    if block == before {
+        Ok(String::from("ENCRYPT_R_NOOP_BLOCK_UNCHANGED"))
+    } else {
+        Ok(String::from("ENCRYPT_R_BLOCK_CHANGED"))
+    }
+}
+
+fn endaliasent_fixture_actual() -> Result<String, String> {
+    unsafe { frankenlibc_abi::unistd_abi::endaliasent() };
+    Ok(String::from("ENDALIASENT_RESET_NOOP"))
+}
+
+fn endfsent_fixture_actual() -> Result<String, String> {
+    unsafe { frankenlibc_abi::unistd_abi::endfsent() };
+    Ok(String::from("ENDFSENT_RESET_NOOP"))
+}
+
+fn endhostent_fixture_actual() -> Result<String, String> {
+    unsafe { frankenlibc_abi::unistd_abi::endhostent() };
+    Ok(String::from("ENDHOSTENT_RESET_NOOP"))
+}
+
+fn endmntent_fixture_actual() -> Result<String, String> {
+    // SAFETY: Null stream is the stable glibc-compatible success class and
+    // avoids opening or closing a host file descriptor.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::endmntent(std::ptr::null_mut()) };
+    Ok(format!("ENDMNTENT_NULL_RC_{rc}"))
+}
+
+fn endnetent_fixture_actual() -> Result<String, String> {
+    unsafe { frankenlibc_abi::unistd_abi::endnetent() };
+    Ok(String::from("ENDNETENT_RESET_NOOP"))
+}
+
+fn endnetgrent_fixture_actual() -> Result<String, String> {
+    unsafe { frankenlibc_abi::unistd_abi::endnetgrent() };
+    Ok(String::from("ENDNETGRENT_RESET_NOOP"))
+}
+
+fn endprotoent_fixture_actual() -> Result<String, String> {
+    unsafe { frankenlibc_abi::unistd_abi::endprotoent() };
+    Ok(String::from("ENDPROTOENT_RESET_NOOP"))
+}
+
+fn endrpcent_fixture_actual() -> Result<String, String> {
+    unsafe { frankenlibc_abi::unistd_abi::endrpcent() };
+    Ok(String::from("ENDRPCENT_RESET_NOOP"))
 }
 
 fn wait_for_aio_completion(cb: &FixtureAiocb) -> c_int {

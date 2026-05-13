@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-13T11:55:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-07 gettext plural passthrough, effective-access null-path class, DES encrypt no-op class, and database iterator end/reset symbols. Outputs classify plural routing, null-path return class, DES no-op stability, and iterator reset success without recording raw locale catalog files, host paths, usernames, uids, file descriptors, process-global resolver database contents, encrypted raw blocks, timestamps, or mutable NSS state.",
+  "spec_reference": "GNU dngettext plural passthrough behavior, GNU eaccess effective-access null-path failure class, libcrypt encrypt/encrypt_r obsolete DES no-op compatibility, and POSIX/GNU end*ent iterator-reset contracts for alias, fstab, hosts, mount, networks, netgroup, protocols, and RPC database cursors.",
+  "campaign": {
+    "bead": "bd-5tx3r",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-07-unistd-process-filesystem-gettext-access-des-enddb",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture",
+    "first_wave_symbols": [
+      "dngettext",
+      "eaccess",
+      "encrypt",
+      "encrypt_r",
+      "endaliasent",
+      "endfsent",
+      "endhostent",
+      "endmntent",
+      "endnetent",
+      "endnetgrent",
+      "endprotoent",
+      "endrpcent"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "dngettext_plural_passthrough_strict",
+      "function": "dngettext",
+      "spec_section": "GNU dngettext plural passthrough contract",
+      "inputs": {
+        "symbol": "dngettext",
+        "scenario": "plural_passthrough_without_catalog_or_locale_capture",
+        "expected": "DNGETTEXT_PLURAL_PASSTHROUGH",
+        "oracle_source": "FrankenLibC dngettext plural passthrough class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=dngettext;mode=strict;expected=DNGETTEXT_PLURAL_PASSTHROUGH;actual=DNGETTEXT_PLURAL_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "dngettext_plural_passthrough_hardened",
+      "function": "dngettext",
+      "spec_section": "GNU dngettext plural passthrough contract",
+      "inputs": {
+        "symbol": "dngettext",
+        "scenario": "plural_passthrough_without_catalog_or_locale_capture",
+        "expected": "DNGETTEXT_PLURAL_PASSTHROUGH",
+        "oracle_source": "FrankenLibC dngettext plural passthrough class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=dngettext;mode=hardened;expected=DNGETTEXT_PLURAL_PASSTHROUGH;actual=DNGETTEXT_PLURAL_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "eaccess_null_path_strict",
+      "function": "eaccess",
+      "spec_section": "GNU eaccess null-path failure class",
+      "inputs": {
+        "symbol": "eaccess",
+        "scenario": "null_path_failure_without_filesystem_capture",
+        "expected": "EACCESS_NULL_RC_-1",
+        "oracle_source": "FrankenLibC eaccess null path class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=eaccess;mode=strict;expected=EACCESS_NULL_RC_-1;actual=EACCESS_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "eaccess_null_path_hardened",
+      "function": "eaccess",
+      "spec_section": "GNU eaccess null-path failure class",
+      "inputs": {
+        "symbol": "eaccess",
+        "scenario": "null_path_failure_without_filesystem_capture",
+        "expected": "EACCESS_NULL_RC_-1",
+        "oracle_source": "FrankenLibC eaccess null path class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=eaccess;mode=hardened;expected=EACCESS_NULL_RC_-1;actual=EACCESS_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "encrypt_noop_strict",
+      "function": "encrypt",
+      "spec_section": "libcrypt encrypt obsolete DES no-op compatibility",
+      "inputs": {
+        "symbol": "encrypt",
+        "scenario": "zero_block_noop_without_raw_block_capture",
+        "expected": "ENCRYPT_NOOP_BLOCK_UNCHANGED",
+        "oracle_source": "FrankenLibC encrypt no-op class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=encrypt;mode=strict;expected=ENCRYPT_NOOP_BLOCK_UNCHANGED;actual=ENCRYPT_NOOP_BLOCK_UNCHANGED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "encrypt_noop_hardened",
+      "function": "encrypt",
+      "spec_section": "libcrypt encrypt obsolete DES no-op compatibility",
+      "inputs": {
+        "symbol": "encrypt",
+        "scenario": "zero_block_noop_without_raw_block_capture",
+        "expected": "ENCRYPT_NOOP_BLOCK_UNCHANGED",
+        "oracle_source": "FrankenLibC encrypt no-op class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=encrypt;mode=hardened;expected=ENCRYPT_NOOP_BLOCK_UNCHANGED;actual=ENCRYPT_NOOP_BLOCK_UNCHANGED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "encrypt_r_noop_strict",
+      "function": "encrypt_r",
+      "spec_section": "libcrypt encrypt_r obsolete DES no-op compatibility",
+      "inputs": {
+        "symbol": "encrypt_r",
+        "scenario": "zero_block_reentrant_noop_without_raw_block_capture",
+        "expected": "ENCRYPT_R_NOOP_BLOCK_UNCHANGED",
+        "oracle_source": "FrankenLibC encrypt_r no-op class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=encrypt_r;mode=strict;expected=ENCRYPT_R_NOOP_BLOCK_UNCHANGED;actual=ENCRYPT_R_NOOP_BLOCK_UNCHANGED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "encrypt_r_noop_hardened",
+      "function": "encrypt_r",
+      "spec_section": "libcrypt encrypt_r obsolete DES no-op compatibility",
+      "inputs": {
+        "symbol": "encrypt_r",
+        "scenario": "zero_block_reentrant_noop_without_raw_block_capture",
+        "expected": "ENCRYPT_R_NOOP_BLOCK_UNCHANGED",
+        "oracle_source": "FrankenLibC encrypt_r no-op class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=encrypt_r;mode=hardened;expected=ENCRYPT_R_NOOP_BLOCK_UNCHANGED;actual=ENCRYPT_R_NOOP_BLOCK_UNCHANGED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endaliasent_reset_strict",
+      "function": "endaliasent",
+      "spec_section": "GNU endaliasent iterator reset contract",
+      "inputs": {
+        "symbol": "endaliasent",
+        "scenario": "iterator_reset_without_alias_database_capture",
+        "expected": "ENDALIASENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endaliasent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endaliasent;mode=strict;expected=ENDALIASENT_RESET_NOOP;actual=ENDALIASENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endaliasent_reset_hardened",
+      "function": "endaliasent",
+      "spec_section": "GNU endaliasent iterator reset contract",
+      "inputs": {
+        "symbol": "endaliasent",
+        "scenario": "iterator_reset_without_alias_database_capture",
+        "expected": "ENDALIASENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endaliasent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endaliasent;mode=hardened;expected=ENDALIASENT_RESET_NOOP;actual=ENDALIASENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endfsent_reset_strict",
+      "function": "endfsent",
+      "spec_section": "GNU endfsent iterator reset contract",
+      "inputs": {
+        "symbol": "endfsent",
+        "scenario": "iterator_reset_without_fstab_capture",
+        "expected": "ENDFSENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endfsent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endfsent;mode=strict;expected=ENDFSENT_RESET_NOOP;actual=ENDFSENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endfsent_reset_hardened",
+      "function": "endfsent",
+      "spec_section": "GNU endfsent iterator reset contract",
+      "inputs": {
+        "symbol": "endfsent",
+        "scenario": "iterator_reset_without_fstab_capture",
+        "expected": "ENDFSENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endfsent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endfsent;mode=hardened;expected=ENDFSENT_RESET_NOOP;actual=ENDFSENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endhostent_reset_strict",
+      "function": "endhostent",
+      "spec_section": "POSIX endhostent iterator reset contract",
+      "inputs": {
+        "symbol": "endhostent",
+        "scenario": "iterator_reset_without_hosts_database_capture",
+        "expected": "ENDHOSTENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endhostent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endhostent;mode=strict;expected=ENDHOSTENT_RESET_NOOP;actual=ENDHOSTENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endhostent_reset_hardened",
+      "function": "endhostent",
+      "spec_section": "POSIX endhostent iterator reset contract",
+      "inputs": {
+        "symbol": "endhostent",
+        "scenario": "iterator_reset_without_hosts_database_capture",
+        "expected": "ENDHOSTENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endhostent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endhostent;mode=hardened;expected=ENDHOSTENT_RESET_NOOP;actual=ENDHOSTENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endmntent_null_stream_strict",
+      "function": "endmntent",
+      "spec_section": "GNU endmntent null stream success class",
+      "inputs": {
+        "symbol": "endmntent",
+        "scenario": "null_stream_success_without_file_descriptor_capture",
+        "expected": "ENDMNTENT_NULL_RC_1",
+        "oracle_source": "FrankenLibC endmntent null stream class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endmntent;mode=strict;expected=ENDMNTENT_NULL_RC_1;actual=ENDMNTENT_NULL_RC_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endmntent_null_stream_hardened",
+      "function": "endmntent",
+      "spec_section": "GNU endmntent null stream success class",
+      "inputs": {
+        "symbol": "endmntent",
+        "scenario": "null_stream_success_without_file_descriptor_capture",
+        "expected": "ENDMNTENT_NULL_RC_1",
+        "oracle_source": "FrankenLibC endmntent null stream class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endmntent;mode=hardened;expected=ENDMNTENT_NULL_RC_1;actual=ENDMNTENT_NULL_RC_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endnetent_reset_strict",
+      "function": "endnetent",
+      "spec_section": "POSIX endnetent iterator reset contract",
+      "inputs": {
+        "symbol": "endnetent",
+        "scenario": "iterator_reset_without_networks_database_capture",
+        "expected": "ENDNETENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endnetent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endnetent;mode=strict;expected=ENDNETENT_RESET_NOOP;actual=ENDNETENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endnetent_reset_hardened",
+      "function": "endnetent",
+      "spec_section": "POSIX endnetent iterator reset contract",
+      "inputs": {
+        "symbol": "endnetent",
+        "scenario": "iterator_reset_without_networks_database_capture",
+        "expected": "ENDNETENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endnetent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endnetent;mode=hardened;expected=ENDNETENT_RESET_NOOP;actual=ENDNETENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endnetgrent_reset_strict",
+      "function": "endnetgrent",
+      "spec_section": "GNU endnetgrent iterator reset contract",
+      "inputs": {
+        "symbol": "endnetgrent",
+        "scenario": "iterator_reset_without_netgroup_database_capture",
+        "expected": "ENDNETGRENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endnetgrent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endnetgrent;mode=strict;expected=ENDNETGRENT_RESET_NOOP;actual=ENDNETGRENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endnetgrent_reset_hardened",
+      "function": "endnetgrent",
+      "spec_section": "GNU endnetgrent iterator reset contract",
+      "inputs": {
+        "symbol": "endnetgrent",
+        "scenario": "iterator_reset_without_netgroup_database_capture",
+        "expected": "ENDNETGRENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endnetgrent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endnetgrent;mode=hardened;expected=ENDNETGRENT_RESET_NOOP;actual=ENDNETGRENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endprotoent_reset_strict",
+      "function": "endprotoent",
+      "spec_section": "POSIX endprotoent iterator reset contract",
+      "inputs": {
+        "symbol": "endprotoent",
+        "scenario": "iterator_reset_without_protocols_database_capture",
+        "expected": "ENDPROTOENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endprotoent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endprotoent;mode=strict;expected=ENDPROTOENT_RESET_NOOP;actual=ENDPROTOENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endprotoent_reset_hardened",
+      "function": "endprotoent",
+      "spec_section": "POSIX endprotoent iterator reset contract",
+      "inputs": {
+        "symbol": "endprotoent",
+        "scenario": "iterator_reset_without_protocols_database_capture",
+        "expected": "ENDPROTOENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endprotoent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endprotoent;mode=hardened;expected=ENDPROTOENT_RESET_NOOP;actual=ENDPROTOENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endrpcent_reset_strict",
+      "function": "endrpcent",
+      "spec_section": "GNU endrpcent iterator reset contract",
+      "inputs": {
+        "symbol": "endrpcent",
+        "scenario": "iterator_reset_without_rpc_database_capture",
+        "expected": "ENDRPCENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endrpcent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endrpcent;mode=strict;expected=ENDRPCENT_RESET_NOOP;actual=ENDRPCENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endrpcent_reset_hardened",
+      "function": "endrpcent",
+      "spec_section": "GNU endrpcent iterator reset contract",
+      "inputs": {
+        "symbol": "endrpcent",
+        "scenario": "iterator_reset_without_rpc_database_capture",
+        "expected": "ENDRPCENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endrpcent reset class",
+        "ambient_state_policy": "forbid_locale_catalog_path_user_fd_database_encrypted_block_time_or_mutable_nss_capture"
+      },
+      "expected_output": "symbol=endrpcent;mode=hardened;expected=ENDRPCENT_RESET_NOOP;actual=ENDRPCENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
