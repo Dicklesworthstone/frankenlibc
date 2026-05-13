@@ -634,6 +634,17 @@ pub fn execute_fixture_case(
         "lsearch" => execute_lsearch_case(inputs, mode),
         "insque" => execute_insque_case(inputs, mode),
         "remque" => execute_remque_case(inputs, mode),
+        "__monstartup"
+        | "pthread_kill_other_threads_np"
+        | "__cyg_profile_func_enter"
+        | "__cyg_profile_func_exit"
+        | "__fentry__"
+        | "mcount"
+        | "monstartup"
+        | "moncontrol"
+        | "profil"
+        | "__profile_frequency"
+        | "tr_break" => execute_glibc_internal_bootstrap_wave01_case(function, inputs, mode),
         "__rpc_thread_createerr"
         | "__rpc_thread_svc_fdset"
         | "__rpc_thread_svc_max_pollfd"
@@ -1267,6 +1278,95 @@ fn execute_rpc_legacy_network_case(
             "Sun RPC fixture uses FrankenLibC's deterministic legacy safe-default contract; ambient host RPC state is intentionally not consulted",
         )),
     })
+}
+
+fn execute_glibc_internal_bootstrap_wave01_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "glibc-internal bootstrap fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = glibc_internal_bootstrap_wave01_actual(function)?;
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    Ok(non_host_execution(format!(
+        "symbol={function};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )))
+}
+
+fn glibc_internal_bootstrap_wave01_actual(function: &str) -> Result<String, String> {
+    match function {
+        "__monstartup" => {
+            unsafe { frankenlibc_abi::glibc_internal_abi::__monstartup(0, 4096) };
+            Ok(String::from("MONSTARTUP_ALIAS_NOOP"))
+        }
+        "pthread_kill_other_threads_np" => {
+            let rc =
+                unsafe { frankenlibc_abi::glibc_internal_abi::pthread_kill_other_threads_np() };
+            Ok(format!("PTHREAD_KILL_OTHER_THREADS_NP_RC_{rc}"))
+        }
+        "__cyg_profile_func_enter" => {
+            unsafe {
+                frankenlibc_abi::glibc_internal_abi::__cyg_profile_func_enter(
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            Ok(String::from("CYG_PROFILE_FUNC_ENTER_NOOP"))
+        }
+        "__cyg_profile_func_exit" => {
+            unsafe {
+                frankenlibc_abi::glibc_internal_abi::__cyg_profile_func_exit(
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            Ok(String::from("CYG_PROFILE_FUNC_EXIT_NOOP"))
+        }
+        "__fentry__" => {
+            unsafe { frankenlibc_abi::glibc_internal_abi::__fentry__() };
+            Ok(String::from("FENTRY_NOOP"))
+        }
+        "mcount" => {
+            unsafe { frankenlibc_abi::glibc_internal_abi::mcount() };
+            Ok(String::from("MCOUNT_NOOP"))
+        }
+        "monstartup" => {
+            unsafe { frankenlibc_abi::glibc_internal_abi::monstartup(0, 4096) };
+            Ok(String::from("MONSTARTUP_NOOP"))
+        }
+        "moncontrol" => {
+            unsafe { frankenlibc_abi::glibc_internal_abi::moncontrol(0) };
+            Ok(String::from("MONCONTROL_NOOP"))
+        }
+        "profil" => {
+            let rc = unsafe {
+                frankenlibc_abi::glibc_internal_abi::profil(std::ptr::null_mut(), 0, 0, 0)
+            };
+            Ok(format!("PROFIL_RC_{rc}"))
+        }
+        "__profile_frequency" => {
+            let hz = unsafe { frankenlibc_abi::glibc_internal_abi::__profile_frequency() };
+            Ok(format!("PROFILE_FREQUENCY_{hz}"))
+        }
+        "tr_break" => {
+            unsafe { frankenlibc_abi::glibc_internal_abi::tr_break() };
+            Ok(String::from("TR_BREAK_NOOP"))
+        }
+        other => Err(format!(
+            "unsupported glibc-internal bootstrap fixture: {other}"
+        )),
+    }
 }
 
 fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {

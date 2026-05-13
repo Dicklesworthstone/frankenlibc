@@ -661,11 +661,11 @@
     },
     {
       "campaign_id": "fcq-glibc-internal-compat",
-      "current_coverage_pct": 0.88,
+      "current_coverage_pct": 2.81,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 2.98,
+      "expected_coverage_after_first_wave_pct": 4.91,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
         "_IO_enable_locks",
@@ -703,9 +703,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "exported glibc internals, compatibility names, diagnostics, backtrace, argz, and resolver helpers",
-      "target_covered": 5,
+      "target_covered": 16,
       "target_total": 570,
-      "target_uncovered": 565,
+      "target_uncovered": 554,
       "title": "glibc internal compatibility triage fixture wave",
       "workload_domains": [
         "startup_linking",
@@ -1039,7 +1039,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3353,
+    "all_uncovered_target_symbols": 3342,
     "campaign_count": 14,
     "covered_modules": [
       "fortify_abi",
@@ -1074,7 +1074,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2999,
+    "selected_target_uncovered_symbols": 2988,
     "total_first_wave_fixture_count": 150
   }
 }

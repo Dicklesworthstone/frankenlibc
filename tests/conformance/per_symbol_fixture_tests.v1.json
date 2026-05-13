@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T13:01:58Z",
-  "report_hash": "7c4b9e437173a522",
+  "generated_at": "2026-05-13T13:32:06Z",
+  "report_hash": "bcd04aa2f44fada1",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 764,
-    "symbols_without_fixtures": 3355,
-    "fixture_coverage_pct": 18.5,
-    "implemented_coverage_pct": 18.1,
-    "total_fixture_files": 91,
-    "total_cases": 1978,
+    "symbols_with_fixtures": 775,
+    "symbols_without_fixtures": 3344,
+    "fixture_coverage_pct": 18.8,
+    "implemented_coverage_pct": 18.4,
+    "total_fixture_files": 92,
+    "total_cases": 2000,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 481,
-    "symbols_with_errno_checks": 761,
-    "total_quality_issues": 3542,
-    "uncovered_action_count": 3355
+    "symbols_with_edge_cases": 486,
+    "symbols_with_errno_checks": 772,
+    "total_quality_issues": 3537,
+    "uncovered_action_count": 3344
   },
   "fixture_file_analyses": [
     {
@@ -95,6 +95,14 @@
       "family": "fenv_ops",
       "valid": true,
       "total_cases": 11,
+      "unique_symbols": 11,
+      "issues": []
+    },
+    {
+      "file": "glibc_internal_bootstrap_wave01.json",
+      "family": "glibc/internal-bootstrap",
+      "valid": true,
+      "total_cases": 22,
       "unique_symbols": 11,
       "issues": []
     },
@@ -4147,30 +4155,40 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "glibc_internal_bootstrap_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__cyg_profile_func_exit",
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "glibc_internal_bootstrap_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__daylight",
@@ -4633,14 +4651,19 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "glibc_internal_bootstrap_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -8752,14 +8775,19 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "glibc_internal_bootstrap_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -9612,15 +9640,20 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "glibc_internal_bootstrap_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__progname",
@@ -41400,14 +41433,19 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "glibc_internal_bootstrap_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -42160,14 +42198,19 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "glibc_internal_bootstrap_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -42175,14 +42218,19 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "glibc_internal_bootstrap_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -46338,15 +46386,21 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "glibc_internal_bootstrap_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "program_invocation_name",
@@ -47469,15 +47523,20 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "glibc_internal_bootstrap_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "pthread_mutex_clocklock",
@@ -60584,14 +60643,19 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "glibc_internal_bootstrap_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -66978,20 +67042,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__cyg_profile_func_enter",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__cyg_profile_func_exit",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__daylight",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -67189,13 +67239,6 @@
     },
     {
       "symbol": "__fdelt_warn",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__fentry__",
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "action": "create fixture cases",
@@ -68791,13 +68834,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__monstartup",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__morecore",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -69191,13 +69227,6 @@
     },
     {
       "symbol": "__printf_fp",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__profile_frequency",
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "action": "create fixture cases",
@@ -80523,13 +80552,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "mcount",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "membarrier",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -80762,20 +80784,6 @@
     },
     {
       "symbol": "modify_ldt",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "moncontrol",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "monstartup",
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "action": "create fixture cases",
@@ -82539,13 +82547,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "profil",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "program_invocation_name",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -82899,13 +82900,6 @@
       "symbol": "pthread_kill",
       "status": "Implemented",
       "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_kill_other_threads_np",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -87281,13 +87275,6 @@
       "symbol": "towupper_l",
       "status": "Implemented",
       "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "tr_break",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

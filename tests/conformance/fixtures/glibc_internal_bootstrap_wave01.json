@@ -1,0 +1,385 @@
+{
+  "version": "v1",
+  "family": "glibc/internal-bootstrap",
+  "captured_at": "2026-05-13T13:30:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for a first glibc-internal bootstrap and profiling compatibility pilot. The cases classify no-op and safe-default behavior without recording pointer addresses, native runtime counters, stderr bytes, process-global state, paths, timestamps, or host diagnostics.",
+  "spec_reference": "glibc internal bootstrap and profiling compatibility surface for __monstartup, pthread_kill_other_threads_np, __cyg_profile_func_enter, __cyg_profile_func_exit, __fentry__, mcount, monstartup, moncontrol, profil, __profile_frequency, and tr_break",
+  "campaign": {
+    "bead": "bd-1bkcw",
+    "campaign_id": "fcq-glibc-internal-compat",
+    "wave_id": "wave-01-bootstrap-profile-safe-defaults",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture",
+    "first_wave_symbols": [
+      "__monstartup",
+      "pthread_kill_other_threads_np",
+      "__cyg_profile_func_enter",
+      "__cyg_profile_func_exit",
+      "__fentry__",
+      "mcount",
+      "monstartup",
+      "moncontrol",
+      "profil",
+      "__profile_frequency",
+      "tr_break"
+    ],
+    "residual_symbols": [],
+    "deferred_ambient_symbols": [
+      {
+        "symbol": "__abort_msg",
+        "reason": "exports process-global diagnostic state and must be covered by a separate pointer-safe diagnostic fixture"
+      },
+      {
+        "symbol": "__backtrace",
+        "reason": "captures call-stack addresses and must be covered by a separate address-normalizing diagnostic fixture"
+      },
+      {
+        "symbol": "__backtrace_symbols",
+        "reason": "captures symbolized addresses and allocation ownership, which are intentionally excluded from bootstrap safe-default replay"
+      },
+      {
+        "symbol": "__backtrace_symbols_fd",
+        "reason": "writes diagnostic bytes to caller-controlled file descriptors and needs a separate isolated-output contract"
+      }
+    ]
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "monstartup_alias_noop_strict",
+      "function": "__monstartup",
+      "spec_section": "glibc profiling monitor startup alias compatibility no-op",
+      "inputs": {
+        "symbol": "__monstartup",
+        "scenario": "monitor_startup_alias_noop_without_pc_range_capture",
+        "expected": "MONSTARTUP_ALIAS_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=__monstartup;mode=strict;expected=MONSTARTUP_ALIAS_NOOP;actual=MONSTARTUP_ALIAS_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "monstartup_alias_noop_hardened",
+      "function": "__monstartup",
+      "spec_section": "glibc profiling monitor startup alias compatibility no-op",
+      "inputs": {
+        "symbol": "__monstartup",
+        "scenario": "monitor_startup_alias_noop_without_pc_range_capture",
+        "expected": "MONSTARTUP_ALIAS_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=__monstartup;mode=hardened;expected=MONSTARTUP_ALIAS_NOOP;actual=MONSTARTUP_ALIAS_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_kill_other_threads_np_noop_strict",
+      "function": "pthread_kill_other_threads_np",
+      "spec_section": "deprecated LinuxThreads compatibility no-op",
+      "inputs": {
+        "symbol": "pthread_kill_other_threads_np",
+        "scenario": "deprecated_thread_kill_all_noop_success",
+        "expected": "PTHREAD_KILL_OTHER_THREADS_NP_RC_0",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=pthread_kill_other_threads_np;mode=strict;expected=PTHREAD_KILL_OTHER_THREADS_NP_RC_0;actual=PTHREAD_KILL_OTHER_THREADS_NP_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_kill_other_threads_np_noop_hardened",
+      "function": "pthread_kill_other_threads_np",
+      "spec_section": "deprecated LinuxThreads compatibility no-op",
+      "inputs": {
+        "symbol": "pthread_kill_other_threads_np",
+        "scenario": "deprecated_thread_kill_all_noop_success",
+        "expected": "PTHREAD_KILL_OTHER_THREADS_NP_RC_0",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=pthread_kill_other_threads_np;mode=hardened;expected=PTHREAD_KILL_OTHER_THREADS_NP_RC_0;actual=PTHREAD_KILL_OTHER_THREADS_NP_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "cyg_profile_func_enter_noop_strict",
+      "function": "__cyg_profile_func_enter",
+      "spec_section": "GCC instrumentation entry hook compatibility no-op",
+      "inputs": {
+        "symbol": "__cyg_profile_func_enter",
+        "scenario": "null_entry_hook_noop_without_pointer_capture",
+        "expected": "CYG_PROFILE_FUNC_ENTER_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=__cyg_profile_func_enter;mode=strict;expected=CYG_PROFILE_FUNC_ENTER_NOOP;actual=CYG_PROFILE_FUNC_ENTER_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "cyg_profile_func_enter_noop_hardened",
+      "function": "__cyg_profile_func_enter",
+      "spec_section": "GCC instrumentation entry hook compatibility no-op",
+      "inputs": {
+        "symbol": "__cyg_profile_func_enter",
+        "scenario": "null_entry_hook_noop_without_pointer_capture",
+        "expected": "CYG_PROFILE_FUNC_ENTER_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=__cyg_profile_func_enter;mode=hardened;expected=CYG_PROFILE_FUNC_ENTER_NOOP;actual=CYG_PROFILE_FUNC_ENTER_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "cyg_profile_func_exit_noop_strict",
+      "function": "__cyg_profile_func_exit",
+      "spec_section": "GCC instrumentation exit hook compatibility no-op",
+      "inputs": {
+        "symbol": "__cyg_profile_func_exit",
+        "scenario": "null_exit_hook_noop_without_pointer_capture",
+        "expected": "CYG_PROFILE_FUNC_EXIT_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=__cyg_profile_func_exit;mode=strict;expected=CYG_PROFILE_FUNC_EXIT_NOOP;actual=CYG_PROFILE_FUNC_EXIT_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "cyg_profile_func_exit_noop_hardened",
+      "function": "__cyg_profile_func_exit",
+      "spec_section": "GCC instrumentation exit hook compatibility no-op",
+      "inputs": {
+        "symbol": "__cyg_profile_func_exit",
+        "scenario": "null_exit_hook_noop_without_pointer_capture",
+        "expected": "CYG_PROFILE_FUNC_EXIT_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=__cyg_profile_func_exit;mode=hardened;expected=CYG_PROFILE_FUNC_EXIT_NOOP;actual=CYG_PROFILE_FUNC_EXIT_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fentry_noop_strict",
+      "function": "__fentry__",
+      "spec_section": "GCC profiling fentry hook compatibility no-op",
+      "inputs": {
+        "symbol": "__fentry__",
+        "scenario": "fentry_noop_without_runtime_metadata_capture",
+        "expected": "FENTRY_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=__fentry__;mode=strict;expected=FENTRY_NOOP;actual=FENTRY_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fentry_noop_hardened",
+      "function": "__fentry__",
+      "spec_section": "GCC profiling fentry hook compatibility no-op",
+      "inputs": {
+        "symbol": "__fentry__",
+        "scenario": "fentry_noop_without_runtime_metadata_capture",
+        "expected": "FENTRY_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=__fentry__;mode=hardened;expected=FENTRY_NOOP;actual=FENTRY_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "mcount_noop_strict",
+      "function": "mcount",
+      "spec_section": "gprof mcount hook compatibility no-op",
+      "inputs": {
+        "symbol": "mcount",
+        "scenario": "mcount_noop_without_runtime_metadata_capture",
+        "expected": "MCOUNT_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=mcount;mode=strict;expected=MCOUNT_NOOP;actual=MCOUNT_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "mcount_noop_hardened",
+      "function": "mcount",
+      "spec_section": "gprof mcount hook compatibility no-op",
+      "inputs": {
+        "symbol": "mcount",
+        "scenario": "mcount_noop_without_runtime_metadata_capture",
+        "expected": "MCOUNT_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=mcount;mode=hardened;expected=MCOUNT_NOOP;actual=MCOUNT_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "monstartup_noop_strict",
+      "function": "monstartup",
+      "spec_section": "gprof monitor startup compatibility no-op",
+      "inputs": {
+        "symbol": "monstartup",
+        "scenario": "monitor_startup_noop_without_pc_range_capture",
+        "expected": "MONSTARTUP_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=monstartup;mode=strict;expected=MONSTARTUP_NOOP;actual=MONSTARTUP_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "monstartup_noop_hardened",
+      "function": "monstartup",
+      "spec_section": "gprof monitor startup compatibility no-op",
+      "inputs": {
+        "symbol": "monstartup",
+        "scenario": "monitor_startup_noop_without_pc_range_capture",
+        "expected": "MONSTARTUP_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=monstartup;mode=hardened;expected=MONSTARTUP_NOOP;actual=MONSTARTUP_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "moncontrol_noop_strict",
+      "function": "moncontrol",
+      "spec_section": "gprof monitor control compatibility no-op",
+      "inputs": {
+        "symbol": "moncontrol",
+        "scenario": "monitor_control_noop_without_profiler_state_capture",
+        "expected": "MONCONTROL_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=moncontrol;mode=strict;expected=MONCONTROL_NOOP;actual=MONCONTROL_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "moncontrol_noop_hardened",
+      "function": "moncontrol",
+      "spec_section": "gprof monitor control compatibility no-op",
+      "inputs": {
+        "symbol": "moncontrol",
+        "scenario": "monitor_control_noop_without_profiler_state_capture",
+        "expected": "MONCONTROL_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=moncontrol;mode=hardened;expected=MONCONTROL_NOOP;actual=MONCONTROL_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "profil_safe_default_strict",
+      "function": "profil",
+      "spec_section": "profil sampling safe-default success no-op",
+      "inputs": {
+        "symbol": "profil",
+        "scenario": "null_buffer_zero_length_safe_default_success",
+        "expected": "PROFIL_RC_0",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=profil;mode=strict;expected=PROFIL_RC_0;actual=PROFIL_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "profil_safe_default_hardened",
+      "function": "profil",
+      "spec_section": "profil sampling safe-default success no-op",
+      "inputs": {
+        "symbol": "profil",
+        "scenario": "null_buffer_zero_length_safe_default_success",
+        "expected": "PROFIL_RC_0",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=profil;mode=hardened;expected=PROFIL_RC_0;actual=PROFIL_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "profile_frequency_safe_default_strict",
+      "function": "__profile_frequency",
+      "spec_section": "profiling frequency safe-default query",
+      "inputs": {
+        "symbol": "__profile_frequency",
+        "scenario": "profile_frequency_hz_safe_default_without_host_kernel_query",
+        "expected": "PROFILE_FREQUENCY_100",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=__profile_frequency;mode=strict;expected=PROFILE_FREQUENCY_100;actual=PROFILE_FREQUENCY_100;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "profile_frequency_safe_default_hardened",
+      "function": "__profile_frequency",
+      "spec_section": "profiling frequency safe-default query",
+      "inputs": {
+        "symbol": "__profile_frequency",
+        "scenario": "profile_frequency_hz_safe_default_without_host_kernel_query",
+        "expected": "PROFILE_FREQUENCY_100",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=__profile_frequency;mode=hardened;expected=PROFILE_FREQUENCY_100;actual=PROFILE_FREQUENCY_100;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "tr_break_noop_strict",
+      "function": "tr_break",
+      "spec_section": "obsolete regex debug hook compatibility no-op",
+      "inputs": {
+        "symbol": "tr_break",
+        "scenario": "regex_debug_break_noop_without_debugger_state_capture",
+        "expected": "TR_BREAK_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=tr_break;mode=strict;expected=TR_BREAK_NOOP;actual=TR_BREAK_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "tr_break_noop_hardened",
+      "function": "tr_break",
+      "spec_section": "obsolete regex debug hook compatibility no-op",
+      "inputs": {
+        "symbol": "tr_break",
+        "scenario": "regex_debug_break_noop_without_debugger_state_capture",
+        "expected": "TR_BREAK_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_native_runtime_counter_stderr_global_state_path_timestamp_capture"
+      },
+      "expected_output": "symbol=tr_break;mode=hardened;expected=TR_BREAK_NOOP;actual=TR_BREAK_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
