@@ -501,6 +501,10 @@ pub fn execute_fixture_case(
         | "__strtoull_l"
         | "__strverscmp"
         | "__strxfrm_l"
+        | "__argz_count"
+        | "__argz_next"
+        | "__argz_stringify"
+        | "__bzero"
         | "argz_add"
         | "argz_add_sep"
         | "argz_append"
@@ -7981,7 +7985,7 @@ fn string_memory_hotpath_actual(
             entries.extend(parse_argz_entries(&parse_string(inputs, "append_entries")?));
             Ok(argz_summary(&entries))
         }
-        "argz_count" => {
+        "argz_count" | "__argz_count" => {
             let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
             Ok(argz_summary(&entries))
         }
@@ -8016,7 +8020,7 @@ fn string_memory_hotpath_actual(
             }
             Ok(argz_summary(&entries))
         }
-        "argz_next" => {
+        "argz_next" | "__argz_next" => {
             let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
             let after = parse_string(inputs, "after")?;
             let next = if after.is_empty() {
@@ -8053,11 +8057,25 @@ fn string_memory_hotpath_actual(
                 argz_summary(&replaced)
             ))
         }
-        "argz_stringify" => {
+        "argz_stringify" | "__argz_stringify" => {
             let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
             let sep = parse_ascii_byte(inputs, "sep")?;
             let sep = char::from(sep).to_string();
             Ok(format!("STRINGIFY_{}", entries.join(&sep)))
+        }
+        "__bzero" => {
+            let mut bytes = parse_string(inputs, "buffer")?.into_bytes();
+            let requested = parse_usize(inputs, "n")?;
+            let zeroed = requested.min(bytes.len());
+            for byte in bytes.iter_mut().take(zeroed) {
+                *byte = 0;
+            }
+            Ok(format!(
+                "BZERO_LEN_{}_ZEROED_{}_HEX_{}",
+                bytes.len(),
+                zeroed,
+                string_hotpath_hex(&bytes)
+            ))
         }
         "envz_entry" => {
             let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
@@ -8196,6 +8214,16 @@ fn envz_summary(entries: &[String]) -> String {
         argz_len(entries),
         entries.join("|")
     )
+}
+
+fn string_hotpath_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(char::from(HEX[(byte >> 4) as usize]));
+        out.push(char::from(HEX[(byte & 0x0f) as usize]));
+    }
+    out
 }
 
 fn string_hotpath_strvers_byte(bytes: &[u8], index: usize) -> u8 {
