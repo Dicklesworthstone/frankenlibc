@@ -769,6 +769,27 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Evaluate the quarantine-depth admissibility barrier (Invariant A)
+    /// via `frankenlibc_membrane::runtime_math::sos_barrier::evaluate_quarantine_barrier`.
+    /// Returns barrier value in milli-units; positive => certified safe,
+    /// negative => violation.
+    EvaluateQuarantineBarrier {
+        /// Quarantine ring depth (entries).
+        #[arg(long)]
+        depth: u32,
+        /// Concurrent free-rate / arena owner contention indicator.
+        #[arg(long)]
+        contention: u32,
+        /// Adverse-event rate (0..1_000_000 ppm).
+        #[arg(long)]
+        adverse_ppm: u32,
+        /// Latency dual variable from PrimalDualController (-128..128).
+        #[arg(long)]
+        lambda_latency: i64,
+        /// Output JSONL path: one quarantine_barrier record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Evaluate the pointer-provenance admissibility barrier (Invariant B)
     /// via `frankenlibc_membrane::runtime_math::sos_barrier::evaluate_provenance_barrier`.
     /// Positive headroom => certified safe; negative => violation.
@@ -2771,6 +2792,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::EvaluateQuarantineBarrier {
+            depth,
+            contention,
+            adverse_ppm,
+            lambda_latency,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_quarantine_barrier;
+            let headroom =
+                evaluate_quarantine_barrier(depth, contention, adverse_ppm, lambda_latency);
+            let safe = headroom >= 0;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "quarantine_barrier",
+                "depth": depth,
+                "contention": contention,
+                "adverse_ppm": adverse_ppm,
+                "lambda_latency": lambda_latency,
+                "headroom": headroom,
+                "safe": safe,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "evaluate-quarantine-barrier: depth={depth} contention={contention} adverse_ppm={adverse_ppm} lambda_latency={lambda_latency} -> headroom={headroom} safe={safe}"
+            );
         }
         Command::EvaluateProvenanceBarrier {
             risk_ppm,
