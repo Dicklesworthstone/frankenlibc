@@ -471,8 +471,5 @@ fn cli_echoes_inputs_into_record() -> TestResult {
         "dst_addr must echo",
     )?;
     require(json_u64(&parsed, "len")? == 333, "len must echo")?;
-    require(
-        !json_bool(&parsed, "overlap")?,
-        "overlap must echo false",
-    )
+    require(!json_bool(&parsed, "overlap")?, "overlap must echo false")
 }

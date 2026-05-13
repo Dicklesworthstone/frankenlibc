@@ -2892,8 +2892,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Err(format!("unknown candidate_isa: {other}").into());
                 }
             };
-            let cert =
-                certify_simd_string_operation(op, isa, src_addr, dst_addr, len, overlap);
+            let cert = certify_simd_string_operation(op, isa, src_addr, dst_addr, len, overlap);
             let state_label = match cert.state {
                 CliffordState::Calibrating => "calibrating",
                 CliffordState::Aligned => "aligned",
@@ -2995,11 +2994,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 compose_memory_pressure_ppm, depth_to_arena_utilization_ppm,
             };
             let depth_ppm = depth_to_arena_utilization_ppm(depth);
-            let composed_ppm = compose_memory_pressure_ppm(
-                depth,
-                pressure_score_milli,
-                pressure_raw_score_milli,
-            );
+            let composed_ppm =
+                compose_memory_pressure_ppm(depth, pressure_score_milli, pressure_raw_score_milli);
             if let Some(parent) = output.parent()
                 && !parent.as_os_str().is_empty()
             {
