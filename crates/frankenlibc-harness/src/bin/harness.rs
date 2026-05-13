@@ -653,6 +653,19 @@ enum Command {
         #[arg(long)]
         mode: String,
     },
+    /// Consume a TraceRow JSONL file (bd-yhvim input shape) and
+    /// emit a single MinimizedTrace summary as JSONL.
+    DecisionTraceMinimize {
+        /// Input JSONL path. Each line: a TraceRow object with
+        /// schema_version, scenario, api_family, symbol,
+        /// decision_path, input_class, mode_strict_decision,
+        /// mode_hardened_decision, source_commit, artifact_refs[].
+        #[arg(long)]
+        input: PathBuf,
+        /// Output JSONL path: one MinimizedTrace summary record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Probe asupersync Lab availability (bd-qfbhc). Emits a single
     /// LabAvailability JSONL record. By default the detector reads
     /// process env (`FRANKENLIBC_ASUPERSYNC_AVAILABLE`, `PATH`) and
@@ -1800,6 +1813,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     format!("failed to exec /bin/true after case output: {exec_err}").into(),
                 );
             }
+        }
+        Command::DecisionTraceMinimize { input, output } => {
+            use frankenlibc_harness::decision_trace_minimizer::{
+                TraceRow, minimize, serialize_minimized_trace_jsonl,
+            };
+            let body = std::fs::read_to_string(&input)
+                .map_err(|e| format!("read --input {}: {e}", input.display()))?;
+            let mut rows: Vec<TraceRow> = Vec::new();
+            for (i, line) in body
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .enumerate()
+            {
+                let v: serde_json::Value = serde_json::from_str(line)
+                    .map_err(|e| format!("--input line {} not JSON: {e}", i + 1))?;
+                let required_string = |k: &str| -> Result<String, String> {
+                    v.get(k)
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .ok_or_else(|| format!("--input line {} missing string field `{k}`", i + 1))
+                };
+                let artifact_refs = v
+                    .get("artifact_refs")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                rows.push(TraceRow {
+                    schema_version: required_string("schema_version")?,
+                    scenario: required_string("scenario")?,
+                    api_family: required_string("api_family")?,
+                    symbol: required_string("symbol")?,
+                    decision_path: required_string("decision_path")?,
+                    input_class: required_string("input_class")?,
+                    mode_strict_decision: required_string("mode_strict_decision")?,
+                    mode_hardened_decision: required_string("mode_hardened_decision")?,
+                    source_commit: required_string("source_commit")?,
+                    artifact_refs,
+                });
+            }
+            if rows.is_empty() {
+                return Err("--input contained zero TraceRow records".into());
+            }
+            let minimized = minimize(&rows).map_err(|e| format!("minimize: {e}"))?;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut serialized = serialize_minimized_trace_jsonl(&minimized);
+            if !serialized.ends_with('\n') {
+                serialized.push('\n');
+            }
+            std::fs::write(&output, serialized)?;
+            eprintln!(
+                "decision-trace-minimize: read {} TraceRow records → wrote 1 MinimizedTrace JSONL record to {}",
+                rows.len(),
+                output.display()
+            );
         }
         Command::AsupersyncDetect {
             override_var,
