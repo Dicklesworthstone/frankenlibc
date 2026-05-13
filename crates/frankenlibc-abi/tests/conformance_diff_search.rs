@@ -621,39 +621,49 @@ fn fl_lsearch_then_lfind_consistency() {
 #[test]
 fn fl_hsearch_capacity_full_returns_null() {
     let _g = HSEARCH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    // Create a small hash table, fill it, then attempt one more ENTER.
-    let _ = unsafe { fl::hcreate(4) };
-    // Insert 4 distinct keys (table capacity is at least 4).
-    let cn = [
+    let keys = [
         CString::new("a").unwrap(),
         CString::new("bb").unwrap(),
         CString::new("ccc").unwrap(),
         CString::new("dddd").unwrap(),
+        CString::new("eeeee").unwrap(),
+        CString::new("ffffff").unwrap(),
     ];
-    let mut inserted = 0;
-    for c in &cn {
+
+    // glibc rounds hcreate(4) up to a five-slot prime table.
+    let _ = unsafe { fl::hcreate(4) };
+    let mut fl_outcomes = Vec::new();
+    for (idx, c) in keys.iter().enumerate() {
         let item = fl::Entry {
             key: c.as_ptr() as *mut c_char,
-            data: std::ptr::dangling_mut::<c_void>(),
+            data: (idx + 1) as *mut c_void,
         };
         let r = unsafe { fl::hsearch(item, fl::Action::ENTER) };
-        if !r.is_null() {
-            inserted += 1;
-        }
+        fl_outcomes.push(!r.is_null());
     }
-    // Try one more — table may or may not be full depending on impl
-    // (POSIX leaves capacity rounding implementation-defined).
-    let extra = CString::new("eeeeee").unwrap();
-    let item = fl::Entry {
-        key: extra.as_ptr() as *mut c_char,
-        data: std::ptr::dangling_mut::<c_void>(),
-    };
-    let r = unsafe { fl::hsearch(item, fl::Action::ENTER) };
-    eprintln!(
-        "{{\"family\":\"search.h\",\"hcreate(4)\",\"inserted\":{inserted},\"5th\":\"{}\"}}",
-        if r.is_null() { "NULL" } else { "non-null" }
-    );
     unsafe { fl::hdestroy() };
+
+    let _ = unsafe { hcreate(4) };
+    let mut lc_outcomes = Vec::new();
+    for (idx, c) in keys.iter().enumerate() {
+        let item = HsearchEntry {
+            key: c.as_ptr() as *mut c_char,
+            data: (idx + 1) as *mut c_void,
+        };
+        let r = unsafe { hsearch(item, ENTER) };
+        lc_outcomes.push(!r.is_null());
+    }
+    unsafe { hdestroy() };
+
+    assert_eq!(
+        fl_outcomes, lc_outcomes,
+        "hcreate(4) capacity outcomes diverged: fl={fl_outcomes:?}, glibc={lc_outcomes:?}"
+    );
+    assert_eq!(
+        fl_outcomes,
+        vec![true, true, true, true, true, false],
+        "hcreate(4) should round to five usable slots"
+    );
 }
 
 // ===========================================================================

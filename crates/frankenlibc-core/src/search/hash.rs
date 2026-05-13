@@ -39,11 +39,10 @@ pub struct LinearProbeTable<K, V> {
 }
 
 impl<K: Default + Clone, V: Default + Clone> LinearProbeTable<K, V> {
-    /// Pre-allocate `nel` slots. POSIX `hcreate(nel)` requests at
-    /// least `nel` capacity; this implementation uses exactly
-    /// `max(1, nel)` and never resizes (matches glibc).
+    /// Pre-allocate slots for `nel` requested entries. glibc rounds the
+    /// backing table to the first prime at or above `max(3, nel)`.
     pub fn new(nel: usize) -> Self {
-        let capacity = nel.max(1);
+        let capacity = glibc_hsearch_capacity(nel);
         let slots = (0..capacity).map(|_| LinearSlot::empty()).collect();
         Self {
             slots,
@@ -131,6 +130,40 @@ impl<K: Default + Clone, V: Default + Clone> LinearProbeTable<K, V> {
     }
 }
 
+fn glibc_hsearch_capacity(nel: usize) -> usize {
+    let mut candidate = nel.max(3);
+    if candidate <= 3 {
+        return 3;
+    }
+    if candidate.is_multiple_of(2) {
+        candidate = candidate.saturating_add(1);
+    }
+    while !is_prime(candidate) {
+        let Some(next) = candidate.checked_add(2) else {
+            return candidate;
+        };
+        candidate = next;
+    }
+    candidate
+}
+
+fn is_prime(n: usize) -> bool {
+    if n < 2 {
+        return false;
+    }
+    if n.is_multiple_of(2) {
+        return n == 2;
+    }
+    let mut divisor = 3;
+    while divisor <= n / divisor {
+        if n.is_multiple_of(divisor) {
+            return false;
+        }
+        divisor += 2;
+    }
+    true
+}
+
 /// djb2 hash for null-terminated C strings, exposed because every
 /// hsearch user wants the same one.
 ///
@@ -167,8 +200,29 @@ mod tests {
     fn empty_search_returns_none() {
         let t: LinearProbeTable<i64, u32> = LinearProbeTable::new(8);
         assert!(t.is_empty());
-        assert_eq!(t.capacity(), 8);
+        assert_eq!(t.capacity(), 11);
         assert!(t.search(&42, h, eq).is_none());
+    }
+
+    #[test]
+    fn capacity_rounds_to_glibc_prime_floor() {
+        let cases = [
+            (0, 3),
+            (1, 3),
+            (2, 3),
+            (3, 3),
+            (4, 5),
+            (8, 11),
+            (16, 17),
+            (31, 31),
+            (32, 37),
+            (64, 67),
+            (100, 101),
+        ];
+        for (requested, expected) in cases {
+            let t: LinearProbeTable<i64, u32> = LinearProbeTable::new(requested);
+            assert_eq!(t.capacity(), expected, "requested={requested}");
+        }
     }
 
     #[test]
@@ -196,10 +250,11 @@ mod tests {
 
     #[test]
     fn enter_returns_none_when_full() {
-        let mut t: LinearProbeTable<i64, u32> = LinearProbeTable::new(2);
+        let mut t: LinearProbeTable<i64, u32> = LinearProbeTable::new(3);
         assert!(t.enter(1, 10, h, eq).is_some());
         assert!(t.enter(2, 20, h, eq).is_some());
-        assert!(t.enter(3, 30, h, eq).is_none());
+        assert!(t.enter(3, 30, h, eq).is_some());
+        assert!(t.enter(4, 40, h, eq).is_none());
     }
 
     #[test]

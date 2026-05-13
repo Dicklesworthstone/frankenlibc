@@ -152,7 +152,12 @@ pub unsafe extern "C" fn hsearch(item: Entry, action: Action) -> *mut Entry {
             Some(p) => p as *mut Entry,
             None => std::ptr::null_mut(),
         },
-        None => std::ptr::null_mut(),
+        None => {
+            if action == Action::ENTER {
+                unsafe { set_abi_errno(libc::ENOMEM) };
+            }
+            std::ptr::null_mut()
+        }
     }
 }
 
@@ -188,8 +193,9 @@ pub unsafe extern "C" fn hcreate_r(nel: usize, htab: *mut HsearchData) -> c_int 
         return 0;
     }
     let ht = Box::new(HashTable::new(nel));
+    let size = c_uint::try_from(ht.capacity()).unwrap_or(c_uint::MAX);
     htab_ref.table = Box::into_raw(ht) as *mut c_void;
-    htab_ref.size = c_uint::try_from(nel.max(1)).unwrap_or(c_uint::MAX);
+    htab_ref.size = size;
     htab_ref.filled = 0;
     1
 }
@@ -231,6 +237,9 @@ pub unsafe extern "C" fn hsearch_r(
     unsafe { *retval = result };
     if action == Action::ENTER && was_new {
         htab_ref.filled = htab_ref.filled.saturating_add(1);
+    }
+    if result.is_null() && action == Action::ENTER {
+        unsafe { set_abi_errno(libc::ENOMEM) };
     }
     if result.is_null() { 0 } else { 1 }
 }

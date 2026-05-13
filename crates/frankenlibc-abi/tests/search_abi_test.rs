@@ -40,6 +40,10 @@ fn htab_filled(htab: &HsearchData) -> usize {
     unsafe { (*(htab as *const HsearchData).cast::<HsearchDataView>()).filled as usize }
 }
 
+fn htab_size(htab: &HsearchData) -> usize {
+    unsafe { (*(htab as *const HsearchData).cast::<HsearchDataView>()).size as usize }
+}
+
 #[test]
 fn hsearch_data_test_view_matches_abi_layout() {
     assert_eq!(
@@ -149,6 +153,35 @@ fn hash_global_api() {
         hdestroy();
     }
 
+    // --- glibc-style prime capacity rounding ---
+    assert_eq!(unsafe { hcreate(4) }, 1);
+    let capacity_keys: Vec<CString> = ["a", "bb", "ccc", "dddd", "eeeee"]
+        .iter()
+        .map(|key| CString::new(*key).unwrap())
+        .collect();
+    for (idx, key) in capacity_keys.iter().enumerate() {
+        let item = Entry {
+            key: key.as_ptr() as *mut _,
+            data: (idx + 1) as *mut c_void,
+        };
+        let inserted = unsafe { hsearch(item, Action::ENTER) };
+        assert!(
+            !inserted.is_null(),
+            "hcreate(4) should accept glibc's rounded fifth slot"
+        );
+    }
+    let extra = CString::new("ffffff").unwrap();
+    let item = Entry {
+        key: extra.as_ptr() as *mut _,
+        data: 6usize as *mut c_void,
+    };
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
+    let inserted = unsafe { hsearch(item, Action::ENTER) };
+    assert!(inserted.is_null(), "sixth insert should fail");
+    assert_eq!(errno_value(), libc::ENOMEM);
+
+    unsafe { hdestroy() };
+
     // --- duplicate ENTER: inserting an existing key returns the original entry ---
     unsafe { hcreate(16) };
 
@@ -179,6 +212,78 @@ fn hash_global_api() {
 // ===========================================================================
 // Reentrant hash table: hcreate_r / hsearch_r / hdestroy_r
 // ===========================================================================
+
+#[test]
+fn hash_reentrant_reports_glibc_prime_capacity() {
+    let cases = [
+        (0, 3),
+        (1, 3),
+        (2, 3),
+        (3, 3),
+        (4, 5),
+        (8, 11),
+        (16, 17),
+        (31, 31),
+        (32, 37),
+        (64, 67),
+        (100, 101),
+    ];
+    for (requested, expected) in cases {
+        let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { hcreate_r(requested, &mut htab) },
+            1,
+            "hcreate_r({requested}) should succeed"
+        );
+        assert_eq!(htab_size(&htab), expected, "requested={requested}");
+        assert_eq!(htab_filled(&htab), 0);
+        unsafe { hdestroy_r(&mut htab) };
+    }
+}
+
+#[test]
+fn hash_reentrant_full_table_sets_enomem_after_rounded_capacity() {
+    let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { hcreate_r(4, &mut htab) }, 1);
+    assert_eq!(htab_size(&htab), 5);
+
+    let keys: Vec<CString> = ["a", "bb", "ccc", "dddd", "eeeee"]
+        .iter()
+        .map(|key| CString::new(*key).unwrap())
+        .collect();
+    for (idx, key) in keys.iter().enumerate() {
+        let item = Entry {
+            key: key.as_ptr() as *mut _,
+            data: (idx + 1) as *mut c_void,
+        };
+        let mut result: *mut Entry = std::ptr::null_mut();
+        assert_eq!(
+            unsafe { hsearch_r(item, Action::ENTER, &mut result, &mut htab) },
+            1
+        );
+        assert!(!result.is_null());
+    }
+    assert_eq!(htab_filled(&htab), 5);
+
+    let extra = CString::new("ffffff").unwrap();
+    let item = Entry {
+        key: extra.as_ptr() as *mut _,
+        data: 6usize as *mut c_void,
+    };
+    let mut result: *mut Entry = std::ptr::dangling_mut();
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
+    let rc = unsafe { hsearch_r(item, Action::ENTER, &mut result, &mut htab) };
+    assert_eq!(rc, 0);
+    assert!(result.is_null());
+    assert_eq!(errno_value(), libc::ENOMEM);
+    assert_eq!(
+        htab_filled(&htab),
+        5,
+        "failed insert must not change filled"
+    );
+
+    unsafe { hdestroy_r(&mut htab) };
+}
 
 #[test]
 fn hash_reentrant_lifecycle() {
