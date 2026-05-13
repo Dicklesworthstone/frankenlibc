@@ -265,25 +265,24 @@
     {
       "id": "sem-pthread-priority-protocol",
       "seed_overlay_id": null,
-      "surface": "pthread priority-ceiling protocol helpers",
+      "surface": "pthread regular-mutex priority-ceiling helpers",
       "symbols": [
         "pthread_mutex_getprioceiling",
-        "pthread_mutex_setprioceiling",
-        "pthread_mutexattr_getprioceiling",
-        "pthread_mutexattr_setprioceiling"
+        "pthread_mutex_setprioceiling"
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
       "source_line": 291,
-      "line_marker": "priority ceiling not supported",
+      "line_marker": "native regular-mutex contract",
       "support_matrix_status": "Implemented",
       "semantic_class": "unsupported_platform_contract",
-      "contract_kind": "priority_protocol_enosys",
-      "current_behavior": "Priority-ceiling helpers return ENOSYS while writing default out-parameters where applicable.",
-      "user_risk": "Realtime pthread users can link but priority protocol configuration is unavailable.",
-      "required_followup": "Add POSIX priority-protocol fixtures and decide whether unsupported status is acceptable for replacement levels.",
+      "contract_kind": "priority_protocol_regular_mutex_einval",
+      "current_behavior": "Regular-mutex priority-ceiling get/set return EINVAL without writing out-parameters; mutexattr priority-ceiling get/set are native managed-attribute round trips covered outside this blocker.",
+      "user_risk": "Realtime pthread users can link, but PRIO_PROTECT mutex priority-ceiling behavior remains unavailable for regular mutex objects.",
+      "required_followup": "Add POSIX PRIO_PROTECT mutex fixtures if priority-protocol mutex semantics are implemented; keep mutexattr priority-ceiling round trips out of unsupported semantic blockers.",
       "evidence_artifacts": [
-        "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+        "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "crates/frankenlibc-abi/tests/pthread_abi_test.rs"
       ]
     },
     {

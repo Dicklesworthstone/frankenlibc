@@ -44,8 +44,8 @@
     "inventory_entry_count": 18,
     "symbol_bearing_entry_count": 17,
     "symbolless_contract_count": 1,
-    "symbol_reference_count": 87,
-    "exact_symbol_reference_count": 83,
+    "symbol_reference_count": 85,
+    "exact_symbol_reference_count": 81,
     "pattern_symbol_reference_count": 4,
     "support_matrix_missing_exact_symbol_count": 6,
     "version_script_missing_exact_symbol_count": 2,
@@ -53,7 +53,7 @@
     "wildcard_source_expansion_count": 69,
     "wildcard_support_matrix_expansion_count": 0,
     "wildcard_version_script_expansion_count": 0,
-    "resolved_symbol_join_row_count": 88,
+    "resolved_symbol_join_row_count": 86,
     "conflicting_exact_symbol_join_count": 0,
     "semantic_parity_blocker_count": 18,
     "rows_where_taxonomy_status_is_not_parity": 18,
@@ -300,7 +300,7 @@
     },
     {
       "inventory_id": "sem-pthread-priority-protocol",
-      "surface": "pthread priority-ceiling protocol helpers",
+      "surface": "pthread regular-mutex priority-ceiling helpers",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
       "taxonomy_status": "Implemented",
       "semantic_class": "unsupported_platform_contract",
@@ -308,9 +308,7 @@
       "taxonomy_status_is_semantic_parity": false,
       "symbol_refs": [
         "pthread_mutex_getprioceiling",
-        "pthread_mutex_setprioceiling",
-        "pthread_mutexattr_getprioceiling",
-        "pthread_mutexattr_setprioceiling"
+        "pthread_mutex_setprioceiling"
       ],
       "expected_missing_source_symbols": [],
       "expected_missing_support_matrix_symbols": [],

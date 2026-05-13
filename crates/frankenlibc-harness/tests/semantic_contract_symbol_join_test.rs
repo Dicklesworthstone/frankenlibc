@@ -175,6 +175,37 @@ fn artifact_preserves_inventory_rows_and_blocks_claim_promotion() {
         blocker_classes.insert(row["semantic_class"].as_str().unwrap().to_string());
     }
 
+    let pthread_priority_row = rows_by_id
+        .get("sem-pthread-priority-protocol")
+        .expect("pthread priority protocol row should be present");
+    let pthread_priority_symbols: Vec<_> = pthread_priority_row["symbol_refs"]
+        .as_array()
+        .expect("pthread priority row symbols must be an array")
+        .iter()
+        .map(|symbol| symbol.as_str().expect("symbol refs must be strings"))
+        .collect();
+    assert_eq!(
+        pthread_priority_symbols,
+        vec![
+            "pthread_mutex_getprioceiling",
+            "pthread_mutex_setprioceiling"
+        ],
+        "only regular-mutex priority-ceiling helpers should remain semantic blockers"
+    );
+    for retired_symbol in [
+        "pthread_mutexattr_getprioceiling",
+        "pthread_mutexattr_setprioceiling",
+    ] {
+        assert!(
+            rows.iter().all(|row| {
+                row["symbol_refs"]
+                    .as_array()
+                    .is_none_or(|symbols| !symbols.iter().any(|symbol| symbol == retired_symbol))
+            }),
+            "{retired_symbol} has native mutexattr roundtrip coverage and must not be listed as a semantic blocker"
+        );
+    }
+
     for class in [
         "abort_only",
         "compat_noop",

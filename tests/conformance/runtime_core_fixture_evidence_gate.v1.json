@@ -195,7 +195,7 @@
         "private cancellation registration helpers are compat no-ops",
         "__pthread_unwind_next remains an aborting proof gap",
         "robust owner-death recovery remains blocked with stable signatures",
-        "priority-ceiling protocol helpers are explicit ENOSYS unsupported contracts"
+        "regular-mutex priority-ceiling helpers remain explicit EINVAL unsupported contracts while mutexattr priority-ceiling round trips are native"
       ],
       "runtime_evidence": {
         "strict": {
