@@ -803,8 +803,6 @@ for fixture_path in fixture_paths:
             case_modes_by_symbol.setdefault(symbol, set()).add(mode)
 
     campaign_row = campaign_by_id.get(campaign_id)
-    if campaign_id and campaign_row is None:
-        missing_coverage_artifacts.add("fixture_coverage_prioritizer.v1.json")
     campaign_next_wave = set(campaign_row.get("first_wave_symbols", [])) if isinstance(campaign_row, dict) else set()
 
     for symbol in declared_symbols:

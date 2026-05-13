@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T05:10:08Z",
-  "report_hash": "932f5865fdab9810",
+  "generated_at": "2026-05-13T06:05:29Z",
+  "report_hash": "c6f7d4973d9209cd",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 593,
-    "symbols_without_fixtures": 3526,
-    "fixture_coverage_pct": 14.4,
-    "implemented_coverage_pct": 14.2,
-    "total_fixture_files": 75,
-    "total_cases": 1664,
+    "symbols_with_fixtures": 598,
+    "symbols_without_fixtures": 3521,
+    "fixture_coverage_pct": 14.5,
+    "implemented_coverage_pct": 14.3,
+    "total_fixture_files": 76,
+    "total_cases": 1674,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 396,
-    "symbols_with_errno_checks": 590,
-    "total_quality_issues": 3571,
-    "uncovered_action_count": 3526
+    "symbols_with_edge_cases": 400,
+    "symbols_with_errno_checks": 595,
+    "total_quality_issues": 3567,
+    "uncovered_action_count": 3521
   },
   "fixture_file_analyses": [
     {
@@ -136,6 +136,14 @@
       "valid": true,
       "total_cases": 24,
       "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "malloc_membrane_wave02.json",
+      "family": "malloc/membrane",
+      "valid": true,
+      "total_cases": 10,
+      "unique_symbols": 5,
       "issues": []
     },
     {
@@ -40360,15 +40368,20 @@
       "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "malloc_membrane_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "mallwatch",
@@ -40630,15 +40643,20 @@
       "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "malloc_membrane_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "membarrier",
@@ -44438,15 +44456,21 @@
       "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "malloc_membrane_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "posix_openpt",
@@ -48010,14 +48034,19 @@
       "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "malloc_membrane_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -60644,15 +60673,20 @@
       "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "malloc_membrane_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "vasprintf",
@@ -80197,13 +80231,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "mallopt",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "mallwatch",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -80321,13 +80348,6 @@
       "module": "glibc_internal_abi",
       "action": "create fixture cases",
       "priority": "normal"
-    },
-    {
-      "symbol": "memalign",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "action": "create fixture cases",
-      "priority": "high"
     },
     {
       "symbol": "membarrier",
@@ -81877,13 +81897,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "posix_memalign",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "action": "create fixture cases",
-      "priority": "high"
-    },
-    {
       "symbol": "posix_openpt",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -83303,13 +83316,6 @@
       "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
-    },
-    {
-      "symbol": "pvalloc",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "action": "create fixture cases",
-      "priority": "high"
     },
     {
       "symbol": "pwrite",
@@ -87783,13 +87789,6 @@
       "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
-    },
-    {
-      "symbol": "valloc",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "action": "create fixture cases",
-      "priority": "high"
     },
     {
       "symbol": "verr",
