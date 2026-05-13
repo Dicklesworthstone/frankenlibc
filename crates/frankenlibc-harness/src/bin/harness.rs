@@ -769,6 +769,18 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Map a Gröbner canonical root-cause class id (0..=7) to a deterministic
+    /// healing action via
+    /// `frankenlibc_membrane::heal::recommended_healing_for_canonical_class`.
+    /// Output `action` is the kebab-case variant name.
+    RecommendHealingForCanonicalClass {
+        /// Canonical class id from grobner::CANONICAL_CLASS_* constants.
+        #[arg(long)]
+        class_id: u8,
+        /// Output JSONL path: one recommended_healing record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Iterate a JSONL file of runtime_evidence.decision.v1 rows and
     /// validate each via
     /// `frankenlibc_membrane::runtime_math::evidence::validate_runtime_evidence_row_v1`.
@@ -2889,6 +2901,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::RecommendHealingForCanonicalClass { class_id, output } => {
+            use frankenlibc_membrane::grobner::{
+                CANONICAL_CLASS_ADMISSIBILITY, CANONICAL_CLASS_COMPOUND,
+                CANONICAL_CLASS_CONGESTION, CANONICAL_CLASS_NONE, CANONICAL_CLASS_NUMERIC,
+                CANONICAL_CLASS_REGIME, CANONICAL_CLASS_TEMPORAL, CANONICAL_CLASS_TOPOLOGICAL,
+            };
+            use frankenlibc_membrane::heal::{HealingAction, recommended_healing_for_canonical_class};
+            let class_label = match class_id {
+                x if x == CANONICAL_CLASS_NONE => "none",
+                x if x == CANONICAL_CLASS_TEMPORAL => "temporal",
+                x if x == CANONICAL_CLASS_CONGESTION => "congestion",
+                x if x == CANONICAL_CLASS_TOPOLOGICAL => "topological",
+                x if x == CANONICAL_CLASS_REGIME => "regime",
+                x if x == CANONICAL_CLASS_NUMERIC => "numeric",
+                x if x == CANONICAL_CLASS_ADMISSIBILITY => "admissibility",
+                x if x == CANONICAL_CLASS_COMPOUND => "compound",
+                _ => "out_of_range_compound_fallback",
+            };
+            let action = recommended_healing_for_canonical_class(class_id);
+            let (action_label, action_args): (&str, serde_json::Value) = match action {
+                HealingAction::None => ("none", serde_json::Value::Null),
+                HealingAction::ClampSize { requested, clamped } => (
+                    "clamp-size",
+                    serde_json::json!({"requested": requested, "clamped": clamped}),
+                ),
+                HealingAction::TruncateWithNull {
+                    requested,
+                    truncated,
+                } => (
+                    "truncate-with-null",
+                    serde_json::json!({"requested": requested, "truncated": truncated}),
+                ),
+                HealingAction::IgnoreDoubleFree => {
+                    ("ignore-double-free", serde_json::Value::Null)
+                }
+                HealingAction::IgnoreForeignFree => {
+                    ("ignore-foreign-free", serde_json::Value::Null)
+                }
+                HealingAction::ReallocAsMalloc { size } => (
+                    "realloc-as-malloc",
+                    serde_json::json!({"size": size}),
+                ),
+                HealingAction::ReturnSafeDefault => {
+                    ("return-safe-default", serde_json::Value::Null)
+                }
+                HealingAction::UpgradeToSafeVariant => {
+                    ("upgrade-to-safe-variant", serde_json::Value::Null)
+                }
+            };
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "recommended_healing",
+                "class_id": class_id,
+                "class_label": class_label,
+                "action": action_label,
+                "action_args": action_args,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "recommend-healing-for-canonical-class: class_id={class_id} ({class_label}) -> action={action_label}"
+            );
         }
         Command::ValidateRuntimeEvidenceRows { jsonl, output } => {
             use frankenlibc_membrane::runtime_math::evidence::{

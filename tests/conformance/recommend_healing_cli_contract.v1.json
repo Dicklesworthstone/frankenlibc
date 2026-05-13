@@ -1,0 +1,64 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "recommend-healing-for-canonical-class-cli-contract",
+  "bead": "bd-6noe6",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "6842183f",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::heal::recommended_healing_for_canonical_class(class_id: u8) -> HealingAction as a standalone CLI. The lib API maps a Gröbner canonical root-cause class id (0..=7 from CANONICAL_CLASS_{NONE,TEMPORAL,CONGESTION,TOPOLOGICAL,REGIME,NUMERIC,ADMISSIBILITY,COMPOUND}) to a deterministic healing suggestion. Out-of-range class_id values fall through to ReturnSafeDefault as a conservative compound-default. Pairs naturally with the previously shipped 'reduce-mask' bridge (bd-f9mnb) whose Gröbner output produces these class ids. Previously reachable only from Rust callers; the CLI bridge lets CI verify the canonical-class -> healing-action mapping without compiling.",
+  "subcommand_name": "recommend-healing-for-canonical-class",
+  "binary_target": "harness",
+  "required_flags": [
+    "--class-id",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::heal::recommended_healing_for_canonical_class",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "recommended_healing",
+    "required_fields": [
+      "kind",
+      "class_id",
+      "class_label",
+      "action",
+      "action_args"
+    ]
+  },
+  "expected_action_table": {
+    "0": {"label": "none", "action": "none"},
+    "1": {"label": "temporal", "action": "return-safe-default"},
+    "2": {"label": "congestion", "action": "clamp-size"},
+    "3": {"label": "topological", "action": "upgrade-to-safe-variant"},
+    "4": {"label": "regime", "action": "return-safe-default"},
+    "5": {"label": "numeric", "action": "clamp-size"},
+    "6": {"label": "admissibility", "action": "upgrade-to-safe-variant"},
+    "7": {"label": "compound", "action": "return-safe-default"},
+    "99": {"label": "out_of_range_compound_fallback", "action": "return-safe-default"}
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "echoes_class_id_into_output_record": true,
+    "deterministic_given_inputs": true,
+    "none_class_yields_none_action": true,
+    "temporal_class_yields_return_safe_default": true,
+    "congestion_class_yields_clamp_size": true,
+    "topological_class_yields_upgrade_to_safe_variant": true,
+    "regime_class_yields_return_safe_default": true,
+    "numeric_class_yields_clamp_size": true,
+    "admissibility_class_yields_upgrade_to_safe_variant": true,
+    "compound_class_yields_return_safe_default": true,
+    "out_of_range_class_id_falls_through_to_return_safe_default": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "action_table_drift_from_expected_action_table",
+    "out_of_range_class_id_yields_none_action"
+  ],
+  "summary": {
+    "bead": "bd-6noe6",
+    "subcommand": "recommend-healing-for-canonical-class",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
