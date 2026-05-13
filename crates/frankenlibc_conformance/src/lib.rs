@@ -869,6 +869,18 @@ pub fn execute_fixture_case(
         | "__pthread_mutexattr_settype"
         | "__pthread_once"
         | "__pthread_register_cancel" => execute_pthread_sync_wave01_case(function, inputs, mode),
+        "__pthread_register_cancel_defer"
+        | "__pthread_rwlock_destroy"
+        | "__pthread_rwlock_init"
+        | "__pthread_rwlock_rdlock"
+        | "__pthread_rwlock_tryrdlock"
+        | "__pthread_rwlock_trywrlock"
+        | "__pthread_rwlock_unlock"
+        | "__pthread_rwlock_wrlock"
+        | "__pthread_setspecific"
+        | "__pthread_unregister_cancel"
+        | "__pthread_unregister_cancel_restore"
+        | "__pthread_unwind_next" => execute_pthread_sync_wave02_case(function, inputs, mode),
         // pthread mutexes
         "pthread_mutex_init" => execute_pthread_mutex_init_case(inputs, mode),
         "pthread_mutex_destroy" => execute_pthread_mutex_destroy_case(inputs, mode),
@@ -13440,6 +13452,11 @@ fn alloc_pthread_cond_ptr() -> *mut libc::pthread_cond_t {
     Box::into_raw(boxed)
 }
 
+fn alloc_pthread_rwlock_ptr() -> *mut libc::pthread_rwlock_t {
+    let boxed: Box<libc::pthread_rwlock_t> = Box::new(unsafe { std::mem::zeroed() });
+    Box::into_raw(boxed)
+}
+
 unsafe fn free_pthread_mutex_ptr(ptr: *mut libc::pthread_mutex_t) {
     // SAFETY: pointer was allocated via Box::into_raw in alloc_pthread_mutex_ptr.
     unsafe { drop(Box::from_raw(ptr)) };
@@ -13447,6 +13464,11 @@ unsafe fn free_pthread_mutex_ptr(ptr: *mut libc::pthread_mutex_t) {
 
 unsafe fn free_pthread_cond_ptr(ptr: *mut libc::pthread_cond_t) {
     // SAFETY: pointer was allocated via Box::into_raw in alloc_pthread_cond_ptr.
+    unsafe { drop(Box::from_raw(ptr)) };
+}
+
+unsafe fn free_pthread_rwlock_ptr(ptr: *mut libc::pthread_rwlock_t) {
+    // SAFETY: pointer was allocated via Box::into_raw in alloc_pthread_rwlock_ptr.
     unsafe { drop(Box::from_raw(ptr)) };
 }
 
@@ -13615,6 +13637,19 @@ fn init_pthread_mutex_for_case(mutex: *mut libc::pthread_mutex_t) -> Result<(), 
     } else {
         Err(format!(
             "pthread_mutex_init failed: {}",
+            format_pthread_status(rc)
+        ))
+    }
+}
+
+fn init_pthread_rwlock_for_case(rwlock: *mut libc::pthread_rwlock_t) -> Result<(), String> {
+    let rc =
+        unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_init(rwlock, std::ptr::null()) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "__pthread_rwlock_init failed: {}",
             format_pthread_status(rc)
         ))
     }
@@ -13855,6 +13890,260 @@ fn pthread_sync_wave01_actual(function: &str) -> Result<String, String> {
             Ok(String::from("REGISTER_CANCEL_NOOP"))
         }
         other => Err(format!("unsupported pthread sync fixture: {other}")),
+    }
+}
+
+fn execute_pthread_sync_wave02_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "pthread sync wave02 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = pthread_sync_wave02_actual(function)?;
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    Ok(non_host_execution(format!(
+        "symbol={function};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )))
+}
+
+fn pthread_sync_wave02_actual(function: &str) -> Result<String, String> {
+    match function {
+        "__pthread_register_cancel_defer" => {
+            unsafe {
+                frankenlibc_abi::pthread_abi::__pthread_register_cancel_defer(std::ptr::null_mut())
+            };
+            Ok(String::from("REGISTER_CANCEL_DEFER_NOOP"))
+        }
+        "__pthread_rwlock_destroy" => {
+            let rwlock = alloc_pthread_rwlock_ptr();
+            init_pthread_rwlock_for_case(rwlock)?;
+            let destroy_rc =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_destroy(rwlock) };
+            unsafe { free_pthread_rwlock_ptr(rwlock) };
+            Ok(format!(
+                "RWLOCK_DESTROY_RC_{}",
+                format_pthread_status(destroy_rc)
+            ))
+        }
+        "__pthread_rwlock_init" => {
+            let rwlock = alloc_pthread_rwlock_ptr();
+            let init_rc = unsafe {
+                frankenlibc_abi::pthread_abi::__pthread_rwlock_init(rwlock, std::ptr::null())
+            };
+            let destroy_rc = if init_rc == 0 {
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_destroy(rwlock) }
+            } else {
+                0
+            };
+            unsafe { free_pthread_rwlock_ptr(rwlock) };
+            if init_rc == 0 && destroy_rc == 0 {
+                Ok(String::from("RWLOCK_INIT_RC_0"))
+            } else {
+                Ok(format!(
+                    "RWLOCK_INIT_{}_DESTROY_{}",
+                    format_pthread_status(init_rc),
+                    format_pthread_status(destroy_rc)
+                ))
+            }
+        }
+        "__pthread_rwlock_rdlock" => {
+            let rwlock = alloc_pthread_rwlock_ptr();
+            init_pthread_rwlock_for_case(rwlock)?;
+            let lock_rc = unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_rdlock(rwlock) };
+            let unlock_rc = if lock_rc == 0 {
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_unlock(rwlock) }
+            } else {
+                0
+            };
+            let destroy_rc =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_destroy(rwlock) };
+            unsafe { free_pthread_rwlock_ptr(rwlock) };
+            if lock_rc == 0 && unlock_rc == 0 && destroy_rc == 0 {
+                Ok(String::from("RWLOCK_RDLOCK_UNLOCK_RC_0"))
+            } else {
+                Ok(format!(
+                    "RWLOCK_RDLOCK_{}_UNLOCK_{}_DESTROY_{}",
+                    format_pthread_status(lock_rc),
+                    format_pthread_status(unlock_rc),
+                    format_pthread_status(destroy_rc)
+                ))
+            }
+        }
+        "__pthread_rwlock_tryrdlock" => {
+            let rwlock = alloc_pthread_rwlock_ptr();
+            init_pthread_rwlock_for_case(rwlock)?;
+            let lock_rc =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_tryrdlock(rwlock) };
+            let unlock_rc = if lock_rc == 0 {
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_unlock(rwlock) }
+            } else {
+                0
+            };
+            let destroy_rc =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_destroy(rwlock) };
+            unsafe { free_pthread_rwlock_ptr(rwlock) };
+            if lock_rc == 0 && unlock_rc == 0 && destroy_rc == 0 {
+                Ok(String::from("RWLOCK_TRYRDLOCK_UNLOCK_RC_0"))
+            } else {
+                Ok(format!(
+                    "RWLOCK_TRYRDLOCK_{}_UNLOCK_{}_DESTROY_{}",
+                    format_pthread_status(lock_rc),
+                    format_pthread_status(unlock_rc),
+                    format_pthread_status(destroy_rc)
+                ))
+            }
+        }
+        "__pthread_rwlock_trywrlock" => {
+            let rwlock = alloc_pthread_rwlock_ptr();
+            init_pthread_rwlock_for_case(rwlock)?;
+            let lock_rc =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_trywrlock(rwlock) };
+            let unlock_rc = if lock_rc == 0 {
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_unlock(rwlock) }
+            } else {
+                0
+            };
+            let destroy_rc =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_destroy(rwlock) };
+            unsafe { free_pthread_rwlock_ptr(rwlock) };
+            if lock_rc == 0 && unlock_rc == 0 && destroy_rc == 0 {
+                Ok(String::from("RWLOCK_TRYWRLOCK_UNLOCK_RC_0"))
+            } else {
+                Ok(format!(
+                    "RWLOCK_TRYWRLOCK_{}_UNLOCK_{}_DESTROY_{}",
+                    format_pthread_status(lock_rc),
+                    format_pthread_status(unlock_rc),
+                    format_pthread_status(destroy_rc)
+                ))
+            }
+        }
+        "__pthread_rwlock_unlock" => {
+            let rwlock = alloc_pthread_rwlock_ptr();
+            init_pthread_rwlock_for_case(rwlock)?;
+            let lock_rc = unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_rdlock(rwlock) };
+            let unlock_rc = if lock_rc == 0 {
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_unlock(rwlock) }
+            } else {
+                0
+            };
+            let destroy_rc =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_destroy(rwlock) };
+            unsafe { free_pthread_rwlock_ptr(rwlock) };
+            if lock_rc == 0 && unlock_rc == 0 && destroy_rc == 0 {
+                Ok(String::from("RWLOCK_UNLOCK_AFTER_READ_RC_0"))
+            } else {
+                Ok(format!(
+                    "RWLOCK_PRELOCK_{}_UNLOCK_{}_DESTROY_{}",
+                    format_pthread_status(lock_rc),
+                    format_pthread_status(unlock_rc),
+                    format_pthread_status(destroy_rc)
+                ))
+            }
+        }
+        "__pthread_rwlock_wrlock" => {
+            let rwlock = alloc_pthread_rwlock_ptr();
+            init_pthread_rwlock_for_case(rwlock)?;
+            let lock_rc = unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_wrlock(rwlock) };
+            let unlock_rc = if lock_rc == 0 {
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_unlock(rwlock) }
+            } else {
+                0
+            };
+            let destroy_rc =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_rwlock_destroy(rwlock) };
+            unsafe { free_pthread_rwlock_ptr(rwlock) };
+            if lock_rc == 0 && unlock_rc == 0 && destroy_rc == 0 {
+                Ok(String::from("RWLOCK_WRLOCK_UNLOCK_RC_0"))
+            } else {
+                Ok(format!(
+                    "RWLOCK_WRLOCK_{}_UNLOCK_{}_DESTROY_{}",
+                    format_pthread_status(lock_rc),
+                    format_pthread_status(unlock_rc),
+                    format_pthread_status(destroy_rc)
+                ))
+            }
+        }
+        "__pthread_setspecific" => {
+            reset_pthread_tls_case_state();
+            let mut key: libc::pthread_key_t = 0;
+            let create_rc =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_key_create(&mut key, None) };
+            if create_rc != 0 {
+                return Ok(format!(
+                    "SETSPECIFIC_KEY_CREATE_{}",
+                    format_pthread_status(create_rc)
+                ));
+            }
+            let value = 0x5678usize as *const c_void;
+            let set_rc = unsafe { frankenlibc_abi::pthread_abi::__pthread_setspecific(key, value) };
+            let got = unsafe { frankenlibc_abi::pthread_abi::__pthread_getspecific(key) };
+            let _ = unsafe { frankenlibc_abi::pthread_abi::pthread_key_delete(key) };
+            if set_rc == 0 && got == value.cast_mut() {
+                Ok(String::from("SETSPECIFIC_ROUNDTRIP"))
+            } else {
+                Ok(format!(
+                    "SETSPECIFIC_SET_{}_MATCH_{}",
+                    format_pthread_status(set_rc),
+                    got == value.cast_mut()
+                ))
+            }
+        }
+        "__pthread_unregister_cancel" => {
+            unsafe {
+                frankenlibc_abi::pthread_abi::__pthread_unregister_cancel(std::ptr::null_mut())
+            };
+            Ok(String::from("UNREGISTER_CANCEL_NOOP"))
+        }
+        "__pthread_unregister_cancel_restore" => {
+            unsafe {
+                frankenlibc_abi::pthread_abi::__pthread_unregister_cancel_restore(
+                    std::ptr::null_mut(),
+                )
+            };
+            Ok(String::from("UNREGISTER_CANCEL_RESTORE_NOOP"))
+        }
+        "__pthread_unwind_next" => classify_pthread_unwind_next_abort(),
+        other => Err(format!("unsupported pthread sync wave02 fixture: {other}")),
+    }
+}
+
+fn classify_pthread_unwind_next_abort() -> Result<String, String> {
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        return Ok(String::from("UNWIND_NEXT_FORK_FAILED"));
+    }
+    if pid == 0 {
+        unsafe { frankenlibc_abi::pthread_abi::__pthread_unwind_next(std::ptr::null_mut()) };
+        unsafe { libc::_exit(127) };
+    }
+
+    let mut status = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    if waited != pid {
+        return Ok(format!("UNWIND_NEXT_WAITPID_{waited}"));
+    }
+    if libc::WIFSIGNALED(status) {
+        let signal = libc::WTERMSIG(status);
+        if signal == libc::SIGABRT {
+            Ok(String::from("UNWIND_NEXT_ABORT_SIGNAL_SIGABRT"))
+        } else {
+            Ok(format!("UNWIND_NEXT_SIGNAL_{signal}"))
+        }
+    } else if libc::WIFEXITED(status) {
+        Ok(format!("UNWIND_NEXT_EXIT_{}", libc::WEXITSTATUS(status)))
+    } else {
+        Ok(String::from("UNWIND_NEXT_UNKNOWN_STATUS"))
     }
 }
 

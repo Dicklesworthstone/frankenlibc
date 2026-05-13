@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "pthread/sync",
+  "captured_at": "2026-05-13T12:55:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-pthread-sync wave-02 pthread rwlock, TLS setspecific, and cancellation alias symbols without recording pthread object addresses, native thread ids, scheduler timing, stderr bytes, or process-global counters.",
+  "spec_reference": "POSIX pthread synchronization and cancellation alias semantics for __pthread_rwlock_init, __pthread_rwlock_destroy, __pthread_rwlock_rdlock, __pthread_rwlock_tryrdlock, __pthread_rwlock_trywrlock, __pthread_rwlock_unlock, __pthread_rwlock_wrlock, __pthread_setspecific, __pthread_register_cancel_defer, __pthread_unregister_cancel, __pthread_unregister_cancel_restore, and __pthread_unwind_next",
+  "campaign": {
+    "bead": "bd-uivdf",
+    "campaign_id": "fcq-pthread-sync",
+    "wave_id": "wave-02-pthread-rwlock-cancel-alias-state",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture",
+    "first_wave_symbols": [
+      "__pthread_register_cancel_defer",
+      "__pthread_rwlock_destroy",
+      "__pthread_rwlock_init",
+      "__pthread_rwlock_rdlock",
+      "__pthread_rwlock_tryrdlock",
+      "__pthread_rwlock_trywrlock",
+      "__pthread_rwlock_unlock",
+      "__pthread_rwlock_wrlock",
+      "__pthread_setspecific",
+      "__pthread_unregister_cancel",
+      "__pthread_unregister_cancel_restore",
+      "__pthread_unwind_next"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "pthread_register_cancel_defer_noop_strict",
+      "function": "__pthread_register_cancel_defer",
+      "spec_section": "POSIX pthread deferred cancellation register no-op alias",
+      "inputs": {
+        "symbol": "__pthread_register_cancel_defer",
+        "scenario": "cancel_register_defer_null_buffer_noop_without_metadata_capture",
+        "expected": "REGISTER_CANCEL_DEFER_NOOP",
+        "oracle_source": "FrankenLibC pthread cancellation alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_register_cancel_defer;mode=strict;expected=REGISTER_CANCEL_DEFER_NOOP;actual=REGISTER_CANCEL_DEFER_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_register_cancel_defer_noop_hardened",
+      "function": "__pthread_register_cancel_defer",
+      "spec_section": "POSIX pthread deferred cancellation register no-op alias",
+      "inputs": {
+        "symbol": "__pthread_register_cancel_defer",
+        "scenario": "cancel_register_defer_null_buffer_noop_without_metadata_capture",
+        "expected": "REGISTER_CANCEL_DEFER_NOOP",
+        "oracle_source": "FrankenLibC pthread cancellation alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_register_cancel_defer;mode=hardened;expected=REGISTER_CANCEL_DEFER_NOOP;actual=REGISTER_CANCEL_DEFER_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_rwlock_destroy_success_strict",
+      "function": "__pthread_rwlock_destroy",
+      "spec_section": "POSIX pthread rwlock destroy after init",
+      "inputs": {
+        "symbol": "__pthread_rwlock_destroy",
+        "scenario": "rwlock_init_destroy_without_object_capture",
+        "expected": "RWLOCK_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_destroy;mode=strict;expected=RWLOCK_DESTROY_RC_0;actual=RWLOCK_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_rwlock_destroy_success_hardened",
+      "function": "__pthread_rwlock_destroy",
+      "spec_section": "POSIX pthread rwlock destroy after init",
+      "inputs": {
+        "symbol": "__pthread_rwlock_destroy",
+        "scenario": "rwlock_init_destroy_without_object_capture",
+        "expected": "RWLOCK_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_destroy;mode=hardened;expected=RWLOCK_DESTROY_RC_0;actual=RWLOCK_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_rwlock_init_success_strict",
+      "function": "__pthread_rwlock_init",
+      "spec_section": "POSIX pthread rwlock init",
+      "inputs": {
+        "symbol": "__pthread_rwlock_init",
+        "scenario": "rwlock_init_destroy_without_object_capture",
+        "expected": "RWLOCK_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_init;mode=strict;expected=RWLOCK_INIT_RC_0;actual=RWLOCK_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_rwlock_init_success_hardened",
+      "function": "__pthread_rwlock_init",
+      "spec_section": "POSIX pthread rwlock init",
+      "inputs": {
+        "symbol": "__pthread_rwlock_init",
+        "scenario": "rwlock_init_destroy_without_object_capture",
+        "expected": "RWLOCK_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_init;mode=hardened;expected=RWLOCK_INIT_RC_0;actual=RWLOCK_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_rwlock_rdlock_unlock_success_strict",
+      "function": "__pthread_rwlock_rdlock",
+      "spec_section": "POSIX pthread rwlock read lock/unlock",
+      "inputs": {
+        "symbol": "__pthread_rwlock_rdlock",
+        "scenario": "rwlock_read_lock_unlock_without_object_capture",
+        "expected": "RWLOCK_RDLOCK_UNLOCK_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_rdlock;mode=strict;expected=RWLOCK_RDLOCK_UNLOCK_RC_0;actual=RWLOCK_RDLOCK_UNLOCK_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_rwlock_rdlock_unlock_success_hardened",
+      "function": "__pthread_rwlock_rdlock",
+      "spec_section": "POSIX pthread rwlock read lock/unlock",
+      "inputs": {
+        "symbol": "__pthread_rwlock_rdlock",
+        "scenario": "rwlock_read_lock_unlock_without_object_capture",
+        "expected": "RWLOCK_RDLOCK_UNLOCK_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_rdlock;mode=hardened;expected=RWLOCK_RDLOCK_UNLOCK_RC_0;actual=RWLOCK_RDLOCK_UNLOCK_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_rwlock_tryrdlock_unlock_success_strict",
+      "function": "__pthread_rwlock_tryrdlock",
+      "spec_section": "POSIX pthread rwlock try read lock/unlock",
+      "inputs": {
+        "symbol": "__pthread_rwlock_tryrdlock",
+        "scenario": "rwlock_try_read_lock_unlock_without_object_capture",
+        "expected": "RWLOCK_TRYRDLOCK_UNLOCK_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_tryrdlock;mode=strict;expected=RWLOCK_TRYRDLOCK_UNLOCK_RC_0;actual=RWLOCK_TRYRDLOCK_UNLOCK_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_rwlock_tryrdlock_unlock_success_hardened",
+      "function": "__pthread_rwlock_tryrdlock",
+      "spec_section": "POSIX pthread rwlock try read lock/unlock",
+      "inputs": {
+        "symbol": "__pthread_rwlock_tryrdlock",
+        "scenario": "rwlock_try_read_lock_unlock_without_object_capture",
+        "expected": "RWLOCK_TRYRDLOCK_UNLOCK_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_tryrdlock;mode=hardened;expected=RWLOCK_TRYRDLOCK_UNLOCK_RC_0;actual=RWLOCK_TRYRDLOCK_UNLOCK_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_rwlock_trywrlock_unlock_success_strict",
+      "function": "__pthread_rwlock_trywrlock",
+      "spec_section": "POSIX pthread rwlock try write lock/unlock",
+      "inputs": {
+        "symbol": "__pthread_rwlock_trywrlock",
+        "scenario": "rwlock_try_write_lock_unlock_without_object_capture",
+        "expected": "RWLOCK_TRYWRLOCK_UNLOCK_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_trywrlock;mode=strict;expected=RWLOCK_TRYWRLOCK_UNLOCK_RC_0;actual=RWLOCK_TRYWRLOCK_UNLOCK_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_rwlock_trywrlock_unlock_success_hardened",
+      "function": "__pthread_rwlock_trywrlock",
+      "spec_section": "POSIX pthread rwlock try write lock/unlock",
+      "inputs": {
+        "symbol": "__pthread_rwlock_trywrlock",
+        "scenario": "rwlock_try_write_lock_unlock_without_object_capture",
+        "expected": "RWLOCK_TRYWRLOCK_UNLOCK_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_trywrlock;mode=hardened;expected=RWLOCK_TRYWRLOCK_UNLOCK_RC_0;actual=RWLOCK_TRYWRLOCK_UNLOCK_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_rwlock_unlock_after_read_success_strict",
+      "function": "__pthread_rwlock_unlock",
+      "spec_section": "POSIX pthread rwlock unlock after read lock",
+      "inputs": {
+        "symbol": "__pthread_rwlock_unlock",
+        "scenario": "rwlock_unlock_after_read_lock_without_object_capture",
+        "expected": "RWLOCK_UNLOCK_AFTER_READ_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_unlock;mode=strict;expected=RWLOCK_UNLOCK_AFTER_READ_RC_0;actual=RWLOCK_UNLOCK_AFTER_READ_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_rwlock_unlock_after_read_success_hardened",
+      "function": "__pthread_rwlock_unlock",
+      "spec_section": "POSIX pthread rwlock unlock after read lock",
+      "inputs": {
+        "symbol": "__pthread_rwlock_unlock",
+        "scenario": "rwlock_unlock_after_read_lock_without_object_capture",
+        "expected": "RWLOCK_UNLOCK_AFTER_READ_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_unlock;mode=hardened;expected=RWLOCK_UNLOCK_AFTER_READ_RC_0;actual=RWLOCK_UNLOCK_AFTER_READ_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_rwlock_wrlock_unlock_success_strict",
+      "function": "__pthread_rwlock_wrlock",
+      "spec_section": "POSIX pthread rwlock write lock/unlock",
+      "inputs": {
+        "symbol": "__pthread_rwlock_wrlock",
+        "scenario": "rwlock_write_lock_unlock_without_object_capture",
+        "expected": "RWLOCK_WRLOCK_UNLOCK_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_wrlock;mode=strict;expected=RWLOCK_WRLOCK_UNLOCK_RC_0;actual=RWLOCK_WRLOCK_UNLOCK_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_rwlock_wrlock_unlock_success_hardened",
+      "function": "__pthread_rwlock_wrlock",
+      "spec_section": "POSIX pthread rwlock write lock/unlock",
+      "inputs": {
+        "symbol": "__pthread_rwlock_wrlock",
+        "scenario": "rwlock_write_lock_unlock_without_object_capture",
+        "expected": "RWLOCK_WRLOCK_UNLOCK_RC_0",
+        "oracle_source": "FrankenLibC pthread rwlock alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_rwlock_wrlock;mode=hardened;expected=RWLOCK_WRLOCK_UNLOCK_RC_0;actual=RWLOCK_WRLOCK_UNLOCK_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_setspecific_roundtrip_strict",
+      "function": "__pthread_setspecific",
+      "spec_section": "POSIX pthread TLS setspecific round-trip alias",
+      "inputs": {
+        "symbol": "__pthread_setspecific",
+        "scenario": "tls_key_value_set_roundtrip_without_pointer_capture",
+        "expected": "SETSPECIFIC_ROUNDTRIP",
+        "oracle_source": "FrankenLibC pthread TLS alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_setspecific;mode=strict;expected=SETSPECIFIC_ROUNDTRIP;actual=SETSPECIFIC_ROUNDTRIP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_setspecific_roundtrip_hardened",
+      "function": "__pthread_setspecific",
+      "spec_section": "POSIX pthread TLS setspecific round-trip alias",
+      "inputs": {
+        "symbol": "__pthread_setspecific",
+        "scenario": "tls_key_value_set_roundtrip_without_pointer_capture",
+        "expected": "SETSPECIFIC_ROUNDTRIP",
+        "oracle_source": "FrankenLibC pthread TLS alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_setspecific;mode=hardened;expected=SETSPECIFIC_ROUNDTRIP;actual=SETSPECIFIC_ROUNDTRIP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_unregister_cancel_noop_strict",
+      "function": "__pthread_unregister_cancel",
+      "spec_section": "POSIX pthread cancellation unregister no-op alias",
+      "inputs": {
+        "symbol": "__pthread_unregister_cancel",
+        "scenario": "cancel_unregister_null_buffer_noop_without_metadata_capture",
+        "expected": "UNREGISTER_CANCEL_NOOP",
+        "oracle_source": "FrankenLibC pthread cancellation alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_unregister_cancel;mode=strict;expected=UNREGISTER_CANCEL_NOOP;actual=UNREGISTER_CANCEL_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_unregister_cancel_noop_hardened",
+      "function": "__pthread_unregister_cancel",
+      "spec_section": "POSIX pthread cancellation unregister no-op alias",
+      "inputs": {
+        "symbol": "__pthread_unregister_cancel",
+        "scenario": "cancel_unregister_null_buffer_noop_without_metadata_capture",
+        "expected": "UNREGISTER_CANCEL_NOOP",
+        "oracle_source": "FrankenLibC pthread cancellation alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_unregister_cancel;mode=hardened;expected=UNREGISTER_CANCEL_NOOP;actual=UNREGISTER_CANCEL_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_unregister_cancel_restore_noop_strict",
+      "function": "__pthread_unregister_cancel_restore",
+      "spec_section": "POSIX pthread deferred cancellation unregister restore no-op alias",
+      "inputs": {
+        "symbol": "__pthread_unregister_cancel_restore",
+        "scenario": "cancel_unregister_restore_null_buffer_noop_without_metadata_capture",
+        "expected": "UNREGISTER_CANCEL_RESTORE_NOOP",
+        "oracle_source": "FrankenLibC pthread cancellation alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_unregister_cancel_restore;mode=strict;expected=UNREGISTER_CANCEL_RESTORE_NOOP;actual=UNREGISTER_CANCEL_RESTORE_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_unregister_cancel_restore_noop_hardened",
+      "function": "__pthread_unregister_cancel_restore",
+      "spec_section": "POSIX pthread deferred cancellation unregister restore no-op alias",
+      "inputs": {
+        "symbol": "__pthread_unregister_cancel_restore",
+        "scenario": "cancel_unregister_restore_null_buffer_noop_without_metadata_capture",
+        "expected": "UNREGISTER_CANCEL_RESTORE_NOOP",
+        "oracle_source": "FrankenLibC pthread cancellation alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_unregister_cancel_restore;mode=hardened;expected=UNREGISTER_CANCEL_RESTORE_NOOP;actual=UNREGISTER_CANCEL_RESTORE_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_unwind_next_abort_contract_strict",
+      "function": "__pthread_unwind_next",
+      "spec_section": "POSIX pthread internal unwind next abort contract",
+      "inputs": {
+        "symbol": "__pthread_unwind_next",
+        "scenario": "unwind_next_child_process_abort_classification_without_metadata_capture",
+        "expected": "UNWIND_NEXT_ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC pthread unwind alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_unwind_next;mode=strict;expected=UNWIND_NEXT_ABORT_SIGNAL_SIGABRT;actual=UNWIND_NEXT_ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_unwind_next_abort_contract_hardened",
+      "function": "__pthread_unwind_next",
+      "spec_section": "POSIX pthread internal unwind next abort contract",
+      "inputs": {
+        "symbol": "__pthread_unwind_next",
+        "scenario": "unwind_next_child_process_abort_classification_without_metadata_capture",
+        "expected": "UNWIND_NEXT_ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC pthread unwind alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_unwind_next;mode=hardened;expected=UNWIND_NEXT_ABORT_SIGNAL_SIGABRT;actual=UNWIND_NEXT_ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
