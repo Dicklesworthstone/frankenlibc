@@ -1,0 +1,132 @@
+{
+  "schema_version": "unistd_process_filesystem_wave05_completion_contract.v1",
+  "bead_id": "bd-waaa6.2",
+  "trace_id": "bd-waaa6.2::unistd-process-filesystem-wave05::completion::v1",
+  "description": "Completion contract binding the unistd/process/filesystem wave-05 fixture, executor support, refreshed coverage truth, structured telemetry, and remote-rch validation commands.",
+  "source_artifacts": [
+    {
+      "id": "beads_ledger",
+      "kind": "tracker",
+      "path": ".beads/issues.jsonl",
+      "evidence": "Tracker rows for bd-waaa6, bd-waaa6.1, and bd-waaa6.2."
+    },
+    {
+      "id": "unistd_wave05_fixture",
+      "kind": "fixture",
+      "path": "tests/conformance/fixtures/unistd_process_filesystem_wave05.json",
+      "evidence": "Strict and hardened deterministic fixtures for the 12 completed unistd/process/filesystem wave-05 symbols."
+    },
+    {
+      "id": "fixture_executor",
+      "kind": "rust_source",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "evidence": "execute_fixture_case dispatch and deterministic unistd/process/filesystem wave-05 fixture executor."
+    },
+    {
+      "id": "unistd_wave05_harness_test",
+      "kind": "rust_test",
+      "path": "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave05_conformance_test.rs",
+      "evidence": "Harness tests for wave-05 fixture schema, both-mode coverage, structured logs, ambient-state exclusion, and isolated execution."
+    },
+    {
+      "id": "symbol_fixture_coverage",
+      "kind": "coverage_artifact",
+      "path": "tests/conformance/symbol_fixture_coverage.v1.json",
+      "evidence": "Canonical coverage artifact refreshed by bd-waaa6.1 after unistd wave-05 and stdio wave-01 landed."
+    },
+    {
+      "id": "per_symbol_fixture_tests",
+      "kind": "coverage_artifact",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "evidence": "Per-symbol fixture rows linking every wave-05 symbol to unistd_process_filesystem_wave05.json."
+    },
+    {
+      "id": "fixture_coverage_prioritizer",
+      "kind": "coverage_artifact",
+      "path": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+      "evidence": "Campaign prioritizer no longer lists completed wave-05 symbols as next unistd/process/filesystem work."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "contract",
+      "path": "tests/conformance/unistd_process_filesystem_wave05_completion_contract.v1.json",
+      "evidence": "Machine-readable binding for bd-waaa6.2 completion obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "checker",
+      "path": "scripts/check_unistd_process_filesystem_wave05_completion_contract.sh",
+      "evidence": "Fail-closed checker for source bindings, coverage accounting, telemetry, and remote-rch validation commands."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "rust_test",
+      "path": "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave05_completion_contract_test.rs",
+      "evidence": "Rust harness tests for the wave-05 completion contract and negative drift signatures."
+    }
+  ],
+  "completion_contract": {
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-05-unistd-process-filesystem-argp-codeset-process-fd",
+    "source_fixture_commit": "34db374d",
+    "coverage_refresh_commit": "ecce67b8",
+    "coverage_close_commit": "a617bf00",
+    "fixture_file": "tests/conformance/fixtures/unistd_process_filesystem_wave05.json",
+    "harness_test": "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave05_conformance_test.rs",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_first_wave_symbols": [
+      "argp_parse",
+      "argp_state_help",
+      "argp_usage",
+      "bind_textdomain_codeset",
+      "brk",
+      "bsd_signal",
+      "c8rtomb",
+      "canonicalize_file_name",
+      "capget",
+      "capset",
+      "chdir",
+      "chmod"
+    ],
+    "expected_fixture_case_count": 24,
+    "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata",
+    "expected_coverage": {
+      "unistd_target_covered": 95,
+      "unistd_target_uncovered": 647,
+      "unistd_current_coverage_pct": 12.8,
+      "total_target_covered": 583,
+      "total_target_uncovered": 3536,
+      "per_symbol_symbols_with_fixtures": 581,
+      "per_symbol_total_cases": 1640
+    },
+    "required_positive_tests": [
+      "contract_binds_unistd_wave05_sources",
+      "checker_accepts_unistd_wave05_completion_contract",
+      "checker_emits_structured_unistd_wave05_telemetry"
+    ],
+    "required_negative_tests": [
+      "checker_rejects_missing_unistd_wave05_fixture_symbol",
+      "checker_rejects_stale_unistd_wave05_coverage_accounting",
+      "checker_rejects_non_remote_rch_cargo_validation_command",
+      "checker_rejects_missing_required_telemetry_event"
+    ],
+    "required_telemetry_events": [
+      "source_artifacts_validated",
+      "unistd_wave05_fixture_validated",
+      "coverage_accounting_validated",
+      "validation_commands_validated",
+      "test_surfaces_validated",
+      "telemetry_contract_validated",
+      "unistd_wave05_completion_contract_validated"
+    ],
+    "required_validation_commands": [
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_unistd_wave05_completion_test cargo test -p frankenlibc-harness --test unistd_process_filesystem_wave05_completion_contract_test -- --nocapture",
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_unistd_wave05_completion_check cargo check -p frankenlibc-harness --test unistd_process_filesystem_wave05_completion_contract_test",
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_unistd_wave05_completion_clippy cargo clippy -p frankenlibc-harness --test unistd_process_filesystem_wave05_completion_contract_test -- -D warnings",
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_unistd_wave05_conformance cargo test -p frankenlibc-harness --test unistd_process_filesystem_wave05_conformance_test -- --nocapture"
+    ]
+  }
+}
