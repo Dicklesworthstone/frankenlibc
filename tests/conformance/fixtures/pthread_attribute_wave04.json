@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "pthread/sync",
+  "captured_at": "2026-05-13T20:44:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-pthread-sync wave-04 pthread attribute init, getter, and setter symbols without recording pthread object addresses, native thread ids, scheduler timing, CPU mask bytes, signal-mask bytes, stack addresses, stderr bytes, or process-global counters.",
+  "spec_reference": "POSIX/GNU pthread attribute semantics for pthread_attr_getstacksize, pthread_attr_init, pthread_attr_setaffinity_np, pthread_attr_setdetachstate, pthread_attr_setguardsize, pthread_attr_setinheritsched, pthread_attr_setschedparam, pthread_attr_setschedpolicy, pthread_attr_setscope, pthread_attr_setsigmask_np, pthread_attr_setstack, and pthread_attr_setstackaddr",
+  "campaign": {
+    "bead": "bd-vm6j0.3",
+    "campaign_id": "fcq-pthread-sync",
+    "wave_id": "wave-04-pthread-attribute-setter-roundtrip",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture",
+    "first_wave_symbols": [
+      "pthread_attr_getstacksize",
+      "pthread_attr_init",
+      "pthread_attr_setaffinity_np",
+      "pthread_attr_setdetachstate",
+      "pthread_attr_setguardsize",
+      "pthread_attr_setinheritsched",
+      "pthread_attr_setschedparam",
+      "pthread_attr_setschedpolicy",
+      "pthread_attr_setscope",
+      "pthread_attr_setsigmask_np",
+      "pthread_attr_setstack",
+      "pthread_attr_setstackaddr"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "pthread_attr_getstacksize_default_strict",
+      "function": "pthread_attr_getstacksize",
+      "spec_section": "POSIX pthread_attr_getstacksize default stack-size class",
+      "inputs": {
+        "symbol": "pthread_attr_getstacksize",
+        "scenario": "attr_default_stacksize_class_without_byte_count_capture",
+        "expected": "ATTR_STACKSIZE_DEFAULT_VALID",
+        "oracle_source": "FrankenLibC pthread attr stack-size replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_getstacksize;mode=strict;expected=ATTR_STACKSIZE_DEFAULT_VALID;actual=ATTR_STACKSIZE_DEFAULT_VALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_getstacksize_default_hardened",
+      "function": "pthread_attr_getstacksize",
+      "spec_section": "POSIX pthread_attr_getstacksize default stack-size class",
+      "inputs": {
+        "symbol": "pthread_attr_getstacksize",
+        "scenario": "attr_default_stacksize_class_without_byte_count_capture",
+        "expected": "ATTR_STACKSIZE_DEFAULT_VALID",
+        "oracle_source": "FrankenLibC pthread attr stack-size replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_getstacksize;mode=hardened;expected=ATTR_STACKSIZE_DEFAULT_VALID;actual=ATTR_STACKSIZE_DEFAULT_VALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_attr_init_default_state_strict",
+      "function": "pthread_attr_init",
+      "spec_section": "POSIX pthread_attr_init default attribute state",
+      "inputs": {
+        "symbol": "pthread_attr_init",
+        "scenario": "attr_init_destroy_without_object_capture",
+        "expected": "ATTR_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread attr init replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_init;mode=strict;expected=ATTR_INIT_RC_0;actual=ATTR_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_init_default_state_hardened",
+      "function": "pthread_attr_init",
+      "spec_section": "POSIX pthread_attr_init default attribute state",
+      "inputs": {
+        "symbol": "pthread_attr_init",
+        "scenario": "attr_init_destroy_without_object_capture",
+        "expected": "ATTR_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread attr init replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_init;mode=hardened;expected=ATTR_INIT_RC_0;actual=ATTR_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_attr_setaffinity_roundtrip_strict",
+      "function": "pthread_attr_setaffinity_np",
+      "spec_section": "GNU pthread_attr_setaffinity_np attribute mask round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setaffinity_np",
+        "scenario": "attr_set_affinity_roundtrip_without_cpu_mask_bytes",
+        "expected": "ATTR_SETAFFINITY_RC_0_MASK_STORED",
+        "oracle_source": "FrankenLibC pthread attr affinity setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setaffinity_np;mode=strict;expected=ATTR_SETAFFINITY_RC_0_MASK_STORED;actual=ATTR_SETAFFINITY_RC_0_MASK_STORED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_setaffinity_roundtrip_hardened",
+      "function": "pthread_attr_setaffinity_np",
+      "spec_section": "GNU pthread_attr_setaffinity_np attribute mask round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setaffinity_np",
+        "scenario": "attr_set_affinity_roundtrip_without_cpu_mask_bytes",
+        "expected": "ATTR_SETAFFINITY_RC_0_MASK_STORED",
+        "oracle_source": "FrankenLibC pthread attr affinity setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setaffinity_np;mode=hardened;expected=ATTR_SETAFFINITY_RC_0_MASK_STORED;actual=ATTR_SETAFFINITY_RC_0_MASK_STORED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_attr_setdetachstate_detached_strict",
+      "function": "pthread_attr_setdetachstate",
+      "spec_section": "POSIX pthread_attr_setdetachstate detached round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setdetachstate",
+        "scenario": "attr_set_detachstate_detached_without_object_capture",
+        "expected": "ATTR_SETDETACHSTATE_DETACHED",
+        "oracle_source": "FrankenLibC pthread attr detach-state setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setdetachstate;mode=strict;expected=ATTR_SETDETACHSTATE_DETACHED;actual=ATTR_SETDETACHSTATE_DETACHED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_setdetachstate_detached_hardened",
+      "function": "pthread_attr_setdetachstate",
+      "spec_section": "POSIX pthread_attr_setdetachstate detached round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setdetachstate",
+        "scenario": "attr_set_detachstate_detached_without_object_capture",
+        "expected": "ATTR_SETDETACHSTATE_DETACHED",
+        "oracle_source": "FrankenLibC pthread attr detach-state setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setdetachstate;mode=hardened;expected=ATTR_SETDETACHSTATE_DETACHED;actual=ATTR_SETDETACHSTATE_DETACHED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_attr_setguardsize_roundtrip_strict",
+      "function": "pthread_attr_setguardsize",
+      "spec_section": "POSIX pthread_attr_setguardsize guard-size round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setguardsize",
+        "scenario": "attr_set_guard_size_without_byte_count_capture",
+        "expected": "ATTR_SETGUARDSIZE_STORED",
+        "oracle_source": "FrankenLibC pthread attr guard-size setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setguardsize;mode=strict;expected=ATTR_SETGUARDSIZE_STORED;actual=ATTR_SETGUARDSIZE_STORED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_setguardsize_roundtrip_hardened",
+      "function": "pthread_attr_setguardsize",
+      "spec_section": "POSIX pthread_attr_setguardsize guard-size round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setguardsize",
+        "scenario": "attr_set_guard_size_without_byte_count_capture",
+        "expected": "ATTR_SETGUARDSIZE_STORED",
+        "oracle_source": "FrankenLibC pthread attr guard-size setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setguardsize;mode=hardened;expected=ATTR_SETGUARDSIZE_STORED;actual=ATTR_SETGUARDSIZE_STORED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_attr_setinheritsched_explicit_strict",
+      "function": "pthread_attr_setinheritsched",
+      "spec_section": "POSIX pthread_attr_setinheritsched explicit scheduler round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setinheritsched",
+        "scenario": "attr_set_inherit_scheduler_explicit_without_policy_capture",
+        "expected": "ATTR_SETINHERITSCHED_EXPLICIT",
+        "oracle_source": "FrankenLibC pthread attr inherit-scheduler setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setinheritsched;mode=strict;expected=ATTR_SETINHERITSCHED_EXPLICIT;actual=ATTR_SETINHERITSCHED_EXPLICIT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_setinheritsched_explicit_hardened",
+      "function": "pthread_attr_setinheritsched",
+      "spec_section": "POSIX pthread_attr_setinheritsched explicit scheduler round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setinheritsched",
+        "scenario": "attr_set_inherit_scheduler_explicit_without_policy_capture",
+        "expected": "ATTR_SETINHERITSCHED_EXPLICIT",
+        "oracle_source": "FrankenLibC pthread attr inherit-scheduler setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setinheritsched;mode=hardened;expected=ATTR_SETINHERITSCHED_EXPLICIT;actual=ATTR_SETINHERITSCHED_EXPLICIT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_attr_setschedparam_priority_zero_strict",
+      "function": "pthread_attr_setschedparam",
+      "spec_section": "POSIX pthread_attr_setschedparam priority round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setschedparam",
+        "scenario": "attr_set_sched_priority_zero_without_scheduler_capture",
+        "expected": "ATTR_SETSCHEDPARAM_PRIORITY_0",
+        "oracle_source": "FrankenLibC pthread attr sched-param setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setschedparam;mode=strict;expected=ATTR_SETSCHEDPARAM_PRIORITY_0;actual=ATTR_SETSCHEDPARAM_PRIORITY_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_setschedparam_priority_zero_hardened",
+      "function": "pthread_attr_setschedparam",
+      "spec_section": "POSIX pthread_attr_setschedparam priority round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setschedparam",
+        "scenario": "attr_set_sched_priority_zero_without_scheduler_capture",
+        "expected": "ATTR_SETSCHEDPARAM_PRIORITY_0",
+        "oracle_source": "FrankenLibC pthread attr sched-param setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setschedparam;mode=hardened;expected=ATTR_SETSCHEDPARAM_PRIORITY_0;actual=ATTR_SETSCHEDPARAM_PRIORITY_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_attr_setschedpolicy_other_strict",
+      "function": "pthread_attr_setschedpolicy",
+      "spec_section": "POSIX pthread_attr_setschedpolicy SCHED_OTHER round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setschedpolicy",
+        "scenario": "attr_set_sched_policy_other_without_scheduler_capture",
+        "expected": "ATTR_SETSCHEDPOLICY_OTHER",
+        "oracle_source": "FrankenLibC pthread attr sched-policy setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setschedpolicy;mode=strict;expected=ATTR_SETSCHEDPOLICY_OTHER;actual=ATTR_SETSCHEDPOLICY_OTHER;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_setschedpolicy_other_hardened",
+      "function": "pthread_attr_setschedpolicy",
+      "spec_section": "POSIX pthread_attr_setschedpolicy SCHED_OTHER round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setschedpolicy",
+        "scenario": "attr_set_sched_policy_other_without_scheduler_capture",
+        "expected": "ATTR_SETSCHEDPOLICY_OTHER",
+        "oracle_source": "FrankenLibC pthread attr sched-policy setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setschedpolicy;mode=hardened;expected=ATTR_SETSCHEDPOLICY_OTHER;actual=ATTR_SETSCHEDPOLICY_OTHER;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_attr_setscope_system_strict",
+      "function": "pthread_attr_setscope",
+      "spec_section": "POSIX pthread_attr_setscope system scope round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setscope",
+        "scenario": "attr_set_scope_system_without_scheduler_capture",
+        "expected": "ATTR_SETSCOPE_SYSTEM",
+        "oracle_source": "FrankenLibC pthread attr scope setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setscope;mode=strict;expected=ATTR_SETSCOPE_SYSTEM;actual=ATTR_SETSCOPE_SYSTEM;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_setscope_system_hardened",
+      "function": "pthread_attr_setscope",
+      "spec_section": "POSIX pthread_attr_setscope system scope round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setscope",
+        "scenario": "attr_set_scope_system_without_scheduler_capture",
+        "expected": "ATTR_SETSCOPE_SYSTEM",
+        "oracle_source": "FrankenLibC pthread attr scope setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setscope;mode=hardened;expected=ATTR_SETSCOPE_SYSTEM;actual=ATTR_SETSCOPE_SYSTEM;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_attr_setsigmask_roundtrip_strict",
+      "function": "pthread_attr_setsigmask_np",
+      "spec_section": "GNU pthread_attr_setsigmask_np attribute signal-mask round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setsigmask_np",
+        "scenario": "attr_set_sigmask_roundtrip_without_signal_mask_bytes",
+        "expected": "ATTR_SETSIGMASK_STORED",
+        "oracle_source": "FrankenLibC pthread attr sigmask setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setsigmask_np;mode=strict;expected=ATTR_SETSIGMASK_STORED;actual=ATTR_SETSIGMASK_STORED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_setsigmask_roundtrip_hardened",
+      "function": "pthread_attr_setsigmask_np",
+      "spec_section": "GNU pthread_attr_setsigmask_np attribute signal-mask round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setsigmask_np",
+        "scenario": "attr_set_sigmask_roundtrip_without_signal_mask_bytes",
+        "expected": "ATTR_SETSIGMASK_STORED",
+        "oracle_source": "FrankenLibC pthread attr sigmask setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setsigmask_np;mode=hardened;expected=ATTR_SETSIGMASK_STORED;actual=ATTR_SETSIGMASK_STORED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_attr_setstack_roundtrip_strict",
+      "function": "pthread_attr_setstack",
+      "spec_section": "POSIX pthread_attr_setstack stack pointer and size round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setstack",
+        "scenario": "attr_set_stack_roundtrip_without_stack_address_capture",
+        "expected": "ATTR_SETSTACK_STORED_SIZE_VALID",
+        "oracle_source": "FrankenLibC pthread attr stack setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setstack;mode=strict;expected=ATTR_SETSTACK_STORED_SIZE_VALID;actual=ATTR_SETSTACK_STORED_SIZE_VALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_setstack_roundtrip_hardened",
+      "function": "pthread_attr_setstack",
+      "spec_section": "POSIX pthread_attr_setstack stack pointer and size round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setstack",
+        "scenario": "attr_set_stack_roundtrip_without_stack_address_capture",
+        "expected": "ATTR_SETSTACK_STORED_SIZE_VALID",
+        "oracle_source": "FrankenLibC pthread attr stack setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setstack;mode=hardened;expected=ATTR_SETSTACK_STORED_SIZE_VALID;actual=ATTR_SETSTACK_STORED_SIZE_VALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_attr_setstackaddr_roundtrip_strict",
+      "function": "pthread_attr_setstackaddr",
+      "spec_section": "Deprecated pthread_attr_setstackaddr stack-address round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setstackaddr",
+        "scenario": "attr_set_stackaddr_roundtrip_without_stack_address_capture",
+        "expected": "ATTR_SETSTACKADDR_STORED",
+        "oracle_source": "FrankenLibC pthread attr deprecated stackaddr setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setstackaddr;mode=strict;expected=ATTR_SETSTACKADDR_STORED;actual=ATTR_SETSTACKADDR_STORED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_setstackaddr_roundtrip_hardened",
+      "function": "pthread_attr_setstackaddr",
+      "spec_section": "Deprecated pthread_attr_setstackaddr stack-address round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setstackaddr",
+        "scenario": "attr_set_stackaddr_roundtrip_without_stack_address_capture",
+        "expected": "ATTR_SETSTACKADDR_STORED",
+        "oracle_source": "FrankenLibC pthread attr deprecated stackaddr setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_mask_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setstackaddr;mode=hardened;expected=ATTR_SETSTACKADDR_STORED;actual=ATTR_SETSTACKADDR_STORED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

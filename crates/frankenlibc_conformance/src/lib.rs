@@ -1001,6 +1001,20 @@ pub fn execute_fixture_case(
         | "pthread_attr_getstackaddr" => {
             execute_pthread_attribute_wave03_case(function, inputs, mode)
         }
+        "pthread_attr_getstacksize"
+        | "pthread_attr_init"
+        | "pthread_attr_setaffinity_np"
+        | "pthread_attr_setdetachstate"
+        | "pthread_attr_setguardsize"
+        | "pthread_attr_setinheritsched"
+        | "pthread_attr_setschedparam"
+        | "pthread_attr_setschedpolicy"
+        | "pthread_attr_setscope"
+        | "pthread_attr_setsigmask_np"
+        | "pthread_attr_setstack"
+        | "pthread_attr_setstackaddr" => {
+            execute_pthread_attribute_wave04_case(function, inputs, mode)
+        }
         // pthread mutexes
         "pthread_mutex_init" => execute_pthread_mutex_init_case(inputs, mode),
         "pthread_mutex_destroy" => execute_pthread_mutex_destroy_case(inputs, mode),
@@ -15399,6 +15413,368 @@ fn pthread_attribute_wave03_actual(function: &str) -> Result<String, String> {
     }
 }
 
+fn execute_pthread_attribute_wave04_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "pthread attribute wave04 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = pthread_attribute_wave04_actual(function)?;
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    Ok(non_host_execution(format!(
+        "symbol={function};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )))
+}
+
+fn pthread_attribute_wave04_actual(function: &str) -> Result<String, String> {
+    match function {
+        "pthread_attr_getstacksize" => with_pthread_attribute_wave03(|attr| {
+            let mut stack_size = 0usize;
+            // SAFETY: attr is initialized and stack_size points to owned output storage.
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getstacksize(
+                    attr as *const libc::pthread_attr_t,
+                    &mut stack_size,
+                )
+            };
+            if rc == 0 && stack_size >= libc::PTHREAD_STACK_MIN {
+                Ok(String::from("ATTR_STACKSIZE_DEFAULT_VALID"))
+            } else {
+                Ok(format!(
+                    "ATTR_STACKSIZE_RC_{}_VALID_{}",
+                    format_pthread_status(rc),
+                    stack_size >= libc::PTHREAD_STACK_MIN
+                ))
+            }
+        }),
+        "pthread_attr_init" => {
+            // SAFETY: pthread_attr_init writes the full object before destroy observes it.
+            let mut attr: libc::pthread_attr_t = unsafe { std::mem::zeroed() };
+            // SAFETY: attr points to owned stack storage for the duration of the calls.
+            let init_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_attr_init(&mut attr) };
+            if init_rc == 0 {
+                // SAFETY: attr was initialized immediately above.
+                let _ = unsafe { frankenlibc_abi::pthread_abi::pthread_attr_destroy(&mut attr) };
+            }
+            Ok(format!("ATTR_INIT_RC_{}", format_pthread_status(init_rc)))
+        }
+        "pthread_attr_setaffinity_np" => with_pthread_attribute_wave03(|attr| {
+            // SAFETY: cpu_set_t is plain storage consumed by pthread_attr_setaffinity_np.
+            let mut cpuset: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+            let cpusetsize = std::mem::size_of::<libc::cpu_set_t>();
+            // SAFETY: cpuset is owned storage; this creates a byte view over the object.
+            let mask_bytes = unsafe {
+                std::slice::from_raw_parts_mut(
+                    (&mut cpuset as *mut libc::cpu_set_t).cast::<u8>(),
+                    cpusetsize,
+                )
+            };
+            if let Some(first) = mask_bytes.first_mut() {
+                *first = 1;
+            }
+            // SAFETY: attr is initialized and cpuset points to owned storage.
+            let set_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_setaffinity_np(attr, cpusetsize, &cpuset)
+            };
+            if set_rc != 0 {
+                return Ok(format!(
+                    "ATTR_SETAFFINITY_SET_RC_{}",
+                    format_pthread_status(set_rc)
+                ));
+            }
+            // SAFETY: output is plain owned storage for the getter.
+            let mut observed: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+            // SAFETY: attr is initialized and observed points to owned storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getaffinity_np(
+                    attr as *const libc::pthread_attr_t,
+                    cpusetsize,
+                    &mut observed,
+                )
+            };
+            // SAFETY: observed is initialized plain storage; read-only byte inspection is valid.
+            let observed_bytes = unsafe {
+                std::slice::from_raw_parts(
+                    (&observed as *const libc::cpu_set_t).cast::<u8>(),
+                    cpusetsize,
+                )
+            };
+            if get_rc == 0 && observed_bytes.first().copied() == Some(1) {
+                Ok(String::from("ATTR_SETAFFINITY_RC_0_MASK_STORED"))
+            } else {
+                Ok(format!(
+                    "ATTR_SETAFFINITY_GET_RC_{}_MASK_STORED_{}",
+                    format_pthread_status(get_rc),
+                    observed_bytes.first().copied() == Some(1)
+                ))
+            }
+        }),
+        "pthread_attr_setdetachstate" => with_pthread_attribute_wave03(|attr| {
+            // SAFETY: attr is initialized and setter accepts a valid detach-state constant.
+            let set_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_setdetachstate(
+                    attr,
+                    libc::PTHREAD_CREATE_DETACHED,
+                )
+            };
+            let mut state = 0;
+            // SAFETY: attr is initialized and state points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getdetachstate(
+                    attr as *const libc::pthread_attr_t,
+                    &mut state,
+                )
+            };
+            if set_rc == 0 && get_rc == 0 && state == libc::PTHREAD_CREATE_DETACHED {
+                Ok(String::from("ATTR_SETDETACHSTATE_DETACHED"))
+            } else {
+                Ok(format!(
+                    "ATTR_SETDETACHSTATE_SET_{}_GET_{}_DETACHED_{}",
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    state == libc::PTHREAD_CREATE_DETACHED
+                ))
+            }
+        }),
+        "pthread_attr_setguardsize" => with_pthread_attribute_wave03(|attr| {
+            let requested = 8192usize;
+            // SAFETY: attr is initialized and requested guard size is deterministic.
+            let set_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_attr_setguardsize(attr, requested) };
+            let mut observed = 0usize;
+            // SAFETY: attr is initialized and observed points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getguardsize(
+                    attr as *const libc::pthread_attr_t,
+                    &mut observed,
+                )
+            };
+            if set_rc == 0 && get_rc == 0 && observed == requested {
+                Ok(String::from("ATTR_SETGUARDSIZE_STORED"))
+            } else {
+                Ok(format!(
+                    "ATTR_SETGUARDSIZE_SET_{}_GET_{}_STORED_{}",
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    observed == requested
+                ))
+            }
+        }),
+        "pthread_attr_setinheritsched" => with_pthread_attribute_wave03(|attr| {
+            // SAFETY: attr is initialized and explicit scheduling is a valid mode.
+            let set_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_setinheritsched(
+                    attr,
+                    libc::PTHREAD_EXPLICIT_SCHED,
+                )
+            };
+            let mut observed = -1;
+            // SAFETY: attr is initialized and observed points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getinheritsched(
+                    attr as *const libc::pthread_attr_t,
+                    &mut observed,
+                )
+            };
+            if set_rc == 0 && get_rc == 0 && observed == libc::PTHREAD_EXPLICIT_SCHED {
+                Ok(String::from("ATTR_SETINHERITSCHED_EXPLICIT"))
+            } else {
+                Ok(format!(
+                    "ATTR_SETINHERITSCHED_SET_{}_GET_{}_EXPLICIT_{}",
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    observed == libc::PTHREAD_EXPLICIT_SCHED
+                ))
+            }
+        }),
+        "pthread_attr_setschedparam" => with_pthread_attribute_wave03(|attr| {
+            let param = libc::sched_param { sched_priority: 0 };
+            // SAFETY: attr is initialized and param points to initialized storage.
+            let set_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_attr_setschedparam(attr, &param) };
+            // SAFETY: sched_param is plain output storage for pthread_attr_getschedparam.
+            let mut observed: libc::sched_param = unsafe { std::mem::zeroed() };
+            // SAFETY: attr is initialized and observed points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getschedparam(
+                    attr as *const libc::pthread_attr_t,
+                    &mut observed,
+                )
+            };
+            if set_rc == 0 && get_rc == 0 && observed.sched_priority == 0 {
+                Ok(String::from("ATTR_SETSCHEDPARAM_PRIORITY_0"))
+            } else {
+                Ok(format!(
+                    "ATTR_SETSCHEDPARAM_SET_{}_GET_{}_PRIORITY_{}",
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    observed.sched_priority
+                ))
+            }
+        }),
+        "pthread_attr_setschedpolicy" => with_pthread_attribute_wave03(|attr| {
+            // SAFETY: attr is initialized and SCHED_OTHER is a valid policy.
+            let set_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_setschedpolicy(attr, libc::SCHED_OTHER)
+            };
+            let mut observed = -1;
+            // SAFETY: attr is initialized and observed points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getschedpolicy(
+                    attr as *const libc::pthread_attr_t,
+                    &mut observed,
+                )
+            };
+            if set_rc == 0 && get_rc == 0 && observed == libc::SCHED_OTHER {
+                Ok(String::from("ATTR_SETSCHEDPOLICY_OTHER"))
+            } else {
+                Ok(format!(
+                    "ATTR_SETSCHEDPOLICY_SET_{}_GET_{}_OTHER_{}",
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    observed == libc::SCHED_OTHER
+                ))
+            }
+        }),
+        "pthread_attr_setscope" => with_pthread_attribute_wave03(|attr| {
+            // SAFETY: attr is initialized and system scope is supported by the native path.
+            let set_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_setscope(
+                    attr,
+                    PTHREAD_ATTRIBUTE_SCOPE_SYSTEM,
+                )
+            };
+            let mut observed = -1;
+            // SAFETY: attr is initialized and observed points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getscope(
+                    attr as *const libc::pthread_attr_t,
+                    &mut observed,
+                )
+            };
+            if set_rc == 0 && get_rc == 0 && observed == PTHREAD_ATTRIBUTE_SCOPE_SYSTEM {
+                Ok(String::from("ATTR_SETSCOPE_SYSTEM"))
+            } else {
+                Ok(format!(
+                    "ATTR_SETSCOPE_SET_{}_GET_{}_SYSTEM_{}",
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    observed == PTHREAD_ATTRIBUTE_SCOPE_SYSTEM
+                ))
+            }
+        }),
+        "pthread_attr_setsigmask_np" => with_pthread_attribute_wave03(|attr| {
+            // SAFETY: sigset_t is plain storage initialized by sigemptyset/sigaddset.
+            let mut sigmask: libc::sigset_t = unsafe { std::mem::zeroed() };
+            // SAFETY: sigmask points to owned storage for libc signal-set helpers.
+            unsafe {
+                libc::sigemptyset(&mut sigmask);
+                libc::sigaddset(&mut sigmask, libc::SIGUSR1);
+            }
+            // SAFETY: attr is initialized and sigmask points to initialized storage.
+            let set_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_attr_setsigmask_np(attr, &sigmask) };
+            // SAFETY: output sigset_t is plain owned storage.
+            let mut observed: libc::sigset_t = unsafe { std::mem::zeroed() };
+            // SAFETY: attr is initialized and observed points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getsigmask_np(
+                    attr as *const libc::pthread_attr_t,
+                    &mut observed,
+                )
+            };
+            // SAFETY: observed is initialized by the getter when get_rc == 0.
+            let contains_sigusr1 = get_rc == 0
+                && unsafe { libc::sigismember(&observed as *const libc::sigset_t, libc::SIGUSR1) }
+                    == 1;
+            if set_rc == 0 && get_rc == 0 && contains_sigusr1 {
+                Ok(String::from("ATTR_SETSIGMASK_STORED"))
+            } else {
+                Ok(format!(
+                    "ATTR_SETSIGMASK_SET_{}_GET_{}_STORED_{}",
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    contains_sigusr1
+                ))
+            }
+        }),
+        "pthread_attr_setstack" => with_pthread_attribute_wave03(|attr| {
+            let stack_size = libc::PTHREAD_STACK_MIN.saturating_mul(2);
+            let mut stack = vec![0u8; stack_size];
+            let stack_ptr = stack.as_mut_ptr().cast::<c_void>();
+            // SAFETY: stack is owned and lives through the getter check below.
+            let set_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_setstack(attr, stack_ptr, stack_size)
+            };
+            let mut observed_base: *mut c_void = std::ptr::null_mut();
+            let mut observed_size = 0usize;
+            // SAFETY: attr is initialized and output pointers refer to owned storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getstack(
+                    attr as *const libc::pthread_attr_t,
+                    &mut observed_base,
+                    &mut observed_size,
+                )
+            };
+            if set_rc == 0
+                && get_rc == 0
+                && !observed_base.is_null()
+                && observed_size >= libc::PTHREAD_STACK_MIN
+            {
+                Ok(String::from("ATTR_SETSTACK_STORED_SIZE_VALID"))
+            } else {
+                Ok(format!(
+                    "ATTR_SETSTACK_SET_{}_GET_{}_STORED_{}_SIZE_VALID_{}",
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    !observed_base.is_null(),
+                    observed_size >= libc::PTHREAD_STACK_MIN
+                ))
+            }
+        }),
+        "pthread_attr_setstackaddr" => with_pthread_attribute_wave03(|attr| {
+            let stack_size = libc::PTHREAD_STACK_MIN.saturating_mul(2);
+            let mut stack = vec![0u8; stack_size];
+            let stack_ptr = stack.as_mut_ptr().cast::<c_void>();
+            // SAFETY: stack is owned and lives through the getter check below.
+            let set_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_attr_setstackaddr(attr, stack_ptr) };
+            let mut observed_base: *mut c_void = std::ptr::null_mut();
+            // SAFETY: attr is initialized and observed_base points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getstackaddr(
+                    attr as *const libc::pthread_attr_t,
+                    &mut observed_base,
+                )
+            };
+            if set_rc == 0 && get_rc == 0 && !observed_base.is_null() {
+                Ok(String::from("ATTR_SETSTACKADDR_STORED"))
+            } else {
+                Ok(format!(
+                    "ATTR_SETSTACKADDR_SET_{}_GET_{}_STORED_{}",
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    !observed_base.is_null()
+                ))
+            }
+        }),
+        other => Err(format!(
+            "unsupported pthread attribute wave04 fixture: {other}"
+        )),
+    }
+}
+
 fn classify_pthread_unwind_next_abort() -> Result<String, String> {
     let pid = unsafe { libc::fork() };
     if pid < 0 {
@@ -26669,6 +27045,47 @@ mod tests {
         let raw = include_str!("../../../tests/conformance/fixtures/pthread_attribute_wave03.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("pthread attribute wave03 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn pthread_attribute_wave04_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/pthread_attribute_wave04.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("pthread attribute wave04 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

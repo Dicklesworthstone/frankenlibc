@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T20:35:31Z",
-  "report_hash": "b95b277000b0424c",
+  "generated_at": "2026-05-13T20:56:32Z",
+  "report_hash": "d5d8f9f30af6a6e2",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 961,
-    "symbols_without_fixtures": 3158,
-    "fixture_coverage_pct": 23.3,
-    "implemented_coverage_pct": 22.6,
-    "total_fixture_files": 108,
-    "total_cases": 2368,
+    "symbols_with_fixtures": 973,
+    "symbols_without_fixtures": 3146,
+    "fixture_coverage_pct": 23.6,
+    "implemented_coverage_pct": 23.0,
+    "total_fixture_files": 109,
+    "total_cases": 2392,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 587,
-    "symbols_with_errno_checks": 958,
-    "total_quality_issues": 3474,
-    "uncovered_action_count": 3158
+    "symbols_with_edge_cases": 590,
+    "symbols_with_errno_checks": 970,
+    "total_quality_issues": 3471,
+    "uncovered_action_count": 3146
   },
   "fixture_file_analyses": [
     {
@@ -308,6 +308,14 @@
     },
     {
       "file": "pthread_attribute_wave03.json",
+      "family": "pthread/sync",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "pthread_attribute_wave04.json",
       "family": "pthread/sync",
       "valid": true,
       "total_cases": 24,
@@ -47710,14 +47718,19 @@
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -47725,44 +47738,59 @@
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "pthread_attr_setaffinity_np",
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "pthread_attr_setdetachstate",
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -47770,14 +47798,19 @@
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -47785,14 +47818,19 @@
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -47800,29 +47838,39 @@
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "pthread_attr_setschedpolicy",
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -47830,14 +47878,19 @@
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -47845,14 +47898,19 @@
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -47860,14 +47918,19 @@
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -47875,14 +47938,19 @@
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_attribute_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -82614,90 +82682,6 @@
       "symbol": "program_invocation_short_name",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_getstacksize",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_init",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_setaffinity_np",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_setdetachstate",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_setguardsize",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_setinheritsched",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_setschedparam",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_setschedpolicy",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_setscope",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_setsigmask_np",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_setstack",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_attr_setstackaddr",
-      "status": "Implemented",
-      "module": "pthread_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
