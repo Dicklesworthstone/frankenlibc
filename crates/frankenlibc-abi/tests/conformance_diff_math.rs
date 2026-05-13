@@ -37,6 +37,31 @@ unsafe extern "C" {
     fn sinh(x: f64) -> f64;
     fn cosh(x: f64) -> f64;
     fn tanh(x: f64) -> f64;
+
+    #[link_name = "__fpclassify"]
+    fn glibc_fpclassify(x: f64) -> i32;
+    #[link_name = "__fpclassifyf"]
+    fn glibc_fpclassifyf(x: f32) -> i32;
+    #[link_name = "__signbit"]
+    fn glibc_signbit(x: f64) -> i32;
+    #[link_name = "__signbitf"]
+    fn glibc_signbitf(x: f32) -> i32;
+    #[link_name = "__isinf"]
+    fn glibc_isinf(x: f64) -> i32;
+    #[link_name = "__isinff"]
+    fn glibc_isinff(x: f32) -> i32;
+    #[link_name = "__isnan"]
+    fn glibc_isnan(x: f64) -> i32;
+    #[link_name = "__isnanf"]
+    fn glibc_isnanf(x: f32) -> i32;
+    #[link_name = "__finite"]
+    fn glibc_finite(x: f64) -> i32;
+    #[link_name = "__finitef"]
+    fn glibc_finitef(x: f32) -> i32;
+    #[link_name = "finite"]
+    fn glibc_public_finite(x: f64) -> i32;
+    #[link_name = "finitef"]
+    fn glibc_public_finitef(x: f32) -> i32;
 }
 
 #[derive(Debug)]
@@ -136,6 +161,170 @@ fn compare_f64(
             delta_ulps: Some(delta),
         });
     }
+}
+
+fn compare_i32(
+    divs: &mut Vec<Divergence>,
+    func: &'static str,
+    input: String,
+    fl_v: i32,
+    lc_v: i32,
+) {
+    if fl_v != lc_v {
+        divs.push(Divergence {
+            function: func,
+            input,
+            frankenlibc: fl_v.to_string(),
+            glibc: lc_v.to_string(),
+            delta_ulps: None,
+        });
+    }
+}
+
+fn compare_nonzero_predicate(
+    divs: &mut Vec<Divergence>,
+    func: &'static str,
+    input: String,
+    fl_v: i32,
+    lc_v: i32,
+) {
+    if (fl_v != 0) != (lc_v != 0) {
+        divs.push(Divergence {
+            function: func,
+            input,
+            frankenlibc: fl_v.to_string(),
+            glibc: lc_v.to_string(),
+            delta_ulps: None,
+        });
+    }
+}
+
+// ===========================================================================
+// ABI classification helpers: __fpclassify*, __signbit*, __isinf*, __isnan*,
+// __finite*, finite*
+// ===========================================================================
+
+#[test]
+fn diff_classification_helpers_match_glibc() {
+    let mut divs = Vec::new();
+
+    let inputs64: &[f64] = &[
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        0.0,
+        -0.0,
+        f64::from_bits(1),
+        1.0,
+        -1.0,
+    ];
+    for &x in inputs64 {
+        let input = format!("{x:?} ({})", ieee_class(x));
+        compare_i32(
+            &mut divs,
+            "__fpclassify",
+            input.clone(),
+            unsafe { fl::__fpclassify(x) },
+            unsafe { glibc_fpclassify(x) },
+        );
+        compare_nonzero_predicate(
+            &mut divs,
+            "__signbit",
+            input.clone(),
+            unsafe { fl::__signbit(x) },
+            unsafe { glibc_signbit(x) },
+        );
+        compare_i32(
+            &mut divs,
+            "__isinf",
+            input.clone(),
+            unsafe { fl::__isinf(x) },
+            unsafe { glibc_isinf(x) },
+        );
+        compare_i32(
+            &mut divs,
+            "__isnan",
+            input.clone(),
+            unsafe { fl::__isnan(x) },
+            unsafe { glibc_isnan(x) },
+        );
+        compare_i32(
+            &mut divs,
+            "__finite",
+            input.clone(),
+            unsafe { fl::__finite(x) },
+            unsafe { glibc_finite(x) },
+        );
+        compare_i32(
+            &mut divs,
+            "finite",
+            input,
+            unsafe { fl::finite(x) },
+            unsafe { glibc_public_finite(x) },
+        );
+    }
+
+    let inputs32: &[f32] = &[
+        f32::NAN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        0.0,
+        -0.0,
+        f32::from_bits(1),
+        1.0,
+        -1.0,
+    ];
+    for &x in inputs32 {
+        let input = format!("{x:?}");
+        compare_i32(
+            &mut divs,
+            "__fpclassifyf",
+            input.clone(),
+            unsafe { fl::__fpclassifyf(x) },
+            unsafe { glibc_fpclassifyf(x) },
+        );
+        compare_nonzero_predicate(
+            &mut divs,
+            "__signbitf",
+            input.clone(),
+            unsafe { fl::__signbitf(x) },
+            unsafe { glibc_signbitf(x) },
+        );
+        compare_i32(
+            &mut divs,
+            "__isinff",
+            input.clone(),
+            unsafe { fl::__isinff(x) },
+            unsafe { glibc_isinff(x) },
+        );
+        compare_i32(
+            &mut divs,
+            "__isnanf",
+            input.clone(),
+            unsafe { fl::__isnanf(x) },
+            unsafe { glibc_isnanf(x) },
+        );
+        compare_i32(
+            &mut divs,
+            "__finitef",
+            input.clone(),
+            unsafe { fl::__finitef(x) },
+            unsafe { glibc_finitef(x) },
+        );
+        compare_i32(
+            &mut divs,
+            "finitef",
+            input,
+            unsafe { fl::finitef(x) },
+            unsafe { glibc_public_finitef(x) },
+        );
+    }
+
+    assert!(
+        divs.is_empty(),
+        "classification helper divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
