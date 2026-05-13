@@ -144,6 +144,14 @@ fn wchar_slice(chars: &[WcharT]) -> *const WcharT {
     chars.as_ptr()
 }
 
+fn wide_ascii(bytes: &[u8]) -> Vec<WcharT> {
+    bytes
+        .iter()
+        .map(|byte| WcharT::from(*byte))
+        .chain(std::iter::once(0))
+        .collect()
+}
+
 #[test]
 fn isoc23_wcstol_decimal() {
     // "42\0" in wchar_t
@@ -369,4 +377,20 @@ fn isoc23_wcstol_hex() {
     ];
     let val = unsafe { __isoc23_wcstol(wchar_slice(&ws), ptr::null_mut(), 16) };
     assert_eq!(val, 255);
+}
+
+// ---------------------------------------------------------------------------
+// __isoc99 wide scanf aliases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn isoc99_swscanf_parses_wide_integer() {
+    let input = wide_ascii(b"42");
+    let fmt = wide_ascii(b"%d");
+    let mut val: c_int = 0;
+
+    let rc = unsafe { __isoc99_swscanf(input.as_ptr(), fmt.as_ptr(), &mut val as *mut c_int) };
+
+    assert_eq!(rc, 1);
+    assert_eq!(val, 42);
 }

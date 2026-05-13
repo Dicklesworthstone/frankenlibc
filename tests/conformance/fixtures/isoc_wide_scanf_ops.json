@@ -1,0 +1,100 @@
+{
+  "version": "v1",
+  "family": "isoc_wide_scanf_ops",
+  "captured_at": "2026-05-13T06:45:00Z",
+  "description": "Compact ISO C99 wide scanf alias fixture coverage for __isoc99_fwscanf, __isoc99_swscanf, and va_list wide scanf wrappers.",
+  "spec_reference": "ISO C99 scanf family, POSIX <wchar.h> wide scanf behavior, glibc __isoc99_* compatibility aliases",
+  "cases": [
+    {
+      "name": "isoc99_swscanf_parses_wide_integer",
+      "function": "__isoc99_swscanf",
+      "spec_section": "ISO C99 __isoc99_swscanf wide string input conversion",
+      "inputs": {
+        "wide_input": "42",
+        "wide_format": "%d",
+        "argument_types": ["int *"]
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": 1,
+        "assignments": {
+          "int": 42
+        },
+        "failure_signature": "none"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by isoc_abi_test::isoc99_swscanf_parses_wide_integer and wchar_abi_test::swscanf_parses_integer."
+    },
+    {
+      "name": "isoc99_fwscanf_null_stream_fails_closed",
+      "function": "__isoc99_fwscanf",
+      "spec_section": "ISO C99 __isoc99_fwscanf null stream rejection",
+      "inputs": {
+        "stream_source": "null",
+        "wide_format": "%d"
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": "EOF",
+        "failure_signature": "null_stream"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Bound to isoc_abi.rs __isoc99_fwscanf source forwarding and wchar_abi_test::wide_vscanf_null_va_list_fails_closed base vfwscanf behavior."
+    },
+    {
+      "name": "isoc99_vswscanf_null_va_list_fails_closed",
+      "function": "__isoc99_vswscanf",
+      "spec_section": "ISO C99 __isoc99_vswscanf va_list rejection",
+      "inputs": {
+        "wide_input": "42",
+        "wide_format": "%d",
+        "va_list": "null"
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": "EOF",
+        "failure_signature": "null_va_list"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Bound to isoc_abi.rs __isoc99_vswscanf source forwarding and wchar_abi_test::wide_vscanf_null_va_list_fails_closed base vswscanf behavior."
+    },
+    {
+      "name": "isoc99_vfwscanf_null_stream_and_va_list_fails_closed",
+      "function": "__isoc99_vfwscanf",
+      "spec_section": "ISO C99 __isoc99_vfwscanf stream and va_list rejection",
+      "inputs": {
+        "stream_source": "null",
+        "wide_format": "%d",
+        "va_list": "null"
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": "EOF",
+        "failure_signature": "null_stream_or_va_list"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Bound to isoc_abi.rs __isoc99_vfwscanf source forwarding and wchar_abi_test::wide_vscanf_null_va_list_fails_closed base vfwscanf behavior."
+    },
+    {
+      "name": "isoc99_vwscanf_null_va_list_fails_closed",
+      "function": "__isoc99_vwscanf",
+      "spec_section": "ISO C99 __isoc99_vwscanf va_list rejection",
+      "inputs": {
+        "wide_format": "%d",
+        "va_list": "null"
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": "EOF",
+        "failure_signature": "null_va_list"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Bound to isoc_abi.rs __isoc99_vwscanf source forwarding and wchar_abi_test::wide_vscanf_null_va_list_fails_closed base vwscanf behavior."
+    }
+  ]
+}

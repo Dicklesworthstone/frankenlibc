@@ -4115,37 +4115,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 0,
-      "milestone_beads": [],
-      "module": "isoc_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "severity_score": 503,
-      "status_breakdown": {
-        "Implemented": 5
-      },
-      "target_coverage_pct": 0.0,
-      "target_covered": 0,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 5,
-      "target_uncovered": 5,
-      "target_uncovered_symbols": [
-        "__isoc99_fwscanf",
-        "__isoc99_swscanf",
-        "__isoc99_vfwscanf",
-        "__isoc99_vswscanf",
-        "__isoc99_vwscanf"
-      ],
-      "total_symbols": 5,
-      "track": "isoc",
-      "uncovered_symbols": 5,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 5,
       "milestone_beads": [],
       "module": "termios_abi",
@@ -4473,6 +4442,31 @@
       "workload_ids": []
     },
     {
+      "covered_symbols": 5,
+      "milestone_beads": [],
+      "module": "isoc_abi",
+      "recommended_bead": null,
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "Implemented": 5
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 5,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 5,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 5,
+      "track": "isoc",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "covered_symbols": 21,
       "milestone_beads": [],
       "module": "malloc_abi",
@@ -4552,9 +4546,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1697,
-    "fixture_json_files": 78,
-    "fixture_json_unique_functions": 638,
+    "fixture_json_cases": 1702,
+    "fixture_json_files": 79,
+    "fixture_json_unique_functions": 643,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4575,7 +4569,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 640
+    "unique_fixture_functions_total": 645
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -8355,23 +8349,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "isoc_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 5,
-      "target_uncovered_symbols": [
-        "__isoc99_fwscanf",
-        "__isoc99_swscanf",
-        "__isoc99_vfwscanf",
-        "__isoc99_vswscanf",
-        "__isoc99_vwscanf"
-      ],
-      "track": "isoc",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "termios_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -8476,10 +8453,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 14.95,
-      "covered": 554,
+      "coverage_pct": 15.09,
+      "covered": 559,
       "total": 3705,
-      "uncovered": 3151
+      "uncovered": 3146
     },
     "RawSyscall": {
       "coverage_pct": 16.67,
@@ -8489,19 +8466,19 @@
     }
   },
   "summary": {
-    "coverage_pct": 15.13,
-    "covered_exported_symbols": 623,
-    "target_coverage_pct": 15.13,
-    "target_covered_symbols": 623,
+    "coverage_pct": 15.25,
+    "covered_exported_symbols": 628,
+    "target_coverage_pct": 15.25,
+    "target_covered_symbols": 628,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3496,
+    "target_uncovered_symbols": 3491,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3496,
-    "uncovered_target_families": 3,
+    "uncovered_exported_symbols": 3491,
+    "uncovered_target_families": 2,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 28
   },
@@ -22673,13 +22650,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "isoc_wide_scanf_ops"
+      ],
+      "fixture_files": [
+        "isoc_wide_scanf_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "isoc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -22687,13 +22672,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "isoc_wide_scanf_ops"
+      ],
+      "fixture_files": [
+        "isoc_wide_scanf_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "isoc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -22701,13 +22694,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "isoc_wide_scanf_ops"
+      ],
+      "fixture_files": [
+        "isoc_wide_scanf_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "isoc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -22715,13 +22716,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "isoc_wide_scanf_ops"
+      ],
+      "fixture_files": [
+        "isoc_wide_scanf_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "isoc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -22729,13 +22738,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "isoc_wide_scanf_ops"
+      ],
+      "fixture_files": [
+        "isoc_wide_scanf_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "isoc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71962,22 +71979,6 @@
         "__wprintf_chk"
       ],
       "track": "fortify",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "module": "isoc_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 5,
-      "target_uncovered_symbols": [
-        "__isoc99_fwscanf",
-        "__isoc99_swscanf",
-        "__isoc99_vfwscanf",
-        "__isoc99_vswscanf",
-        "__isoc99_vwscanf"
-      ],
-      "track": "isoc",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
