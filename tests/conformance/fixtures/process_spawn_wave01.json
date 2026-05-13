@@ -1,0 +1,400 @@
+{
+  "version": "v1",
+  "family": "process/spawn",
+  "captured_at": "2026-05-13T16:20:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-process-spawn wave-01 exit, clone, exec, privilege-sensitive syscall, credential-result, and spawn file-action symbols without recording process ids, raw uid/gid values, filesystem paths, open file descriptors, child stack addresses, argv/envp payloads, PATH contents, cwd, stdout bytes, stderr bytes, or wall-clock timing.",
+  "spec_reference": "POSIX/GNU process and spawn semantics for _exit, acct, chroot, clone, closefrom, execvp, execvpe, getresgid, getresuid, posix_spawn_file_actions_addchdir_np, posix_spawn_file_actions_addclose, and posix_spawn_file_actions_adddup2",
+  "campaign": {
+    "bead": "bd-r5k32.5",
+    "campaign_id": "fcq-process-spawn",
+    "wave_id": "wave-01-process-spawn-privilege-file-actions",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture",
+    "first_wave_symbols": [
+      "_exit",
+      "acct",
+      "chroot",
+      "clone",
+      "closefrom",
+      "execvp",
+      "execvpe",
+      "getresgid",
+      "getresuid",
+      "posix_spawn_file_actions_addchdir_np",
+      "posix_spawn_file_actions_addclose",
+      "posix_spawn_file_actions_adddup2"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "_exit_status_42_strict",
+      "function": "_exit",
+      "spec_section": "POSIX _exit child status propagation",
+      "inputs": {
+        "symbol": "_exit",
+        "scenario": "fork_isolated_exit_status_without_pid_capture",
+        "status": 42,
+        "expected": "EXIT_STATUS_42",
+        "oracle_source": "FrankenLibC process_abi::_exit fork/wait status replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=_exit;mode=strict;expected=EXIT_STATUS_42;actual=EXIT_STATUS_42;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "_exit_status_42_hardened",
+      "function": "_exit",
+      "spec_section": "POSIX _exit child status propagation",
+      "inputs": {
+        "symbol": "_exit",
+        "scenario": "fork_isolated_exit_status_without_pid_capture",
+        "status": 42,
+        "expected": "EXIT_STATUS_42",
+        "oracle_source": "FrankenLibC process_abi::_exit fork/wait status replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=_exit;mode=hardened;expected=EXIT_STATUS_42;actual=EXIT_STATUS_42;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "acct_privilege_denied_strict",
+      "function": "acct",
+      "spec_section": "Linux/POSIX acct invalid filename pointer errno",
+      "inputs": {
+        "symbol": "acct",
+        "scenario": "process_accounting_privilege_denied_without_accounting_state_change",
+        "expected": "ACCT_BAD_PATH_RC_-1_ERRNO_EPERM",
+        "oracle_source": "FrankenLibC unistd_abi::acct raw syscall errno replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=acct;mode=strict;expected=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;actual=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "acct_privilege_denied_hardened",
+      "function": "acct",
+      "spec_section": "Linux/POSIX acct invalid filename pointer errno",
+      "inputs": {
+        "symbol": "acct",
+        "scenario": "process_accounting_privilege_denied_without_accounting_state_change",
+        "expected": "ACCT_BAD_PATH_RC_-1_ERRNO_EPERM",
+        "oracle_source": "FrankenLibC unistd_abi::acct raw syscall errno replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=acct;mode=hardened;expected=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;actual=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "chroot_bad_path_efault_strict",
+      "function": "chroot",
+      "spec_section": "POSIX chroot invalid pathname pointer errno",
+      "inputs": {
+        "symbol": "chroot",
+        "scenario": "invalid_pathname_pointer_errno_without_root_change",
+        "expected": "CHROOT_BAD_PATH_RC_-1_ERRNO_EFAULT",
+        "oracle_source": "FrankenLibC unistd_abi::chroot raw syscall errno replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=chroot;mode=strict;expected=CHROOT_BAD_PATH_RC_-1_ERRNO_EFAULT;actual=CHROOT_BAD_PATH_RC_-1_ERRNO_EFAULT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "chroot_bad_path_efault_hardened",
+      "function": "chroot",
+      "spec_section": "POSIX chroot invalid pathname pointer errno",
+      "inputs": {
+        "symbol": "chroot",
+        "scenario": "invalid_pathname_pointer_errno_without_root_change",
+        "expected": "CHROOT_BAD_PATH_RC_-1_ERRNO_EFAULT",
+        "oracle_source": "FrankenLibC unistd_abi::chroot raw syscall errno replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=chroot;mode=hardened;expected=CHROOT_BAD_PATH_RC_-1_ERRNO_EFAULT;actual=CHROOT_BAD_PATH_RC_-1_ERRNO_EFAULT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clone_null_entry_einval_strict",
+      "function": "clone",
+      "spec_section": "GNU clone null function and stack errno",
+      "inputs": {
+        "symbol": "clone",
+        "scenario": "null_entry_and_stack_errno_without_child_creation",
+        "expected": "CLONE_NULL_ENTRY_RC_-1_ERRNO_EINVAL",
+        "oracle_source": "FrankenLibC unistd_abi::clone delegated invalid-argument replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=clone;mode=strict;expected=CLONE_NULL_ENTRY_RC_-1_ERRNO_EINVAL;actual=CLONE_NULL_ENTRY_RC_-1_ERRNO_EINVAL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clone_null_entry_einval_hardened",
+      "function": "clone",
+      "spec_section": "GNU clone null function and stack errno",
+      "inputs": {
+        "symbol": "clone",
+        "scenario": "null_entry_and_stack_errno_without_child_creation",
+        "expected": "CLONE_NULL_ENTRY_RC_-1_ERRNO_EINVAL",
+        "oracle_source": "FrankenLibC unistd_abi::clone delegated invalid-argument replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=clone;mode=hardened;expected=CLONE_NULL_ENTRY_RC_-1_ERRNO_EINVAL;actual=CLONE_NULL_ENTRY_RC_-1_ERRNO_EINVAL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "closefrom_high_fd_noop_strict",
+      "function": "closefrom",
+      "spec_section": "GNU closefrom high descriptor no-op",
+      "inputs": {
+        "symbol": "closefrom",
+        "scenario": "high_descriptor_noop_without_open_fd_capture",
+        "expected": "CLOSEFROM_HIGH_FD_NOOP",
+        "oracle_source": "FrankenLibC unistd_abi::closefrom high-range replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=closefrom;mode=strict;expected=CLOSEFROM_HIGH_FD_NOOP;actual=CLOSEFROM_HIGH_FD_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "closefrom_high_fd_noop_hardened",
+      "function": "closefrom",
+      "spec_section": "GNU closefrom high descriptor no-op",
+      "inputs": {
+        "symbol": "closefrom",
+        "scenario": "high_descriptor_noop_without_open_fd_capture",
+        "expected": "CLOSEFROM_HIGH_FD_NOOP",
+        "oracle_source": "FrankenLibC unistd_abi::closefrom high-range replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=closefrom;mode=hardened;expected=CLOSEFROM_HIGH_FD_NOOP;actual=CLOSEFROM_HIGH_FD_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "execvp_null_file_efault_strict",
+      "function": "execvp",
+      "spec_section": "POSIX execvp null file pointer errno",
+      "inputs": {
+        "symbol": "execvp",
+        "scenario": "null_file_pointer_errno_without_path_search",
+        "expected": "EXECVP_NULL_FILE_RC_-1_ERRNO_EFAULT",
+        "oracle_source": "FrankenLibC process_abi::execvp null-argument replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=execvp;mode=strict;expected=EXECVP_NULL_FILE_RC_-1_ERRNO_EFAULT;actual=EXECVP_NULL_FILE_RC_-1_ERRNO_EFAULT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "execvp_null_file_efault_hardened",
+      "function": "execvp",
+      "spec_section": "POSIX execvp null file pointer errno",
+      "inputs": {
+        "symbol": "execvp",
+        "scenario": "null_file_pointer_errno_without_path_search",
+        "expected": "EXECVP_NULL_FILE_RC_-1_ERRNO_EFAULT",
+        "oracle_source": "FrankenLibC process_abi::execvp null-argument replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=execvp;mode=hardened;expected=EXECVP_NULL_FILE_RC_-1_ERRNO_EFAULT;actual=EXECVP_NULL_FILE_RC_-1_ERRNO_EFAULT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "execvpe_null_file_efault_strict",
+      "function": "execvpe",
+      "spec_section": "GNU execvpe null file pointer errno",
+      "inputs": {
+        "symbol": "execvpe",
+        "scenario": "null_file_pointer_errno_without_path_search_or_env_capture",
+        "expected": "EXECVPE_NULL_FILE_RC_-1_ERRNO_EFAULT",
+        "oracle_source": "FrankenLibC process_abi::execvpe null-argument replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=execvpe;mode=strict;expected=EXECVPE_NULL_FILE_RC_-1_ERRNO_EFAULT;actual=EXECVPE_NULL_FILE_RC_-1_ERRNO_EFAULT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "execvpe_null_file_efault_hardened",
+      "function": "execvpe",
+      "spec_section": "GNU execvpe null file pointer errno",
+      "inputs": {
+        "symbol": "execvpe",
+        "scenario": "null_file_pointer_errno_without_path_search_or_env_capture",
+        "expected": "EXECVPE_NULL_FILE_RC_-1_ERRNO_EFAULT",
+        "oracle_source": "FrankenLibC process_abi::execvpe null-argument replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=execvpe;mode=hardened;expected=EXECVPE_NULL_FILE_RC_-1_ERRNO_EFAULT;actual=EXECVPE_NULL_FILE_RC_-1_ERRNO_EFAULT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getresgid_triple_written_strict",
+      "function": "getresgid",
+      "spec_section": "GNU getresgid result slots written",
+      "inputs": {
+        "symbol": "getresgid",
+        "scenario": "credential_gid_slots_written_without_value_capture",
+        "expected": "GETRESGID_RC_0_TRIPLE_WRITTEN",
+        "oracle_source": "FrankenLibC unistd_abi::getresgid raw syscall replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=getresgid;mode=strict;expected=GETRESGID_RC_0_TRIPLE_WRITTEN;actual=GETRESGID_RC_0_TRIPLE_WRITTEN;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getresgid_triple_written_hardened",
+      "function": "getresgid",
+      "spec_section": "GNU getresgid result slots written",
+      "inputs": {
+        "symbol": "getresgid",
+        "scenario": "credential_gid_slots_written_without_value_capture",
+        "expected": "GETRESGID_RC_0_TRIPLE_WRITTEN",
+        "oracle_source": "FrankenLibC unistd_abi::getresgid raw syscall replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=getresgid;mode=hardened;expected=GETRESGID_RC_0_TRIPLE_WRITTEN;actual=GETRESGID_RC_0_TRIPLE_WRITTEN;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getresuid_triple_written_strict",
+      "function": "getresuid",
+      "spec_section": "GNU getresuid result slots written",
+      "inputs": {
+        "symbol": "getresuid",
+        "scenario": "credential_uid_slots_written_without_value_capture",
+        "expected": "GETRESUID_RC_0_TRIPLE_WRITTEN",
+        "oracle_source": "FrankenLibC unistd_abi::getresuid raw syscall replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=getresuid;mode=strict;expected=GETRESUID_RC_0_TRIPLE_WRITTEN;actual=GETRESUID_RC_0_TRIPLE_WRITTEN;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getresuid_triple_written_hardened",
+      "function": "getresuid",
+      "spec_section": "GNU getresuid result slots written",
+      "inputs": {
+        "symbol": "getresuid",
+        "scenario": "credential_uid_slots_written_without_value_capture",
+        "expected": "GETRESUID_RC_0_TRIPLE_WRITTEN",
+        "oracle_source": "FrankenLibC unistd_abi::getresuid raw syscall replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=getresuid;mode=hardened;expected=GETRESUID_RC_0_TRIPLE_WRITTEN;actual=GETRESUID_RC_0_TRIPLE_WRITTEN;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "posix_spawn_file_actions_addchdir_np_valid_strict",
+      "function": "posix_spawn_file_actions_addchdir_np",
+      "spec_section": "GNU posix_spawn_file_actions_addchdir_np valid action append",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_addchdir_np",
+        "scenario": "valid_chdir_action_append_without_path_capture",
+        "expected": "POSIX_SPAWN_ADDCHDIR_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi spawn file-action list replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_addchdir_np;mode=strict;expected=POSIX_SPAWN_ADDCHDIR_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_ADDCHDIR_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "posix_spawn_file_actions_addchdir_np_valid_hardened",
+      "function": "posix_spawn_file_actions_addchdir_np",
+      "spec_section": "GNU posix_spawn_file_actions_addchdir_np valid action append",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_addchdir_np",
+        "scenario": "valid_chdir_action_append_without_path_capture",
+        "expected": "POSIX_SPAWN_ADDCHDIR_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi spawn file-action list replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_addchdir_np;mode=hardened;expected=POSIX_SPAWN_ADDCHDIR_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_ADDCHDIR_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "posix_spawn_file_actions_addclose_valid_strict",
+      "function": "posix_spawn_file_actions_addclose",
+      "spec_section": "POSIX posix_spawn_file_actions_addclose valid action append",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_addclose",
+        "scenario": "valid_close_action_append_without_fd_capture",
+        "expected": "POSIX_SPAWN_ADDCLOSE_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi spawn file-action list replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_addclose;mode=strict;expected=POSIX_SPAWN_ADDCLOSE_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_ADDCLOSE_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "posix_spawn_file_actions_addclose_valid_hardened",
+      "function": "posix_spawn_file_actions_addclose",
+      "spec_section": "POSIX posix_spawn_file_actions_addclose valid action append",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_addclose",
+        "scenario": "valid_close_action_append_without_fd_capture",
+        "expected": "POSIX_SPAWN_ADDCLOSE_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi spawn file-action list replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_addclose;mode=hardened;expected=POSIX_SPAWN_ADDCLOSE_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_ADDCLOSE_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "posix_spawn_file_actions_adddup2_valid_strict",
+      "function": "posix_spawn_file_actions_adddup2",
+      "spec_section": "POSIX posix_spawn_file_actions_adddup2 valid action append",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_adddup2",
+        "scenario": "valid_dup2_action_append_without_fd_capture",
+        "expected": "POSIX_SPAWN_ADDDUP2_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi spawn file-action list replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_adddup2;mode=strict;expected=POSIX_SPAWN_ADDDUP2_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_ADDDUP2_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "posix_spawn_file_actions_adddup2_valid_hardened",
+      "function": "posix_spawn_file_actions_adddup2",
+      "spec_section": "POSIX posix_spawn_file_actions_adddup2 valid action append",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_adddup2",
+        "scenario": "valid_dup2_action_append_without_fd_capture",
+        "expected": "POSIX_SPAWN_ADDDUP2_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi spawn file-action list replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_adddup2;mode=hardened;expected=POSIX_SPAWN_ADDDUP2_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_ADDDUP2_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T15:56:09Z",
-  "report_hash": "bc5f87b3a3d082db",
+  "generated_at": "2026-05-13T16:27:41Z",
+  "report_hash": "d9a3117d358e1120",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 845,
-    "symbols_without_fixtures": 3274,
-    "fixture_coverage_pct": 20.5,
-    "implemented_coverage_pct": 20.2,
-    "total_fixture_files": 98,
-    "total_cases": 2136,
+    "symbols_with_fixtures": 857,
+    "symbols_without_fixtures": 3262,
+    "fixture_coverage_pct": 20.8,
+    "implemented_coverage_pct": 20.3,
+    "total_fixture_files": 99,
+    "total_cases": 2160,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 521,
-    "symbols_with_errno_checks": 842,
-    "total_quality_issues": 3515,
-    "uncovered_action_count": 3274
+    "symbols_with_edge_cases": 531,
+    "symbols_with_errno_checks": 854,
+    "total_quality_issues": 3513,
+    "uncovered_action_count": 3262
   },
   "fixture_file_analyses": [
     {
@@ -272,6 +272,14 @@
       "valid": true,
       "total_cases": 7,
       "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "process_spawn_wave01.json",
+      "family": "process/spawn",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
       "issues": []
     },
     {
@@ -14635,13 +14643,20 @@
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "_flushlbf",
@@ -15224,12 +15239,19 @@
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -20356,12 +20378,19 @@
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -21092,12 +21121,20 @@
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -21165,13 +21202,20 @@
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "closelog",
@@ -25561,12 +25605,20 @@
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -25574,15 +25626,21 @@
       "status": "Implemented",
       "module": "process_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "exit",
@@ -34454,12 +34512,19 @@
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -34467,12 +34532,19 @@
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -45645,30 +45717,40 @@
       "status": "Implemented",
       "module": "process_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "posix_spawn_file_actions_addclose",
       "status": "Implemented",
       "module": "process_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "posix_spawn_file_actions_addclosefrom_np",
@@ -45690,15 +45772,20 @@
       "status": "Implemented",
       "module": "process_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_spawn_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "posix_spawn_file_actions_addfchdir_np",
@@ -70933,13 +71020,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "_exit",
-      "status": "RawSyscall",
-      "module": "process_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_flushlbf",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -71139,13 +71219,6 @@
       "symbol": "abs",
       "status": "Implemented",
       "module": "stdlib_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "acct",
-      "status": "RawSyscall",
-      "module": "process_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -72788,13 +72861,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "chroot",
-      "status": "RawSyscall",
-      "module": "process_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "cimag",
       "status": "Implemented",
       "module": "math_abi",
@@ -73085,20 +73151,6 @@
       "symbol": "clogl",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "clone",
-      "status": "RawSyscall",
-      "module": "process_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "closefrom",
-      "status": "RawSyscall",
-      "module": "process_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -74359,20 +74411,6 @@
       "symbol": "execveat",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "execvp",
-      "status": "RawSyscall",
-      "module": "process_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "execvpe",
-      "status": "Implemented",
-      "module": "process_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -77698,20 +77736,6 @@
       "symbol": "getrandom",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "getresgid",
-      "status": "RawSyscall",
-      "module": "process_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "getresuid",
-      "status": "RawSyscall",
-      "module": "process_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -82175,30 +82199,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "posix_spawn_file_actions_addchdir_np",
-      "status": "Implemented",
-      "module": "process_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "posix_spawn_file_actions_addclose",
-      "status": "Implemented",
-      "module": "process_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "posix_spawn_file_actions_addclosefrom_np",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "posix_spawn_file_actions_adddup2",
-      "status": "Implemented",
-      "module": "process_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
