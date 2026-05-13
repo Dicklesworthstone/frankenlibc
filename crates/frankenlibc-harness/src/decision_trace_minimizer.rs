@@ -181,8 +181,9 @@ fn validate_row(idx: usize, r: &TraceRow) -> Result<(), MinimizerError> {
 ///      deterministic output regardless of input ordering.
 ///   4. Compute `has_divergence` as "any kept row has a strict
 ///      decision that differs from its hardened decision".
-///   5. Build `expected_failure_signature` from the *first* kept
-///      row that exhibits a divergence, or "" if none.
+///   5. Build `expected_failure_signature` from the first kept row
+///      in deterministic fingerprint-key order that exhibits a
+///      divergence, or "" if none.
 pub fn minimize(rows: &[TraceRow]) -> Result<MinimizedTrace, MinimizerError> {
     if rows.is_empty() {
         return Err(MinimizerError::Empty);
@@ -205,34 +206,33 @@ pub fn minimize(rows: &[TraceRow]) -> Result<MinimizedTrace, MinimizerError> {
     let kept: Vec<TraceRow> = keep_by_key.values().cloned().collect();
     let dropped_count = dropped.len();
 
-    // Pick the first kept row in INPUT order that diverges, for the
-    // expected_failure_signature.
-    let mut first_divergence: Option<&TraceRow> = None;
-    for r in rows {
-        if r.mode_strict_decision != r.mode_hardened_decision {
-            first_divergence = Some(r);
-            break;
-        }
-    }
+    // Pick the first replayable kept row that diverges. This must be
+    // derived from `kept`, not raw input rows, because duplicate
+    // fingerprint rows are intentionally dropped above.
+    let first_divergence = kept
+        .iter()
+        .find(|r| r.mode_strict_decision != r.mode_hardened_decision);
 
-    let signature = if let Some(r) = first_divergence {
-        format!(
-            "{}::{}::{}::{}::{}::{}->vs->-{}",
-            r.scenario,
-            r.api_family,
-            r.symbol,
-            r.decision_path,
-            r.input_class,
-            r.mode_strict_decision,
-            r.mode_hardened_decision
-        )
-    } else {
-        String::new()
+    let (has_divergence, signature) = match first_divergence {
+        Some(r) => (
+            true,
+            format!(
+                "{}::{}::{}::{}::{}::{}->vs->-{}",
+                r.scenario,
+                r.api_family,
+                r.symbol,
+                r.decision_path,
+                r.input_class,
+                r.mode_strict_decision,
+                r.mode_hardened_decision
+            ),
+        ),
+        None => (false, String::new()),
     };
 
     // Replay command emits the kept-row count and the signature so a
     // downstream agent can rerun the smallest possible reproducer.
-    let replay_command = if first_divergence.is_some() {
+    let replay_command = if has_divergence {
         format!(
             "rch cargo test -p frankenlibc-harness --test runtime_evidence_replay_gate_test -- --exact replay::{}",
             signature.replace("::", "_").replace("->vs->-", "_to_")
@@ -263,7 +263,7 @@ pub fn minimize(rows: &[TraceRow]) -> Result<MinimizedTrace, MinimizerError> {
         expected_failure_signature: signature,
         source_commit,
         original_artifact_refs,
-        has_divergence: first_divergence.is_some(),
+        has_divergence,
     })
 }
 
@@ -546,6 +546,91 @@ mod tests {
         assert_eq!(m.minimized_rows.len(), 1);
         assert_eq!(m.dropped_row_count, 2);
         assert!(m.dropped_row_rationale[0].contains("s|stdio|fread|slow|adversarial"));
+    }
+
+    // MR strength matrix:
+    // duplicate-row suppression: sensitivity 5, independence 4, cost 1, score 20
+    // input-reordering invariance: sensitivity 4, independence 4, cost 1, score 16
+    // kept-row replayability: sensitivity 5, independence 5, cost 1, score 25
+
+    #[test]
+    fn duplicate_divergent_row_dropped_does_not_create_unreplayable_signature() {
+        let rows = vec![
+            row("s", "stdio", "fread", "fast", "typical", "Allow", "Allow"),
+            row("s", "stdio", "fread", "fast", "typical", "Allow", "Repair"),
+        ];
+
+        let m = minimize(&rows).unwrap();
+
+        assert_eq!(m.minimized_rows.len(), 1);
+        assert_eq!(m.dropped_row_count, 1);
+        assert!(!m.has_divergence);
+        assert_eq!(m.expected_failure_signature, "");
+        assert!(m.replay_command.contains("no_divergence_control"));
+    }
+
+    #[test]
+    fn replay_signature_comes_from_kept_rows_after_duplicate_suppression() {
+        let rows = vec![
+            row("s", "stdio", "fread", "fast", "typical", "Allow", "Allow"),
+            row("s", "stdio", "fread", "fast", "typical", "Allow", "Repair"),
+            row(
+                "s",
+                "stdio",
+                "fwrite",
+                "slow",
+                "adversarial",
+                "Allow",
+                "Repair",
+            ),
+        ];
+
+        let m = minimize(&rows).unwrap();
+
+        assert!(m.has_divergence);
+        assert_eq!(m.minimized_rows.len(), 2);
+        assert_eq!(
+            m.expected_failure_signature,
+            "s::stdio::fwrite::slow::adversarial::Allow->vs->-Repair"
+        );
+        assert!(
+            m.minimized_rows.iter().any(|r| {
+                r.symbol == "fwrite" && r.mode_strict_decision != r.mode_hardened_decision
+            }),
+            "signature must identify a divergence present in minimized_rows"
+        );
+    }
+
+    #[test]
+    fn signature_is_stable_under_reordering_when_multiple_kept_rows_diverge() {
+        let rows = vec![
+            row(
+                "z",
+                "stdio",
+                "fwrite",
+                "slow",
+                "adversarial",
+                "Allow",
+                "Repair",
+            ),
+            row("a", "malloc", "free", "full", "foreign", "Deny", "Repair"),
+        ];
+        let mut reversed = rows.clone();
+        reversed.reverse();
+
+        let original = minimize(&rows).unwrap();
+        let permuted = minimize(&reversed).unwrap();
+
+        assert_eq!(
+            original.expected_failure_signature,
+            permuted.expected_failure_signature
+        );
+        assert_eq!(
+            original.expected_failure_signature,
+            "a::malloc::free::full::foreign::Deny->vs->-Repair"
+        );
+        assert_eq!(original.has_divergence, permuted.has_divergence);
+        assert_eq!(original.minimized_rows, permuted.minimized_rows);
     }
 
     #[test]
