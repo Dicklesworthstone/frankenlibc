@@ -769,6 +769,30 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Compute the alien-CS contention score + per-concept breakdown via
+    /// `frankenlibc_membrane::alien_cs_metrics::compute_contention_score`
+    /// and `compute_contention_breakdown`. Each diagnostic struct is
+    /// optional; pass JSON file path(s) to include that concept.
+    ComputeContentionScore {
+        /// Optional JSON path to a SeqLockDiagnostics object with fields
+        /// {reads, cache_hits, cache_misses, writes, contention_events,
+        /// pending_writers, hit_ratio}.
+        #[arg(long)]
+        seqlock_diag: Option<PathBuf>,
+        /// Optional JSON path to an EbrDiagnostics object with fields
+        /// {global_epoch, active_threads, pinned_threads, total_retired,
+        /// total_reclaimed, pending_per_epoch: [u, u, u]}.
+        #[arg(long)]
+        ebr_diag: Option<PathBuf>,
+        /// Optional JSON path to a FlatCombinerDiagnostics object with
+        /// fields {total_ops, total_passes, max_batch_size, avg_batch_size,
+        /// active_slots, total_slots}.
+        #[arg(long)]
+        fc_diag: Option<PathBuf>,
+        /// Output JSONL path: one contention_score record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Convert a Unix-days timestamp (days since 1970-01-01) into a civil
     /// (year, month, day) tuple via
     /// `frankenlibc_membrane::util::civil_date_from_unix_days`
@@ -2915,6 +2939,116 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .into());
             }
         }
+        Command::ComputeContentionScore {
+            seqlock_diag,
+            ebr_diag,
+            fc_diag,
+            output,
+        } => {
+            use frankenlibc_membrane::alien_cs_metrics::{
+                compute_contention_breakdown, compute_contention_score,
+            };
+            use frankenlibc_membrane::ebr::EbrDiagnostics;
+            use frankenlibc_membrane::flat_combining::FlatCombinerDiagnostics;
+            use frankenlibc_membrane::seqlock::SeqLockDiagnostics;
+            fn load_value(p: &Path) -> Result<serde_json::Value, String> {
+                let body =
+                    std::fs::read_to_string(p).map_err(|e| format!("read {}: {e}", p.display()))?;
+                serde_json::from_str(&body).map_err(|e| format!("parse {}: {e}", p.display()))
+            }
+            fn u64_or_zero(v: &serde_json::Value, k: &str) -> u64 {
+                v.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0)
+            }
+            fn usize_or_zero(v: &serde_json::Value, k: &str) -> usize {
+                v.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0) as usize
+            }
+            fn f64_or_zero(v: &serde_json::Value, k: &str) -> f64 {
+                v.get(k).and_then(serde_json::Value::as_f64).unwrap_or(0.0)
+            }
+            let seqlock: Option<SeqLockDiagnostics> = match &seqlock_diag {
+                Some(p) => {
+                    let v = load_value(p)?;
+                    Some(SeqLockDiagnostics {
+                        reads: u64_or_zero(&v, "reads"),
+                        cache_hits: u64_or_zero(&v, "cache_hits"),
+                        cache_misses: u64_or_zero(&v, "cache_misses"),
+                        writes: u64_or_zero(&v, "writes"),
+                        contention_events: u64_or_zero(&v, "contention_events"),
+                        pending_writers: u64_or_zero(&v, "pending_writers"),
+                        hit_ratio: f64_or_zero(&v, "hit_ratio"),
+                    })
+                }
+                None => None,
+            };
+            let ebr: Option<EbrDiagnostics> = match &ebr_diag {
+                Some(p) => {
+                    let v = load_value(p)?;
+                    let pe = v
+                        .get("pending_per_epoch")
+                        .and_then(serde_json::Value::as_array);
+                    let pending_per_epoch = if let Some(arr) = pe {
+                        let mut out = [0usize; 3];
+                        for (i, slot) in out.iter_mut().enumerate().take(arr.len().min(3)) {
+                            *slot = arr[i].as_u64().unwrap_or(0) as usize;
+                        }
+                        out
+                    } else {
+                        [0usize; 3]
+                    };
+                    Some(EbrDiagnostics {
+                        global_epoch: u64_or_zero(&v, "global_epoch"),
+                        active_threads: usize_or_zero(&v, "active_threads"),
+                        pinned_threads: usize_or_zero(&v, "pinned_threads"),
+                        total_retired: u64_or_zero(&v, "total_retired"),
+                        total_reclaimed: u64_or_zero(&v, "total_reclaimed"),
+                        pending_per_epoch,
+                    })
+                }
+                None => None,
+            };
+            let fc: Option<FlatCombinerDiagnostics> = match &fc_diag {
+                Some(p) => {
+                    let v = load_value(p)?;
+                    Some(FlatCombinerDiagnostics {
+                        total_ops: u64_or_zero(&v, "total_ops"),
+                        total_passes: u64_or_zero(&v, "total_passes"),
+                        max_batch_size: u64_or_zero(&v, "max_batch_size"),
+                        avg_batch_size: f64_or_zero(&v, "avg_batch_size"),
+                        active_slots: usize_or_zero(&v, "active_slots"),
+                        total_slots: usize_or_zero(&v, "total_slots"),
+                    })
+                }
+                None => None,
+            };
+            let breakdown =
+                compute_contention_breakdown(seqlock.as_ref(), ebr.as_ref(), fc.as_ref());
+            let score = compute_contention_score(seqlock.as_ref(), ebr.as_ref(), fc.as_ref());
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "contention_score",
+                "score": score,
+                "breakdown": {
+                    "seqlock_cache_miss_ratio": breakdown.seqlock_cache_miss_ratio,
+                    "seqlock_contention_per_write": breakdown.seqlock_contention_per_write,
+                    "ebr_pinned_fraction": breakdown.ebr_pinned_fraction,
+                    "flat_combining_ops_per_pass": breakdown.flat_combining_ops_per_pass,
+                    "flat_combining_efficiency_loss": breakdown.flat_combining_efficiency_loss,
+                },
+                "concepts_present": {
+                    "seqlock": seqlock.is_some(),
+                    "ebr": ebr.is_some(),
+                    "flat_combining": fc.is_some(),
+                },
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!("compute-contention-score: score={score:.6}");
+        }
         Command::CivilDateFromUnixDays { unix_days, output } => {
             use frankenlibc_membrane::util::civil_date_from_unix_days;
             let (year, month, day) = civil_date_from_unix_days(unix_days);
@@ -2943,7 +3077,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 CANONICAL_CLASS_CONGESTION, CANONICAL_CLASS_NONE, CANONICAL_CLASS_NUMERIC,
                 CANONICAL_CLASS_REGIME, CANONICAL_CLASS_TEMPORAL, CANONICAL_CLASS_TOPOLOGICAL,
             };
-            use frankenlibc_membrane::heal::{HealingAction, recommended_healing_for_canonical_class};
+            use frankenlibc_membrane::heal::{
+                HealingAction, recommended_healing_for_canonical_class,
+            };
             let class_label = match class_id {
                 x if x == CANONICAL_CLASS_NONE => "none",
                 x if x == CANONICAL_CLASS_TEMPORAL => "temporal",
@@ -2969,16 +3105,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "truncate-with-null",
                     serde_json::json!({"requested": requested, "truncated": truncated}),
                 ),
-                HealingAction::IgnoreDoubleFree => {
-                    ("ignore-double-free", serde_json::Value::Null)
-                }
+                HealingAction::IgnoreDoubleFree => ("ignore-double-free", serde_json::Value::Null),
                 HealingAction::IgnoreForeignFree => {
                     ("ignore-foreign-free", serde_json::Value::Null)
                 }
-                HealingAction::ReallocAsMalloc { size } => (
-                    "realloc-as-malloc",
-                    serde_json::json!({"size": size}),
-                ),
+                HealingAction::ReallocAsMalloc { size } => {
+                    ("realloc-as-malloc", serde_json::json!({"size": size}))
+                }
                 HealingAction::ReturnSafeDefault => {
                     ("return-safe-default", serde_json::Value::Null)
                 }

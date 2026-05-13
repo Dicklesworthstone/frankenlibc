@@ -1,0 +1,98 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "compute-contention-score-cli-contract",
+  "bead": "bd-rnlv2",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "eb7c43b8",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::alien_cs_metrics::{compute_contention_score, compute_contention_breakdown} as a standalone CLI. The CLI accepts optional JSON diagnostic snapshots for SeqLockDiagnostics, EbrDiagnostics, and FlatCombinerDiagnostics, then emits the mean contention score over present components plus the per-concept breakdown fields.",
+  "subcommand_name": "compute-contention-score",
+  "binary_target": "harness",
+  "required_flags": [
+    "--output"
+  ],
+  "optional_flags": [
+    "--seqlock-diag",
+    "--ebr-diag",
+    "--fc-diag"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::alien_cs_metrics::compute_contention_score",
+    "frankenlibc_membrane::alien_cs_metrics::compute_contention_breakdown"
+  ],
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "contention_score",
+    "required_fields": [
+      "kind",
+      "score",
+      "breakdown",
+      "concepts_present"
+    ],
+    "breakdown_required_fields": [
+      "seqlock_cache_miss_ratio",
+      "seqlock_contention_per_write",
+      "ebr_pinned_fraction",
+      "flat_combining_ops_per_pass",
+      "flat_combining_efficiency_loss"
+    ]
+  },
+  "expected_full_sample": {
+    "seqlock": {
+      "reads": 20,
+      "cache_hits": 15,
+      "cache_misses": 5,
+      "writes": 4,
+      "contention_events": 3,
+      "pending_writers": 0,
+      "hit_ratio": 0.75
+    },
+    "ebr": {
+      "global_epoch": 7,
+      "active_threads": 4,
+      "pinned_threads": 1,
+      "total_retired": 0,
+      "total_reclaimed": 0,
+      "pending_per_epoch": [0, 0, 0]
+    },
+    "flat_combining": {
+      "total_ops": 18,
+      "total_passes": 6,
+      "max_batch_size": 4,
+      "avg_batch_size": 3.0,
+      "active_slots": 2,
+      "total_slots": 8
+    },
+    "expected_breakdown": {
+      "seqlock_cache_miss_ratio": 0.25,
+      "seqlock_contention_per_write": 0.75,
+      "ebr_pinned_fraction": 0.25,
+      "flat_combining_ops_per_pass": 3.0,
+      "flat_combining_efficiency_loss": 0.3333333333333333
+    },
+    "expected_score": 0.3958333333333333
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "all_diagnostics_are_optional": true,
+    "score_zero_when_no_diagnostics_present": true,
+    "concepts_present_flags_match_inputs": true,
+    "breakdown_matches_library_formulas": true,
+    "score_is_mean_of_present_components": true,
+    "deterministic_given_inputs": true,
+    "invalid_diagnostic_json_is_rejected": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "breakdown_drift",
+    "score_drift",
+    "invalid_json_certified"
+  ],
+  "summary": {
+    "bead": "bd-rnlv2",
+    "subcommand": "compute-contention-score",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
