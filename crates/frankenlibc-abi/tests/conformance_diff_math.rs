@@ -25,6 +25,10 @@ unsafe extern "C" {
     fn floor(x: f64) -> f64;
     fn ceil(x: f64) -> f64;
     fn fmod(x: f64, y: f64) -> f64;
+    fn copysign(x: f64, y: f64) -> f64;
+    fn fmin(x: f64, y: f64) -> f64;
+    fn fmax(x: f64, y: f64) -> f64;
+    fn fdim(x: f64, y: f64) -> f64;
     fn sin(x: f64) -> f64;
     fn cos(x: f64) -> f64;
     fn tan(x: f64) -> f64;
@@ -159,6 +163,24 @@ fn compare_f64(
             frankenlibc: format!("{fl_v}"),
             glibc: format!("{lc_v}"),
             delta_ulps: Some(delta),
+        });
+    }
+}
+
+fn compare_f64_bits(
+    divs: &mut Vec<Divergence>,
+    func: &'static str,
+    input: String,
+    fl_v: f64,
+    lc_v: f64,
+) {
+    if fl_v.to_bits() != lc_v.to_bits() {
+        divs.push(Divergence {
+            function: func,
+            input,
+            frankenlibc: format!("{fl_v:?} ({:#018x})", fl_v.to_bits()),
+            glibc: format!("{lc_v:?} ({:#018x})", lc_v.to_bits()),
+            delta_ulps: None,
         });
     }
 }
@@ -442,6 +464,81 @@ fn diff_fmod_exact() {
     assert!(divs.is_empty(), "fmod divergences:\n{}", render_divs(&divs));
 }
 
+#[test]
+fn diff_sign_min_max_dim_helpers_match_glibc_bits() {
+    let mut divs = Vec::new();
+
+    let sign_cases: &[(f64, f64)] = &[
+        (1.0, -0.0),
+        (-1.0, 0.0),
+        (0.0, -1.0),
+        (-0.0, 1.0),
+        (f64::INFINITY, -1.0),
+        (f64::NEG_INFINITY, 1.0),
+    ];
+    for &(x, y) in sign_cases {
+        compare_f64_bits(
+            &mut divs,
+            "copysign",
+            format!("({x:?}, {y:?})"),
+            unsafe { fl::copysign(x, y) },
+            unsafe { copysign(x, y) },
+        );
+    }
+
+    let min_max_cases: &[(f64, f64)] = &[
+        (2.0, 3.0),
+        (3.0, 2.0),
+        (-2.0, -3.0),
+        (0.0, -0.0),
+        (-0.0, 0.0),
+        (f64::INFINITY, 1.0),
+        (f64::NEG_INFINITY, 1.0),
+        (f64::NAN, 5.0),
+        (5.0, f64::NAN),
+    ];
+    for &(x, y) in min_max_cases {
+        compare_f64_bits(
+            &mut divs,
+            "fmin",
+            format!("({x:?}, {y:?})"),
+            unsafe { fl::fmin(x, y) },
+            unsafe { fmin(x, y) },
+        );
+        compare_f64_bits(
+            &mut divs,
+            "fmax",
+            format!("({x:?}, {y:?})"),
+            unsafe { fl::fmax(x, y) },
+            unsafe { fmax(x, y) },
+        );
+    }
+
+    let dim_cases: &[(f64, f64)] = &[
+        (5.0, 3.0),
+        (3.0, 5.0),
+        (0.0, -0.0),
+        (-0.0, 0.0),
+        (f64::INFINITY, 1.0),
+        (1.0, f64::INFINITY),
+    ];
+    for &(x, y) in dim_cases {
+        compare_f64_bits(
+            &mut divs,
+            "fdim",
+            format!("({x:?}, {y:?})"),
+            unsafe { fl::fdim(x, y) },
+            unsafe { fdim(x, y) },
+        );
+    }
+
+    assert!(
+        divs.is_empty(),
+        "sign/min/max/dim divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 // ===========================================================================
 // ULP-tolerant transcendentals
 // ===========================================================================
@@ -676,6 +773,6 @@ fn diff_hyperbolic_within_4_ulps() {
 #[test]
 fn math_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"math.h core\",\"reference\":\"glibc\",\"functions\":15,\"divergences\":0,\"ulp_tolerance\":4}}",
+        "{{\"family\":\"math.h core\",\"reference\":\"glibc\",\"functions\":19,\"divergences\":0,\"ulp_tolerance\":4}}",
     );
 }
