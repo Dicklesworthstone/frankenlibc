@@ -1,0 +1,242 @@
+{
+  "schema_version": "string_memory_hotpaths_wave05_completion_contract.v1",
+  "bead_id": "bd-0y1w6.2",
+  "epic_id": "bd-0y1w6",
+  "trace_id": "bd-0y1w6.2::string-memory-hotpaths-wave05::completion::v1",
+  "description": "Completion contract binding the string/memory wave-05 fixture, executor support, refreshed coverage truth, structured telemetry, and remote-rch validation commands.",
+  "source_artifacts": [
+    {
+      "id": "beads_ledger",
+      "kind": "tracker",
+      "path": ".beads/issues.jsonl",
+      "evidence": "Tracker rows for bd-0y1w6, bd-0y1w6.1, and bd-0y1w6.2."
+    },
+    {
+      "id": "fixture_coverage_prioritizer",
+      "kind": "campaign_source",
+      "path": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+      "evidence": "Campaign fcq-string-memory-hotpaths coverage counts and next first-wave symbols after wave-05 coverage."
+    },
+    {
+      "id": "symbol_fixture_coverage",
+      "kind": "coverage_accounting",
+      "path": "tests/conformance/symbol_fixture_coverage.v1.json",
+      "evidence": "Per-symbol fixture coverage rows linking completed wave-05 symbols to string_memory_hotpaths_wave05.json."
+    },
+    {
+      "id": "per_symbol_fixture_tests",
+      "kind": "coverage_accounting",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "evidence": "Strict/hardened per-symbol fixture accounting for completed wave-05 symbols."
+    },
+    {
+      "id": "string_wave05_fixture",
+      "kind": "fixture",
+      "path": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json",
+      "evidence": "Strict and hardened deterministic fixtures for the 12 completed string/memory wave-05 symbols."
+    },
+    {
+      "id": "fixture_executor",
+      "kind": "implementation",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "evidence": "execute_fixture_case dispatch and deterministic string/memory wave-05 fixture executor."
+    },
+    {
+      "id": "string_wave05_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave05_conformance_test.rs",
+      "evidence": "Harness tests for fixture shape, both-mode wave coverage, structured output fields, coverage artifact bindings, and isolated execution."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/string_memory_hotpaths_wave05_completion_contract.v1.json",
+      "evidence": "Machine-readable binding for bd-0y1w6.2 completion obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_string_memory_hotpaths_wave05_completion_contract.sh",
+      "evidence": "Fail-closed validator for source artifacts, dependency proof, fixture evidence, coverage accounting, telemetry, and remote-rch validation commands."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave05_completion_contract_test.rs",
+      "evidence": "Rust harness tests for the string/memory wave-05 completion contract and negative drift signatures."
+    }
+  ],
+  "completion_contract": {
+    "required_dependency_proofs": [
+      {
+        "proof_id": "string-wave05-code-proof",
+        "proof_state": "pushed",
+        "commit": "ba933b3a",
+        "evidence": "Wave-05 fixture proof commit added deterministic strict/hardened fixture rows, executor dispatch, and isolated harness coverage.",
+        "evidence_paths": [
+          "tests/conformance/fixtures/string_memory_hotpaths_wave05.json",
+          "crates/frankenlibc_conformance/src/lib.rs",
+          "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave05_conformance_test.rs"
+        ]
+      },
+      {
+        "proof_id": "bd-0y1w6.1",
+        "proof_state": "tracker_closed",
+        "commit": "0cfb12e8",
+        "tracker_seed_commit": "d96cfb73",
+        "tracker_close_commit": "9d6686a2",
+        "evidence": "Coverage/prioritizer truth proof commit refreshed canonical coverage artifacts and added focused wave-05 coverage assertions.",
+        "evidence_paths": [
+          "tests/conformance/fixture_coverage_prioritizer.v1.json",
+          "tests/conformance/symbol_fixture_coverage.v1.json",
+          "tests/conformance/per_symbol_fixture_tests.v1.json",
+          "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave05_conformance_test.rs"
+        ]
+      }
+    ],
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "campaign_id": "fcq-string-memory-hotpaths",
+    "wave_id": "wave-05-string-memory-hotpaths",
+    "fixture_file": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json",
+    "harness_test": "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave05_conformance_test.rs",
+    "required_first_wave_symbols": [
+      "__strsep_3c",
+      "__strsep_g",
+      "__strspn_c1",
+      "__strspn_c2",
+      "__strspn_c3",
+      "__strtod_internal",
+      "__strtod_l",
+      "__strtof_internal",
+      "__strtof_l",
+      "__strtok_r",
+      "__strtok_r_1c",
+      "__strtol_internal"
+    ],
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_structured_log_fields": [
+      "symbol",
+      "mode",
+      "expected",
+      "actual",
+      "failure_signature"
+    ],
+    "forbidden_ambient_output_tokens": [
+      "0x",
+      "ptr=",
+      "address",
+      "locale_t",
+      "errno_buf",
+      "pid=",
+      "fd=",
+      "/tmp",
+      "thread=",
+      "timestamp",
+      "process-global"
+    ],
+    "coverage_accounting": {
+      "campaign_target_covered_min": 61,
+      "campaign_target_uncovered_max": 85,
+      "campaign_current_coverage_pct_min": 41.78,
+      "campaign_expected_after_first_wave_pct_min": 50.0,
+      "symbol_fixture_covered_min": 503,
+      "per_symbol_fixture_linked_min": 501,
+      "per_symbol_total_fixture_files_min": 66,
+      "per_symbol_total_cases_min": 1480,
+      "completed_symbols_must_not_be_next_wave": true
+    },
+    "required_fixture_harness_needles": [
+      "string_memory_hotpaths_wave05_fixture_exists_and_names_campaign",
+      "string_memory_hotpaths_wave05_covers_first_wave_in_both_modes",
+      "string_memory_hotpaths_wave05_logs_without_ambient_leaks",
+      "string_memory_hotpaths_wave05_spec_reference_names_required_surfaces",
+      "string_memory_hotpaths_wave05_coverage_artifacts_bind_first_wave",
+      "string_memory_hotpaths_wave05_executes_via_isolated_harness"
+    ],
+    "required_telemetry_events": [
+      "source_artifacts_validated",
+      "dependency_proofs_validated",
+      "string_wave05_fixture_validated",
+      "coverage_accounting_validated",
+      "validation_commands_validated",
+      "test_surfaces_validated",
+      "telemetry_contract_validated",
+      "string_wave05_completion_contract_validated"
+    ],
+    "runtime_validation": [
+      "jq empty tests/conformance/string_memory_hotpaths_wave05_completion_contract.v1.json",
+      "bash -n scripts/check_string_memory_hotpaths_wave05_completion_contract.sh",
+      "bash scripts/check_string_memory_hotpaths_wave05_completion_contract.sh",
+      "bash scripts/check_fixture_coverage_prioritizer.sh --validate-only",
+      "AGENT_NAME=BrownTern br --no-db dep cycles --json",
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_string_wave05_completion_test cargo test -p frankenlibc-harness --test string_memory_hotpaths_wave05_completion_contract_test -- --nocapture",
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_string_wave05_completion_check cargo check -p frankenlibc-harness --test string_memory_hotpaths_wave05_completion_contract_test",
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_string_wave05_completion_clippy cargo clippy -p frankenlibc-harness --test string_memory_hotpaths_wave05_completion_contract_test -- -D warnings",
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_string_wave05_conformance cargo test -p frankenlibc-harness --test string_memory_hotpaths_wave05_conformance_test -- --nocapture"
+    ]
+  },
+  "missing_item_bindings": [
+    {
+      "missing_item_id": "tests.unit.primary",
+      "implementation_refs": [
+        "scripts/check_string_memory_hotpaths_wave05_completion_contract.sh",
+        "tests/conformance/string_memory_hotpaths_wave05_completion_contract.v1.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave05_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_string_wave05_completion_test cargo test -p frankenlibc-harness --test string_memory_hotpaths_wave05_completion_contract_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "tests.e2e.primary",
+      "implementation_refs": [
+        "scripts/check_string_memory_hotpaths_wave05_completion_contract.sh",
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "tests/conformance/fixtures/string_memory_hotpaths_wave05.json"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave05_conformance_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_string_memory_hotpaths_wave05_completion_contract.sh",
+        "bash scripts/check_fixture_coverage_prioritizer.sh --validate-only"
+      ]
+    },
+    {
+      "missing_item_id": "tests.conformance.primary",
+      "implementation_refs": [
+        "tests/conformance/fixtures/string_memory_hotpaths_wave05.json",
+        "crates/frankenlibc_conformance/src/lib.rs"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave05_conformance_test.rs"
+      ],
+      "runtime_validation": [
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_string_wave05_conformance cargo test -p frankenlibc-harness --test string_memory_hotpaths_wave05_conformance_test -- --nocapture"
+      ]
+    },
+    {
+      "missing_item_id": "telemetry.primary",
+      "implementation_refs": [
+        "tests/conformance/string_memory_hotpaths_wave05_completion_contract.v1.json",
+        "scripts/check_string_memory_hotpaths_wave05_completion_contract.sh"
+      ],
+      "test_refs": [
+        "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave05_completion_contract_test.rs"
+      ],
+      "runtime_validation": [
+        "bash scripts/check_string_memory_hotpaths_wave05_completion_contract.sh"
+      ]
+    }
+  ]
+}
