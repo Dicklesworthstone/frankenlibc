@@ -301,18 +301,17 @@ fn fnmatch_inner(
                             pi += 1;
 
                             let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
-                            let low_cmp = if casefold {
-                                low.to_ascii_lowercase()
+                            if casefold {
+                                for r_ch in low..=high {
+                                    if test_ch == r_ch.to_ascii_lowercase() {
+                                        matched = true;
+                                        break;
+                                    }
+                                }
                             } else {
-                                low
-                            };
-                            let high_cmp = if casefold {
-                                high.to_ascii_lowercase()
-                            } else {
-                                high
-                            };
-                            if test_ch >= low_cmp && test_ch <= high_cmp {
-                                matched = true;
+                                if test_ch >= low && test_ch <= high {
+                                    matched = true;
+                                }
                             }
                         } else {
                             let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
@@ -494,6 +493,9 @@ mod tests {
         assert!(m("hello", "HELLO", f));
         assert!(!m("HELLO", "hello", FnmatchFlags::NONE));
         assert!(m("[a-z]", "M", f));
+        // Testing tricky range with casefold
+        assert!(m("[Z-a]", "z", f));
+        assert!(m("[Z-a]", "[", f));
     }
 
     #[test]

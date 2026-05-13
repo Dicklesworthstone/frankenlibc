@@ -1243,10 +1243,13 @@ impl<'a> PikeVm<'a> {
                 for &(lo, hi) in ranges.iter() {
                     if *icase {
                         let ch_lo = ch.to_ascii_lowercase();
-                        let lo_lo = lo.to_ascii_lowercase();
-                        let hi_lo = hi.to_ascii_lowercase();
-                        if ch_lo >= lo_lo && ch_lo <= hi_lo {
-                            found = true;
+                        for r_ch in lo..=hi {
+                            if ch_lo == r_ch.to_ascii_lowercase() {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if found {
                             break;
                         }
                     } else if ch >= lo && ch <= hi {
