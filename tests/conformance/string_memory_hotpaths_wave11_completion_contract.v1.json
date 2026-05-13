@@ -1,0 +1,132 @@
+{
+  "schema_version": "string_memory_hotpaths_wave11_completion_contract.v1",
+  "bead_id": "bd-trfzu",
+  "trace_id": "bd-trfzu::string-memory-hotpaths-wave11::completion::v1",
+  "description": "Completion contract binding the string/memory wave-11 fixture, executor support, refreshed coverage truth, structured telemetry, and remote-rch validation commands.",
+  "source_artifacts": [
+    {
+      "id": "beads_ledger",
+      "kind": "tracker",
+      "path": ".beads/issues.jsonl",
+      "evidence": "Tracker row for bd-trfzu and closeout reason."
+    },
+    {
+      "id": "string_wave11_fixture",
+      "kind": "fixture",
+      "path": "tests/conformance/fixtures/string_memory_hotpaths_wave11.json",
+      "evidence": "Strict and hardened deterministic fixtures for the 12 completed string/memory wave-11 symbols."
+    },
+    {
+      "id": "fixture_executor",
+      "kind": "rust_source",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "evidence": "execute_fixture_case dispatch and deterministic string/memory wave-11 fixture executor."
+    },
+    {
+      "id": "string_wave11_harness_test",
+      "kind": "rust_test",
+      "path": "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave11_conformance_test.rs",
+      "evidence": "Harness tests for wave-11 fixture schema, both-mode coverage, structured logs, and isolated execution."
+    },
+    {
+      "id": "symbol_fixture_coverage",
+      "kind": "coverage_artifact",
+      "path": "tests/conformance/symbol_fixture_coverage.v1.json",
+      "evidence": "Canonical coverage artifact refreshed by bd-y4aj6 after wave-10 and wave-11 landed."
+    },
+    {
+      "id": "per_symbol_fixture_tests",
+      "kind": "coverage_artifact",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "evidence": "Per-symbol fixture rows linking every wave-11 symbol to string_memory_hotpaths_wave11.json."
+    },
+    {
+      "id": "fixture_coverage_prioritizer",
+      "kind": "coverage_artifact",
+      "path": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+      "evidence": "Campaign prioritizer no longer lists completed wave-11 symbols as next first-wave work."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "contract",
+      "path": "tests/conformance/string_memory_hotpaths_wave11_completion_contract.v1.json",
+      "evidence": "Machine-readable binding for bd-trfzu completion obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "checker",
+      "path": "scripts/check_string_memory_hotpaths_wave11_completion_contract.sh",
+      "evidence": "Fail-closed checker for source bindings, coverage accounting, telemetry, and remote-rch validation commands."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "rust_test",
+      "path": "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave11_completion_contract_test.rs",
+      "evidence": "Rust harness tests for the wave-11 completion contract and negative drift signatures."
+    }
+  ],
+  "completion_contract": {
+    "campaign_id": "fcq-string-memory-hotpaths",
+    "wave_id": "wave-11-string-memory-hotpaths",
+    "source_fixture_commit": "4dcd65f9",
+    "coverage_refresh_commit": "eb256972",
+    "coverage_close_commit": "650e6ad8",
+    "fixture_file": "tests/conformance/fixtures/string_memory_hotpaths_wave11.json",
+    "harness_test": "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave11_conformance_test.rs",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_first_wave_symbols": [
+      "memset_explicit",
+      "rindex",
+      "strchrnul",
+      "strerrordesc_np",
+      "strerrorname_np",
+      "strfromd",
+      "strfromf",
+      "strfroml",
+      "strmode",
+      "swab",
+      "timingsafe_bcmp",
+      "timingsafe_memcmp"
+    ],
+    "expected_fixture_case_count": 24,
+    "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture",
+    "expected_coverage": {
+      "string_target_covered": 113,
+      "string_target_uncovered": 33,
+      "string_current_coverage_pct": 77.4,
+      "total_target_covered": 559,
+      "total_target_uncovered": 3560,
+      "per_symbol_symbols_with_fixtures": 557,
+      "per_symbol_total_cases": 1592
+    },
+    "required_positive_tests": [
+      "contract_binds_string_wave11_sources",
+      "checker_accepts_string_wave11_completion_contract",
+      "checker_emits_structured_string_wave11_telemetry"
+    ],
+    "required_negative_tests": [
+      "checker_rejects_missing_string_wave11_fixture_symbol",
+      "checker_rejects_stale_string_wave11_coverage_accounting",
+      "checker_rejects_non_remote_rch_cargo_validation_command",
+      "checker_rejects_missing_required_telemetry_event"
+    ],
+    "required_telemetry_events": [
+      "source_artifacts_validated",
+      "string_wave11_fixture_validated",
+      "coverage_accounting_validated",
+      "validation_commands_validated",
+      "test_surfaces_validated",
+      "telemetry_contract_validated",
+      "string_wave11_completion_contract_validated"
+    ],
+    "required_validation_commands": [
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_string_wave11_completion_test cargo test -p frankenlibc-harness --test string_memory_hotpaths_wave11_completion_contract_test -- --nocapture",
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_string_wave11_completion_check cargo check -p frankenlibc-harness --test string_memory_hotpaths_wave11_completion_contract_test",
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_string_wave11_completion_clippy cargo clippy -p frankenlibc-harness --test string_memory_hotpaths_wave11_completion_contract_test -- -D warnings",
+      "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_string_wave11_conformance cargo test -p frankenlibc-harness --test string_memory_hotpaths_wave11_conformance_test -- --nocapture"
+    ]
+  }
+}
