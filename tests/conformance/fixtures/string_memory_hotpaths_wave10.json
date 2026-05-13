@@ -1,0 +1,460 @@
+{
+  "version": "v1",
+  "family": "string_memory_hotpaths_wave10",
+  "captured_at": "2026-05-13T03:18:00Z",
+  "description": "Strict/hardened deterministic fixture wave for the refreshed string/memory hot-path frontier without recording pointers, allocation addresses, errno buffers, file descriptors, or process-global state.",
+  "spec_reference": "GNU/POSIX argz_create, bcmp, bcopy, bzero, consttime_bcmp, consttime_memequal, explicit_bzero, explicit_memset, globfree, index, memccpy, and memmem semantics",
+  "campaign": {
+    "bead": "pending-string-memory-wave10",
+    "campaign_id": "fcq-string-memory-hotpaths",
+    "wave_id": "wave-10-string-memory-hotpaths",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture",
+    "first_wave_symbols": [
+      "argz_create",
+      "bcmp",
+      "bcopy",
+      "bzero",
+      "consttime_bcmp",
+      "consttime_memequal",
+      "explicit_bzero",
+      "explicit_memset",
+      "globfree",
+      "index",
+      "memccpy",
+      "memmem"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "argz_create_three_arguments_strict",
+      "function": "argz_create",
+      "spec_section": "GNU libc argz_create",
+      "inputs": {
+        "symbol": "argz_create",
+        "scenario": "create_from_argument_vector",
+        "argv": "alpha|beta|gamma",
+        "expected": "ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma",
+        "oracle_source": "GNU argz_create pointer-free vector model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_create;mode=strict;expected=ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma;actual=ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argz_create_three_arguments_hardened",
+      "function": "argz_create",
+      "spec_section": "GNU libc argz_create",
+      "inputs": {
+        "symbol": "argz_create",
+        "scenario": "create_from_argument_vector",
+        "argv": "alpha|beta|gamma",
+        "expected": "ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma",
+        "oracle_source": "GNU argz_create pointer-free vector model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_create;mode=hardened;expected=ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma;actual=ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "bcmp_detects_difference_strict",
+      "function": "bcmp",
+      "spec_section": "BSD bcmp",
+      "inputs": {
+        "symbol": "bcmp",
+        "scenario": "difference_in_compared_prefix",
+        "lhs": "agentic",
+        "rhs": "agentix",
+        "n": 7,
+        "expected": "BCMP_1",
+        "oracle_source": "BSD bcmp normalized nonzero model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=bcmp;mode=strict;expected=BCMP_1;actual=BCMP_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "bcmp_detects_difference_hardened",
+      "function": "bcmp",
+      "spec_section": "BSD bcmp",
+      "inputs": {
+        "symbol": "bcmp",
+        "scenario": "difference_in_compared_prefix",
+        "lhs": "agentic",
+        "rhs": "agentix",
+        "n": 7,
+        "expected": "BCMP_1",
+        "oracle_source": "BSD bcmp normalized nonzero model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=bcmp;mode=hardened;expected=BCMP_1;actual=BCMP_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "bcopy_copies_source_prefix_strict",
+      "function": "bcopy",
+      "spec_section": "BSD bcopy",
+      "inputs": {
+        "symbol": "bcopy",
+        "scenario": "copy_prefix_into_destination",
+        "src": "move",
+        "dst_init": "........",
+        "n": 4,
+        "expected": "BCOPY_LEN_8_COPIED_4_TEXT_move....",
+        "oracle_source": "BSD bcopy memmove-equivalent pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=bcopy;mode=strict;expected=BCOPY_LEN_8_COPIED_4_TEXT_move....;actual=BCOPY_LEN_8_COPIED_4_TEXT_move....;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "bcopy_copies_source_prefix_hardened",
+      "function": "bcopy",
+      "spec_section": "BSD bcopy",
+      "inputs": {
+        "symbol": "bcopy",
+        "scenario": "copy_prefix_into_destination",
+        "src": "move",
+        "dst_init": "........",
+        "n": 4,
+        "expected": "BCOPY_LEN_8_COPIED_4_TEXT_move....",
+        "oracle_source": "BSD bcopy memmove-equivalent pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=bcopy;mode=hardened;expected=BCOPY_LEN_8_COPIED_4_TEXT_move....;actual=BCOPY_LEN_8_COPIED_4_TEXT_move....;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "bzero_zeroes_prefix_strict",
+      "function": "bzero",
+      "spec_section": "BSD bzero",
+      "inputs": {
+        "symbol": "bzero",
+        "scenario": "zero_prefix_without_capture",
+        "buffer": "ABCDxyz",
+        "n": 3,
+        "expected": "BZERO_LEN_7_ZEROED_3_HEX_0000004478797a",
+        "oracle_source": "BSD bzero byte-zeroing model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=bzero;mode=strict;expected=BZERO_LEN_7_ZEROED_3_HEX_0000004478797a;actual=BZERO_LEN_7_ZEROED_3_HEX_0000004478797a;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "bzero_zeroes_prefix_hardened",
+      "function": "bzero",
+      "spec_section": "BSD bzero",
+      "inputs": {
+        "symbol": "bzero",
+        "scenario": "zero_prefix_without_capture",
+        "buffer": "ABCDxyz",
+        "n": 3,
+        "expected": "BZERO_LEN_7_ZEROED_3_HEX_0000004478797a",
+        "oracle_source": "BSD bzero byte-zeroing model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=bzero;mode=hardened;expected=BZERO_LEN_7_ZEROED_3_HEX_0000004478797a;actual=BZERO_LEN_7_ZEROED_3_HEX_0000004478797a;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "consttime_bcmp_detects_difference_strict",
+      "function": "consttime_bcmp",
+      "spec_section": "constant-time bcmp",
+      "inputs": {
+        "symbol": "consttime_bcmp",
+        "scenario": "constant_time_difference",
+        "lhs": "token-a",
+        "rhs": "token-b",
+        "n": 7,
+        "expected": "CT_BCMP_1",
+        "oracle_source": "constant-time bcmp normalized model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=consttime_bcmp;mode=strict;expected=CT_BCMP_1;actual=CT_BCMP_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "consttime_bcmp_detects_difference_hardened",
+      "function": "consttime_bcmp",
+      "spec_section": "constant-time bcmp",
+      "inputs": {
+        "symbol": "consttime_bcmp",
+        "scenario": "constant_time_difference",
+        "lhs": "token-a",
+        "rhs": "token-b",
+        "n": 7,
+        "expected": "CT_BCMP_1",
+        "oracle_source": "constant-time bcmp normalized model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=consttime_bcmp;mode=hardened;expected=CT_BCMP_1;actual=CT_BCMP_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "consttime_memequal_reports_equal_strict",
+      "function": "consttime_memequal",
+      "spec_section": "constant-time memequal",
+      "inputs": {
+        "symbol": "consttime_memequal",
+        "scenario": "constant_time_equality",
+        "lhs": "same-tag",
+        "rhs": "same-tag",
+        "n": 8,
+        "expected": "CT_MEMEQUAL_1",
+        "oracle_source": "constant-time equality model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=consttime_memequal;mode=strict;expected=CT_MEMEQUAL_1;actual=CT_MEMEQUAL_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "consttime_memequal_reports_equal_hardened",
+      "function": "consttime_memequal",
+      "spec_section": "constant-time memequal",
+      "inputs": {
+        "symbol": "consttime_memequal",
+        "scenario": "constant_time_equality",
+        "lhs": "same-tag",
+        "rhs": "same-tag",
+        "n": 8,
+        "expected": "CT_MEMEQUAL_1",
+        "oracle_source": "constant-time equality model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=consttime_memequal;mode=hardened;expected=CT_MEMEQUAL_1;actual=CT_MEMEQUAL_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "explicit_bzero_zeroes_secret_prefix_strict",
+      "function": "explicit_bzero",
+      "spec_section": "POSIX explicit_bzero",
+      "inputs": {
+        "symbol": "explicit_bzero",
+        "scenario": "zero_secret_prefix",
+        "buffer": "secret!!",
+        "n": 6,
+        "expected": "EXPLICIT_BZERO_LEN_8_ZEROED_6_HEX_0000000000002121",
+        "oracle_source": "explicit_bzero non-elidable byte-zeroing model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=explicit_bzero;mode=strict;expected=EXPLICIT_BZERO_LEN_8_ZEROED_6_HEX_0000000000002121;actual=EXPLICIT_BZERO_LEN_8_ZEROED_6_HEX_0000000000002121;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "explicit_bzero_zeroes_secret_prefix_hardened",
+      "function": "explicit_bzero",
+      "spec_section": "POSIX explicit_bzero",
+      "inputs": {
+        "symbol": "explicit_bzero",
+        "scenario": "zero_secret_prefix",
+        "buffer": "secret!!",
+        "n": 6,
+        "expected": "EXPLICIT_BZERO_LEN_8_ZEROED_6_HEX_0000000000002121",
+        "oracle_source": "explicit_bzero non-elidable byte-zeroing model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=explicit_bzero;mode=hardened;expected=EXPLICIT_BZERO_LEN_8_ZEROED_6_HEX_0000000000002121;actual=EXPLICIT_BZERO_LEN_8_ZEROED_6_HEX_0000000000002121;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "explicit_memset_sets_prefix_strict",
+      "function": "explicit_memset",
+      "spec_section": "NetBSD explicit_memset",
+      "inputs": {
+        "symbol": "explicit_memset",
+        "scenario": "set_prefix_with_nonzero_byte",
+        "buffer": "config",
+        "value": "*",
+        "n": 3,
+        "expected": "EXPLICIT_MEMSET_LEN_6_SET_3_HEX_2a2a2a666967",
+        "oracle_source": "explicit_memset non-elidable byte-fill model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=explicit_memset;mode=strict;expected=EXPLICIT_MEMSET_LEN_6_SET_3_HEX_2a2a2a666967;actual=EXPLICIT_MEMSET_LEN_6_SET_3_HEX_2a2a2a666967;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "explicit_memset_sets_prefix_hardened",
+      "function": "explicit_memset",
+      "spec_section": "NetBSD explicit_memset",
+      "inputs": {
+        "symbol": "explicit_memset",
+        "scenario": "set_prefix_with_nonzero_byte",
+        "buffer": "config",
+        "value": "*",
+        "n": 3,
+        "expected": "EXPLICIT_MEMSET_LEN_6_SET_3_HEX_2a2a2a666967",
+        "oracle_source": "explicit_memset non-elidable byte-fill model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=explicit_memset;mode=hardened;expected=EXPLICIT_MEMSET_LEN_6_SET_3_HEX_2a2a2a666967;actual=EXPLICIT_MEMSET_LEN_6_SET_3_HEX_2a2a2a666967;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "globfree_releases_path_vector_strict",
+      "function": "globfree",
+      "spec_section": "POSIX globfree",
+      "inputs": {
+        "symbol": "globfree",
+        "scenario": "release_two_path_matches",
+        "paths": "src/*.rs|tests/*.rs",
+        "flags": 0,
+        "expected": "GLOBFREE_COUNT_2_FLAGS_0",
+        "oracle_source": "globfree ownership-release summary model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=globfree;mode=strict;expected=GLOBFREE_COUNT_2_FLAGS_0;actual=GLOBFREE_COUNT_2_FLAGS_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "globfree_releases_path_vector_hardened",
+      "function": "globfree",
+      "spec_section": "POSIX globfree",
+      "inputs": {
+        "symbol": "globfree",
+        "scenario": "release_two_path_matches",
+        "paths": "src/*.rs|tests/*.rs",
+        "flags": 0,
+        "expected": "GLOBFREE_COUNT_2_FLAGS_0",
+        "oracle_source": "globfree ownership-release summary model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=globfree;mode=hardened;expected=GLOBFREE_COUNT_2_FLAGS_0;actual=GLOBFREE_COUNT_2_FLAGS_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "index_finds_first_character_strict",
+      "function": "index",
+      "spec_section": "BSD index",
+      "inputs": {
+        "symbol": "index",
+        "scenario": "find_first_character",
+        "s": "frankenlibc",
+        "c": "l",
+        "expected": "INDEX_OFFSET_7",
+        "oracle_source": "BSD index strchr-equivalent pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=index;mode=strict;expected=INDEX_OFFSET_7;actual=INDEX_OFFSET_7;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "index_finds_first_character_hardened",
+      "function": "index",
+      "spec_section": "BSD index",
+      "inputs": {
+        "symbol": "index",
+        "scenario": "find_first_character",
+        "s": "frankenlibc",
+        "c": "l",
+        "expected": "INDEX_OFFSET_7",
+        "oracle_source": "BSD index strchr-equivalent pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=index;mode=hardened;expected=INDEX_OFFSET_7;actual=INDEX_OFFSET_7;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "memccpy_stops_after_delimiter_strict",
+      "function": "memccpy",
+      "spec_section": "POSIX memccpy",
+      "inputs": {
+        "symbol": "memccpy",
+        "scenario": "copy_through_delimiter",
+        "src": "alpha:beta",
+        "dst_len": 12,
+        "c": ":",
+        "n": 10,
+        "expected": "MEMCCPY_RETURN_6_LEN_12_HEX_616c7068613a000000000000",
+        "oracle_source": "POSIX memccpy delimiter-stop model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=memccpy;mode=strict;expected=MEMCCPY_RETURN_6_LEN_12_HEX_616c7068613a000000000000;actual=MEMCCPY_RETURN_6_LEN_12_HEX_616c7068613a000000000000;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "memccpy_stops_after_delimiter_hardened",
+      "function": "memccpy",
+      "spec_section": "POSIX memccpy",
+      "inputs": {
+        "symbol": "memccpy",
+        "scenario": "copy_through_delimiter",
+        "src": "alpha:beta",
+        "dst_len": 12,
+        "c": ":",
+        "n": 10,
+        "expected": "MEMCCPY_RETURN_6_LEN_12_HEX_616c7068613a000000000000",
+        "oracle_source": "POSIX memccpy delimiter-stop model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=memccpy;mode=hardened;expected=MEMCCPY_RETURN_6_LEN_12_HEX_616c7068613a000000000000;actual=MEMCCPY_RETURN_6_LEN_12_HEX_616c7068613a000000000000;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "memmem_finds_embedded_needle_strict",
+      "function": "memmem",
+      "spec_section": "GNU libc memmem",
+      "inputs": {
+        "symbol": "memmem",
+        "scenario": "find_embedded_needle",
+        "haystack": "needle in haystack",
+        "needle": "hay",
+        "n": 18,
+        "expected": "MEMMEM_OFFSET_10",
+        "oracle_source": "GNU memmem byte-window model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=memmem;mode=strict;expected=MEMMEM_OFFSET_10;actual=MEMMEM_OFFSET_10;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "memmem_finds_embedded_needle_hardened",
+      "function": "memmem",
+      "spec_section": "GNU libc memmem",
+      "inputs": {
+        "symbol": "memmem",
+        "scenario": "find_embedded_needle",
+        "haystack": "needle in haystack",
+        "needle": "hay",
+        "n": 18,
+        "expected": "MEMMEM_OFFSET_10",
+        "oracle_source": "GNU memmem byte-window model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=memmem;mode=hardened;expected=MEMMEM_OFFSET_10;actual=MEMMEM_OFFSET_10;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

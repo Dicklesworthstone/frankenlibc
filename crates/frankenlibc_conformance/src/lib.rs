@@ -505,6 +505,7 @@ pub fn execute_fixture_case(
         | "__argz_next"
         | "__argz_stringify"
         | "__bzero"
+        | "argz_create"
         | "argz_add"
         | "argz_add_sep"
         | "argz_append"
@@ -521,7 +522,18 @@ pub fn execute_fixture_case(
         | "envz_get"
         | "envz_merge"
         | "envz_remove"
-        | "envz_strip" => execute_string_memory_hotpaths_case(function, inputs, mode),
+        | "envz_strip"
+        | "bcmp"
+        | "bcopy"
+        | "bzero"
+        | "consttime_bcmp"
+        | "consttime_memequal"
+        | "explicit_bzero"
+        | "explicit_memset"
+        | "globfree"
+        | "index"
+        | "memccpy"
+        | "memmem" => execute_string_memory_hotpaths_case(function, inputs, mode),
         "strcmp" => execute_strcmp_case(inputs, mode),
         "strcpy" => execute_strcpy_case(inputs, mode),
         "strncpy" => execute_strncpy_case(inputs, mode),
@@ -7966,6 +7978,10 @@ fn string_memory_hotpath_actual(
             let needed = frankenlibc_core::string::str::strxfrm(&mut dst, &input, n);
             Ok(format!("XFRM_LEN_{needed}_TEXT_{}", c_fixture_text(&dst)))
         }
+        "argz_create" => {
+            let entries = parse_argz_entries(&parse_string(inputs, "argv")?);
+            Ok(argz_summary(&entries))
+        }
         "argz_add" => {
             let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
             let entry = parse_string(inputs, "entry")?;
@@ -8076,6 +8092,103 @@ fn string_memory_hotpath_actual(
                 zeroed,
                 string_hotpath_hex(&bytes)
             ))
+        }
+        "bcmp" => {
+            let lhs = parse_string(inputs, "lhs")?.into_bytes();
+            let rhs = parse_string(inputs, "rhs")?.into_bytes();
+            let n = parse_usize(inputs, "n")?;
+            Ok(format!(
+                "BCMP_{}",
+                frankenlibc_core::string::bcmp(&lhs, &rhs, n)
+            ))
+        }
+        "bcopy" => {
+            let src = parse_string(inputs, "src")?.into_bytes();
+            let mut dst = parse_string(inputs, "dst_init")?.into_bytes();
+            let n = parse_usize(inputs, "n")?;
+            let copied = frankenlibc_core::string::memmove(&mut dst, &src, n);
+            Ok(format!(
+                "BCOPY_LEN_{}_COPIED_{}_TEXT_{}",
+                dst.len(),
+                copied,
+                String::from_utf8_lossy(&dst)
+            ))
+        }
+        "bzero" | "explicit_bzero" => {
+            let mut bytes = parse_string(inputs, "buffer")?.into_bytes();
+            let requested = parse_usize(inputs, "n")?;
+            let zeroed = requested.min(bytes.len());
+            frankenlibc_core::string::bzero(&mut bytes, requested);
+            Ok(format!(
+                "{}_LEN_{}_ZEROED_{}_HEX_{}",
+                function.to_ascii_uppercase(),
+                bytes.len(),
+                zeroed,
+                string_hotpath_hex(&bytes)
+            ))
+        }
+        "consttime_bcmp" => {
+            let lhs = parse_string(inputs, "lhs")?.into_bytes();
+            let rhs = parse_string(inputs, "rhs")?.into_bytes();
+            let n = parse_usize(inputs, "n")?;
+            Ok(format!(
+                "CT_BCMP_{}",
+                frankenlibc_core::string::timingsafe::bcmp(&lhs, &rhs, n)
+            ))
+        }
+        "consttime_memequal" => {
+            let lhs = parse_string(inputs, "lhs")?.into_bytes();
+            let rhs = parse_string(inputs, "rhs")?.into_bytes();
+            let n = parse_usize(inputs, "n")?;
+            let equal = frankenlibc_core::string::timingsafe::bcmp(&lhs, &rhs, n) == 0;
+            Ok(format!("CT_MEMEQUAL_{}", usize::from(equal)))
+        }
+        "explicit_memset" => {
+            let mut bytes = parse_string(inputs, "buffer")?.into_bytes();
+            let value = parse_ascii_byte(inputs, "value")?;
+            let requested = parse_usize(inputs, "n")?;
+            let set = frankenlibc_core::string::memset(&mut bytes, value, requested);
+            Ok(format!(
+                "EXPLICIT_MEMSET_LEN_{}_SET_{}_HEX_{}",
+                bytes.len(),
+                set,
+                string_hotpath_hex(&bytes)
+            ))
+        }
+        "globfree" => {
+            let paths = parse_argz_entries(&parse_string(inputs, "paths")?);
+            let flags = parse_i32(inputs, "flags")?;
+            Ok(format!("GLOBFREE_COUNT_{}_FLAGS_{flags}", paths.len()))
+        }
+        "index" => {
+            let s = nul_terminated_bytes(&parse_string(inputs, "s")?);
+            let needle = parse_ascii_byte(inputs, "c")?;
+            Ok(match frankenlibc_core::string::str::strchr(&s, needle) {
+                Some(offset) => format!("INDEX_OFFSET_{offset}"),
+                None => String::from("INDEX_NULL"),
+            })
+        }
+        "memccpy" => {
+            let src = parse_string(inputs, "src")?.into_bytes();
+            let mut dst = vec![0_u8; parse_usize(inputs, "dst_len")?];
+            let c = parse_ascii_byte(inputs, "c")?;
+            let n = parse_usize(inputs, "n")?;
+            let returned = frankenlibc_core::string::memccpy(&mut dst, &src, c, n)
+                .map_or_else(|| String::from("NULL"), |offset| offset.to_string());
+            Ok(format!(
+                "MEMCCPY_RETURN_{}_LEN_{}_HEX_{}",
+                returned,
+                dst.len(),
+                string_hotpath_hex(&dst)
+            ))
+        }
+        "memmem" => {
+            let haystack = parse_string(inputs, "haystack")?.into_bytes();
+            let needle = parse_string(inputs, "needle")?.into_bytes();
+            let n = parse_usize(inputs, "n")?;
+            let offset = frankenlibc_core::string::memmem(&haystack, n, &needle, needle.len())
+                .map_or_else(|| String::from("NULL"), |offset| offset.to_string());
+            Ok(format!("MEMMEM_OFFSET_{offset}"))
         }
         "envz_entry" => {
             let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
