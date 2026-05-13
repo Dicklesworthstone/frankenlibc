@@ -1,0 +1,83 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "derive-policy-key-cli-contract",
+  "bead": "bd-87vkk",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "a66f4109a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that composes frankenlibc_membrane::runtime_math::policy_table::{risk_bucket_v1, budget_bucket_v1, consistency_bucket_v1, key_v1_index} into a single CLI for discretizing a runtime control decision's continuous state onto a u32 row index into the Policy Compaction Profile Table. Previously the four bucket helpers were reachable only from Rust callers; the CLI bridge lets CI verify the discretization pipeline + key index math without compiling.",
+  "subcommand_name": "derive-policy-key",
+  "binary_target": "harness",
+  "required_flags": [
+    "--mode",
+    "--family",
+    "--risk-ppm",
+    "--output"
+  ],
+  "optional_flags": [
+    "--fast-over-budget",
+    "--full-over-budget",
+    "--pareto-exhausted",
+    "--consistency-faults"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::runtime_math::policy_table::risk_bucket_v1",
+    "frankenlibc_membrane::runtime_math::policy_table::budget_bucket_v1",
+    "frankenlibc_membrane::runtime_math::policy_table::consistency_bucket_v1",
+    "frankenlibc_membrane::runtime_math::policy_table::key_v1_index"
+  ],
+  "discretization_constants": {
+    "risk_buckets": 16,
+    "budget_buckets": 8,
+    "consistency_buckets": 4,
+    "api_family_count": 20,
+    "mode_count": 2,
+    "total_table_len": 20480
+  },
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "policy_key",
+    "required_fields": [
+      "kind",
+      "mode",
+      "family",
+      "risk_ppm",
+      "fast_over_budget",
+      "full_over_budget",
+      "pareto_exhausted",
+      "consistency_faults",
+      "risk_bucket",
+      "budget_bucket",
+      "consistency_bucket",
+      "key_index"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "risk_bucket_in_0_15": true,
+    "budget_bucket_in_0_7": true,
+    "consistency_bucket_in_0_3": true,
+    "key_index_below_total_table_len": true,
+    "mode_off_maps_to_same_index_as_strict": true,
+    "deterministic_given_inputs": true,
+    "fail_closed_on_unknown_mode": true,
+    "fail_closed_on_unknown_family": true,
+    "risk_ppm_zero_yields_bucket_zero": true,
+    "risk_ppm_999999_yields_bucket_15": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "key_index_above_table_len",
+    "bucket_out_of_range",
+    "off_and_strict_diverge",
+    "non_deterministic_output",
+    "unknown_mode_accepted",
+    "unknown_family_accepted"
+  ],
+  "summary": {
+    "bead": "bd-87vkk",
+    "subcommand": "derive-policy-key",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}

@@ -769,6 +769,42 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Discretize a runtime control decision's continuous state onto
+    /// a single u32 row index into the Policy Compaction Profile
+    /// Table, via the pipeline
+    /// `policy_table::{risk_bucket_v1, budget_bucket_v1,
+    /// consistency_bucket_v1, key_v1_index}`. Emits one
+    /// policy_key JSONL record with every intermediate bucket plus
+    /// the final key_index.
+    DerivePolicyKey {
+        /// Safety level: strict | hardened | off.
+        #[arg(long)]
+        mode: String,
+        /// ApiFamily enum name: PointerValidation | Allocator |
+        /// StringMemory | Stdio | Threading | Resolver | MathFenv |
+        /// Loader | Stdlib | Ctype | Time | Signal | IoFd | Socket |
+        /// Locale | Termios | Inet | Process | VirtualMemory | Poll.
+        #[arg(long)]
+        family: String,
+        /// Risk in parts per million (0..=1_000_000).
+        #[arg(long)]
+        risk_ppm: u32,
+        /// Fast-path over budget flag.
+        #[arg(long, default_value_t = false)]
+        fast_over_budget: bool,
+        /// Full-pipeline over budget flag.
+        #[arg(long, default_value_t = false)]
+        full_over_budget: bool,
+        /// Pareto-exhausted flag.
+        #[arg(long, default_value_t = false)]
+        pareto_exhausted: bool,
+        /// Consistency-fault count.
+        #[arg(long, default_value_t = 0_u64)]
+        consistency_faults: u64,
+        /// Output JSONL path: one policy_key record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Derive a deterministic repair schedule for a single repair
     /// symbol via
     /// `frankenlibc_membrane::runtime_math::evidence::derive_repair_schedule_v1`.
@@ -2651,6 +2687,89 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::DerivePolicyKey {
+            mode,
+            family,
+            risk_ppm,
+            fast_over_budget,
+            full_over_budget,
+            pareto_exhausted,
+            consistency_faults,
+            output,
+        } => {
+            use frankenlibc_membrane::config::SafetyLevel;
+            use frankenlibc_membrane::runtime_math::ApiFamily;
+            use frankenlibc_membrane::runtime_math::policy_table::{
+                budget_bucket_v1, consistency_bucket_v1, key_v1_index, risk_bucket_v1,
+            };
+            let safety_level = match mode.to_ascii_lowercase().as_str() {
+                "strict" => SafetyLevel::Strict,
+                "hardened" => SafetyLevel::Hardened,
+                "off" => SafetyLevel::Off,
+                _ => {
+                    return Err(format!("--mode must be strict|hardened|off; got {mode:?}").into());
+                }
+            };
+            let api_family = match family.as_str() {
+                "PointerValidation" => ApiFamily::PointerValidation,
+                "Allocator" => ApiFamily::Allocator,
+                "StringMemory" => ApiFamily::StringMemory,
+                "Stdio" => ApiFamily::Stdio,
+                "Threading" => ApiFamily::Threading,
+                "Resolver" => ApiFamily::Resolver,
+                "MathFenv" => ApiFamily::MathFenv,
+                "Loader" => ApiFamily::Loader,
+                "Stdlib" => ApiFamily::Stdlib,
+                "Ctype" => ApiFamily::Ctype,
+                "Time" => ApiFamily::Time,
+                "Signal" => ApiFamily::Signal,
+                "IoFd" => ApiFamily::IoFd,
+                "Socket" => ApiFamily::Socket,
+                "Locale" => ApiFamily::Locale,
+                "Termios" => ApiFamily::Termios,
+                "Inet" => ApiFamily::Inet,
+                "Process" => ApiFamily::Process,
+                "VirtualMemory" => ApiFamily::VirtualMemory,
+                "Poll" => ApiFamily::Poll,
+                _ => return Err(format!("--family unknown ApiFamily: {family:?}").into()),
+            };
+            let risk_bucket = risk_bucket_v1(risk_ppm);
+            let budget_bucket =
+                budget_bucket_v1(fast_over_budget, full_over_budget, pareto_exhausted);
+            let consistency_bucket = consistency_bucket_v1(consistency_faults);
+            let key_index = key_v1_index(
+                safety_level,
+                api_family,
+                risk_bucket,
+                budget_bucket,
+                consistency_bucket,
+            );
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "policy_key",
+                "mode": mode,
+                "family": family,
+                "risk_ppm": risk_ppm,
+                "fast_over_budget": fast_over_budget,
+                "full_over_budget": full_over_budget,
+                "pareto_exhausted": pareto_exhausted,
+                "consistency_faults": consistency_faults,
+                "risk_bucket": risk_bucket,
+                "budget_bucket": budget_bucket,
+                "consistency_bucket": consistency_bucket,
+                "key_index": key_index,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "derive-policy-key: mode={mode} family={family} → risk_bucket={risk_bucket} budget_bucket={budget_bucket} consistency_bucket={consistency_bucket} key_index={key_index}"
+            );
         }
         Command::DeriveRepairSchedule {
             epoch_seed,
