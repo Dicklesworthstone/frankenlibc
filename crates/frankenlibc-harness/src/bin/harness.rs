@@ -653,6 +653,26 @@ enum Command {
         #[arg(long)]
         mode: String,
     },
+    /// Stress the production `EvidenceRingBuffer<CAP>` past
+    /// capacity (bd-9nyo2) and emit a single RealRingReport as JSONL.
+    /// CAP is selected by the `--cap` flag (one of 32, 128, 1024).
+    EvidenceRingStress {
+        /// Deterministic payload-byte seed: writes `(seed ^ i) as u8`.
+        #[arg(long, default_value_t = 0xc0ffee_u64)]
+        seed: u64,
+        /// Number of CAPs to push (must be >= 2).
+        #[arg(long, default_value_t = 4_u64)]
+        multiple: u64,
+        /// EvidenceRingBuffer capacity. One of 32, 128, 1024.
+        #[arg(long, default_value_t = 32_usize)]
+        cap: usize,
+        /// 40-char hex SHA stamped on the report.
+        #[arg(long)]
+        source_commit: String,
+        /// Output JSONL path: one RealRingReport record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Drive a paired-lane live measurement (bd-juvqm.3 / bd-8b70o /
     /// bd-vmp2v) and emit JSONL with one LiveMeasurementRow per lane
     /// plus a single P99Delta record. Uses
@@ -1758,6 +1778,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     format!("failed to exec /bin/true after case output: {exec_err}").into(),
                 );
             }
+        }
+        Command::EvidenceRingStress {
+            seed,
+            multiple,
+            cap,
+            source_commit,
+            output,
+        } => {
+            use frankenlibc_harness::evidence_ring_backpressure::{
+                run_real_ring_stress, serialize_real_ring_report_jsonl,
+            };
+            let sha_ok =
+                source_commit.len() == 40 && source_commit.chars().all(|c| c.is_ascii_hexdigit());
+            if !sha_ok {
+                return Err(format!(
+                    "--source-commit must be a 40-char ascii-hex SHA; got {source_commit:?}"
+                )
+                .into());
+            }
+            if multiple < 2 {
+                return Err(format!(
+                    "--multiple must be >= 2 (the ring needs at least two CAPs of pushes to evict); got {multiple}"
+                )
+                .into());
+            }
+            // CAP must be a const generic — dispatch on the supported set.
+            let report = match cap {
+                32 => run_real_ring_stress::<32>(seed, multiple, &source_commit),
+                128 => run_real_ring_stress::<128>(seed, multiple, &source_commit),
+                1024 => run_real_ring_stress::<1024>(seed, multiple, &source_commit),
+                other => {
+                    return Err(format!("--cap must be one of 32, 128, 1024; got {other}").into());
+                }
+            };
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut body = serialize_real_ring_report_jsonl(&report);
+            if !body.ends_with('\n') {
+                body.push('\n');
+            }
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "evidence-ring-stress: cap={cap} multiple={multiple} → wrote 1 RealRingReport JSONL record to {}",
+                output.display()
+            );
         }
         Command::LiveMeasurement {
             profile_id,

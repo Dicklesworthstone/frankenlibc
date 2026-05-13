@@ -1,0 +1,44 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "evidence-ring-stress-cli-contract",
+  "bead": "bd-vp6xi",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "f175db5e59ad5c54edbf190c02ab3e4fcc20fe1a",
+  "purpose": "Pin the harness binary subcommand that stresses the production EvidenceRingBuffer past capacity and emits a RealRingReport as JSONL. Previously bd-9nyo2 shipped lib-level run_real_ring_stress over the const-generic ring with serialize/validate helpers, but only the conformance harness test called it. The CLI subcommand makes the stress driver invokable from rch cargo run and from CI runners without writing Rust.",
+  "subcommand_name": "evidence-ring-stress",
+  "binary_target": "harness",
+  "required_flags": [
+    "--seed",
+    "--multiple",
+    "--cap",
+    "--source-commit",
+    "--output"
+  ],
+  "supported_cap_values": [32, 128, 1024],
+  "underlying_lib_function": "frankenlibc_harness::evidence_ring_backpressure::run_real_ring_stress",
+  "underlying_serializer_function": "frankenlibc_harness::evidence_ring_backpressure::serialize_real_ring_report_jsonl",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind": "RealRingReport",
+    "required_fields_const": "frankenlibc_harness::evidence_ring_backpressure::REAL_RING_REPORT_REQUIRED_FIELDS"
+  },
+  "policy": {
+    "fail_closed_when_source_commit_is_not_40_char_sha": true,
+    "fail_closed_when_multiple_below_two": true,
+    "fail_closed_when_cap_not_supported": true,
+    "must_emit_exactly_one_jsonl_record": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_source_commit_validation",
+    "missing_multiple_lower_bound_validation",
+    "missing_cap_enum_validation",
+    "must_emit_exactly_one_record"
+  ],
+  "summary": {
+    "bead": "bd-vp6xi",
+    "subcommand": "evidence-ring-stress",
+    "supported_caps": 3,
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
