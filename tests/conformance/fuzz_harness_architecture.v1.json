@@ -1,16 +1,16 @@
 {
   "schema_version": "v1",
   "bead": "bd-1oz.5",
-  "generated_at": "2026-04-27T03:57:04Z",
+  "generated_at": "2026-05-13T11:16:31Z",
   "summary": {
-    "total_targets": 55,
-    "functional_targets": 55,
+    "total_targets": 66,
+    "functional_targets": 66,
     "stub_targets": 0,
-    "checks_passed": 275,
-    "checks_total": 275,
+    "checks_passed": 330,
+    "checks_total": 330,
     "quality_score_pct": 100.0,
-    "total_seed_corpus": 22779,
-    "total_dict_entries": 380,
+    "total_seed_corpus": 22987,
+    "total_dict_entries": 446,
     "cwe_coverage": [
       "CWE-120",
       "CWE-122",
@@ -73,6 +73,129 @@
     }
   },
   "target_analyses": [
+    {
+      "target": "fuzz_argz",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_argz.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 157
+    },
+    {
+      "target": "fuzz_asprintf",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 94
+    },
+    {
+      "target": "fuzz_b64",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_b64.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 137
+    },
     {
       "target": "fuzz_c11threads",
       "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_c11threads.rs",
@@ -366,6 +489,47 @@
       "lines": 703
     },
     {
+      "target": "fuzz_etc_db",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_etc_db.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 185
+    },
+    {
       "target": "fuzz_fcntl",
       "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_fcntl.rs",
       "domain": "unknown",
@@ -407,6 +571,47 @@
       "lines": 200
     },
     {
+      "target": "fuzz_fnmatch",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_fnmatch.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 156
+    },
+    {
       "target": "fuzz_fortify",
       "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_fortify.rs",
       "domain": "unknown",
@@ -446,6 +651,47 @@
       "todos": [],
       "implementation_status": "functional",
       "lines": 459
+    },
+    {
+      "target": "fuzz_getsubopt",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_getsubopt.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 219
     },
     {
       "target": "fuzz_iconv",
@@ -653,6 +899,47 @@
       "lines": 255
     },
     {
+      "target": "fuzz_loc_codec",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_loc_codec.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 137
+    },
+    {
       "target": "fuzz_locale",
       "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_locale.rs",
       "domain": "locale",
@@ -827,7 +1114,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 25
+      "lines": 162
     },
     {
       "target": "fuzz_mmap",
@@ -871,6 +1158,47 @@
       "lines": 450
     },
     {
+      "target": "fuzz_mntent",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_mntent.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 204
+    },
+    {
       "target": "fuzz_mount",
       "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_mount.rs",
       "domain": "unknown",
@@ -909,7 +1237,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 199
+      "lines": 205
     },
     {
       "target": "fuzz_open_syscalls",
@@ -1117,7 +1445,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 571
+      "lines": 568
     },
     {
       "target": "fuzz_printf_adversarial",
@@ -1405,6 +1733,47 @@
       "todos": [],
       "implementation_status": "functional",
       "lines": 134
+    },
+    {
+      "target": "fuzz_punycode",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_punycode.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 170
     },
     {
       "target": "fuzz_pwd_grp",
@@ -2112,6 +2481,47 @@
       "lines": 597
     },
     {
+      "target": "fuzz_strptime",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_strptime.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 210
+    },
+    {
       "target": "fuzz_sysv_ipc",
       "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_sysv_ipc.rs",
       "domain": "unknown",
@@ -2235,6 +2645,47 @@
       "lines": 225
     },
     {
+      "target": "fuzz_vis",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_vis.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 199
+    },
+    {
       "target": "fuzz_wchar",
       "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_wchar.rs",
       "domain": "unknown",
@@ -2273,7 +2724,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 381
+      "lines": 479
     },
     {
       "target": "fuzz_wordexp",
@@ -2362,6 +2813,162 @@
     "approach": "deterministic",
     "description": "Each target gets hand-crafted seed inputs covering boundary conditions, typical usage, and attack patterns. Seeds are content-addressed for reproducibility.",
     "manifests": [
+      {
+        "target": "fuzz_argz",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-e844fae8a92e",
+            "size_bytes": 8,
+            "sha256_prefix": "e844fae8a92e"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-cbf3e8aaf5df",
+            "size_bytes": 8,
+            "sha256_prefix": "cbf3e8aaf5df"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-5094a7f80dc3",
+            "size_bytes": 3,
+            "sha256_prefix": "5094a7f80dc3"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-0d8f8dd59669",
+            "size_bytes": 1,
+            "sha256_prefix": "0d8f8dd59669"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-da635c6c079e",
+            "size_bytes": 22,
+            "sha256_prefix": "da635c6c079e"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-eb92729c823c",
+            "size_bytes": 2,
+            "sha256_prefix": "eb92729c823c"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-4a8f69be713c",
+            "size_bytes": 6,
+            "sha256_prefix": "4a8f69be713c"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-a45265e45db7",
+            "size_bytes": 8,
+            "sha256_prefix": "a45265e45db7"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-33e30fa0ec70",
+            "size_bytes": 2,
+            "sha256_prefix": "33e30fa0ec70"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-22214cf6b63d",
+            "size_bytes": 8,
+            "sha256_prefix": "22214cf6b63d"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-00070208b452",
+            "size_bytes": 38,
+            "sha256_prefix": "00070208b452"
+          }
+        ],
+        "count": 11,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
+        "target": "fuzz_asprintf",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-3d3588e58283",
+            "size_bytes": 29,
+            "sha256_prefix": "3d3588e58283"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-4234d2738255",
+            "size_bytes": 28,
+            "sha256_prefix": "4234d2738255"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-9dec17ad5181",
+            "size_bytes": 29,
+            "sha256_prefix": "9dec17ad5181"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-e7ffa69d0ea9",
+            "size_bytes": 31,
+            "sha256_prefix": "e7ffa69d0ea9"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-ba3c6d492683",
+            "size_bytes": 34,
+            "sha256_prefix": "ba3c6d492683"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-3868c29e471a",
+            "size_bytes": 27,
+            "sha256_prefix": "3868c29e471a"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-8a00813ea5e8",
+            "size_bytes": 29,
+            "sha256_prefix": "8a00813ea5e8"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-326a8f2ee110",
+            "size_bytes": 41,
+            "sha256_prefix": "326a8f2ee110"
+          }
+        ],
+        "count": 8,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
+        "target": "fuzz_b64",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-d0b799b448b6",
+            "size_bytes": 5,
+            "sha256_prefix": "d0b799b448b6"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-79a063299f7d",
+            "size_bytes": 9,
+            "sha256_prefix": "79a063299f7d"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-835905eb3686",
+            "size_bytes": 9,
+            "sha256_prefix": "835905eb3686"
+          }
+        ],
+        "count": 3,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
       {
         "target": "fuzz_c11threads",
         "seeds": [
@@ -2465,42 +3072,90 @@
           },
           {
             "index": 1,
-            "seed_id": "seed-0bda7dfe3ecb",
-            "size_bytes": 11,
-            "sha256_prefix": "0bda7dfe3ecb"
+            "seed_id": "seed-2e55777ee996",
+            "size_bytes": 2,
+            "sha256_prefix": "2e55777ee996"
           },
           {
             "index": 2,
-            "seed_id": "seed-1a1d2913c0f9",
-            "size_bytes": 27,
-            "sha256_prefix": "1a1d2913c0f9"
+            "seed_id": "seed-8a5b3f6a5288",
+            "size_bytes": 11,
+            "sha256_prefix": "8a5b3f6a5288"
           },
           {
             "index": 3,
-            "seed_id": "seed-1c1f1bb5b28f",
-            "size_bytes": 13,
-            "sha256_prefix": "1c1f1bb5b28f"
+            "seed_id": "seed-6f8d908ba3e4",
+            "size_bytes": 7,
+            "sha256_prefix": "6f8d908ba3e4"
           },
           {
             "index": 4,
-            "seed_id": "seed-5930f673f24f",
-            "size_bytes": 17,
-            "sha256_prefix": "5930f673f24f"
+            "seed_id": "seed-052f5f9340cf",
+            "size_bytes": 27,
+            "sha256_prefix": "052f5f9340cf"
           },
           {
             "index": 5,
-            "seed_id": "seed-5c498dc2b36e",
-            "size_bytes": 7,
-            "sha256_prefix": "5c498dc2b36e"
+            "seed_id": "seed-5b666669639f",
+            "size_bytes": 13,
+            "sha256_prefix": "5b666669639f"
           },
           {
             "index": 6,
-            "seed_id": "seed-98d304043f00",
+            "seed_id": "seed-e4c3bae74d00",
+            "size_bytes": 16,
+            "sha256_prefix": "e4c3bae74d00"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-9605b9839ec9",
             "size_bytes": 27,
-            "sha256_prefix": "98d304043f00"
+            "sha256_prefix": "9605b9839ec9"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-6ad83159a7d8",
+            "size_bytes": 27,
+            "sha256_prefix": "6ad83159a7d8"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-3274280da20b",
+            "size_bytes": 7,
+            "sha256_prefix": "3274280da20b"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-7625e6c85ad2",
+            "size_bytes": 27,
+            "sha256_prefix": "7625e6c85ad2"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-9c1cf3120fc6",
+            "size_bytes": 11,
+            "sha256_prefix": "9c1cf3120fc6"
+          },
+          {
+            "index": 12,
+            "seed_id": "seed-a5ac7f35419e",
+            "size_bytes": 17,
+            "sha256_prefix": "a5ac7f35419e"
+          },
+          {
+            "index": 13,
+            "seed_id": "seed-5525f61d773c",
+            "size_bytes": 7,
+            "sha256_prefix": "5525f61d773c"
+          },
+          {
+            "index": 14,
+            "seed_id": "seed-3ac0550fa460",
+            "size_bytes": 27,
+            "sha256_prefix": "3ac0550fa460"
           }
         ],
-        "count": 7,
+        "count": 15,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -14221,6 +14876,38 @@
         "reproducible": true
       },
       {
+        "target": "fuzz_etc_db",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-6fe71e6609a5",
+            "size_bytes": 39,
+            "sha256_prefix": "6fe71e6609a5"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-465353cf50e8",
+            "size_bytes": 69,
+            "sha256_prefix": "465353cf50e8"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-4f0937f7cc72",
+            "size_bytes": 18,
+            "sha256_prefix": "4f0937f7cc72"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-60deffb60aa4",
+            "size_bytes": 42,
+            "sha256_prefix": "60deffb60aa4"
+          }
+        ],
+        "count": 4,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
         "target": "fuzz_fcntl",
         "seeds": [
           {
@@ -14465,6 +15152,98 @@
           }
         ],
         "count": 40,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
+        "target": "fuzz_fnmatch",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-38528477f537",
+            "size_bytes": 9,
+            "sha256_prefix": "38528477f537"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-b14f2c191b07",
+            "size_bytes": 8,
+            "sha256_prefix": "b14f2c191b07"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-8ff20db89fe2",
+            "size_bytes": 8,
+            "sha256_prefix": "8ff20db89fe2"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-9bad26f2d99f",
+            "size_bytes": 2,
+            "sha256_prefix": "9bad26f2d99f"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-60cb6b388d36",
+            "size_bytes": 5,
+            "sha256_prefix": "60cb6b388d36"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-8dd25fc44a34",
+            "size_bytes": 20,
+            "sha256_prefix": "8dd25fc44a34"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-e25fba7f68b4",
+            "size_bytes": 8,
+            "sha256_prefix": "e25fba7f68b4"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-9aa8409e426c",
+            "size_bytes": 14,
+            "sha256_prefix": "9aa8409e426c"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-d25c2e2b0f85",
+            "size_bytes": 6,
+            "sha256_prefix": "d25c2e2b0f85"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-134e08848112",
+            "size_bytes": 12,
+            "sha256_prefix": "134e08848112"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-15e8e63f0467",
+            "size_bytes": 6,
+            "sha256_prefix": "15e8e63f0467"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-4a9d46525279",
+            "size_bytes": 10,
+            "sha256_prefix": "4a9d46525279"
+          },
+          {
+            "index": 12,
+            "seed_id": "seed-9059f0cf7a7f",
+            "size_bytes": 8,
+            "sha256_prefix": "9059f0cf7a7f"
+          },
+          {
+            "index": 13,
+            "seed_id": "seed-b561a18a8ac2",
+            "size_bytes": 11,
+            "sha256_prefix": "b561a18a8ac2"
+          }
+        ],
+        "count": 14,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -18689,6 +19468,302 @@
         "reproducible": true
       },
       {
+        "target": "fuzz_getsubopt",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-777b6e5a101c",
+            "size_bytes": 31,
+            "sha256_prefix": "777b6e5a101c"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-b01813c40bbe",
+            "size_bytes": 5,
+            "sha256_prefix": "b01813c40bbe"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-4dec35f0efa7",
+            "size_bytes": 7,
+            "sha256_prefix": "4dec35f0efa7"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-e1a6b41dfc9c",
+            "size_bytes": 39,
+            "sha256_prefix": "e1a6b41dfc9c"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-3655fca32776",
+            "size_bytes": 5,
+            "sha256_prefix": "3655fca32776"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-b6cc63e76217",
+            "size_bytes": 7,
+            "sha256_prefix": "b6cc63e76217"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-9a1d0d7ff904",
+            "size_bytes": 4,
+            "sha256_prefix": "9a1d0d7ff904"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-7c8de3ec184d",
+            "size_bytes": 33,
+            "sha256_prefix": "7c8de3ec184d"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-67b403779e46",
+            "size_bytes": 10,
+            "sha256_prefix": "67b403779e46"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-c46574cae5ad",
+            "size_bytes": 36,
+            "sha256_prefix": "c46574cae5ad"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-8205786ef70b",
+            "size_bytes": 37,
+            "sha256_prefix": "8205786ef70b"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-506cb35a84a0",
+            "size_bytes": 39,
+            "sha256_prefix": "506cb35a84a0"
+          },
+          {
+            "index": 12,
+            "seed_id": "seed-3d57a4e8bd35",
+            "size_bytes": 30,
+            "sha256_prefix": "3d57a4e8bd35"
+          },
+          {
+            "index": 13,
+            "seed_id": "seed-f58fd2bd9f86",
+            "size_bytes": 3,
+            "sha256_prefix": "f58fd2bd9f86"
+          },
+          {
+            "index": 14,
+            "seed_id": "seed-4b73e8032077",
+            "size_bytes": 31,
+            "sha256_prefix": "4b73e8032077"
+          },
+          {
+            "index": 15,
+            "seed_id": "seed-391c6f360805",
+            "size_bytes": 13,
+            "sha256_prefix": "391c6f360805"
+          },
+          {
+            "index": 16,
+            "seed_id": "seed-dd88faa0eec6",
+            "size_bytes": 22,
+            "sha256_prefix": "dd88faa0eec6"
+          },
+          {
+            "index": 17,
+            "seed_id": "seed-2072c20bebec",
+            "size_bytes": 34,
+            "sha256_prefix": "2072c20bebec"
+          },
+          {
+            "index": 18,
+            "seed_id": "seed-4c24c2500780",
+            "size_bytes": 15,
+            "sha256_prefix": "4c24c2500780"
+          },
+          {
+            "index": 19,
+            "seed_id": "seed-19948ee88d44",
+            "size_bytes": 4,
+            "sha256_prefix": "19948ee88d44"
+          },
+          {
+            "index": 20,
+            "seed_id": "seed-4a022fd4eaa5",
+            "size_bytes": 13,
+            "sha256_prefix": "4a022fd4eaa5"
+          },
+          {
+            "index": 21,
+            "seed_id": "seed-5ca1de9e043c",
+            "size_bytes": 15,
+            "sha256_prefix": "5ca1de9e043c"
+          },
+          {
+            "index": 22,
+            "seed_id": "seed-1a05dc547d24",
+            "size_bytes": 8,
+            "sha256_prefix": "1a05dc547d24"
+          },
+          {
+            "index": 23,
+            "seed_id": "seed-691a25bf70be",
+            "size_bytes": 9,
+            "sha256_prefix": "691a25bf70be"
+          },
+          {
+            "index": 24,
+            "seed_id": "seed-c3925ac8f05a",
+            "size_bytes": 39,
+            "sha256_prefix": "c3925ac8f05a"
+          },
+          {
+            "index": 25,
+            "seed_id": "seed-96ba3ad68e21",
+            "size_bytes": 23,
+            "sha256_prefix": "96ba3ad68e21"
+          },
+          {
+            "index": 26,
+            "seed_id": "seed-c7ed57cb317e",
+            "size_bytes": 39,
+            "sha256_prefix": "c7ed57cb317e"
+          },
+          {
+            "index": 27,
+            "seed_id": "seed-d54495346ee7",
+            "size_bytes": 12,
+            "sha256_prefix": "d54495346ee7"
+          },
+          {
+            "index": 28,
+            "seed_id": "seed-0051722b503e",
+            "size_bytes": 14,
+            "sha256_prefix": "0051722b503e"
+          },
+          {
+            "index": 29,
+            "seed_id": "seed-e2965427331c",
+            "size_bytes": 10,
+            "sha256_prefix": "e2965427331c"
+          },
+          {
+            "index": 30,
+            "seed_id": "seed-13147950f4c5",
+            "size_bytes": 39,
+            "sha256_prefix": "13147950f4c5"
+          },
+          {
+            "index": 31,
+            "seed_id": "seed-03925b7ca886",
+            "size_bytes": 12,
+            "sha256_prefix": "03925b7ca886"
+          },
+          {
+            "index": 32,
+            "seed_id": "seed-350dae657ead",
+            "size_bytes": 39,
+            "sha256_prefix": "350dae657ead"
+          },
+          {
+            "index": 33,
+            "seed_id": "seed-436c3b5c878d",
+            "size_bytes": 10,
+            "sha256_prefix": "436c3b5c878d"
+          },
+          {
+            "index": 34,
+            "seed_id": "seed-4f5cf9787cf8",
+            "size_bytes": 7,
+            "sha256_prefix": "4f5cf9787cf8"
+          },
+          {
+            "index": 35,
+            "seed_id": "seed-6b346f6cd4dd",
+            "size_bytes": 10,
+            "sha256_prefix": "6b346f6cd4dd"
+          },
+          {
+            "index": 36,
+            "seed_id": "seed-916e27e0cc14",
+            "size_bytes": 1,
+            "sha256_prefix": "916e27e0cc14"
+          },
+          {
+            "index": 37,
+            "seed_id": "seed-b72daaf28ef0",
+            "size_bytes": 7,
+            "sha256_prefix": "b72daaf28ef0"
+          },
+          {
+            "index": 38,
+            "seed_id": "seed-69ac90fbb021",
+            "size_bytes": 6,
+            "sha256_prefix": "69ac90fbb021"
+          },
+          {
+            "index": 39,
+            "seed_id": "seed-6b90ac042633",
+            "size_bytes": 2,
+            "sha256_prefix": "6b90ac042633"
+          },
+          {
+            "index": 40,
+            "seed_id": "seed-bdacfd5b76c6",
+            "size_bytes": 4,
+            "sha256_prefix": "bdacfd5b76c6"
+          },
+          {
+            "index": 41,
+            "seed_id": "seed-793bc5f90590",
+            "size_bytes": 39,
+            "sha256_prefix": "793bc5f90590"
+          },
+          {
+            "index": 42,
+            "seed_id": "seed-23f707293499",
+            "size_bytes": 3,
+            "sha256_prefix": "23f707293499"
+          },
+          {
+            "index": 43,
+            "seed_id": "seed-f40522b28ec9",
+            "size_bytes": 9,
+            "sha256_prefix": "f40522b28ec9"
+          },
+          {
+            "index": 44,
+            "seed_id": "seed-ee56bd72f3ae",
+            "size_bytes": 10,
+            "sha256_prefix": "ee56bd72f3ae"
+          },
+          {
+            "index": 45,
+            "seed_id": "seed-efb7312579d2",
+            "size_bytes": 13,
+            "sha256_prefix": "efb7312579d2"
+          },
+          {
+            "index": 46,
+            "seed_id": "seed-c2d6f4f6795a",
+            "size_bytes": 4,
+            "sha256_prefix": "c2d6f4f6795a"
+          },
+          {
+            "index": 47,
+            "seed_id": "seed-6e48571d3113",
+            "size_bytes": 8,
+            "sha256_prefix": "6e48571d3113"
+          }
+        ],
+        "count": 48,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
         "target": "fuzz_iconv",
         "seeds": [
           {
@@ -22599,6 +23674,32 @@
         "reproducible": true
       },
       {
+        "target": "fuzz_loc_codec",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-8543dfbe3e90",
+            "size_bytes": 18,
+            "sha256_prefix": "8543dfbe3e90"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-23df8e785252",
+            "size_bytes": 55,
+            "sha256_prefix": "23df8e785252"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-dbbc8ccefc64",
+            "size_bytes": 62,
+            "sha256_prefix": "dbbc8ccefc64"
+          }
+        ],
+        "count": 3,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
         "target": "fuzz_locale",
         "seeds": [
           {
@@ -25313,54 +26414,102 @@
         "seeds": [
           {
             "index": 0,
-            "seed_id": "seed-7846b63d762c",
-            "size_bytes": 8,
-            "sha256_prefix": "7846b63d762c"
+            "seed_id": "seed-7cffed725017",
+            "size_bytes": 21,
+            "sha256_prefix": "7cffed725017"
           },
           {
             "index": 1,
-            "seed_id": "seed-fd8fb673bf4f",
+            "seed_id": "seed-675d2019001e",
             "size_bytes": 8,
-            "sha256_prefix": "fd8fb673bf4f"
+            "sha256_prefix": "675d2019001e"
           },
           {
             "index": 2,
-            "seed_id": "seed-9f0559a5faff",
-            "size_bytes": 8,
-            "sha256_prefix": "9f0559a5faff"
+            "seed_id": "seed-59e1a321a391",
+            "size_bytes": 21,
+            "sha256_prefix": "59e1a321a391"
           },
           {
             "index": 3,
-            "seed_id": "seed-a2c706c88106",
+            "seed_id": "seed-cf2b49dfcab6",
             "size_bytes": 8,
-            "sha256_prefix": "a2c706c88106"
+            "sha256_prefix": "cf2b49dfcab6"
           },
           {
             "index": 4,
-            "seed_id": "seed-20c5c6a6a66f",
-            "size_bytes": 8,
-            "sha256_prefix": "20c5c6a6a66f"
+            "seed_id": "seed-4e2698bafb3d",
+            "size_bytes": 21,
+            "sha256_prefix": "4e2698bafb3d"
           },
           {
             "index": 5,
-            "seed_id": "seed-b0072ddc2294",
+            "seed_id": "seed-e1f172f3209c",
             "size_bytes": 8,
-            "sha256_prefix": "b0072ddc2294"
+            "sha256_prefix": "e1f172f3209c"
           },
           {
             "index": 6,
-            "seed_id": "seed-8f79b2065706",
-            "size_bytes": 8,
-            "sha256_prefix": "8f79b2065706"
+            "seed_id": "seed-19bca4a84c9e",
+            "size_bytes": 21,
+            "sha256_prefix": "19bca4a84c9e"
           },
           {
             "index": 7,
-            "seed_id": "seed-86a68c7c2568",
+            "seed_id": "seed-e958e853a690",
+            "size_bytes": 21,
+            "sha256_prefix": "e958e853a690"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-bbf7522ad6eb",
             "size_bytes": 8,
-            "sha256_prefix": "86a68c7c2568"
+            "sha256_prefix": "bbf7522ad6eb"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-4cebdd3b532e",
+            "size_bytes": 8,
+            "sha256_prefix": "4cebdd3b532e"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-7bb0b656ba96",
+            "size_bytes": 8,
+            "sha256_prefix": "7bb0b656ba96"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-ee13e88d08ea",
+            "size_bytes": 21,
+            "sha256_prefix": "ee13e88d08ea"
+          },
+          {
+            "index": 12,
+            "seed_id": "seed-65ace725dd02",
+            "size_bytes": 21,
+            "sha256_prefix": "65ace725dd02"
+          },
+          {
+            "index": 13,
+            "seed_id": "seed-9d1bfa6c706a",
+            "size_bytes": 8,
+            "sha256_prefix": "9d1bfa6c706a"
+          },
+          {
+            "index": 14,
+            "seed_id": "seed-97dbebd75cbb",
+            "size_bytes": 8,
+            "sha256_prefix": "97dbebd75cbb"
+          },
+          {
+            "index": 15,
+            "seed_id": "seed-c9765079d15a",
+            "size_bytes": 21,
+            "sha256_prefix": "c9765079d15a"
           }
         ],
-        "count": 8,
+        "count": 16,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -25369,48 +26518,96 @@
         "seeds": [
           {
             "index": 0,
-            "seed_id": "seed-34fc762f3402",
+            "seed_id": "seed-15f6ef7f347e",
             "size_bytes": 8,
-            "sha256_prefix": "34fc762f3402"
+            "sha256_prefix": "15f6ef7f347e"
           },
           {
             "index": 1,
-            "seed_id": "seed-ea7d023d2fb0",
+            "seed_id": "seed-1babe64c6a55",
             "size_bytes": 8,
-            "sha256_prefix": "ea7d023d2fb0"
+            "sha256_prefix": "1babe64c6a55"
           },
           {
             "index": 2,
-            "seed_id": "seed-b84dd1856327",
+            "seed_id": "seed-db1445a15d7d",
             "size_bytes": 8,
-            "sha256_prefix": "b84dd1856327"
+            "sha256_prefix": "db1445a15d7d"
           },
           {
             "index": 3,
-            "seed_id": "seed-34af8f697230",
+            "seed_id": "seed-4ebd24f83621",
             "size_bytes": 8,
-            "sha256_prefix": "34af8f697230"
+            "sha256_prefix": "4ebd24f83621"
           },
           {
             "index": 4,
-            "seed_id": "seed-a43dad001e5e",
+            "seed_id": "seed-ccced0e9980c",
             "size_bytes": 8,
-            "sha256_prefix": "a43dad001e5e"
+            "sha256_prefix": "ccced0e9980c"
           },
           {
             "index": 5,
-            "seed_id": "seed-a248111ea422",
+            "seed_id": "seed-1c1b4548515d",
             "size_bytes": 8,
-            "sha256_prefix": "a248111ea422"
+            "sha256_prefix": "1c1b4548515d"
           },
           {
             "index": 6,
-            "seed_id": "seed-e12c53eb3071",
+            "seed_id": "seed-11536575157c",
+            "size_bytes": 8,
+            "sha256_prefix": "11536575157c"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-a948e34fa990",
+            "size_bytes": 8,
+            "sha256_prefix": "a948e34fa990"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-74d4634d27c3",
+            "size_bytes": 8,
+            "sha256_prefix": "74d4634d27c3"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-b8c663363b08",
+            "size_bytes": 8,
+            "sha256_prefix": "b8c663363b08"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-cd82f5ed5044",
+            "size_bytes": 8,
+            "sha256_prefix": "cd82f5ed5044"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-c6ff5f80793a",
+            "size_bytes": 24,
+            "sha256_prefix": "c6ff5f80793a"
+          },
+          {
+            "index": 12,
+            "seed_id": "seed-b9e4765a0343",
             "size_bytes": 16,
-            "sha256_prefix": "e12c53eb3071"
+            "sha256_prefix": "b9e4765a0343"
+          },
+          {
+            "index": 13,
+            "seed_id": "seed-8793bde2d8ef",
+            "size_bytes": 8,
+            "sha256_prefix": "8793bde2d8ef"
+          },
+          {
+            "index": 14,
+            "seed_id": "seed-fb39c09a6915",
+            "size_bytes": 8,
+            "sha256_prefix": "fb39c09a6915"
           }
         ],
-        "count": 7,
+        "count": 15,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -27027,6 +28224,50 @@
           }
         ],
         "count": 268,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
+        "target": "fuzz_mntent",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-14df0378995b",
+            "size_bytes": 33,
+            "sha256_prefix": "14df0378995b"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-41c499f74daf",
+            "size_bytes": 15,
+            "sha256_prefix": "41c499f74daf"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-1aa965c16a95",
+            "size_bytes": 33,
+            "sha256_prefix": "1aa965c16a95"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-1357695a4656",
+            "size_bytes": 26,
+            "sha256_prefix": "1357695a4656"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-6c35069d2ad9",
+            "size_bytes": 28,
+            "sha256_prefix": "6c35069d2ad9"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-a7bf21ea6926",
+            "size_bytes": 27,
+            "sha256_prefix": "a7bf21ea6926"
+          }
+        ],
+        "count": 6,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -39713,21 +40954,21 @@
         "seeds": [
           {
             "index": 0,
-            "seed_id": "seed-0ffcd1ed2078",
-            "size_bytes": 23,
-            "sha256_prefix": "0ffcd1ed2078"
+            "seed_id": "seed-0135af75767c",
+            "size_bytes": 6,
+            "sha256_prefix": "0135af75767c"
           },
           {
             "index": 1,
-            "seed_id": "seed-fd634c6e7164",
-            "size_bytes": 1,
-            "sha256_prefix": "fd634c6e7164"
+            "seed_id": "seed-f68d0bed61be",
+            "size_bytes": 65,
+            "sha256_prefix": "f68d0bed61be"
           },
           {
             "index": 2,
-            "seed_id": "seed-fd1d54e6c431",
-            "size_bytes": 2,
-            "sha256_prefix": "fd1d54e6c431"
+            "seed_id": "seed-dd6335a89d63",
+            "size_bytes": 25,
+            "sha256_prefix": "dd6335a89d63"
           }
         ],
         "count": 3,
@@ -40884,9 +42125,45 @@
             "seed_id": "seed-5e3fdc20d3f0",
             "size_bytes": 24,
             "sha256_prefix": "5e3fdc20d3f0"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-c52339fe8de5",
+            "size_bytes": 7,
+            "sha256_prefix": "c52339fe8de5"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-857c1b657a4e",
+            "size_bytes": 26,
+            "sha256_prefix": "857c1b657a4e"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-3f39416b2f74",
+            "size_bytes": 10,
+            "sha256_prefix": "3f39416b2f74"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-05e220151660",
+            "size_bytes": 3,
+            "sha256_prefix": "05e220151660"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-2e73cccfde87",
+            "size_bytes": 12,
+            "sha256_prefix": "2e73cccfde87"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-e3c3490364e8",
+            "size_bytes": 6,
+            "sha256_prefix": "e3c3490364e8"
           }
         ],
-        "count": 1,
+        "count": 7,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -45671,6 +46948,110 @@
           }
         ],
         "count": 34,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
+        "target": "fuzz_punycode",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-92e7d9e96a82",
+            "size_bytes": 6,
+            "sha256_prefix": "92e7d9e96a82"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-505def444913",
+            "size_bytes": 5,
+            "sha256_prefix": "505def444913"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-f6cf35ffc234",
+            "size_bytes": 6,
+            "sha256_prefix": "f6cf35ffc234"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-e02dc6bf23de",
+            "size_bytes": 6,
+            "sha256_prefix": "e02dc6bf23de"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-41b73ffda20b",
+            "size_bytes": 4,
+            "sha256_prefix": "41b73ffda20b"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-da714b39317b",
+            "size_bytes": 2,
+            "sha256_prefix": "da714b39317b"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-edc971aed15a",
+            "size_bytes": 11,
+            "sha256_prefix": "edc971aed15a"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-38f2c757649d",
+            "size_bytes": 6,
+            "sha256_prefix": "38f2c757649d"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-dc9360f09c09",
+            "size_bytes": 26,
+            "sha256_prefix": "dc9360f09c09"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-4908e1a6dd94",
+            "size_bytes": 24,
+            "sha256_prefix": "4908e1a6dd94"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-a0f72811cc2b",
+            "size_bytes": 47,
+            "sha256_prefix": "a0f72811cc2b"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-c1ccb45199fb",
+            "size_bytes": 6,
+            "sha256_prefix": "c1ccb45199fb"
+          },
+          {
+            "index": 12,
+            "seed_id": "seed-554353984f89",
+            "size_bytes": 8,
+            "sha256_prefix": "554353984f89"
+          },
+          {
+            "index": 13,
+            "seed_id": "seed-657ea49ebf08",
+            "size_bytes": 2,
+            "sha256_prefix": "657ea49ebf08"
+          },
+          {
+            "index": 14,
+            "seed_id": "seed-b7851af7f651",
+            "size_bytes": 23,
+            "sha256_prefix": "b7851af7f651"
+          },
+          {
+            "index": 15,
+            "seed_id": "seed-312534624a85",
+            "size_bytes": 10,
+            "sha256_prefix": "312534624a85"
+          }
+        ],
+        "count": 16,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -50483,48 +51864,108 @@
         "seeds": [
           {
             "index": 0,
-            "seed_id": "seed-c2ba55bf1fb0",
-            "size_bytes": 21,
-            "sha256_prefix": "c2ba55bf1fb0"
+            "seed_id": "seed-099b6e810efc",
+            "size_bytes": 26,
+            "sha256_prefix": "099b6e810efc"
           },
           {
             "index": 1,
-            "seed_id": "seed-15c62c87bab8",
-            "size_bytes": 17,
-            "sha256_prefix": "15c62c87bab8"
+            "seed_id": "seed-0cd1393606f8",
+            "size_bytes": 21,
+            "sha256_prefix": "0cd1393606f8"
           },
           {
             "index": 2,
-            "seed_id": "seed-ee7eaee978de",
-            "size_bytes": 9,
-            "sha256_prefix": "ee7eaee978de"
+            "seed_id": "seed-6dcdf4cf0a30",
+            "size_bytes": 13,
+            "sha256_prefix": "6dcdf4cf0a30"
           },
           {
             "index": 3,
-            "seed_id": "seed-4841a00eb6fb",
-            "size_bytes": 20,
-            "sha256_prefix": "4841a00eb6fb"
+            "seed_id": "seed-131e3012fce7",
+            "size_bytes": 17,
+            "sha256_prefix": "131e3012fce7"
           },
           {
             "index": 4,
-            "seed_id": "seed-6202389c91c0",
-            "size_bytes": 15,
-            "sha256_prefix": "6202389c91c0"
+            "seed_id": "seed-6880ae37fe21",
+            "size_bytes": 23,
+            "sha256_prefix": "6880ae37fe21"
           },
           {
             "index": 5,
-            "seed_id": "seed-3c0591abfaf9",
-            "size_bytes": 21,
-            "sha256_prefix": "3c0591abfaf9"
+            "seed_id": "seed-f7c2ba848ec0",
+            "size_bytes": 17,
+            "sha256_prefix": "f7c2ba848ec0"
           },
           {
             "index": 6,
-            "seed_id": "seed-6128bfbe76df",
+            "seed_id": "seed-eeab38e483c1",
+            "size_bytes": 20,
+            "sha256_prefix": "eeab38e483c1"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-a10ee8c07629",
+            "size_bytes": 40,
+            "sha256_prefix": "a10ee8c07629"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-2102cd9c9459",
+            "size_bytes": 9,
+            "sha256_prefix": "2102cd9c9459"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-95233870f363",
+            "size_bytes": 19,
+            "sha256_prefix": "95233870f363"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-05ca39b38414",
+            "size_bytes": 20,
+            "sha256_prefix": "05ca39b38414"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-96f98d5249b8",
+            "size_bytes": 15,
+            "sha256_prefix": "96f98d5249b8"
+          },
+          {
+            "index": 12,
+            "seed_id": "seed-b35043651741",
+            "size_bytes": 21,
+            "sha256_prefix": "b35043651741"
+          },
+          {
+            "index": 13,
+            "seed_id": "seed-2908a6f91940",
             "size_bytes": 18,
-            "sha256_prefix": "6128bfbe76df"
+            "sha256_prefix": "2908a6f91940"
+          },
+          {
+            "index": 14,
+            "seed_id": "seed-fa1ccc3891e1",
+            "size_bytes": 18,
+            "sha256_prefix": "fa1ccc3891e1"
+          },
+          {
+            "index": 15,
+            "seed_id": "seed-b401820f9b9e",
+            "size_bytes": 34,
+            "sha256_prefix": "b401820f9b9e"
+          },
+          {
+            "index": 16,
+            "seed_id": "seed-ba7469a21cb8",
+            "size_bytes": 26,
+            "sha256_prefix": "ba7469a21cb8"
           }
         ],
-        "count": 7,
+        "count": 17,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -60125,18 +61566,54 @@
         "seeds": [
           {
             "index": 0,
-            "seed_id": "seed-46ebd6b505af",
-            "size_bytes": 16,
-            "sha256_prefix": "46ebd6b505af"
+            "seed_id": "seed-5edb5ff9f9d4",
+            "size_bytes": 23,
+            "sha256_prefix": "5edb5ff9f9d4"
           },
           {
             "index": 1,
-            "seed_id": "seed-f7e4396c4b83",
+            "seed_id": "seed-13477e22119c",
+            "size_bytes": 32,
+            "sha256_prefix": "13477e22119c"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-62cd55698703",
+            "size_bytes": 32,
+            "sha256_prefix": "62cd55698703"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-ab3c851d0f98",
+            "size_bytes": 16,
+            "sha256_prefix": "ab3c851d0f98"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-8be84f2d8c56",
+            "size_bytes": 24,
+            "sha256_prefix": "8be84f2d8c56"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-4f1b71c0ff1d",
+            "size_bytes": 23,
+            "sha256_prefix": "4f1b71c0ff1d"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-181d86a3f5a7",
+            "size_bytes": 23,
+            "sha256_prefix": "181d86a3f5a7"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-a0602b633398",
             "size_bytes": 15,
-            "sha256_prefix": "f7e4396c4b83"
+            "sha256_prefix": "a0602b633398"
           }
         ],
-        "count": 2,
+        "count": 8,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -88269,48 +89746,218 @@
         "seeds": [
           {
             "index": 0,
-            "seed_id": "seed-0a8b065905a2",
-            "size_bytes": 14,
-            "sha256_prefix": "0a8b065905a2"
+            "seed_id": "seed-42769fcdea69",
+            "size_bytes": 32,
+            "sha256_prefix": "42769fcdea69"
           },
           {
             "index": 1,
-            "seed_id": "seed-8f98f286513d",
-            "size_bytes": 18,
-            "sha256_prefix": "8f98f286513d"
+            "seed_id": "seed-99b00be4c474",
+            "size_bytes": 14,
+            "sha256_prefix": "99b00be4c474"
           },
           {
             "index": 2,
-            "seed_id": "seed-9259a363217d",
-            "size_bytes": 10,
-            "sha256_prefix": "9259a363217d"
+            "seed_id": "seed-10199b3d272e",
+            "size_bytes": 22,
+            "sha256_prefix": "10199b3d272e"
           },
           {
             "index": 3,
-            "seed_id": "seed-91be80236127",
+            "seed_id": "seed-8defd8d571de",
             "size_bytes": 18,
-            "sha256_prefix": "91be80236127"
+            "sha256_prefix": "8defd8d571de"
           },
           {
             "index": 4,
-            "seed_id": "seed-fbd29e08f5b7",
-            "size_bytes": 29,
-            "sha256_prefix": "fbd29e08f5b7"
+            "seed_id": "seed-7a6f6833231b",
+            "size_bytes": 30,
+            "sha256_prefix": "7a6f6833231b"
           },
           {
             "index": 5,
-            "seed_id": "seed-bcdea20d43cd",
-            "size_bytes": 17,
-            "sha256_prefix": "bcdea20d43cd"
+            "seed_id": "seed-50174ebb5971",
+            "size_bytes": 10,
+            "sha256_prefix": "50174ebb5971"
           },
           {
             "index": 6,
-            "seed_id": "seed-8087ace72b68",
+            "seed_id": "seed-30d719ea269b",
+            "size_bytes": 24,
+            "sha256_prefix": "30d719ea269b"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-4ab3dad9efeb",
+            "size_bytes": 18,
+            "sha256_prefix": "4ab3dad9efeb"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-a7346cbeb753",
+            "size_bytes": 24,
+            "sha256_prefix": "a7346cbeb753"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-5a96c70cc892",
+            "size_bytes": 20,
+            "sha256_prefix": "5a96c70cc892"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-b1ba0347332a",
+            "size_bytes": 29,
+            "sha256_prefix": "b1ba0347332a"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-7021d0aff929",
             "size_bytes": 17,
-            "sha256_prefix": "8087ace72b68"
+            "sha256_prefix": "7021d0aff929"
+          },
+          {
+            "index": 12,
+            "seed_id": "seed-ea68f53bfe37",
+            "size_bytes": 8,
+            "sha256_prefix": "ea68f53bfe37"
+          },
+          {
+            "index": 13,
+            "seed_id": "seed-c5723d6399f1",
+            "size_bytes": 17,
+            "sha256_prefix": "c5723d6399f1"
+          },
+          {
+            "index": 14,
+            "seed_id": "seed-3c7be8fa236e",
+            "size_bytes": 31,
+            "sha256_prefix": "3c7be8fa236e"
           }
         ],
-        "count": 7,
+        "count": 15,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
+        "target": "fuzz_strptime",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-364bef455628",
+            "size_bytes": 17,
+            "sha256_prefix": "364bef455628"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-94b0f0119d0a",
+            "size_bytes": 18,
+            "sha256_prefix": "94b0f0119d0a"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-f51f672088b9",
+            "size_bytes": 9,
+            "sha256_prefix": "f51f672088b9"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-0fbbada1a8ff",
+            "size_bytes": 11,
+            "sha256_prefix": "0fbbada1a8ff"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-cdc3a6d2a5ff",
+            "size_bytes": 6,
+            "sha256_prefix": "cdc3a6d2a5ff"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-1ada052893bf",
+            "size_bytes": 9,
+            "sha256_prefix": "1ada052893bf"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-7bf16b94e1dd",
+            "size_bytes": 5,
+            "sha256_prefix": "7bf16b94e1dd"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-a408b478a86a",
+            "size_bytes": 5,
+            "sha256_prefix": "a408b478a86a"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-cd380b3f035e",
+            "size_bytes": 11,
+            "sha256_prefix": "cd380b3f035e"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-329a9ea95aba",
+            "size_bytes": 20,
+            "sha256_prefix": "329a9ea95aba"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-f0596aaf1997",
+            "size_bytes": 6,
+            "sha256_prefix": "f0596aaf1997"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-5f4a879b6a90",
+            "size_bytes": 9,
+            "sha256_prefix": "5f4a879b6a90"
+          },
+          {
+            "index": 12,
+            "seed_id": "seed-022adad948ff",
+            "size_bytes": 9,
+            "sha256_prefix": "022adad948ff"
+          },
+          {
+            "index": 13,
+            "seed_id": "seed-a38b74355438",
+            "size_bytes": 9,
+            "sha256_prefix": "a38b74355438"
+          },
+          {
+            "index": 14,
+            "seed_id": "seed-5a240e3df17d",
+            "size_bytes": 10,
+            "sha256_prefix": "5a240e3df17d"
+          },
+          {
+            "index": 15,
+            "seed_id": "seed-f1364b20910c",
+            "size_bytes": 3,
+            "sha256_prefix": "f1364b20910c"
+          },
+          {
+            "index": 16,
+            "seed_id": "seed-1e0cd130f11e",
+            "size_bytes": 3,
+            "sha256_prefix": "1e0cd130f11e"
+          },
+          {
+            "index": 17,
+            "seed_id": "seed-cf187167cd70",
+            "size_bytes": 5,
+            "sha256_prefix": "cf187167cd70"
+          },
+          {
+            "index": 18,
+            "seed_id": "seed-358148f3f0b2",
+            "size_bytes": 4,
+            "sha256_prefix": "358148f3f0b2"
+          }
+        ],
+        "count": 19,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -104167,28 +105814,168 @@
         "reproducible": true
       },
       {
+        "target": "fuzz_vis",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-101ade43565a",
+            "size_bytes": 24,
+            "sha256_prefix": "101ade43565a"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-533b3d47b981",
+            "size_bytes": 20,
+            "sha256_prefix": "533b3d47b981"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-d697e7699902",
+            "size_bytes": 6,
+            "sha256_prefix": "d697e7699902"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-419c12f727a5",
+            "size_bytes": 9,
+            "sha256_prefix": "419c12f727a5"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-dfb654bff396",
+            "size_bytes": 21,
+            "sha256_prefix": "dfb654bff396"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-baa219c8be14",
+            "size_bytes": 21,
+            "sha256_prefix": "baa219c8be14"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-fc092f4c2463",
+            "size_bytes": 25,
+            "sha256_prefix": "fc092f4c2463"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-16dcf052bf36",
+            "size_bytes": 12,
+            "sha256_prefix": "16dcf052bf36"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-f7875421decf",
+            "size_bytes": 15,
+            "sha256_prefix": "f7875421decf"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-4ca384341a6a",
+            "size_bytes": 26,
+            "sha256_prefix": "4ca384341a6a"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-c8bdc239e950",
+            "size_bytes": 47,
+            "sha256_prefix": "c8bdc239e950"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-1b9cb239dbc2",
+            "size_bytes": 52,
+            "sha256_prefix": "1b9cb239dbc2"
+          },
+          {
+            "index": 12,
+            "seed_id": "seed-c2dea227a8a8",
+            "size_bytes": 16,
+            "sha256_prefix": "c2dea227a8a8"
+          }
+        ],
+        "count": 13,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
         "target": "fuzz_wchar",
         "seeds": [
           {
             "index": 0,
-            "seed_id": "seed-d0a83b6e355d",
-            "size_bytes": 10,
-            "sha256_prefix": "d0a83b6e355d"
+            "seed_id": "seed-5fa55136585b",
+            "size_bytes": 23,
+            "sha256_prefix": "5fa55136585b"
           },
           {
             "index": 1,
-            "seed_id": "seed-985d84dc34be",
-            "size_bytes": 1,
-            "sha256_prefix": "985d84dc34be"
+            "seed_id": "seed-532c0c9c8a9d",
+            "size_bytes": 26,
+            "sha256_prefix": "532c0c9c8a9d"
           },
           {
             "index": 2,
-            "seed_id": "seed-f040eda730cb",
-            "size_bytes": 2,
-            "sha256_prefix": "f040eda730cb"
+            "seed_id": "seed-4155eb244330",
+            "size_bytes": 25,
+            "sha256_prefix": "4155eb244330"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-236acc7d0780",
+            "size_bytes": 17,
+            "sha256_prefix": "236acc7d0780"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-d9712bed5b1d",
+            "size_bytes": 28,
+            "sha256_prefix": "d9712bed5b1d"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-9cf14b42fc07",
+            "size_bytes": 28,
+            "sha256_prefix": "9cf14b42fc07"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-402d5d4a2723",
+            "size_bytes": 27,
+            "sha256_prefix": "402d5d4a2723"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-4eeebec2f0a7",
+            "size_bytes": 35,
+            "sha256_prefix": "4eeebec2f0a7"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-3caa9cc3d52a",
+            "size_bytes": 25,
+            "sha256_prefix": "3caa9cc3d52a"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-8bb84f286ab7",
+            "size_bytes": 20,
+            "sha256_prefix": "8bb84f286ab7"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-ab9f01282f98",
+            "size_bytes": 33,
+            "sha256_prefix": "ab9f01282f98"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-c1658ad7a980",
+            "size_bytes": 35,
+            "sha256_prefix": "c1658ad7a980"
           }
         ],
-        "count": 3,
+        "count": 12,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -139483,6 +141270,45 @@
     "description": "Per-target dictionaries with domain-specific tokens to guide mutation toward high-signal inputs.",
     "manifests": [
       {
+        "target": "fuzz_argz",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_asprintf",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_b64",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
         "target": "fuzz_c11threads",
         "entries": [
           "\"\\x00\"",
@@ -139586,6 +141412,19 @@
         "format": "libfuzzer"
       },
       {
+        "target": "fuzz_etc_db",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
         "target": "fuzz_fcntl",
         "entries": [
           "\"\\x00\"",
@@ -139599,7 +141438,33 @@
         "format": "libfuzzer"
       },
       {
+        "target": "fuzz_fnmatch",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
         "target": "fuzz_fortify",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_getsubopt",
         "entries": [
           "\"\\x00\"",
           "\"\\xff\"",
@@ -139685,6 +141550,19 @@
         "format": "libfuzzer"
       },
       {
+        "target": "fuzz_loc_codec",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
         "target": "fuzz_locale",
         "entries": [
           "\"C\"",
@@ -139739,6 +141617,19 @@
       },
       {
         "target": "fuzz_mmap",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_mntent",
         "entries": [
           "\"\\x00\"",
           "\"\\xff\"",
@@ -139913,6 +141804,19 @@
       },
       {
         "target": "fuzz_ptrace",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_punycode",
         "entries": [
           "\"\\x00\"",
           "\"\\xff\"",
@@ -140165,6 +142069,19 @@
         "format": "libfuzzer"
       },
       {
+        "target": "fuzz_strptime",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
         "target": "fuzz_sysv_ipc",
         "entries": [
           "\"\\x00\"",
@@ -140197,6 +142114,19 @@
       },
       {
         "target": "fuzz_vector_io",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_vis",
         "entries": [
           "\"\\x00\"",
           "\"\\xff\"",
@@ -140250,10 +142180,10 @@
     ]
   },
   "quality_checklist": {
-    "convention_compliance": "275/275 checks passed",
-    "implementation_coverage": "55/55 targets functional",
-    "corpus_seeded": "55/55 targets with seeds",
-    "dictionary_created": "55/55 targets with dictionaries",
+    "convention_compliance": "330/330 checks passed",
+    "implementation_coverage": "66/66 targets functional",
+    "corpus_seeded": "66/66 targets with seeds",
+    "dictionary_created": "66/66 targets with dictionaries",
     "cwe_mapping": "17 CWEs covered across targets"
   }
 }

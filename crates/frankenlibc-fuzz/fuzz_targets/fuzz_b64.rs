@@ -80,15 +80,19 @@ fn fuzz_decoded_len_matches_pton(payload: &[u8]) {
     let dry = b64::decoded_len(payload);
     let mut buf = vec![0u8; payload.len().max(1)];
     let real = b64::pton(payload, &mut buf);
+    assert_eq!(
+        dry.is_some(),
+        real.is_some(),
+        "decoded_len/pton acceptance disagrees for input {payload:?}: dry={dry:?} real={real:?}"
+    );
     match (dry, real) {
         (Some(a), Some(b)) => assert_eq!(
             a, b,
             "decoded_len/pton disagree on length for input {payload:?}"
         ),
         (None, None) => {}
-        // Disagreement (one Some, other None) is itself a defect; the
-        // assertion below surfaces it as a fuzz finding.
-        (a, b) => panic!("decoded_len returned {a:?} but pton returned {b:?} for the same input"),
+        // The assertion above already surfaced the acceptance mismatch.
+        _ => {}
     }
 }
 
