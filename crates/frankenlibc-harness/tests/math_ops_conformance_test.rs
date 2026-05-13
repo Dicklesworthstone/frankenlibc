@@ -243,6 +243,44 @@ fn math_ops_covers_pow() {
     );
 }
 
+#[test]
+fn math_ops_covers_finite_domain_error_bucket() {
+    let fixture = load_fixture("math_ops");
+    let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
+
+    let required = [
+        "asin_domain_gt_one",
+        "acos_domain_gt_one",
+        "log_domain_negative",
+        "log10_domain_negative",
+        "pow_domain_negative_fractional",
+        "fmod_domain_zero_divisor",
+    ];
+
+    for name in required {
+        assert!(
+            case_names.contains(&name),
+            "Missing finite math domain-error fixture case: {name}"
+        );
+    }
+
+    for case in &fixture.cases {
+        if case.name.contains("_domain_") {
+            assert_eq!(
+                case.expected_errno, 33,
+                "domain-error case {} should use EDOM",
+                case.name
+            );
+            assert_eq!(
+                case.expected_output.as_deref(),
+                Some("NaN"),
+                "domain-error case {} should expect NaN output",
+                case.name
+            );
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Coverage validation: rounding functions
 // ─────────────────────────────────────────────────────────────────────────────

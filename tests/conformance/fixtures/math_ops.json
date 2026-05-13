@@ -266,6 +266,66 @@
       "mode": "both"
     },
     {
+      "name": "asin_domain_gt_one",
+      "function": "asin",
+      "spec_section": "C11 7.12.4.2 asin",
+      "inputs": { "x": 2.0 },
+      "expected_output": "NaN",
+      "expected_errno": 33,
+      "mode": "both",
+      "note": "Domain-error bucket: finite input outside [-1, 1]"
+    },
+    {
+      "name": "acos_domain_gt_one",
+      "function": "acos",
+      "spec_section": "C11 7.12.4.1 acos",
+      "inputs": { "x": 2.0 },
+      "expected_output": "NaN",
+      "expected_errno": 33,
+      "mode": "both",
+      "note": "Domain-error bucket: finite input outside [-1, 1]"
+    },
+    {
+      "name": "log_domain_negative",
+      "function": "log",
+      "spec_section": "C11 7.12.6.7 log",
+      "inputs": { "x": -1.0 },
+      "expected_output": "NaN",
+      "expected_errno": 33,
+      "mode": "both",
+      "note": "Domain-error bucket: finite negative input"
+    },
+    {
+      "name": "log10_domain_negative",
+      "function": "log10",
+      "spec_section": "C11 7.12.6.8 log10",
+      "inputs": { "x": -1.0 },
+      "expected_output": "NaN",
+      "expected_errno": 33,
+      "mode": "both",
+      "note": "Domain-error bucket: finite negative input"
+    },
+    {
+      "name": "pow_domain_negative_fractional",
+      "function": "pow",
+      "spec_section": "C11 7.12.7.4 pow",
+      "inputs": { "x": -1.0, "y": 0.5 },
+      "expected_output": "NaN",
+      "expected_errno": 33,
+      "mode": "both",
+      "note": "Domain-error bucket: finite negative base with non-integer exponent"
+    },
+    {
+      "name": "fmod_domain_zero_divisor",
+      "function": "fmod",
+      "spec_section": "C11 7.12.10.1 fmod",
+      "inputs": { "x": 5.0, "y": 0.0 },
+      "expected_output": "NaN",
+      "expected_errno": 33,
+      "mode": "both",
+      "note": "Domain-error bucket: finite zero divisor"
+    },
+    {
       "name": "erf_zero",
       "function": "erf",
       "spec_section": "C11 7.12.8.1 erf",
