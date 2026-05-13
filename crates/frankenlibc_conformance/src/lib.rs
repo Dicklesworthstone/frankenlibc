@@ -780,7 +780,19 @@ pub fn execute_fixture_case(
         | "endnetent"
         | "endnetgrent"
         | "endprotoent"
-        | "endrpcent" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        | "endrpcent"
+        | "endservent"
+        | "endttyent"
+        | "endutent"
+        | "endutxent"
+        | "epoll_pwait2"
+        | "ether_aton"
+        | "ether_aton_r"
+        | "ether_hostton"
+        | "ether_line"
+        | "ether_ntoa"
+        | "ether_ntoa_r"
+        | "ether_ntohost" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
         | "_IO_peekc_locked" | "_IO_putc" | "_IO_puts" | "_IO_seekoff" | "_IO_seekpos"
@@ -17273,6 +17285,18 @@ fn execute_unistd_process_filesystem_case(
         "endnetgrent" => endnetgrent_fixture_actual()?,
         "endprotoent" => endprotoent_fixture_actual()?,
         "endrpcent" => endrpcent_fixture_actual()?,
+        "endservent" => endservent_fixture_actual()?,
+        "endttyent" => endttyent_fixture_actual()?,
+        "endutent" => endutent_fixture_actual()?,
+        "endutxent" => endutxent_fixture_actual()?,
+        "epoll_pwait2" => epoll_pwait2_fixture_actual(inputs)?,
+        "ether_aton" => ether_aton_fixture_actual()?,
+        "ether_aton_r" => ether_aton_r_fixture_actual()?,
+        "ether_hostton" => ether_hostton_fixture_actual()?,
+        "ether_line" => ether_line_fixture_actual()?,
+        "ether_ntoa" => ether_ntoa_fixture_actual()?,
+        "ether_ntoa_r" => ether_ntoa_r_fixture_actual()?,
+        "ether_ntohost" => ether_ntohost_fixture_actual()?,
         other => {
             return Err(format!(
                 "unsupported unistd process/filesystem fixture: {other}"
@@ -18633,6 +18657,203 @@ fn endprotoent_fixture_actual() -> Result<String, String> {
 fn endrpcent_fixture_actual() -> Result<String, String> {
     unsafe { frankenlibc_abi::unistd_abi::endrpcent() };
     Ok(String::from("ENDRPCENT_RESET_NOOP"))
+}
+
+fn endservent_fixture_actual() -> Result<String, String> {
+    unsafe { frankenlibc_abi::unistd_abi::endservent() };
+    Ok(String::from("ENDSERVENT_RESET_NOOP"))
+}
+
+fn endttyent_fixture_actual() -> Result<String, String> {
+    let rc = unsafe { frankenlibc_abi::unistd_abi::endttyent() };
+    Ok(format!("ENDTTYENT_RESET_RC_{rc}"))
+}
+
+fn endutent_fixture_actual() -> Result<String, String> {
+    unsafe { frankenlibc_abi::unistd_abi::endutent() };
+    Ok(String::from("ENDUTENT_RESET_NOOP"))
+}
+
+fn endutxent_fixture_actual() -> Result<String, String> {
+    unsafe { frankenlibc_abi::unistd_abi::endutxent() };
+    Ok(String::from("ENDUTXENT_RESET_NOOP"))
+}
+
+fn epoll_pwait2_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let epfd = parse_i32(inputs, "epfd")?;
+    let maxevents = parse_i32(inputs, "maxevents")?;
+    let timeout = libc::timespec {
+        tv_sec: inputs
+            .get("timeout_sec")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0) as libc::time_t,
+        tv_nsec: inputs
+            .get("timeout_nsec")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0) as libc::c_long,
+    };
+    let mut event = libc::epoll_event { events: 0, u64: 0 };
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::epoll_pwait2(
+            epfd,
+            (&mut event as *mut libc::epoll_event).cast::<c_void>(),
+            maxevents,
+            &timeout,
+            std::ptr::null(),
+        )
+    };
+    if rc >= 0 {
+        Ok(format!("EPOLL_PWAIT2_RC_{rc}"))
+    } else {
+        Ok(format!(
+            "EPOLL_PWAIT2_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FixtureEtherAddr {
+    octet: [u8; 6],
+}
+
+impl FixtureEtherAddr {
+    const SAMPLE: Self = Self {
+        octet: [1, 2, 3, 4, 5, 6],
+    };
+}
+
+fn ether_fixture_sample_text() -> Result<CString, String> {
+    CString::new("01:02:03:04:05:06")
+        .map_err(|_| "ether fixture sample contains interior NUL".to_string())
+}
+
+fn ether_class_from_addr(label: &str, addr: FixtureEtherAddr) -> String {
+    if addr == FixtureEtherAddr::SAMPLE {
+        format!("{label}_PARSED_SAMPLE_ADDR")
+    } else {
+        format!("{label}_PARSED_OTHER_ADDR")
+    }
+}
+
+fn ether_text_class(label: &str, ptr: *const c_char) -> String {
+    if ptr.is_null() {
+        return format!("{label}_NULL");
+    }
+    let text = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
+    if text == "01:02:03:04:05:06" {
+        format!("{label}_CANONICAL_SAMPLE_TEXT")
+    } else {
+        format!("{label}_OTHER_TEXT")
+    }
+}
+
+fn ether_aton_fixture_actual() -> Result<String, String> {
+    let text = ether_fixture_sample_text()?;
+    let ptr = unsafe { frankenlibc_abi::unistd_abi::ether_aton(text.as_ptr()) };
+    if ptr.is_null() {
+        return Ok(String::from("ETHER_ATON_NULL"));
+    }
+    let addr = unsafe { *(ptr.cast::<FixtureEtherAddr>()) };
+    Ok(ether_class_from_addr("ETHER_ATON", addr))
+}
+
+fn ether_aton_r_fixture_actual() -> Result<String, String> {
+    let text = ether_fixture_sample_text()?;
+    let mut addr = FixtureEtherAddr { octet: [0; 6] };
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::ether_aton_r(
+            text.as_ptr(),
+            (&mut addr as *mut FixtureEtherAddr).cast::<c_void>(),
+        )
+    };
+    if ptr.is_null() {
+        return Ok(String::from("ETHER_ATON_R_NULL"));
+    }
+    let pointer_class = if ptr == (&mut addr as *mut FixtureEtherAddr).cast::<c_void>() {
+        "CALLER_BUFFER"
+    } else {
+        "OTHER_BUFFER"
+    };
+    Ok(format!(
+        "{}_{pointer_class}",
+        ether_class_from_addr("ETHER_ATON_R", addr)
+    ))
+}
+
+fn ether_ntoa_fixture_actual() -> Result<String, String> {
+    let addr = FixtureEtherAddr::SAMPLE;
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::ether_ntoa((&addr as *const FixtureEtherAddr).cast::<c_void>())
+    };
+    Ok(ether_text_class("ETHER_NTOA", ptr))
+}
+
+fn ether_ntoa_r_fixture_actual() -> Result<String, String> {
+    let addr = FixtureEtherAddr::SAMPLE;
+    let mut buf = [0 as c_char; 18];
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::ether_ntoa_r(
+            (&addr as *const FixtureEtherAddr).cast::<c_void>(),
+            buf.as_mut_ptr(),
+        )
+    };
+    let pointer_class = if ptr == buf.as_mut_ptr() {
+        "CALLER_BUFFER"
+    } else {
+        "OTHER_BUFFER"
+    };
+    Ok(format!(
+        "{}_{pointer_class}",
+        ether_text_class("ETHER_NTOA_R", ptr)
+    ))
+}
+
+fn ether_line_fixture_actual() -> Result<String, String> {
+    let line = CString::new("01:02:03:04:05:06 fixture-host")
+        .map_err(|_| "ether_line fixture line contains NUL".to_string())?;
+    let mut addr = FixtureEtherAddr { octet: [0; 6] };
+    let mut hostname = [0 as c_char; 64];
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::ether_line(
+            line.as_ptr(),
+            (&mut addr as *mut FixtureEtherAddr).cast::<c_void>(),
+            hostname.as_mut_ptr(),
+        )
+    };
+    if rc != 0 {
+        return Ok(format!("ETHER_LINE_RC_{rc}"));
+    }
+    let host = unsafe { CStr::from_ptr(hostname.as_ptr()) }.to_bytes();
+    if addr == FixtureEtherAddr::SAMPLE && host == b"fixture-host" {
+        Ok(String::from("ETHER_LINE_PARSED_SAMPLE_HOST"))
+    } else {
+        Ok(String::from("ETHER_LINE_PARSED_OTHER"))
+    }
+}
+
+fn ether_hostton_fixture_actual() -> Result<String, String> {
+    let mut addr = FixtureEtherAddr { octet: [0; 6] };
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::ether_hostton(
+            std::ptr::null(),
+            (&mut addr as *mut FixtureEtherAddr).cast::<c_void>(),
+        )
+    };
+    Ok(format!("ETHER_HOSTTON_NULL_HOST_RC_{rc}"))
+}
+
+fn ether_ntohost_fixture_actual() -> Result<String, String> {
+    let addr = FixtureEtherAddr::SAMPLE;
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::ether_ntohost(
+            std::ptr::null_mut(),
+            (&addr as *const FixtureEtherAddr).cast::<c_void>(),
+        )
+    };
+    Ok(format!("ETHER_NTOHOST_NULL_HOST_RC_{rc}"))
 }
 
 fn wait_for_aio_completion(cb: &FixtureAiocb) -> c_int {
@@ -24289,6 +24510,41 @@ mod tests {
                     case.name
                 );
             }
+        }
+    }
+
+    #[test]
+    fn unistd_process_filesystem_wave08_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!(
+            "../../../tests/conformance/fixtures/unistd_process_filesystem_wave08.json"
+        );
+        let fixture: FixtureSetLite = serde_json::from_str(raw)
+            .expect("unistd_process_filesystem_wave08 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {}",
+                case.name
+            );
         }
     }
 

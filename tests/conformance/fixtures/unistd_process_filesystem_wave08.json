@@ -1,0 +1,406 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-13T15:05:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-08 service, tty, utmp, utmpx, epoll_pwait2, and Ethernet helper symbols. Outputs classify reset/noop status, invalid descriptor errno class, Ethernet parse/format success, and lookup null-argument failure without recording raw file descriptors, thread ids, timestamps, usernames, host database rows, filesystem paths, network database contents, pointer addresses, or process-global iterator state.",
+  "spec_reference": "POSIX/GNU endservent, endttyent, endutent, and endutxent iterator reset contracts; Linux epoll_pwait2 invalid descriptor behavior; and BSD/GNU ether_aton, ether_aton_r, ether_ntoa, ether_ntoa_r, ether_line, ether_hostton, and ether_ntohost Ethernet helper contracts.",
+  "campaign": {
+    "bead": "bd-r5k32.1",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-08-unistd-process-filesystem-tty-utmp-epoll-ether",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture",
+    "first_wave_symbols": [
+      "endservent",
+      "endttyent",
+      "endutent",
+      "endutxent",
+      "epoll_pwait2",
+      "ether_aton",
+      "ether_aton_r",
+      "ether_hostton",
+      "ether_line",
+      "ether_ntoa",
+      "ether_ntoa_r",
+      "ether_ntohost"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "endservent_reset_strict",
+      "function": "endservent",
+      "spec_section": "POSIX endservent iterator reset contract",
+      "inputs": {
+        "symbol": "endservent",
+        "scenario": "iterator_reset_without_services_database_capture",
+        "expected": "ENDSERVENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endservent reset class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=endservent;mode=strict;expected=ENDSERVENT_RESET_NOOP;actual=ENDSERVENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endservent_reset_hardened",
+      "function": "endservent",
+      "spec_section": "POSIX endservent iterator reset contract",
+      "inputs": {
+        "symbol": "endservent",
+        "scenario": "iterator_reset_without_services_database_capture",
+        "expected": "ENDSERVENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endservent reset class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=endservent;mode=hardened;expected=ENDSERVENT_RESET_NOOP;actual=ENDSERVENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endttyent_reset_strict",
+      "function": "endttyent",
+      "spec_section": "BSD endttyent iterator reset contract",
+      "inputs": {
+        "symbol": "endttyent",
+        "scenario": "iterator_reset_without_tty_database_capture",
+        "expected": "ENDTTYENT_RESET_RC_1",
+        "oracle_source": "FrankenLibC endttyent reset class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=endttyent;mode=strict;expected=ENDTTYENT_RESET_RC_1;actual=ENDTTYENT_RESET_RC_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endttyent_reset_hardened",
+      "function": "endttyent",
+      "spec_section": "BSD endttyent iterator reset contract",
+      "inputs": {
+        "symbol": "endttyent",
+        "scenario": "iterator_reset_without_tty_database_capture",
+        "expected": "ENDTTYENT_RESET_RC_1",
+        "oracle_source": "FrankenLibC endttyent reset class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=endttyent;mode=hardened;expected=ENDTTYENT_RESET_RC_1;actual=ENDTTYENT_RESET_RC_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endutent_reset_strict",
+      "function": "endutent",
+      "spec_section": "POSIX endutent iterator reset contract",
+      "inputs": {
+        "symbol": "endutent",
+        "scenario": "iterator_reset_without_utmp_database_capture",
+        "expected": "ENDUTENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endutent reset class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=endutent;mode=strict;expected=ENDUTENT_RESET_NOOP;actual=ENDUTENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endutent_reset_hardened",
+      "function": "endutent",
+      "spec_section": "POSIX endutent iterator reset contract",
+      "inputs": {
+        "symbol": "endutent",
+        "scenario": "iterator_reset_without_utmp_database_capture",
+        "expected": "ENDUTENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endutent reset class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=endutent;mode=hardened;expected=ENDUTENT_RESET_NOOP;actual=ENDUTENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endutxent_reset_strict",
+      "function": "endutxent",
+      "spec_section": "POSIX endutxent iterator reset contract",
+      "inputs": {
+        "symbol": "endutxent",
+        "scenario": "iterator_reset_without_utmpx_database_capture",
+        "expected": "ENDUTXENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endutxent reset class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=endutxent;mode=strict;expected=ENDUTXENT_RESET_NOOP;actual=ENDUTXENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "endutxent_reset_hardened",
+      "function": "endutxent",
+      "spec_section": "POSIX endutxent iterator reset contract",
+      "inputs": {
+        "symbol": "endutxent",
+        "scenario": "iterator_reset_without_utmpx_database_capture",
+        "expected": "ENDUTXENT_RESET_NOOP",
+        "oracle_source": "FrankenLibC endutxent reset class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=endutxent;mode=hardened;expected=ENDUTXENT_RESET_NOOP;actual=ENDUTXENT_RESET_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "epoll_pwait2_invalid_descriptor_strict",
+      "function": "epoll_pwait2",
+      "spec_section": "Linux epoll_pwait2 invalid descriptor behavior",
+      "inputs": {
+        "symbol": "epoll_pwait2",
+        "scenario": "invalid_descriptor_errno_class_without_fd_or_time_capture",
+        "epfd": -1,
+        "maxevents": 1,
+        "timeout_sec": 0,
+        "timeout_nsec": 0,
+        "expected": "EPOLL_PWAIT2_ERROR_EBADF",
+        "oracle_source": "FrankenLibC epoll_pwait2 invalid descriptor errno class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=epoll_pwait2;mode=strict;expected=EPOLL_PWAIT2_ERROR_EBADF;actual=EPOLL_PWAIT2_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "epoll_pwait2_invalid_descriptor_hardened",
+      "function": "epoll_pwait2",
+      "spec_section": "Linux epoll_pwait2 invalid descriptor behavior",
+      "inputs": {
+        "symbol": "epoll_pwait2",
+        "scenario": "invalid_descriptor_errno_class_without_fd_or_time_capture",
+        "epfd": -1,
+        "maxevents": 1,
+        "timeout_sec": 0,
+        "timeout_nsec": 0,
+        "expected": "EPOLL_PWAIT2_ERROR_EBADF",
+        "oracle_source": "FrankenLibC epoll_pwait2 invalid descriptor errno class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=epoll_pwait2;mode=hardened;expected=EPOLL_PWAIT2_ERROR_EBADF;actual=EPOLL_PWAIT2_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "ether_aton_parse_strict",
+      "function": "ether_aton",
+      "spec_section": "BSD ether_aton parse contract",
+      "inputs": {
+        "symbol": "ether_aton",
+        "scenario": "sample_address_parse_without_pointer_capture",
+        "expected": "ETHER_ATON_PARSED_SAMPLE_ADDR",
+        "oracle_source": "FrankenLibC ether_aton sample parse class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_aton;mode=strict;expected=ETHER_ATON_PARSED_SAMPLE_ADDR;actual=ETHER_ATON_PARSED_SAMPLE_ADDR;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ether_aton_parse_hardened",
+      "function": "ether_aton",
+      "spec_section": "BSD ether_aton parse contract",
+      "inputs": {
+        "symbol": "ether_aton",
+        "scenario": "sample_address_parse_without_pointer_capture",
+        "expected": "ETHER_ATON_PARSED_SAMPLE_ADDR",
+        "oracle_source": "FrankenLibC ether_aton sample parse class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_aton;mode=hardened;expected=ETHER_ATON_PARSED_SAMPLE_ADDR;actual=ETHER_ATON_PARSED_SAMPLE_ADDR;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ether_aton_r_parse_strict",
+      "function": "ether_aton_r",
+      "spec_section": "BSD ether_aton_r parse contract",
+      "inputs": {
+        "symbol": "ether_aton_r",
+        "scenario": "sample_address_parse_into_caller_buffer_without_pointer_capture",
+        "expected": "ETHER_ATON_R_PARSED_SAMPLE_ADDR_CALLER_BUFFER",
+        "oracle_source": "FrankenLibC ether_aton_r sample parse class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_aton_r;mode=strict;expected=ETHER_ATON_R_PARSED_SAMPLE_ADDR_CALLER_BUFFER;actual=ETHER_ATON_R_PARSED_SAMPLE_ADDR_CALLER_BUFFER;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ether_aton_r_parse_hardened",
+      "function": "ether_aton_r",
+      "spec_section": "BSD ether_aton_r parse contract",
+      "inputs": {
+        "symbol": "ether_aton_r",
+        "scenario": "sample_address_parse_into_caller_buffer_without_pointer_capture",
+        "expected": "ETHER_ATON_R_PARSED_SAMPLE_ADDR_CALLER_BUFFER",
+        "oracle_source": "FrankenLibC ether_aton_r sample parse class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_aton_r;mode=hardened;expected=ETHER_ATON_R_PARSED_SAMPLE_ADDR_CALLER_BUFFER;actual=ETHER_ATON_R_PARSED_SAMPLE_ADDR_CALLER_BUFFER;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ether_hostton_null_host_strict",
+      "function": "ether_hostton",
+      "spec_section": "BSD ether_hostton null hostname failure contract",
+      "inputs": {
+        "symbol": "ether_hostton",
+        "scenario": "null_hostname_failure_without_ethers_database_capture",
+        "expected": "ETHER_HOSTTON_NULL_HOST_RC_-1",
+        "oracle_source": "FrankenLibC ether_hostton null argument failure class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_hostton;mode=strict;expected=ETHER_HOSTTON_NULL_HOST_RC_-1;actual=ETHER_HOSTTON_NULL_HOST_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ether_hostton_null_host_hardened",
+      "function": "ether_hostton",
+      "spec_section": "BSD ether_hostton null hostname failure contract",
+      "inputs": {
+        "symbol": "ether_hostton",
+        "scenario": "null_hostname_failure_without_ethers_database_capture",
+        "expected": "ETHER_HOSTTON_NULL_HOST_RC_-1",
+        "oracle_source": "FrankenLibC ether_hostton null argument failure class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_hostton;mode=hardened;expected=ETHER_HOSTTON_NULL_HOST_RC_-1;actual=ETHER_HOSTTON_NULL_HOST_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ether_line_parse_strict",
+      "function": "ether_line",
+      "spec_section": "BSD ether_line parse contract",
+      "inputs": {
+        "symbol": "ether_line",
+        "scenario": "sample_line_parse_without_path_database_or_pointer_capture",
+        "expected": "ETHER_LINE_PARSED_SAMPLE_HOST",
+        "oracle_source": "FrankenLibC ether_line sample line parse class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_line;mode=strict;expected=ETHER_LINE_PARSED_SAMPLE_HOST;actual=ETHER_LINE_PARSED_SAMPLE_HOST;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ether_line_parse_hardened",
+      "function": "ether_line",
+      "spec_section": "BSD ether_line parse contract",
+      "inputs": {
+        "symbol": "ether_line",
+        "scenario": "sample_line_parse_without_path_database_or_pointer_capture",
+        "expected": "ETHER_LINE_PARSED_SAMPLE_HOST",
+        "oracle_source": "FrankenLibC ether_line sample line parse class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_line;mode=hardened;expected=ETHER_LINE_PARSED_SAMPLE_HOST;actual=ETHER_LINE_PARSED_SAMPLE_HOST;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ether_ntoa_format_strict",
+      "function": "ether_ntoa",
+      "spec_section": "BSD ether_ntoa format contract",
+      "inputs": {
+        "symbol": "ether_ntoa",
+        "scenario": "sample_address_format_without_pointer_capture",
+        "expected": "ETHER_NTOA_CANONICAL_SAMPLE_TEXT",
+        "oracle_source": "FrankenLibC ether_ntoa canonical text class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_ntoa;mode=strict;expected=ETHER_NTOA_CANONICAL_SAMPLE_TEXT;actual=ETHER_NTOA_CANONICAL_SAMPLE_TEXT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ether_ntoa_format_hardened",
+      "function": "ether_ntoa",
+      "spec_section": "BSD ether_ntoa format contract",
+      "inputs": {
+        "symbol": "ether_ntoa",
+        "scenario": "sample_address_format_without_pointer_capture",
+        "expected": "ETHER_NTOA_CANONICAL_SAMPLE_TEXT",
+        "oracle_source": "FrankenLibC ether_ntoa canonical text class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_ntoa;mode=hardened;expected=ETHER_NTOA_CANONICAL_SAMPLE_TEXT;actual=ETHER_NTOA_CANONICAL_SAMPLE_TEXT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ether_ntoa_r_format_strict",
+      "function": "ether_ntoa_r",
+      "spec_section": "BSD ether_ntoa_r format contract",
+      "inputs": {
+        "symbol": "ether_ntoa_r",
+        "scenario": "sample_address_format_into_caller_buffer_without_pointer_capture",
+        "expected": "ETHER_NTOA_R_CANONICAL_SAMPLE_TEXT_CALLER_BUFFER",
+        "oracle_source": "FrankenLibC ether_ntoa_r canonical text class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_ntoa_r;mode=strict;expected=ETHER_NTOA_R_CANONICAL_SAMPLE_TEXT_CALLER_BUFFER;actual=ETHER_NTOA_R_CANONICAL_SAMPLE_TEXT_CALLER_BUFFER;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ether_ntoa_r_format_hardened",
+      "function": "ether_ntoa_r",
+      "spec_section": "BSD ether_ntoa_r format contract",
+      "inputs": {
+        "symbol": "ether_ntoa_r",
+        "scenario": "sample_address_format_into_caller_buffer_without_pointer_capture",
+        "expected": "ETHER_NTOA_R_CANONICAL_SAMPLE_TEXT_CALLER_BUFFER",
+        "oracle_source": "FrankenLibC ether_ntoa_r canonical text class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_ntoa_r;mode=hardened;expected=ETHER_NTOA_R_CANONICAL_SAMPLE_TEXT_CALLER_BUFFER;actual=ETHER_NTOA_R_CANONICAL_SAMPLE_TEXT_CALLER_BUFFER;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ether_ntohost_null_host_strict",
+      "function": "ether_ntohost",
+      "spec_section": "BSD ether_ntohost null output failure contract",
+      "inputs": {
+        "symbol": "ether_ntohost",
+        "scenario": "null_hostname_output_failure_without_ethers_database_capture",
+        "expected": "ETHER_NTOHOST_NULL_HOST_RC_-1",
+        "oracle_source": "FrankenLibC ether_ntohost null argument failure class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_ntohost;mode=strict;expected=ETHER_NTOHOST_NULL_HOST_RC_-1;actual=ETHER_NTOHOST_NULL_HOST_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ether_ntohost_null_host_hardened",
+      "function": "ether_ntohost",
+      "spec_section": "BSD ether_ntohost null output failure contract",
+      "inputs": {
+        "symbol": "ether_ntohost",
+        "scenario": "null_hostname_output_failure_without_ethers_database_capture",
+        "expected": "ETHER_NTOHOST_NULL_HOST_RC_-1",
+        "oracle_source": "FrankenLibC ether_ntohost null argument failure class",
+        "ambient_state_policy": "forbid_fd_thread_time_user_path_network_database_pointer_or_iterator_capture"
+      },
+      "expected_output": "symbol=ether_ntohost;mode=hardened;expected=ETHER_NTOHOST_NULL_HOST_RC_-1;actual=ETHER_NTOHOST_NULL_HOST_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
