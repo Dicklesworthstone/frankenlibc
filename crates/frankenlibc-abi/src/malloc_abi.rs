@@ -1381,7 +1381,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         let _ = fallback_remove(ptr);
         return;
     }
-    if strict_allocator_host_path_active() {
+    if strict_allocator_host_path_active() && !check_ownership(ptr as usize) {
         let tracked_size = fallback_remove_sized(ptr);
         // SAFETY: strict-mode preserves host allocator semantics. Some glibc
         // internals allocate without crossing our public malloc symbol, so
