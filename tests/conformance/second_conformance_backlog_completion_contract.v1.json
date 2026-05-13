@@ -1,0 +1,268 @@
+{
+  "schema_version": "second_conformance_backlog_completion_contract.v1",
+  "bead_id": "bd-r5k32.15",
+  "parent_bead": "bd-r5k32",
+  "trace_id": "bd-r5k32.15::second-conformance-backlog::completion::v1",
+  "generated_at_utc": "2026-05-13T19:55:00Z",
+  "purpose": "Completion contract for the second artifact-guided conformance wave backlog. It binds child closeout evidence, coverage gates, prioritizer advancement, graph health, and telemetry for bd-r5k32.15 and parent bd-r5k32.",
+  "source_artifacts": [
+    {
+      "id": "symbol_fixture_coverage",
+      "kind": "coverage_artifact",
+      "path": "tests/conformance/symbol_fixture_coverage.v1.json"
+    },
+    {
+      "id": "per_symbol_fixture_tests",
+      "kind": "coverage_artifact",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json"
+    },
+    {
+      "id": "fixture_coverage_prioritizer",
+      "kind": "prioritizer_artifact",
+      "path": "tests/conformance/fixture_coverage_prioritizer.v1.json"
+    },
+    {
+      "id": "symbol_fixture_coverage_gate",
+      "kind": "gate",
+      "path": "scripts/check_symbol_fixture_coverage.sh"
+    },
+    {
+      "id": "per_symbol_fixture_tests_gate",
+      "kind": "gate",
+      "path": "scripts/check_per_symbol_fixture_tests.sh"
+    },
+    {
+      "id": "fixture_coverage_prioritizer_gate",
+      "kind": "gate",
+      "path": "scripts/check_fixture_coverage_prioritizer.sh"
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/second_conformance_backlog_completion_contract.v1.json"
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_second_conformance_backlog_completion_contract.sh"
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/second_conformance_backlog_completion_contract_test.rs"
+    }
+  ],
+  "tracker_snapshot": {
+    "source": ".beads/issues.jsonl no-db closeout snapshot",
+    "required_closed_child_count": 14,
+    "required_child_ids": [
+      "bd-r5k32.1",
+      "bd-r5k32.2",
+      "bd-r5k32.3",
+      "bd-r5k32.4",
+      "bd-r5k32.5",
+      "bd-r5k32.6",
+      "bd-r5k32.7",
+      "bd-r5k32.8",
+      "bd-r5k32.9",
+      "bd-r5k32.10",
+      "bd-r5k32.11",
+      "bd-r5k32.12",
+      "bd-r5k32.13",
+      "bd-r5k32.14"
+    ],
+    "child_closeouts": [
+      {
+        "id": "bd-r5k32.1",
+        "status": "closed",
+        "evidence_fragments": ["jq empty", "scripts/check_fixture_coverage_prioritizer.sh", "rch exec"]
+      },
+      {
+        "id": "bd-r5k32.2",
+        "status": "closed",
+        "evidence_fragments": ["jq empty", "scripts/check_fixture_coverage_prioritizer.sh", "remote RCH"]
+      },
+      {
+        "id": "bd-r5k32.3",
+        "status": "closed",
+        "evidence_fragments": ["jq empty", "check_fixture_coverage_prioritizer", "rch remote"]
+      },
+      {
+        "id": "bd-r5k32.4",
+        "status": "closed",
+        "evidence_fragments": ["jq empty", "check_fixture_coverage_prioritizer", "rch remote"]
+      },
+      {
+        "id": "bd-r5k32.5",
+        "status": "closed",
+        "evidence_fragments": ["Tracker-only closeout", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+      },
+      {
+        "id": "bd-r5k32.6",
+        "status": "closed",
+        "evidence_fragments": ["jq empty", "scripts/check_fixture_coverage_prioritizer.sh", "remote RCH"]
+      },
+      {
+        "id": "bd-r5k32.7",
+        "status": "closed",
+        "evidence_fragments": ["Tracker-only closeout", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+      },
+      {
+        "id": "bd-r5k32.8",
+        "status": "closed",
+        "evidence_fragments": ["Tracker-only closeout", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+      },
+      {
+        "id": "bd-r5k32.9",
+        "status": "closed",
+        "evidence_fragments": ["Tracker-only closeout", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+      },
+      {
+        "id": "bd-r5k32.10",
+        "status": "closed",
+        "evidence_fragments": ["time/clock calendar wave-01", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+      },
+      {
+        "id": "bd-r5k32.11",
+        "status": "closed",
+        "evidence_fragments": ["math_finite_special_wave02", "scripts/check_fixture_coverage_prioritizer.sh", "remote RCH"]
+      },
+      {
+        "id": "bd-r5k32.12",
+        "status": "closed",
+        "evidence_fragments": ["signal_async_wave01", "scripts/check_fixture_coverage_prioritizer.sh", "rch cargo"]
+      },
+      {
+        "id": "bd-r5k32.13",
+        "status": "closed",
+        "evidence_fragments": ["glibc_internal_compat_wave02", "scripts/check_fixture_coverage_prioritizer.sh", "rch tests"]
+      },
+      {
+        "id": "bd-r5k32.14",
+        "status": "closed",
+        "evidence_fragments": ["rpc_legacy_network_wave02", "covered_count=939", "2320 cases"]
+      }
+    ]
+  },
+  "coverage_expectations": {
+    "symbol_fixture_coverage": {
+      "target_total_symbols": 4119,
+      "target_covered_symbols": 939,
+      "target_uncovered_symbols": 3180,
+      "target_coverage_pct": 22.8
+    },
+    "per_symbol_fixture_tests": {
+      "total_symbols": 4119,
+      "symbols_with_fixtures": 937,
+      "total_cases": 2320,
+      "uncovered_action_count": 3182,
+      "total_format_issues": 0
+    },
+    "fixture_coverage_prioritizer": {
+      "campaign_count": 11,
+      "selected_target_uncovered_symbols": 2826,
+      "all_uncovered_target_symbols": 3180,
+      "total_first_wave_fixture_count": 125,
+      "required_covered_modules": [
+        "fortify_abi",
+        "glibc_internal_abi",
+        "math_abi",
+        "process_abi",
+        "pthread_abi",
+        "rpc_abi",
+        "signal_abi",
+        "stdio_abi",
+        "time_abi",
+        "unistd_abi",
+        "wchar_abi"
+      ]
+    }
+  },
+  "prioritizer_advancement": {
+    "campaign_id": "fcq-rpc-legacy-network",
+    "completed_wave_symbols": [
+      "authunix_create",
+      "authunix_create_default",
+      "bindresvport",
+      "callrpc",
+      "cbc_crypt",
+      "clnt_broadcast",
+      "clnt_create",
+      "clnt_pcreateerror",
+      "clnt_perrno",
+      "clnt_perror",
+      "clnt_spcreateerror",
+      "clnt_sperrno"
+    ],
+    "expected_next_first_wave_symbols": [
+      "clnt_sperror",
+      "clntraw_create",
+      "clnttcp_create",
+      "clntudp_bufcreate",
+      "clntudp_create",
+      "clntunix_create",
+      "des_setparity",
+      "ecb_crypt",
+      "get_myaddress",
+      "getnetname",
+      "getpublickey",
+      "getrpcport"
+    ],
+    "expected_current_coverage_pct": 15.09,
+    "expected_target_covered": 24,
+    "expected_target_uncovered": 135
+  },
+  "base_gate_commands": [
+    "scripts/check_symbol_fixture_coverage.sh",
+    "scripts/check_per_symbol_fixture_tests.sh --validate-only",
+    "scripts/check_fixture_coverage_prioritizer.sh",
+    "br --no-db dep cycles --json"
+  ],
+  "telemetry_contract": {
+    "report_path": "target/conformance/second_conformance_backlog_completion_contract.report.json",
+    "log_path": "target/conformance/second_conformance_backlog_completion_contract.events.jsonl",
+    "required_events": [
+      "second_conformance_backlog.source_artifacts_validated",
+      "second_conformance_backlog.child_closeouts_validated",
+      "second_conformance_backlog.coverage_artifacts_validated",
+      "second_conformance_backlog.prioritizer_advancement_validated",
+      "second_conformance_backlog.base_gates_validated",
+      "second_conformance_backlog.test_surface_validated",
+      "second_conformance_backlog.completion_contract_validated"
+    ],
+    "failure_event": "second_conformance_backlog.completion_contract_failed",
+    "required_log_fields": [
+      "schema_version",
+      "timestamp",
+      "trace_id",
+      "event",
+      "status",
+      "bead_id",
+      "parent_bead",
+      "source_commit",
+      "artifact_refs",
+      "failure_signature"
+    ]
+  },
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_second_conformance_backlog_closeout",
+      "checker_accepts_second_conformance_backlog_completion_contract",
+      "checker_emits_completion_telemetry"
+    ],
+    "negative": [
+      "checker_rejects_missing_child_closeout",
+      "checker_rejects_stale_rpc_first_wave_symbols",
+      "checker_rejects_per_symbol_case_count_drift"
+    ]
+  },
+  "required_validation_commands": [
+    "jq empty tests/conformance/second_conformance_backlog_completion_contract.v1.json",
+    "bash -n scripts/check_second_conformance_backlog_completion_contract.sh",
+    "bash scripts/check_second_conformance_backlog_completion_contract.sh",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/second_conformance_backlog_completion_contract_test.rs",
+    "rch exec -- cargo test -p frankenlibc-harness --test second_conformance_backlog_completion_contract_test -- --nocapture",
+    "rch exec -- cargo check -p frankenlibc-harness --test second_conformance_backlog_completion_contract_test",
+    "rch exec -- cargo clippy -p frankenlibc-harness --test second_conformance_backlog_completion_contract_test -- -D warnings"
+  ]
+}
