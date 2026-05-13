@@ -3277,8 +3277,11 @@ pub unsafe extern "C" fn abort() -> ! {
         frankenlibc_core::syscall::sys_exit_group(134)
     }
 
-    // Flush stdout/stderr before aborting.
-    let _ = unsafe { crate::stdio_abi::fflush(ptr::null_mut()) };
+    // In a multi-threaded process, calling host_fflush(NULL) after fork()
+    // (which assert_child_sigabrt does) will deadlock if the host's stdout
+    // was locked during the fork. Instead of a full fflush(NULL), we only
+    // attempt to flush our managed streams, and even then, we use try_lock.
+    let _ = unsafe { crate::stdio_abi::fflush_managed_only_for_abort() };
 
     // Build a sigset containing only SIGABRT and unblock it in this thread so
     // a held SIGABRT cannot suppress delivery of the impending raise.
@@ -3295,18 +3298,32 @@ pub unsafe extern "C" fn abort() -> ! {
     };
 
     unsafe {
-        crate::signal_abi::raise(libc::SIGABRT);
+        // Use raw syscalls to bypass runtime_policy locks which may be held
+        // if another thread called fork() while doing policy checks.
+        let pid = frankenlibc_core::syscall::sys_getpid();
+        let tid = frankenlibc_core::syscall::sys_gettid();
+        let _ = raw_syscall::sys_tgkill(pid, tid, libc::SIGABRT);
+
         // Handler returned (or SIG_IGN was installed). Reset to SIG_DFL so the
         // next raise produces the default core-dump action, then unblock again
         // (a handler may have re-blocked the signal) and re-raise.
-        crate::signal_abi::signal(libc::SIGABRT, libc::SIG_DFL);
+        let mut act = core::mem::zeroed::<libc::sigaction>();
+        act.sa_sigaction = libc::SIG_DFL as libc::sighandler_t;
+        let _ = raw_syscall::sys_rt_sigaction(
+            libc::SIGABRT,
+            &act as *const _ as *const u8,
+            ptr::null_mut(),
+            core::mem::size_of::<libc::c_ulong>(),
+        );
+
         let _ = raw_syscall::sys_rt_sigprocmask(
             libc::SIG_UNBLOCK,
             &unblock_set as *const libc::sigset_t as *const u8,
             ptr::null_mut(),
             core::mem::size_of::<libc::c_ulong>(),
         );
-        crate::signal_abi::raise(libc::SIGABRT);
+
+        let _ = raw_syscall::sys_tgkill(pid, tid, libc::SIGABRT);
     }
     // Should never reach here, but the compiler needs a diverging path.
     frankenlibc_core::syscall::sys_exit_group(134)

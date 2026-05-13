@@ -1324,6 +1324,24 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
 // fflush
 // ---------------------------------------------------------------------------
 
+#[doc(hidden)]
+pub unsafe fn fflush_managed_only_for_abort() -> c_int {
+    let Ok(mut reg) = registry().try_lock() else {
+        return libc::EOF;
+    };
+    let ids: Vec<usize> = reg.streams.keys().copied().collect();
+    let mut overall_rc = 0;
+    for id in ids {
+        if let Some(s) = reg.streams.get_mut(&id) {
+            let success = unsafe { flush_stream(s) };
+            if !success {
+                overall_rc = libc::EOF;
+            }
+        }
+    }
+    overall_rc
+}
+
 /// POSIX `fflush`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
@@ -6805,7 +6823,23 @@ pub unsafe extern "C" fn fflush_unlocked(stream: *mut c_void) -> c_int {
 pub extern "C" fn fcloseall() -> c_int {
     // Flush all open streams by passing NULL to fflush (POSIX semantics).
     unsafe { fflush(std::ptr::null_mut()) };
-    0
+
+    let ids: Vec<usize> = {
+        let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        reg.streams.keys().copied().collect()
+    };
+
+    let mut overall_rc = 0;
+    for id in ids {
+        // `id as *mut c_void` resolves back to the same `id` inside `fclose`
+        // because `standard_stream_id` returns `None` for integer values like 1, 2, 3,
+        // and `canonical_stream_id` falls back to the integer value.
+        let rc = unsafe { fclose(id as *mut c_void) };
+        if rc != 0 {
+            overall_rc = libc::EOF;
+        }
+    }
+    overall_rc
 }
 
 // ===========================================================================

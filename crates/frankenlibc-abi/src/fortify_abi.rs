@@ -133,7 +133,9 @@ unsafe extern "C" {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __chk_fail() -> ! {
     let msg = b"*** buffer overflow detected ***: terminated\n";
-    unsafe { crate::unistd_abi::write(2, msg.as_ptr().cast(), msg.len()) };
+    unsafe {
+        let _ = frankenlibc_core::syscall::sys_write(2, msg.as_ptr().cast(), msg.len());
+    }
     unsafe { crate::stdlib_abi::abort() }
 }
 
@@ -141,7 +143,7 @@ pub unsafe extern "C" fn __chk_fail() -> ! {
 pub unsafe extern "C" fn __stack_chk_fail() -> ! {
     let msg = b"*** stack smashing detected ***: terminated\n";
     unsafe {
-        crate::unistd_abi::write(2, msg.as_ptr().cast(), msg.len());
+        let _ = frankenlibc_core::syscall::sys_write(2, msg.as_ptr().cast(), msg.len());
         crate::stdlib_abi::abort()
     }
 }
@@ -151,12 +153,10 @@ pub unsafe extern "C" fn __fortify_fail(msg: *const c_char) -> ! {
     let prefix = b"*** ";
     let suffix = b" ***: terminated\n";
     unsafe {
-        crate::unistd_abi::write(2, prefix.as_ptr().cast(), prefix.len());
-        if !msg.is_null() {
-            let len = crate::string_abi::strlen(msg);
-            crate::unistd_abi::write(2, msg.cast(), len);
-        }
-        crate::unistd_abi::write(2, suffix.as_ptr().cast(), suffix.len());
+        let _ = frankenlibc_core::syscall::sys_write(2, prefix.as_ptr().cast(), prefix.len());
+        let len = crate::string_abi::strlen(msg);
+        let _ = frankenlibc_core::syscall::sys_write(2, msg.cast(), len);
+        let _ = frankenlibc_core::syscall::sys_write(2, suffix.as_ptr().cast(), suffix.len());
         crate::stdlib_abi::abort()
     }
 }
