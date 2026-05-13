@@ -769,6 +769,18 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Decode a raw 128-byte v1 decision payload via
+    /// `frankenlibc_membrane::runtime_math::evidence::decode_decision_payload_v1`
+    /// and emit one structured JSONL record describing the payload.
+    /// Exits non-zero on decode failure.
+    DecodeDecisionPayload {
+        /// Path to the 128-byte raw payload file.
+        #[arg(long)]
+        payload: PathBuf,
+        /// Output JSONL path: one decision_payload_decode record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Verify a Policy Compaction Profile Table (.pcpt) artifact via
     /// `frankenlibc_membrane::runtime_math::policy_table::verify_pcpt`.
     /// Checks magic, schema_version, hash alg, key/cell spec ids,
@@ -2617,6 +2629,92 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err(format!(
                     "validate-p99-delta: rejected {} - see {}",
                     jsonl.display(),
+                    output.display()
+                )
+                .into());
+            }
+        }
+        Command::DecodeDecisionPayload { payload, output } => {
+            use frankenlibc_membrane::runtime_math::evidence::{
+                EVIDENCE_SYMBOL_SIZE_T, decode_decision_payload_v1,
+            };
+            let bytes = std::fs::read(&payload)
+                .map_err(|e| format!("read --payload {}: {e}", payload.display()))?;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let (line, ok) = if bytes.len() != EVIDENCE_SYMBOL_SIZE_T {
+                (
+                    serde_json::json!({
+                        "kind": "decision_payload_decode",
+                        "input": payload.display().to_string(),
+                        "ok": false,
+                        "error": format!(
+                            "payload size {} != {EVIDENCE_SYMBOL_SIZE_T}",
+                            bytes.len()
+                        ),
+                    }),
+                    false,
+                )
+            } else {
+                let mut arr = [0u8; EVIDENCE_SYMBOL_SIZE_T];
+                arr.copy_from_slice(&bytes);
+                match decode_decision_payload_v1(&arr) {
+                    Ok(decoded) => {
+                        let loss = decoded.loss_evidence.as_ref().map(|le| {
+                            serde_json::json!({
+                                "posterior_adverse_ppm": le.posterior_adverse_ppm,
+                                "selected_action": le.selected_action,
+                                "competing_action": le.competing_action,
+                                "selected_expected_loss_milli": le.selected_expected_loss_milli,
+                                "competing_expected_loss_milli": le.competing_expected_loss_milli,
+                            })
+                        });
+                        (
+                            serde_json::json!({
+                                "kind": "decision_payload_decode",
+                                "input": payload.display().to_string(),
+                                "ok": true,
+                                "mode": decoded.mode,
+                                "addr_hint": decoded.addr_hint,
+                                "requested_bytes": decoded.requested_bytes,
+                                "is_write": decoded.is_write,
+                                "bloom_negative": decoded.bloom_negative,
+                                "contention_hint": decoded.contention_hint,
+                                "policy_id": decoded.policy_id,
+                                "risk_upper_bound_ppm": decoded.risk_upper_bound_ppm,
+                                "estimated_cost_ns": decoded.estimated_cost_ns,
+                                "adverse": decoded.adverse,
+                                "healing_action": format!("{:?}", decoded.healing_action),
+                                "loss_evidence": loss,
+                            }),
+                            true,
+                        )
+                    }
+                    Err(err) => (
+                        serde_json::json!({
+                            "kind": "decision_payload_decode",
+                            "input": payload.display().to_string(),
+                            "ok": false,
+                            "error": format!("{err:?}"),
+                        }),
+                        false,
+                    ),
+                }
+            };
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "decode-decision-payload: ok={ok} → wrote 1 JSONL record to {}",
+                output.display()
+            );
+            if !ok {
+                return Err(format!(
+                    "decode-decision-payload: rejected {} — see {}",
+                    payload.display(),
                     output.display()
                 )
                 .into());
