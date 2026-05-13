@@ -1,0 +1,57 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "reduce-mask-cli-contract",
+  "bead": "bd-f9mnb",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "c4f2fce3",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::grobner::{reduce_mask, reduce_mask_with_limit} (table-driven Gröbner-style monomial reduction over u128 bitset masks; deterministic, bounded-time, allocation-free) as a standalone CLI. Accepts the input mask (u128), a rules table (JSON array of {lhs, rhs} u128 pairs), and a step limit (safety belt; default 1024). Emits a single JSONL record { kind: 'reduce_mask', input_mask, rule_count, step_limit, reduced_mask, steps, reached_fixpoint, error } where reduced_mask is the input on step_limit_exceeded. The CLI bridge lets CI validate Gröbner-basis rewrite rules and policy compaction without compiling.",
+  "subcommand_name": "reduce-mask",
+  "binary_target": "harness",
+  "required_flags": [
+    "--mask",
+    "--rules",
+    "--output"
+  ],
+  "optional_flags": [
+    "--step-limit"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::grobner::reduce_mask_with_limit",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "reduce_mask",
+    "required_fields": [
+      "kind",
+      "input_mask",
+      "rule_count",
+      "step_limit",
+      "reduced_mask",
+      "steps",
+      "reached_fixpoint",
+      "error"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "echoes_inputs_into_output_record": true,
+    "deterministic_given_inputs": true,
+    "identity_with_empty_rule_table": true,
+    "drops_redundant_atom_a_or_b_to_a": true,
+    "canonical_root_cause_c0_and_c3_to_c3": true,
+    "canonical_full_support_reduces_to_disjoint_class_union": true,
+    "step_limit_exceeded_preserves_input_mask_and_flags_error": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "identity_changes_mask_with_empty_rules",
+    "step_limit_exceeded_silently_succeeds",
+    "step_limit_exceeded_replaces_input_mask"
+  ],
+  "summary": {
+    "bead": "bd-f9mnb",
+    "subcommand": "reduce-mask",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}

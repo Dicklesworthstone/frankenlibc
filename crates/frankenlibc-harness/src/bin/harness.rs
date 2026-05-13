@@ -769,6 +769,27 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Reduce a u128 monomial/signature bitset mask to normal form using a
+    /// table of (lhs, rhs) rewrite rules, via
+    /// `frankenlibc_membrane::grobner::reduce_mask_with_limit`.
+    /// The rule set must be confluent + terminating (e.g. extracted from a
+    /// Gröbner basis); the step limit is a safety belt.
+    ReduceMask {
+        /// Input monomial mask as a u128 decimal integer.
+        #[arg(long)]
+        mask: u128,
+        /// Path to a JSON file containing the rewrite rules as
+        /// `[{ "lhs": <u128>, "rhs": <u128> }, ...]` (decimal integers).
+        #[arg(long)]
+        rules: PathBuf,
+        /// Maximum number of successful rewrites permitted before bailing.
+        /// Defaults to grobner::DEFAULT_STEP_LIMIT (1024).
+        #[arg(long, default_value_t = 1024u32)]
+        step_limit: u32,
+        /// Output JSONL path: one reduce_mask record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Compute the memory-pressure ppm composition pipeline via
     /// `frankenlibc_membrane::runtime_math::sos_barrier::depth_to_arena_utilization_ppm`
     /// (depth -> ppm) and
@@ -2812,6 +2833,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::ReduceMask {
+            mask,
+            rules,
+            step_limit,
+            output,
+        } => {
+            use frankenlibc_membrane::grobner::{
+                MonomialMask, ReduceError, ReductionRule, reduce_mask_with_limit,
+            };
+            let body = std::fs::read_to_string(&rules)
+                .map_err(|e| format!("read rules {}: {e}", rules.display()))?;
+            #[derive(serde::Deserialize)]
+            struct RuleJson {
+                lhs: MonomialMask,
+                rhs: MonomialMask,
+            }
+            let parsed: Vec<RuleJson> =
+                serde_json::from_str(&body).map_err(|e| format!("parse rules: {e}"))?;
+            let rule_count = parsed.len();
+            let rule_table: Vec<ReductionRule> = parsed
+                .into_iter()
+                .map(|r| ReductionRule {
+                    lhs: r.lhs,
+                    rhs: r.rhs,
+                })
+                .collect();
+            let (reduced_mask, steps, reached_fixpoint, error) =
+                match reduce_mask_with_limit(mask, &rule_table, step_limit) {
+                    Ok((m, stats)) => (m, stats.steps, stats.reached_fixpoint, None),
+                    Err(ReduceError::StepLimitExceeded { steps }) => {
+                        (mask, steps, false, Some("step_limit_exceeded"))
+                    }
+                };
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "reduce_mask",
+                "input_mask": mask.to_string(),
+                "rule_count": rule_count,
+                "step_limit": step_limit,
+                "reduced_mask": reduced_mask.to_string(),
+                "steps": steps,
+                "reached_fixpoint": reached_fixpoint,
+                "error": error,
+            });
+            let mut out_body = line.to_string();
+            out_body.push('\n');
+            std::fs::write(&output, out_body)?;
+            eprintln!(
+                "reduce-mask: input_mask={mask} rule_count={rule_count} step_limit={step_limit} -> reduced_mask={reduced_mask} steps={steps} fixpoint={reached_fixpoint} error={error:?}"
+            );
         }
         Command::ComputeMemoryPressurePpm {
             depth,
