@@ -1202,6 +1202,18 @@ pub fn execute_fixture_case(
         | "posix_spawn_file_actions_adddup2" => {
             execute_process_spawn_wave01_case(function, inputs, mode)
         }
+        "posix_spawn_file_actions_addfchdir_np"
+        | "posix_spawn_file_actions_addopen"
+        | "posix_spawn_file_actions_destroy"
+        | "posix_spawn_file_actions_init"
+        | "posix_spawnattr_destroy"
+        | "posix_spawnattr_init"
+        | "posix_spawnp"
+        | "setresgid"
+        | "setresuid"
+        | "vfork"
+        | "wait"
+        | "wait3" => execute_process_spawn_wave02_case(function, inputs, mode),
         "execve" => execute_execve_case(inputs, mode),
         "posix_spawn" => execute_posix_spawn_case(inputs, mode),
         "system" => execute_system_case(inputs, mode),
@@ -24936,6 +24948,230 @@ fn process_spawn_adddup2_actual() -> Result<String, String> {
     })
 }
 
+fn execute_process_spawn_wave02_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "process/spawn wave-02 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = match function {
+        "posix_spawn_file_actions_addfchdir_np" => process_spawn_addfchdir_actual()?,
+        "posix_spawn_file_actions_addopen" => process_spawn_addopen_actual()?,
+        "posix_spawn_file_actions_destroy" => process_spawn_file_actions_destroy_actual()?,
+        "posix_spawn_file_actions_init" => process_spawn_file_actions_init_actual()?,
+        "posix_spawnattr_destroy" => process_spawn_attr_destroy_actual()?,
+        "posix_spawnattr_init" => process_spawn_attr_init_actual()?,
+        "posix_spawnp" => process_spawn_spawnp_null_file_actual()?,
+        "setresgid" => process_spawn_setresgid_noop_actual()?,
+        "setresuid" => process_spawn_setresuid_noop_actual()?,
+        "vfork" => process_spawn_vfork_actual(inputs)?,
+        "wait" => process_spawn_wait_actual(inputs)?,
+        "wait3" => process_spawn_wait3_actual(inputs)?,
+        other => {
+            return Err(format!(
+                "unsupported process/spawn wave-02 fixture: {other}"
+            ));
+        }
+    };
+
+    Ok(non_host_execution(process_spawn_wave01_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn process_spawn_spawn_return_result(prefix: &str, rc: c_int) -> String {
+    if rc == 0 {
+        format!("{prefix}_RC_0")
+    } else {
+        format!("{prefix}_RC_{}", process_spawn_errno_class(rc))
+    }
+}
+
+fn process_spawn_file_actions_init_actual() -> Result<String, String> {
+    let mut actions = std::mem::MaybeUninit::<libc::posix_spawn_file_actions_t>::zeroed();
+    let actions_ptr = actions.as_mut_ptr().cast::<c_void>();
+    let init_rc =
+        unsafe { frankenlibc_abi::process_abi::posix_spawn_file_actions_init(actions_ptr) };
+    let destroy_rc = if init_rc == 0 {
+        unsafe { frankenlibc_abi::process_abi::posix_spawn_file_actions_destroy(actions_ptr) }
+    } else {
+        libc::EINVAL
+    };
+    Ok(format!(
+        "POSIX_SPAWN_FILE_ACTIONS_INIT_RC_{init_rc}_DESTROY_RC_{destroy_rc}"
+    ))
+}
+
+fn process_spawn_file_actions_destroy_actual() -> Result<String, String> {
+    let mut actions = std::mem::MaybeUninit::<libc::posix_spawn_file_actions_t>::zeroed();
+    let actions_ptr = actions.as_mut_ptr().cast::<c_void>();
+    let init_rc =
+        unsafe { frankenlibc_abi::process_abi::posix_spawn_file_actions_init(actions_ptr) };
+    if init_rc != 0 {
+        return Ok(format!(
+            "POSIX_SPAWN_FILE_ACTIONS_DESTROY_INIT_RC_{init_rc}"
+        ));
+    }
+    let destroy_rc =
+        unsafe { frankenlibc_abi::process_abi::posix_spawn_file_actions_destroy(actions_ptr) };
+    Ok(format!("POSIX_SPAWN_FILE_ACTIONS_DESTROY_RC_{destroy_rc}"))
+}
+
+fn process_spawn_addfchdir_actual() -> Result<String, String> {
+    process_spawn_with_file_actions("POSIX_SPAWN_ADDFCHDIR", |actions| unsafe {
+        frankenlibc_abi::process_abi::posix_spawn_file_actions_addfchdir_np(actions, 0)
+    })
+}
+
+fn process_spawn_addopen_actual() -> Result<String, String> {
+    let path = CString::new("frankenlibc-wave02-static")
+        .map_err(|_| "spawn addopen path contains NUL".to_string())?;
+    process_spawn_with_file_actions("POSIX_SPAWN_ADDOPEN", |actions| unsafe {
+        frankenlibc_abi::process_abi::posix_spawn_file_actions_addopen(
+            actions,
+            19,
+            path.as_ptr(),
+            libc::O_RDONLY,
+            0,
+        )
+    })
+}
+
+fn process_spawn_attr_init_actual() -> Result<String, String> {
+    let mut attr = std::mem::MaybeUninit::<libc::posix_spawnattr_t>::zeroed();
+    let attr_ptr = attr.as_mut_ptr().cast::<c_void>();
+    let init_rc = unsafe { frankenlibc_abi::process_abi::posix_spawnattr_init(attr_ptr) };
+    let destroy_rc = if init_rc == 0 {
+        unsafe { frankenlibc_abi::process_abi::posix_spawnattr_destroy(attr_ptr) }
+    } else {
+        libc::EINVAL
+    };
+    Ok(format!(
+        "POSIX_SPAWNATTR_INIT_RC_{init_rc}_DESTROY_RC_{destroy_rc}"
+    ))
+}
+
+fn process_spawn_attr_destroy_actual() -> Result<String, String> {
+    let mut attr = std::mem::MaybeUninit::<libc::posix_spawnattr_t>::zeroed();
+    let attr_ptr = attr.as_mut_ptr().cast::<c_void>();
+    let init_rc = unsafe { frankenlibc_abi::process_abi::posix_spawnattr_init(attr_ptr) };
+    if init_rc != 0 {
+        return Ok(format!("POSIX_SPAWNATTR_DESTROY_INIT_RC_{init_rc}"));
+    }
+    let destroy_rc = unsafe { frankenlibc_abi::process_abi::posix_spawnattr_destroy(attr_ptr) };
+    Ok(format!("POSIX_SPAWNATTR_DESTROY_RC_{destroy_rc}"))
+}
+
+fn process_spawn_spawnp_null_file_actual() -> Result<String, String> {
+    let mut child = 0;
+    let argv = [std::ptr::null_mut::<c_char>()];
+    let envp = [std::ptr::null_mut::<c_char>()];
+    let rc = unsafe {
+        frankenlibc_abi::process_abi::posix_spawnp(
+            &mut child,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr(),
+            envp.as_ptr(),
+        )
+    };
+    Ok(process_spawn_spawn_return_result(
+        "POSIX_SPAWNP_NULL_FILE",
+        rc,
+    ))
+}
+
+fn process_spawn_setresgid_noop_actual() -> Result<String, String> {
+    let no_change = u32::MAX as libc::gid_t;
+    process_spawn_reset_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::setresgid(no_change, no_change, no_change) };
+    Ok(process_spawn_errno_result("SETRESGID_NOOP", rc))
+}
+
+fn process_spawn_setresuid_noop_actual() -> Result<String, String> {
+    let no_change = u32::MAX as libc::uid_t;
+    process_spawn_reset_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::setresuid(no_change, no_change, no_change) };
+    Ok(process_spawn_errno_result("SETRESUID_NOOP", rc))
+}
+
+fn process_spawn_wait_status(prefix: &str, wait_status: c_int) -> String {
+    if libc::WIFEXITED(wait_status) {
+        format!("{prefix}_CHILD_EXIT_{}", libc::WEXITSTATUS(wait_status))
+    } else if libc::WIFSIGNALED(wait_status) {
+        format!("{prefix}_CHILD_SIGNAL_{}", libc::WTERMSIG(wait_status))
+    } else {
+        format!("{prefix}_CHILD_STATUS_OTHER")
+    }
+}
+
+fn process_spawn_vfork_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let status = parse_i32(inputs, "status").unwrap_or(17);
+    let child = unsafe { frankenlibc_abi::process_abi::vfork() };
+    if child == 0 {
+        unsafe { libc::_exit(status) };
+    }
+    if child < 0 {
+        return Ok(process_spawn_errno_result("VFORK", child));
+    }
+
+    let mut wait_status = 0;
+    let waited = unsafe { libc::waitpid(child, &mut wait_status, 0) };
+    if waited != child {
+        return Ok(format!("VFORK_WAITPID_RC_{waited}"));
+    }
+    Ok(process_spawn_wait_status("VFORK", wait_status))
+}
+
+fn process_spawn_wait_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let status = parse_i32(inputs, "status").unwrap_or(23);
+    let child = unsafe { libc::fork() };
+    if child == 0 {
+        unsafe { libc::_exit(status) };
+    }
+    if child < 0 {
+        return Ok(String::from("WAIT_FORK_FAILED"));
+    }
+
+    let mut wait_status = 0;
+    process_spawn_reset_errno();
+    let waited = unsafe { frankenlibc_abi::process_abi::wait(&mut wait_status) };
+    if waited < 0 {
+        return Ok(process_spawn_errno_result("WAIT", waited));
+    }
+    Ok(process_spawn_wait_status("WAIT", wait_status))
+}
+
+fn process_spawn_wait3_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let status = parse_i32(inputs, "status").unwrap_or(24);
+    let child = unsafe { libc::fork() };
+    if child == 0 {
+        unsafe { libc::_exit(status) };
+    }
+    if child < 0 {
+        return Ok(String::from("WAIT3_FORK_FAILED"));
+    }
+
+    let mut wait_status = 0;
+    let mut rusage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    process_spawn_reset_errno();
+    let waited =
+        unsafe { frankenlibc_abi::process_abi::wait3(&mut wait_status, 0, rusage.as_mut_ptr()) };
+    if waited < 0 {
+        return Ok(process_spawn_errno_result("WAIT3", waited));
+    }
+    let status_class = process_spawn_wait_status("WAIT3", wait_status);
+    Ok(format!("{status_class}_RUSAGE_ACCEPTED"))
+}
+
 fn execute_system_case(
     inputs: &serde_json::Value,
     mode: &str,
@@ -27127,6 +27363,47 @@ mod tests {
         let raw = include_str!("../../../tests/conformance/fixtures/process_spawn_wave01.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("process/spawn wave01 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn process_spawn_wave02_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/process_spawn_wave02.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("process/spawn wave02 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

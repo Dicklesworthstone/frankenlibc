@@ -173,26 +173,16 @@
     },
     {
       "campaign_id": "fcq-process-spawn",
-      "current_coverage_pct": 53.33,
+      "current_coverage_pct": 93.33,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 93.33,
-      "first_wave_fixture_count": 12,
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "first_wave_fixture_count": 2,
       "first_wave_symbols": [
-        "posix_spawn_file_actions_addfchdir_np",
-        "posix_spawn_file_actions_addopen",
-        "posix_spawn_file_actions_destroy",
-        "posix_spawn_file_actions_init",
-        "posix_spawnattr_destroy",
-        "posix_spawnattr_init",
-        "posix_spawnp",
-        "setresgid",
-        "setresuid",
-        "vfork",
-        "wait",
-        "wait3"
+        "wait4",
+        "waitid"
       ],
       "module": "process_abi",
       "next_step": "Add exec/spawn/action fixtures with exact status, errno, and file-action diagnostics.",
@@ -205,20 +195,20 @@
         "startup_linking_failure"
       ],
       "scores": {
-        "coverage_gap_score": 14,
+        "coverage_gap_score": 2,
         "feature_gap_risk_score": 3,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 4,
         "parity_risk_score": 5,
-        "priority_score": 2314,
+        "priority_score": 2302,
         "semantic_risk_score": 0,
         "workload_risk_score": 5
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "exit, clone, exec, spawn actions, chroot, and uid/gid result contracts",
-      "target_covered": 16,
+      "target_covered": 28,
       "target_total": 30,
-      "target_uncovered": 14,
+      "target_uncovered": 2,
       "title": "process spawn and privilege-sensitive fixture wave",
       "workload_domains": [
         "shell_coreutils",
@@ -978,7 +968,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3144,
+    "all_uncovered_target_symbols": 3132,
     "campaign_count": 11,
     "covered_modules": [
       "fortify_abi",
@@ -1010,7 +1000,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2790,
-    "total_first_wave_fixture_count": 125
+    "selected_target_uncovered_symbols": 2778,
+    "total_first_wave_fixture_count": 115
   }
 }

@@ -1,0 +1,404 @@
+{
+  "version": "v1",
+  "family": "process/spawn",
+  "captured_at": "2026-05-13T21:05:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-process-spawn wave-02 file-action, spawn-attribute, credential no-op, vfork, wait, and wait3 symbols without recording process ids, raw uid/gid values, file descriptor numbers, filesystem paths, argv/envp payloads, PATH contents, child resource-usage values, stdout bytes, stderr bytes, or wall-clock timing.",
+  "spec_reference": "POSIX/GNU process and spawn semantics for posix_spawn_file_actions_addfchdir_np, posix_spawn_file_actions_addopen, posix_spawn_file_actions_destroy, posix_spawn_file_actions_init, posix_spawnattr_destroy, posix_spawnattr_init, posix_spawnp, setresgid, setresuid, vfork, wait, and wait3",
+  "campaign": {
+    "bead": "bd-vm6j0.4",
+    "campaign_id": "fcq-process-spawn",
+    "wave_id": "wave-02-process-spawn-attrs-wait-credentials",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture",
+    "first_wave_symbols": [
+      "posix_spawn_file_actions_addfchdir_np",
+      "posix_spawn_file_actions_addopen",
+      "posix_spawn_file_actions_destroy",
+      "posix_spawn_file_actions_init",
+      "posix_spawnattr_destroy",
+      "posix_spawnattr_init",
+      "posix_spawnp",
+      "setresgid",
+      "setresuid",
+      "vfork",
+      "wait",
+      "wait3"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "posix_spawn_file_actions_addfchdir_np_valid_strict",
+      "function": "posix_spawn_file_actions_addfchdir_np",
+      "spec_section": "GNU posix_spawn_file_actions_addfchdir_np valid action append",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_addfchdir_np",
+        "scenario": "initialized_file_actions_append_fchdir_without_fd_capture",
+        "expected": "POSIX_SPAWN_ADDFCHDIR_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawn_file_actions_addfchdir_np append replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_addfchdir_np;mode=strict;expected=POSIX_SPAWN_ADDFCHDIR_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_ADDFCHDIR_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "posix_spawn_file_actions_addfchdir_np_valid_hardened",
+      "function": "posix_spawn_file_actions_addfchdir_np",
+      "spec_section": "GNU posix_spawn_file_actions_addfchdir_np valid action append",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_addfchdir_np",
+        "scenario": "initialized_file_actions_append_fchdir_without_fd_capture",
+        "expected": "POSIX_SPAWN_ADDFCHDIR_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawn_file_actions_addfchdir_np append replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_addfchdir_np;mode=hardened;expected=POSIX_SPAWN_ADDFCHDIR_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_ADDFCHDIR_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "posix_spawn_file_actions_addopen_valid_strict",
+      "function": "posix_spawn_file_actions_addopen",
+      "spec_section": "POSIX posix_spawn_file_actions_addopen valid action append",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_addopen",
+        "scenario": "initialized_file_actions_append_open_without_path_or_fd_capture",
+        "expected": "POSIX_SPAWN_ADDOPEN_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawn_file_actions_addopen append replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_addopen;mode=strict;expected=POSIX_SPAWN_ADDOPEN_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_ADDOPEN_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "posix_spawn_file_actions_addopen_valid_hardened",
+      "function": "posix_spawn_file_actions_addopen",
+      "spec_section": "POSIX posix_spawn_file_actions_addopen valid action append",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_addopen",
+        "scenario": "initialized_file_actions_append_open_without_path_or_fd_capture",
+        "expected": "POSIX_SPAWN_ADDOPEN_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawn_file_actions_addopen append replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_addopen;mode=hardened;expected=POSIX_SPAWN_ADDOPEN_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_ADDOPEN_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "posix_spawn_file_actions_destroy_after_init_strict",
+      "function": "posix_spawn_file_actions_destroy",
+      "spec_section": "POSIX posix_spawn_file_actions_destroy initialized object lifecycle",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_destroy",
+        "scenario": "initialized_file_actions_destroy_without_pointer_capture",
+        "expected": "POSIX_SPAWN_FILE_ACTIONS_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawn_file_actions_destroy lifecycle replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_destroy;mode=strict;expected=POSIX_SPAWN_FILE_ACTIONS_DESTROY_RC_0;actual=POSIX_SPAWN_FILE_ACTIONS_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "posix_spawn_file_actions_destroy_after_init_hardened",
+      "function": "posix_spawn_file_actions_destroy",
+      "spec_section": "POSIX posix_spawn_file_actions_destroy initialized object lifecycle",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_destroy",
+        "scenario": "initialized_file_actions_destroy_without_pointer_capture",
+        "expected": "POSIX_SPAWN_FILE_ACTIONS_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawn_file_actions_destroy lifecycle replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_destroy;mode=hardened;expected=POSIX_SPAWN_FILE_ACTIONS_DESTROY_RC_0;actual=POSIX_SPAWN_FILE_ACTIONS_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "posix_spawn_file_actions_init_valid_strict",
+      "function": "posix_spawn_file_actions_init",
+      "spec_section": "POSIX posix_spawn_file_actions_init initialized object lifecycle",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_init",
+        "scenario": "file_actions_init_then_destroy_without_pointer_capture",
+        "expected": "POSIX_SPAWN_FILE_ACTIONS_INIT_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawn_file_actions_init lifecycle replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_init;mode=strict;expected=POSIX_SPAWN_FILE_ACTIONS_INIT_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_FILE_ACTIONS_INIT_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "posix_spawn_file_actions_init_valid_hardened",
+      "function": "posix_spawn_file_actions_init",
+      "spec_section": "POSIX posix_spawn_file_actions_init initialized object lifecycle",
+      "inputs": {
+        "symbol": "posix_spawn_file_actions_init",
+        "scenario": "file_actions_init_then_destroy_without_pointer_capture",
+        "expected": "POSIX_SPAWN_FILE_ACTIONS_INIT_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawn_file_actions_init lifecycle replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawn_file_actions_init;mode=hardened;expected=POSIX_SPAWN_FILE_ACTIONS_INIT_RC_0_DESTROY_RC_0;actual=POSIX_SPAWN_FILE_ACTIONS_INIT_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "posix_spawnattr_destroy_after_init_strict",
+      "function": "posix_spawnattr_destroy",
+      "spec_section": "POSIX posix_spawnattr_destroy initialized object lifecycle",
+      "inputs": {
+        "symbol": "posix_spawnattr_destroy",
+        "scenario": "initialized_spawnattr_destroy_without_pointer_capture",
+        "expected": "POSIX_SPAWNATTR_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawnattr_destroy lifecycle replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawnattr_destroy;mode=strict;expected=POSIX_SPAWNATTR_DESTROY_RC_0;actual=POSIX_SPAWNATTR_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "posix_spawnattr_destroy_after_init_hardened",
+      "function": "posix_spawnattr_destroy",
+      "spec_section": "POSIX posix_spawnattr_destroy initialized object lifecycle",
+      "inputs": {
+        "symbol": "posix_spawnattr_destroy",
+        "scenario": "initialized_spawnattr_destroy_without_pointer_capture",
+        "expected": "POSIX_SPAWNATTR_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawnattr_destroy lifecycle replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawnattr_destroy;mode=hardened;expected=POSIX_SPAWNATTR_DESTROY_RC_0;actual=POSIX_SPAWNATTR_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "posix_spawnattr_init_valid_strict",
+      "function": "posix_spawnattr_init",
+      "spec_section": "POSIX posix_spawnattr_init initialized object lifecycle",
+      "inputs": {
+        "symbol": "posix_spawnattr_init",
+        "scenario": "spawnattr_init_then_destroy_without_pointer_capture",
+        "expected": "POSIX_SPAWNATTR_INIT_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawnattr_init lifecycle replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawnattr_init;mode=strict;expected=POSIX_SPAWNATTR_INIT_RC_0_DESTROY_RC_0;actual=POSIX_SPAWNATTR_INIT_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "posix_spawnattr_init_valid_hardened",
+      "function": "posix_spawnattr_init",
+      "spec_section": "POSIX posix_spawnattr_init initialized object lifecycle",
+      "inputs": {
+        "symbol": "posix_spawnattr_init",
+        "scenario": "spawnattr_init_then_destroy_without_pointer_capture",
+        "expected": "POSIX_SPAWNATTR_INIT_RC_0_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::posix_spawnattr_init lifecycle replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawnattr_init;mode=hardened;expected=POSIX_SPAWNATTR_INIT_RC_0_DESTROY_RC_0;actual=POSIX_SPAWNATTR_INIT_RC_0_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "posix_spawnp_null_file_strict",
+      "function": "posix_spawnp",
+      "spec_section": "POSIX posix_spawnp null file argument rejection",
+      "inputs": {
+        "symbol": "posix_spawnp",
+        "scenario": "null_file_argument_rejection_without_path_search",
+        "expected": "POSIX_SPAWNP_NULL_FILE_RC_EINVAL",
+        "oracle_source": "FrankenLibC process_abi::posix_spawnp null-file replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawnp;mode=strict;expected=POSIX_SPAWNP_NULL_FILE_RC_EINVAL;actual=POSIX_SPAWNP_NULL_FILE_RC_EINVAL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "posix_spawnp_null_file_hardened",
+      "function": "posix_spawnp",
+      "spec_section": "POSIX posix_spawnp null file argument rejection",
+      "inputs": {
+        "symbol": "posix_spawnp",
+        "scenario": "null_file_argument_rejection_without_path_search",
+        "expected": "POSIX_SPAWNP_NULL_FILE_RC_EINVAL",
+        "oracle_source": "FrankenLibC process_abi::posix_spawnp null-file replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=posix_spawnp;mode=hardened;expected=POSIX_SPAWNP_NULL_FILE_RC_EINVAL;actual=POSIX_SPAWNP_NULL_FILE_RC_EINVAL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "setresgid_noop_strict",
+      "function": "setresgid",
+      "spec_section": "GNU setresgid no-op sentinel credential update",
+      "inputs": {
+        "symbol": "setresgid",
+        "scenario": "all_gid_slots_no_change_sentinel_without_value_capture",
+        "expected": "SETRESGID_NOOP_RC_0",
+        "oracle_source": "FrankenLibC unistd_abi::setresgid no-op sentinel replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=setresgid;mode=strict;expected=SETRESGID_NOOP_RC_0;actual=SETRESGID_NOOP_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "setresgid_noop_hardened",
+      "function": "setresgid",
+      "spec_section": "GNU setresgid no-op sentinel credential update",
+      "inputs": {
+        "symbol": "setresgid",
+        "scenario": "all_gid_slots_no_change_sentinel_without_value_capture",
+        "expected": "SETRESGID_NOOP_RC_0",
+        "oracle_source": "FrankenLibC unistd_abi::setresgid no-op sentinel replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=setresgid;mode=hardened;expected=SETRESGID_NOOP_RC_0;actual=SETRESGID_NOOP_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "setresuid_noop_strict",
+      "function": "setresuid",
+      "spec_section": "GNU setresuid no-op sentinel credential update",
+      "inputs": {
+        "symbol": "setresuid",
+        "scenario": "all_uid_slots_no_change_sentinel_without_value_capture",
+        "expected": "SETRESUID_NOOP_RC_0",
+        "oracle_source": "FrankenLibC unistd_abi::setresuid no-op sentinel replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=setresuid;mode=strict;expected=SETRESUID_NOOP_RC_0;actual=SETRESUID_NOOP_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "setresuid_noop_hardened",
+      "function": "setresuid",
+      "spec_section": "GNU setresuid no-op sentinel credential update",
+      "inputs": {
+        "symbol": "setresuid",
+        "scenario": "all_uid_slots_no_change_sentinel_without_value_capture",
+        "expected": "SETRESUID_NOOP_RC_0",
+        "oracle_source": "FrankenLibC unistd_abi::setresuid no-op sentinel replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=setresuid;mode=hardened;expected=SETRESUID_NOOP_RC_0;actual=SETRESUID_NOOP_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "vfork_exit_status_strict",
+      "function": "vfork",
+      "spec_section": "POSIX/GNU vfork child status propagation",
+      "inputs": {
+        "symbol": "vfork",
+        "scenario": "fork_isolated_vfork_child_exit_status_without_pid_capture",
+        "status": 17,
+        "expected": "VFORK_CHILD_EXIT_17",
+        "oracle_source": "FrankenLibC process_abi::vfork fork-compatible status replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=vfork;mode=strict;expected=VFORK_CHILD_EXIT_17;actual=VFORK_CHILD_EXIT_17;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "vfork_exit_status_hardened",
+      "function": "vfork",
+      "spec_section": "POSIX/GNU vfork child status propagation",
+      "inputs": {
+        "symbol": "vfork",
+        "scenario": "fork_isolated_vfork_child_exit_status_without_pid_capture",
+        "status": 17,
+        "expected": "VFORK_CHILD_EXIT_17",
+        "oracle_source": "FrankenLibC process_abi::vfork fork-compatible status replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=vfork;mode=hardened;expected=VFORK_CHILD_EXIT_17;actual=VFORK_CHILD_EXIT_17;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "wait_child_exit_status_strict",
+      "function": "wait",
+      "spec_section": "POSIX wait child status propagation",
+      "inputs": {
+        "symbol": "wait",
+        "scenario": "fork_isolated_wait_child_exit_status_without_pid_capture",
+        "status": 23,
+        "expected": "WAIT_CHILD_EXIT_23",
+        "oracle_source": "FrankenLibC process_abi::wait status replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=wait;mode=strict;expected=WAIT_CHILD_EXIT_23;actual=WAIT_CHILD_EXIT_23;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "wait_child_exit_status_hardened",
+      "function": "wait",
+      "spec_section": "POSIX wait child status propagation",
+      "inputs": {
+        "symbol": "wait",
+        "scenario": "fork_isolated_wait_child_exit_status_without_pid_capture",
+        "status": 23,
+        "expected": "WAIT_CHILD_EXIT_23",
+        "oracle_source": "FrankenLibC process_abi::wait status replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=wait;mode=hardened;expected=WAIT_CHILD_EXIT_23;actual=WAIT_CHILD_EXIT_23;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "wait3_child_exit_status_strict",
+      "function": "wait3",
+      "spec_section": "BSD wait3 child status and rusage pointer acceptance",
+      "inputs": {
+        "symbol": "wait3",
+        "scenario": "fork_isolated_wait3_child_exit_status_without_pid_or_rusage_capture",
+        "status": 24,
+        "expected": "WAIT3_CHILD_EXIT_24_RUSAGE_ACCEPTED",
+        "oracle_source": "FrankenLibC process_abi::wait3 status and rusage replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=wait3;mode=strict;expected=WAIT3_CHILD_EXIT_24_RUSAGE_ACCEPTED;actual=WAIT3_CHILD_EXIT_24_RUSAGE_ACCEPTED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "wait3_child_exit_status_hardened",
+      "function": "wait3",
+      "spec_section": "BSD wait3 child status and rusage pointer acceptance",
+      "inputs": {
+        "symbol": "wait3",
+        "scenario": "fork_isolated_wait3_child_exit_status_without_pid_or_rusage_capture",
+        "status": 24,
+        "expected": "WAIT3_CHILD_EXIT_24_RUSAGE_ACCEPTED",
+        "oracle_source": "FrankenLibC process_abi::wait3 status and rusage replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_or_timing_capture"
+      },
+      "expected_output": "symbol=wait3;mode=hardened;expected=WAIT3_CHILD_EXIT_24_RUSAGE_ACCEPTED;actual=WAIT3_CHILD_EXIT_24_RUSAGE_ACCEPTED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

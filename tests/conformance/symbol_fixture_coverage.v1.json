@@ -3419,47 +3419,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 16,
-      "milestone_beads": [],
-      "module": "process_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 1402,
-      "status_breakdown": {
-        "Implemented": 12,
-        "RawSyscall": 18
-      },
-      "target_coverage_pct": 53.33,
-      "target_covered": 16,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 30,
-      "target_uncovered": 14,
-      "target_uncovered_symbols": [
-        "posix_spawn_file_actions_addfchdir_np",
-        "posix_spawn_file_actions_addopen",
-        "posix_spawn_file_actions_destroy",
-        "posix_spawn_file_actions_init",
-        "posix_spawnattr_destroy",
-        "posix_spawnattr_init",
-        "posix_spawnp",
-        "setresgid",
-        "setresuid",
-        "vfork",
-        "wait",
-        "wait3",
-        "wait4",
-        "waitid"
-      ],
-      "total_symbols": 30,
-      "track": "process",
-      "uncovered_symbols": 14,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 7,
       "milestone_beads": [],
       "module": "inet_abi",
@@ -3747,6 +3706,35 @@
       ],
       "total_symbols": 25,
       "track": "c11threads",
+      "uncovered_symbols": 2,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 28,
+      "milestone_beads": [],
+      "module": "process_abi",
+      "recommended_bead": null,
+      "severity": "medium",
+      "severity_score": 201,
+      "status_breakdown": {
+        "Implemented": 12,
+        "RawSyscall": 18
+      },
+      "target_coverage_pct": 93.33,
+      "target_covered": 28,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 30,
+      "target_uncovered": 2,
+      "target_uncovered_symbols": [
+        "wait4",
+        "waitid"
+      ],
+      "total_symbols": 30,
+      "track": "process",
       "uncovered_symbols": 2,
       "workload_blocked_count": 0,
       "workload_ids": []
@@ -4194,9 +4182,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 2392,
-    "fixture_json_files": 109,
-    "fixture_json_unique_functions": 990,
+    "fixture_json_cases": 2416,
+    "fixture_json_files": 110,
+    "fixture_json_unique_functions": 1002,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4217,7 +4205,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 992
+    "unique_fixture_functions_total": 1004
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -7460,32 +7448,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "process_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 14,
-      "target_uncovered_symbols": [
-        "posix_spawn_file_actions_addfchdir_np",
-        "posix_spawn_file_actions_addopen",
-        "posix_spawn_file_actions_destroy",
-        "posix_spawn_file_actions_init",
-        "posix_spawnattr_destroy",
-        "posix_spawnattr_init",
-        "posix_spawnp",
-        "setresgid",
-        "setresuid",
-        "vfork",
-        "wait",
-        "wait3",
-        "wait4",
-        "waitid"
-      ],
-      "track": "process",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "inet_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -7649,6 +7611,20 @@
     },
     {
       "milestone_beads": [],
+      "module": "process_abi",
+      "recommended_bead": null,
+      "severity": "medium",
+      "target_uncovered_count": 2,
+      "target_uncovered_symbols": [
+        "wait4",
+        "waitid"
+      ],
+      "track": "process",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
       "module": "resource_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -7690,34 +7666,34 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 22.97,
-      "covered": 851,
+      "coverage_pct": 23.16,
+      "covered": 858,
       "total": 3705,
-      "uncovered": 2854
+      "uncovered": 2847
     },
     "RawSyscall": {
-      "coverage_pct": 29.95,
-      "covered": 124,
+      "coverage_pct": 31.16,
+      "covered": 129,
       "total": 414,
-      "uncovered": 290
+      "uncovered": 285
     }
   },
   "summary": {
-    "coverage_pct": 23.67,
-    "covered_exported_symbols": 975,
-    "target_coverage_pct": 23.67,
-    "target_covered_symbols": 975,
+    "coverage_pct": 23.96,
+    "covered_exported_symbols": 987,
+    "target_coverage_pct": 23.96,
+    "target_covered_symbols": 987,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3144,
+    "target_uncovered_symbols": 3132,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3144,
+    "uncovered_exported_symbols": 3132,
     "uncovered_target_families": 1,
     "weak_family_threshold_pct": 80.0,
-    "weak_target_families": 23
+    "weak_target_families": 22
   },
   "symbols": [
     {
@@ -42134,13 +42110,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -42148,13 +42133,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -42162,13 +42156,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -42176,13 +42179,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -42190,13 +42202,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -42204,13 +42225,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -42218,13 +42248,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -42232,13 +42271,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "unknown",
       "status": "RawSyscall",
@@ -42246,13 +42294,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "unknown",
       "status": "RawSyscall",
@@ -42260,13 +42317,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -42274,13 +42340,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -42288,13 +42363,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "process/spawn"
+      ],
+      "fixture_files": [
+        "process_spawn_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "process_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -76381,32 +76465,6 @@
         "munlockall"
       ],
       "track": "vm/mmap",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "module": "process_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_coverage_pct": 53.33,
-      "target_uncovered_count": 14,
-      "target_uncovered_symbols": [
-        "posix_spawn_file_actions_addfchdir_np",
-        "posix_spawn_file_actions_addopen",
-        "posix_spawn_file_actions_destroy",
-        "posix_spawn_file_actions_init",
-        "posix_spawnattr_destroy",
-        "posix_spawnattr_init",
-        "posix_spawnp",
-        "setresgid",
-        "setresuid",
-        "vfork",
-        "wait",
-        "wait3",
-        "wait4",
-        "waitid"
-      ],
-      "track": "process",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
