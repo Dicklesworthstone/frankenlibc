@@ -795,6 +795,7 @@ pub fn execute_fixture_case(
         | "dn_skipname"
         | "dngettext"
         | "eaccess"
+        | "euidaccess"
         | "encrypt"
         | "encrypt_r"
         | "endaliasent"
@@ -816,7 +817,18 @@ pub fn execute_fixture_case(
         | "ether_line"
         | "ether_ntoa"
         | "ether_ntoa_r"
-        | "ether_ntohost" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        | "ether_ntohost"
+        | "eventfd2"
+        | "eventfd_read"
+        | "eventfd_write"
+        | "execl"
+        | "execle"
+        | "execlp"
+        | "execv"
+        | "execveat"
+        | "faccessat"
+        | "fallocate"
+        | "fallocate64" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
         | "_IO_peekc_locked" | "_IO_putc" | "_IO_puts" | "_IO_seekoff" | "_IO_seekpos"
@@ -18039,6 +18051,7 @@ fn execute_unistd_process_filesystem_case(
         "dn_skipname" => dn_skipname_fixture_actual()?,
         "dngettext" => dngettext_fixture_actual()?,
         "eaccess" => eaccess_fixture_actual()?,
+        "euidaccess" => euidaccess_fixture_actual()?,
         "encrypt" => encrypt_fixture_actual()?,
         "encrypt_r" => encrypt_r_fixture_actual()?,
         "endaliasent" => endaliasent_fixture_actual()?,
@@ -18061,6 +18074,17 @@ fn execute_unistd_process_filesystem_case(
         "ether_ntoa" => ether_ntoa_fixture_actual()?,
         "ether_ntoa_r" => ether_ntoa_r_fixture_actual()?,
         "ether_ntohost" => ether_ntohost_fixture_actual()?,
+        "eventfd2" => eventfd2_fixture_actual(inputs)?,
+        "eventfd_read" => eventfd_read_fixture_actual()?,
+        "eventfd_write" => eventfd_write_fixture_actual()?,
+        "execl" => execl_fixture_actual()?,
+        "execle" => execle_fixture_actual()?,
+        "execlp" => execlp_fixture_actual()?,
+        "execv" => execv_fixture_actual()?,
+        "execveat" => execveat_fixture_actual()?,
+        "faccessat" => faccessat_fixture_actual()?,
+        "fallocate" => fallocate_fixture_actual(function)?,
+        "fallocate64" => fallocate_fixture_actual(function)?,
         other => {
             return Err(format!(
                 "unsupported unistd process/filesystem fixture: {other}"
@@ -19348,6 +19372,21 @@ fn eaccess_fixture_actual() -> Result<String, String> {
     Ok(format!("EACCESS_NULL_RC_{rc}"))
 }
 
+fn euidaccess_fixture_actual() -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    // SAFETY: A null path exercises the deterministic effective-access failure
+    // class and cannot inspect host filesystem state.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::euidaccess(std::ptr::null(), libc::F_OK) };
+    if rc == 0 {
+        Ok(String::from("EUIDACCESS_NULL_RC_0"))
+    } else {
+        Ok(format!(
+            "EUIDACCESS_NULL_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
 fn encrypt_fixture_actual() -> Result<String, String> {
     let mut block = [0 as c_char; 64];
     let before = block;
@@ -19618,6 +19657,195 @@ fn ether_ntohost_fixture_actual() -> Result<String, String> {
         )
     };
     Ok(format!("ETHER_NTOHOST_NULL_HOST_RC_{rc}"))
+}
+
+fn eventfd2_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let initval = parse_u32(inputs, "initval").unwrap_or(0);
+    let flags = parse_i32(inputs, "flags").unwrap_or(libc::EFD_CLOEXEC);
+    poll_event_loop_reset_errno();
+    let fd = unsafe { frankenlibc_abi::unistd_abi::eventfd2(initval, flags) };
+    if fd >= 0 {
+        close_raw_fd(fd);
+        Ok(String::from("EVENTFD2_FD_CREATED_CLOSED"))
+    } else {
+        Ok(format!(
+            "EVENTFD2_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+fn eventfd_read_fixture_actual() -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    let fd = unsafe { frankenlibc_abi::unistd_abi::eventfd2(7, libc::EFD_CLOEXEC) };
+    if fd < 0 {
+        return Ok(format!(
+            "EVENTFD_READ_SETUP_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ));
+    }
+    let mut value = 0_u64;
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::eventfd_read(fd, &mut value) };
+    close_raw_fd(fd);
+    if rc == 0 && value == 7 {
+        Ok(String::from("EVENTFD_READ_RC_0_VALUE_CLASS_NONZERO"))
+    } else if rc == 0 {
+        Ok(String::from("EVENTFD_READ_RC_0_VALUE_CLASS_OTHER"))
+    } else {
+        Ok(format!(
+            "EVENTFD_READ_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+fn eventfd_write_fixture_actual() -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    let fd = unsafe { frankenlibc_abi::unistd_abi::eventfd2(0, libc::EFD_CLOEXEC) };
+    if fd < 0 {
+        return Ok(format!(
+            "EVENTFD_WRITE_SETUP_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ));
+    }
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::eventfd_write(fd, 11) };
+    let mut value = 0_u64;
+    let read = unsafe { libc::read(fd, (&mut value as *mut u64).cast::<c_void>(), 8) };
+    close_raw_fd(fd);
+    if rc == 0 && read == 8 && value == 11 {
+        Ok(String::from("EVENTFD_WRITE_RC_0_VALUE_OBSERVED"))
+    } else if rc == 0 {
+        Ok(String::from("EVENTFD_WRITE_RC_0_VALUE_OTHER"))
+    } else {
+        Ok(format!(
+            "EVENTFD_WRITE_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+fn exec_null_argv() -> [*const c_char; 1] {
+    [std::ptr::null()]
+}
+
+fn exec_null_envp() -> [*const c_char; 1] {
+    [std::ptr::null()]
+}
+
+fn exec_error_result(prefix: &str, rc: c_int) -> String {
+    if rc == 0 {
+        format!("{prefix}_RC_0")
+    } else {
+        format!(
+            "{prefix}_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        )
+    }
+}
+
+fn execl_fixture_actual() -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::execl(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null::<c_char>(),
+        )
+    };
+    Ok(exec_error_result("EXECL_NULL_PATH", rc))
+}
+
+fn execle_fixture_actual() -> Result<String, String> {
+    let envp = exec_null_envp();
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::execle(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null::<c_char>(),
+            envp.as_ptr(),
+        )
+    };
+    Ok(exec_error_result("EXECLE_NULL_PATH", rc))
+}
+
+fn execlp_fixture_actual() -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::execlp(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null::<c_char>(),
+        )
+    };
+    Ok(exec_error_result("EXECLP_NULL_FILE", rc))
+}
+
+fn execv_fixture_actual() -> Result<String, String> {
+    let argv = exec_null_argv();
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::execv(std::ptr::null(), argv.as_ptr()) };
+    Ok(exec_error_result("EXECV_NULL_PATH", rc))
+}
+
+fn execveat_fixture_actual() -> Result<String, String> {
+    let argv = exec_null_argv();
+    let envp = exec_null_envp();
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::execveat(
+            libc::AT_FDCWD,
+            std::ptr::null(),
+            argv.as_ptr(),
+            envp.as_ptr(),
+            0,
+        )
+    };
+    Ok(exec_error_result("EXECVEAT_NULL_PATH", rc))
+}
+
+fn faccessat_fixture_actual() -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    // SAFETY: A null path exercises a deterministic EFAULT class and cannot
+    // inspect relative filesystem state.
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::faccessat(
+            libc::AT_FDCWD,
+            std::ptr::null(),
+            libc::F_OK,
+            libc::AT_EACCESS,
+        )
+    };
+    if rc == 0 {
+        Ok(String::from("FACCESSAT_NULL_RC_0"))
+    } else {
+        Ok(format!(
+            "FACCESSAT_NULL_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+fn fallocate_fixture_actual(function: &str) -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        match function {
+            "fallocate" => frankenlibc_abi::unistd_abi::fallocate(-1, 0, 0, 4096),
+            "fallocate64" => frankenlibc_abi::unistd_abi::fallocate64(-1, 0, 0, 4096),
+            _ => unreachable!("validated fallocate function"),
+        }
+    };
+    if rc == 0 {
+        Ok(format!("{}_INVALID_FD_RC_0", function.to_ascii_uppercase()))
+    } else {
+        Ok(format!(
+            "{}_INVALID_FD_ERROR_{}",
+            function.to_ascii_uppercase(),
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
 }
 
 fn wait_for_aio_completion(cb: &FixtureAiocb) -> c_int {
@@ -27338,6 +27566,41 @@ mod tests {
         );
         let fixture: FixtureSetLite = serde_json::from_str(raw)
             .expect("unistd_process_filesystem_wave08 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn unistd_process_filesystem_wave09_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!(
+            "../../../tests/conformance/fixtures/unistd_process_filesystem_wave09.json"
+        );
+        let fixture: FixtureSetLite = serde_json::from_str(raw)
+            .expect("unistd_process_filesystem_wave09 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

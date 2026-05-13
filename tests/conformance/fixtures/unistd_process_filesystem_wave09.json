@@ -1,0 +1,402 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-13T20:15:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-09 access, eventfd, exec, and fallocate symbols. Outputs classify null path errors, eventfd create/read/write success, null exec argument failure, relative access failure, and invalid descriptor allocation failure without recording raw file descriptors, filesystem paths, process ids, environment contents, usernames, launched program output, descriptor counters, or ambient file state.",
+  "spec_reference": "GNU euidaccess and POSIX faccessat effective access contracts; Linux eventfd2, eventfd_read, and eventfd_write event counter contracts; POSIX execl, execle, execlp, and execv null argument failure contracts; Linux execveat relative execution failure contract; and Linux fallocate/fallocate64 invalid descriptor behavior.",
+  "campaign": {
+    "bead": "bd-vm6j0.1",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-09-unistd-process-filesystem-access-eventfd-exec-fallocate",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture",
+    "first_wave_symbols": [
+      "euidaccess",
+      "eventfd2",
+      "eventfd_read",
+      "eventfd_write",
+      "execl",
+      "execle",
+      "execlp",
+      "execv",
+      "execveat",
+      "faccessat",
+      "fallocate",
+      "fallocate64"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "euidaccess_null_path_strict",
+      "function": "euidaccess",
+      "spec_section": "GNU euidaccess null-path effective-access failure",
+      "inputs": {
+        "symbol": "euidaccess",
+        "scenario": "null_path_effective_access_without_filesystem_probe",
+        "expected": "EUIDACCESS_NULL_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC euidaccess null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=euidaccess;mode=strict;expected=EUIDACCESS_NULL_ERROR_EFAULT;actual=EUIDACCESS_NULL_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "strict"
+    },
+    {
+      "name": "euidaccess_null_path_hardened",
+      "function": "euidaccess",
+      "spec_section": "GNU euidaccess null-path effective-access failure",
+      "inputs": {
+        "symbol": "euidaccess",
+        "scenario": "null_path_effective_access_without_filesystem_probe",
+        "expected": "EUIDACCESS_NULL_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC euidaccess null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=euidaccess;mode=hardened;expected=EUIDACCESS_NULL_ERROR_EFAULT;actual=EUIDACCESS_NULL_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "hardened"
+    },
+    {
+      "name": "eventfd2_create_close_strict",
+      "function": "eventfd2",
+      "spec_section": "Linux eventfd2 create/close class",
+      "inputs": {
+        "symbol": "eventfd2",
+        "scenario": "create_counter_close_without_fd_capture",
+        "initval": 0,
+        "flags": 524288,
+        "expected": "EVENTFD2_FD_CREATED_CLOSED",
+        "oracle_source": "FrankenLibC eventfd2 create class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=eventfd2;mode=strict;expected=EVENTFD2_FD_CREATED_CLOSED;actual=EVENTFD2_FD_CREATED_CLOSED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "eventfd2_create_close_hardened",
+      "function": "eventfd2",
+      "spec_section": "Linux eventfd2 create/close class",
+      "inputs": {
+        "symbol": "eventfd2",
+        "scenario": "create_counter_close_without_fd_capture",
+        "initval": 0,
+        "flags": 524288,
+        "expected": "EVENTFD2_FD_CREATED_CLOSED",
+        "oracle_source": "FrankenLibC eventfd2 create class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=eventfd2;mode=hardened;expected=EVENTFD2_FD_CREATED_CLOSED;actual=EVENTFD2_FD_CREATED_CLOSED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "eventfd_read_counter_strict",
+      "function": "eventfd_read",
+      "spec_section": "GNU eventfd_read reads full event counter",
+      "inputs": {
+        "symbol": "eventfd_read",
+        "scenario": "read_seeded_counter_without_fd_or_value_capture",
+        "expected": "EVENTFD_READ_RC_0_VALUE_CLASS_NONZERO",
+        "oracle_source": "FrankenLibC eventfd_read counter class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=eventfd_read;mode=strict;expected=EVENTFD_READ_RC_0_VALUE_CLASS_NONZERO;actual=EVENTFD_READ_RC_0_VALUE_CLASS_NONZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "eventfd_read_counter_hardened",
+      "function": "eventfd_read",
+      "spec_section": "GNU eventfd_read reads full event counter",
+      "inputs": {
+        "symbol": "eventfd_read",
+        "scenario": "read_seeded_counter_without_fd_or_value_capture",
+        "expected": "EVENTFD_READ_RC_0_VALUE_CLASS_NONZERO",
+        "oracle_source": "FrankenLibC eventfd_read counter class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=eventfd_read;mode=hardened;expected=EVENTFD_READ_RC_0_VALUE_CLASS_NONZERO;actual=EVENTFD_READ_RC_0_VALUE_CLASS_NONZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "eventfd_write_counter_strict",
+      "function": "eventfd_write",
+      "spec_section": "GNU eventfd_write writes full event counter",
+      "inputs": {
+        "symbol": "eventfd_write",
+        "scenario": "write_counter_then_readback_without_fd_or_value_capture",
+        "expected": "EVENTFD_WRITE_RC_0_VALUE_OBSERVED",
+        "oracle_source": "FrankenLibC eventfd_write counter class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=eventfd_write;mode=strict;expected=EVENTFD_WRITE_RC_0_VALUE_OBSERVED;actual=EVENTFD_WRITE_RC_0_VALUE_OBSERVED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "eventfd_write_counter_hardened",
+      "function": "eventfd_write",
+      "spec_section": "GNU eventfd_write writes full event counter",
+      "inputs": {
+        "symbol": "eventfd_write",
+        "scenario": "write_counter_then_readback_without_fd_or_value_capture",
+        "expected": "EVENTFD_WRITE_RC_0_VALUE_OBSERVED",
+        "oracle_source": "FrankenLibC eventfd_write counter class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=eventfd_write;mode=hardened;expected=EVENTFD_WRITE_RC_0_VALUE_OBSERVED;actual=EVENTFD_WRITE_RC_0_VALUE_OBSERVED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "execl_null_path_strict",
+      "function": "execl",
+      "spec_section": "POSIX execl null path failure",
+      "inputs": {
+        "symbol": "execl",
+        "scenario": "null_path_null_argv_without_launching_program",
+        "expected": "EXECL_NULL_PATH_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC execl null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=execl;mode=strict;expected=EXECL_NULL_PATH_ERROR_EFAULT;actual=EXECL_NULL_PATH_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "strict"
+    },
+    {
+      "name": "execl_null_path_hardened",
+      "function": "execl",
+      "spec_section": "POSIX execl null path failure",
+      "inputs": {
+        "symbol": "execl",
+        "scenario": "null_path_null_argv_without_launching_program",
+        "expected": "EXECL_NULL_PATH_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC execl null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=execl;mode=hardened;expected=EXECL_NULL_PATH_ERROR_EFAULT;actual=EXECL_NULL_PATH_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "hardened"
+    },
+    {
+      "name": "execle_null_path_strict",
+      "function": "execle",
+      "spec_section": "POSIX execle null path failure",
+      "inputs": {
+        "symbol": "execle",
+        "scenario": "null_path_null_argv_null_env_without_launching_program",
+        "expected": "EXECLE_NULL_PATH_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC execle null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=execle;mode=strict;expected=EXECLE_NULL_PATH_ERROR_EFAULT;actual=EXECLE_NULL_PATH_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "strict"
+    },
+    {
+      "name": "execle_null_path_hardened",
+      "function": "execle",
+      "spec_section": "POSIX execle null path failure",
+      "inputs": {
+        "symbol": "execle",
+        "scenario": "null_path_null_argv_null_env_without_launching_program",
+        "expected": "EXECLE_NULL_PATH_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC execle null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=execle;mode=hardened;expected=EXECLE_NULL_PATH_ERROR_EFAULT;actual=EXECLE_NULL_PATH_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "hardened"
+    },
+    {
+      "name": "execlp_null_file_strict",
+      "function": "execlp",
+      "spec_section": "POSIX execlp null file failure",
+      "inputs": {
+        "symbol": "execlp",
+        "scenario": "null_file_null_argv_without_path_search",
+        "expected": "EXECLP_NULL_FILE_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC execlp null file errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=execlp;mode=strict;expected=EXECLP_NULL_FILE_ERROR_EFAULT;actual=EXECLP_NULL_FILE_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "strict"
+    },
+    {
+      "name": "execlp_null_file_hardened",
+      "function": "execlp",
+      "spec_section": "POSIX execlp null file failure",
+      "inputs": {
+        "symbol": "execlp",
+        "scenario": "null_file_null_argv_without_path_search",
+        "expected": "EXECLP_NULL_FILE_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC execlp null file errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=execlp;mode=hardened;expected=EXECLP_NULL_FILE_ERROR_EFAULT;actual=EXECLP_NULL_FILE_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "hardened"
+    },
+    {
+      "name": "execv_null_path_strict",
+      "function": "execv",
+      "spec_section": "POSIX execv null path failure",
+      "inputs": {
+        "symbol": "execv",
+        "scenario": "null_path_null_vector_without_launching_program",
+        "expected": "EXECV_NULL_PATH_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC execv null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=execv;mode=strict;expected=EXECV_NULL_PATH_ERROR_EFAULT;actual=EXECV_NULL_PATH_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "strict"
+    },
+    {
+      "name": "execv_null_path_hardened",
+      "function": "execv",
+      "spec_section": "POSIX execv null path failure",
+      "inputs": {
+        "symbol": "execv",
+        "scenario": "null_path_null_vector_without_launching_program",
+        "expected": "EXECV_NULL_PATH_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC execv null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=execv;mode=hardened;expected=EXECV_NULL_PATH_ERROR_EFAULT;actual=EXECV_NULL_PATH_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "hardened"
+    },
+    {
+      "name": "execveat_null_path_strict",
+      "function": "execveat",
+      "spec_section": "Linux execveat null path failure",
+      "inputs": {
+        "symbol": "execveat",
+        "scenario": "null_path_at_fdcwd_without_launching_program",
+        "expected": "EXECVEAT_NULL_PATH_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC execveat null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=execveat;mode=strict;expected=EXECVEAT_NULL_PATH_ERROR_EFAULT;actual=EXECVEAT_NULL_PATH_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "strict"
+    },
+    {
+      "name": "execveat_null_path_hardened",
+      "function": "execveat",
+      "spec_section": "Linux execveat null path failure",
+      "inputs": {
+        "symbol": "execveat",
+        "scenario": "null_path_at_fdcwd_without_launching_program",
+        "expected": "EXECVEAT_NULL_PATH_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC execveat null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=execveat;mode=hardened;expected=EXECVEAT_NULL_PATH_ERROR_EFAULT;actual=EXECVEAT_NULL_PATH_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "hardened"
+    },
+    {
+      "name": "faccessat_null_path_strict",
+      "function": "faccessat",
+      "spec_section": "POSIX faccessat null path effective-access failure",
+      "inputs": {
+        "symbol": "faccessat",
+        "scenario": "null_path_relative_access_without_filesystem_probe",
+        "expected": "FACCESSAT_NULL_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC faccessat null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=faccessat;mode=strict;expected=FACCESSAT_NULL_ERROR_EFAULT;actual=FACCESSAT_NULL_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "strict"
+    },
+    {
+      "name": "faccessat_null_path_hardened",
+      "function": "faccessat",
+      "spec_section": "POSIX faccessat null path effective-access failure",
+      "inputs": {
+        "symbol": "faccessat",
+        "scenario": "null_path_relative_access_without_filesystem_probe",
+        "expected": "FACCESSAT_NULL_ERROR_EFAULT",
+        "oracle_source": "FrankenLibC faccessat null path errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=faccessat;mode=hardened;expected=FACCESSAT_NULL_ERROR_EFAULT;actual=FACCESSAT_NULL_ERROR_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "hardened"
+    },
+    {
+      "name": "fallocate_invalid_fd_strict",
+      "function": "fallocate",
+      "spec_section": "Linux fallocate invalid descriptor failure",
+      "inputs": {
+        "symbol": "fallocate",
+        "scenario": "invalid_descriptor_without_file_state_capture",
+        "expected": "FALLOCATE_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fallocate invalid fd errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=fallocate;mode=strict;expected=FALLOCATE_INVALID_FD_ERROR_EBADF;actual=FALLOCATE_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fallocate_invalid_fd_hardened",
+      "function": "fallocate",
+      "spec_section": "Linux fallocate invalid descriptor failure",
+      "inputs": {
+        "symbol": "fallocate",
+        "scenario": "invalid_descriptor_without_file_state_capture",
+        "expected": "FALLOCATE_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fallocate invalid fd errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=fallocate;mode=hardened;expected=FALLOCATE_INVALID_FD_ERROR_EBADF;actual=FALLOCATE_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "fallocate64_invalid_fd_strict",
+      "function": "fallocate64",
+      "spec_section": "Linux fallocate64 invalid descriptor failure",
+      "inputs": {
+        "symbol": "fallocate64",
+        "scenario": "invalid_descriptor_without_file_state_capture",
+        "expected": "FALLOCATE64_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fallocate64 invalid fd errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=fallocate64;mode=strict;expected=FALLOCATE64_INVALID_FD_ERROR_EBADF;actual=FALLOCATE64_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fallocate64_invalid_fd_hardened",
+      "function": "fallocate64",
+      "spec_section": "Linux fallocate64 invalid descriptor failure",
+      "inputs": {
+        "symbol": "fallocate64",
+        "scenario": "invalid_descriptor_without_file_state_capture",
+        "expected": "FALLOCATE64_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fallocate64 invalid fd errno class",
+        "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
+      },
+      "expected_output": "symbol=fallocate64;mode=hardened;expected=FALLOCATE64_INVALID_FD_ERROR_EBADF;actual=FALLOCATE64_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    }
+  ]
+}
