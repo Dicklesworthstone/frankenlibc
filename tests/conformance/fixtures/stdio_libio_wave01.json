@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "stdio/libio",
+  "captured_at": "2026-05-13T04:20:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-stdio-libio wave-01 _IO_puts, seek, sgetn, C23 scanf alias, C23 va_list scanf alias, and C99 scanf alias symbols. Outputs classify null-output, controlled tmpfile seek/read, controlled string/tmpfile scanf, and empty-stdin EOF classes without recording stream addresses, file descriptors, filesystem paths, stdout bytes, stdin payloads, thread ids, timestamps, or host FILE internals.",
+  "spec_reference": "GNU libc libio _IO_puts/_IO_seekoff/_IO_seekpos/_IO_sgetn compatibility names plus ISO C99/C23 scanf alias and va_list forwarding semantics over C11 7.21.6.2 / POSIX fscanf",
+  "campaign": {
+    "bead": "tracker-blocked-empty-queue-discovery",
+    "campaign_id": "fcq-stdio-libio",
+    "wave_id": "wave-01-stdio-libio-scanf-seek-stream",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture",
+    "first_wave_symbols": [
+      "_IO_puts",
+      "_IO_seekoff",
+      "_IO_seekpos",
+      "_IO_sgetn",
+      "__isoc23_fscanf",
+      "__isoc23_scanf",
+      "__isoc23_sscanf",
+      "__isoc23_vfscanf",
+      "__isoc23_vscanf",
+      "__isoc23_vsscanf",
+      "__isoc99_fscanf",
+      "__isoc99_scanf"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "io_puts_null_strict",
+      "function": "_IO_puts",
+      "spec_section": "GNU libc _IO_puts null pointer error class",
+      "inputs": {
+        "symbol": "_IO_puts",
+        "scenario": "null_string_without_stdout_capture",
+        "expected": "IO_PUTS_NULL_EOF",
+        "oracle_source": "FrankenLibC _IO_puts null class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=_IO_puts;mode=strict;expected=IO_PUTS_NULL_EOF;actual=IO_PUTS_NULL_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_puts_null_hardened",
+      "function": "_IO_puts",
+      "spec_section": "GNU libc _IO_puts null pointer error class",
+      "inputs": {
+        "symbol": "_IO_puts",
+        "scenario": "null_string_without_stdout_capture",
+        "expected": "IO_PUTS_NULL_EOF",
+        "oracle_source": "FrankenLibC _IO_puts null class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=_IO_puts;mode=hardened;expected=IO_PUTS_NULL_EOF;actual=IO_PUTS_NULL_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_seekoff_set_position_strict",
+      "function": "_IO_seekoff",
+      "spec_section": "GNU libc _IO_seekoff SEEK_SET stream position contract",
+      "inputs": {
+        "symbol": "_IO_seekoff",
+        "scenario": "controlled_tmpfile_seek_set_without_fd_or_path_capture",
+        "expected": "SEEKOFF_POS_2",
+        "oracle_source": "FrankenLibC controlled tmpfile replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=_IO_seekoff;mode=strict;expected=SEEKOFF_POS_2;actual=SEEKOFF_POS_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_seekoff_set_position_hardened",
+      "function": "_IO_seekoff",
+      "spec_section": "GNU libc _IO_seekoff SEEK_SET stream position contract",
+      "inputs": {
+        "symbol": "_IO_seekoff",
+        "scenario": "controlled_tmpfile_seek_set_without_fd_or_path_capture",
+        "expected": "SEEKOFF_POS_2",
+        "oracle_source": "FrankenLibC controlled tmpfile replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=_IO_seekoff;mode=hardened;expected=SEEKOFF_POS_2;actual=SEEKOFF_POS_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_seekpos_absolute_position_strict",
+      "function": "_IO_seekpos",
+      "spec_section": "GNU libc _IO_seekpos absolute stream position contract",
+      "inputs": {
+        "symbol": "_IO_seekpos",
+        "scenario": "controlled_tmpfile_seekpos_without_fd_or_path_capture",
+        "expected": "SEEKPOS_POS_3",
+        "oracle_source": "FrankenLibC controlled tmpfile replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=_IO_seekpos;mode=strict;expected=SEEKPOS_POS_3;actual=SEEKPOS_POS_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_seekpos_absolute_position_hardened",
+      "function": "_IO_seekpos",
+      "spec_section": "GNU libc _IO_seekpos absolute stream position contract",
+      "inputs": {
+        "symbol": "_IO_seekpos",
+        "scenario": "controlled_tmpfile_seekpos_without_fd_or_path_capture",
+        "expected": "SEEKPOS_POS_3",
+        "oracle_source": "FrankenLibC controlled tmpfile replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=_IO_seekpos;mode=hardened;expected=SEEKPOS_POS_3;actual=SEEKPOS_POS_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "io_sgetn_controlled_read_strict",
+      "function": "_IO_sgetn",
+      "spec_section": "GNU libc _IO_sgetn controlled byte-read contract",
+      "inputs": {
+        "symbol": "_IO_sgetn",
+        "scenario": "controlled_tmpfile_sgetn_without_fd_or_path_capture",
+        "expected": "SGETN_5_TEXT_libio",
+        "oracle_source": "FrankenLibC controlled tmpfile replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=_IO_sgetn;mode=strict;expected=SGETN_5_TEXT_libio;actual=SGETN_5_TEXT_libio;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_sgetn_controlled_read_hardened",
+      "function": "_IO_sgetn",
+      "spec_section": "GNU libc _IO_sgetn controlled byte-read contract",
+      "inputs": {
+        "symbol": "_IO_sgetn",
+        "scenario": "controlled_tmpfile_sgetn_without_fd_or_path_capture",
+        "expected": "SGETN_5_TEXT_libio",
+        "oracle_source": "FrankenLibC controlled tmpfile replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=_IO_sgetn;mode=hardened;expected=SGETN_5_TEXT_libio;actual=SGETN_5_TEXT_libio;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc23_fscanf_controlled_int_strict",
+      "function": "__isoc23_fscanf",
+      "spec_section": "ISO C23 __isoc23_fscanf base-alias controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc23_fscanf",
+        "scenario": "controlled_tmpfile_integer_scan_without_fd_or_path_capture",
+        "expected": "ISOC23_FSCANF_RC_1_VALUE_23",
+        "oracle_source": "FrankenLibC C23 fscanf base-alias replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_fscanf;mode=strict;expected=ISOC23_FSCANF_RC_1_VALUE_23;actual=ISOC23_FSCANF_RC_1_VALUE_23;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc23_fscanf_controlled_int_hardened",
+      "function": "__isoc23_fscanf",
+      "spec_section": "ISO C23 __isoc23_fscanf base-alias controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc23_fscanf",
+        "scenario": "controlled_tmpfile_integer_scan_without_fd_or_path_capture",
+        "expected": "ISOC23_FSCANF_RC_1_VALUE_23",
+        "oracle_source": "FrankenLibC C23 fscanf base-alias replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_fscanf;mode=hardened;expected=ISOC23_FSCANF_RC_1_VALUE_23;actual=ISOC23_FSCANF_RC_1_VALUE_23;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc23_scanf_empty_stdin_strict",
+      "function": "__isoc23_scanf",
+      "spec_section": "ISO C23 __isoc23_scanf empty stdin EOF class",
+      "inputs": {
+        "symbol": "__isoc23_scanf",
+        "scenario": "empty_stdin_integer_scan_without_stdin_payload_capture",
+        "expected": "ISOC23_SCANF_EMPTY_RC_-1",
+        "oracle_source": "FrankenLibC C23 scanf empty stdin class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_scanf;mode=strict;expected=ISOC23_SCANF_EMPTY_RC_-1;actual=ISOC23_SCANF_EMPTY_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc23_scanf_empty_stdin_hardened",
+      "function": "__isoc23_scanf",
+      "spec_section": "ISO C23 __isoc23_scanf empty stdin EOF class",
+      "inputs": {
+        "symbol": "__isoc23_scanf",
+        "scenario": "empty_stdin_integer_scan_without_stdin_payload_capture",
+        "expected": "ISOC23_SCANF_EMPTY_RC_-1",
+        "oracle_source": "FrankenLibC C23 scanf empty stdin class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_scanf;mode=hardened;expected=ISOC23_SCANF_EMPTY_RC_-1;actual=ISOC23_SCANF_EMPTY_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc23_sscanf_controlled_int_strict",
+      "function": "__isoc23_sscanf",
+      "spec_section": "ISO C23 __isoc23_sscanf base-alias controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc23_sscanf",
+        "scenario": "controlled_string_integer_scan_without_input_payload_capture",
+        "expected": "ISOC23_SSCANF_RC_1_VALUE_23",
+        "oracle_source": "FrankenLibC C23 sscanf base-alias replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_sscanf;mode=strict;expected=ISOC23_SSCANF_RC_1_VALUE_23;actual=ISOC23_SSCANF_RC_1_VALUE_23;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc23_sscanf_controlled_int_hardened",
+      "function": "__isoc23_sscanf",
+      "spec_section": "ISO C23 __isoc23_sscanf base-alias controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc23_sscanf",
+        "scenario": "controlled_string_integer_scan_without_input_payload_capture",
+        "expected": "ISOC23_SSCANF_RC_1_VALUE_23",
+        "oracle_source": "FrankenLibC C23 sscanf base-alias replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_sscanf;mode=hardened;expected=ISOC23_SSCANF_RC_1_VALUE_23;actual=ISOC23_SSCANF_RC_1_VALUE_23;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc23_vfscanf_controlled_int_strict",
+      "function": "__isoc23_vfscanf",
+      "spec_section": "ISO C23 __isoc23_vfscanf va_list controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc23_vfscanf",
+        "scenario": "controlled_tmpfile_va_list_integer_scan_without_fd_or_path_capture",
+        "expected": "ISOC23_VFSCANF_RC_1_VALUE_31",
+        "oracle_source": "FrankenLibC C23 vfscanf alias replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_vfscanf;mode=strict;expected=ISOC23_VFSCANF_RC_1_VALUE_31;actual=ISOC23_VFSCANF_RC_1_VALUE_31;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc23_vfscanf_controlled_int_hardened",
+      "function": "__isoc23_vfscanf",
+      "spec_section": "ISO C23 __isoc23_vfscanf va_list controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc23_vfscanf",
+        "scenario": "controlled_tmpfile_va_list_integer_scan_without_fd_or_path_capture",
+        "expected": "ISOC23_VFSCANF_RC_1_VALUE_31",
+        "oracle_source": "FrankenLibC C23 vfscanf alias replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_vfscanf;mode=hardened;expected=ISOC23_VFSCANF_RC_1_VALUE_31;actual=ISOC23_VFSCANF_RC_1_VALUE_31;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc23_vscanf_empty_stdin_strict",
+      "function": "__isoc23_vscanf",
+      "spec_section": "ISO C23 __isoc23_vscanf va_list empty stdin EOF class",
+      "inputs": {
+        "symbol": "__isoc23_vscanf",
+        "scenario": "empty_stdin_va_list_integer_scan_without_stdin_payload_capture",
+        "expected": "ISOC23_VSCANF_EMPTY_RC_-1_VALUE_-99",
+        "oracle_source": "FrankenLibC C23 vscanf empty stdin class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_vscanf;mode=strict;expected=ISOC23_VSCANF_EMPTY_RC_-1_VALUE_-99;actual=ISOC23_VSCANF_EMPTY_RC_-1_VALUE_-99;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc23_vscanf_empty_stdin_hardened",
+      "function": "__isoc23_vscanf",
+      "spec_section": "ISO C23 __isoc23_vscanf va_list empty stdin EOF class",
+      "inputs": {
+        "symbol": "__isoc23_vscanf",
+        "scenario": "empty_stdin_va_list_integer_scan_without_stdin_payload_capture",
+        "expected": "ISOC23_VSCANF_EMPTY_RC_-1_VALUE_-99",
+        "oracle_source": "FrankenLibC C23 vscanf empty stdin class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_vscanf;mode=hardened;expected=ISOC23_VSCANF_EMPTY_RC_-1_VALUE_-99;actual=ISOC23_VSCANF_EMPTY_RC_-1_VALUE_-99;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc23_vsscanf_controlled_int_strict",
+      "function": "__isoc23_vsscanf",
+      "spec_section": "ISO C23 __isoc23_vsscanf va_list controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc23_vsscanf",
+        "scenario": "controlled_string_va_list_integer_scan_without_input_payload_capture",
+        "expected": "ISOC23_VSSCANF_RC_1_VALUE_37",
+        "oracle_source": "FrankenLibC C23 vsscanf alias replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_vsscanf;mode=strict;expected=ISOC23_VSSCANF_RC_1_VALUE_37;actual=ISOC23_VSSCANF_RC_1_VALUE_37;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc23_vsscanf_controlled_int_hardened",
+      "function": "__isoc23_vsscanf",
+      "spec_section": "ISO C23 __isoc23_vsscanf va_list controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc23_vsscanf",
+        "scenario": "controlled_string_va_list_integer_scan_without_input_payload_capture",
+        "expected": "ISOC23_VSSCANF_RC_1_VALUE_37",
+        "oracle_source": "FrankenLibC C23 vsscanf alias replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc23_vsscanf;mode=hardened;expected=ISOC23_VSSCANF_RC_1_VALUE_37;actual=ISOC23_VSSCANF_RC_1_VALUE_37;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc99_fscanf_null_stream_strict",
+      "function": "__isoc99_fscanf",
+      "spec_section": "ISO C99 __isoc99_fscanf null stream error class",
+      "inputs": {
+        "symbol": "__isoc99_fscanf",
+        "scenario": "null_stream_integer_scan_without_fd_or_path_capture",
+        "expected": "ISOC99_FSCANF_NULL_RC_-1",
+        "oracle_source": "FrankenLibC C99 fscanf null stream class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_fscanf;mode=strict;expected=ISOC99_FSCANF_NULL_RC_-1;actual=ISOC99_FSCANF_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc99_fscanf_null_stream_hardened",
+      "function": "__isoc99_fscanf",
+      "spec_section": "ISO C99 __isoc99_fscanf null stream error class",
+      "inputs": {
+        "symbol": "__isoc99_fscanf",
+        "scenario": "null_stream_integer_scan_without_fd_or_path_capture",
+        "expected": "ISOC99_FSCANF_NULL_RC_-1",
+        "oracle_source": "FrankenLibC C99 fscanf null stream class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_fscanf;mode=hardened;expected=ISOC99_FSCANF_NULL_RC_-1;actual=ISOC99_FSCANF_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc99_scanf_empty_stdin_strict",
+      "function": "__isoc99_scanf",
+      "spec_section": "ISO C99 __isoc99_scanf empty stdin EOF class",
+      "inputs": {
+        "symbol": "__isoc99_scanf",
+        "scenario": "empty_stdin_integer_scan_without_stdin_payload_capture",
+        "expected": "ISOC99_SCANF_EMPTY_RC_-1",
+        "oracle_source": "FrankenLibC C99 scanf empty stdin class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_scanf;mode=strict;expected=ISOC99_SCANF_EMPTY_RC_-1;actual=ISOC99_SCANF_EMPTY_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc99_scanf_empty_stdin_hardened",
+      "function": "__isoc99_scanf",
+      "spec_section": "ISO C99 __isoc99_scanf empty stdin EOF class",
+      "inputs": {
+        "symbol": "__isoc99_scanf",
+        "scenario": "empty_stdin_integer_scan_without_stdin_payload_capture",
+        "expected": "ISOC99_SCANF_EMPTY_RC_-1",
+        "oracle_source": "FrankenLibC C99 scanf empty stdin class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_scanf;mode=hardened;expected=ISOC99_SCANF_EMPTY_RC_-1;actual=ISOC99_SCANF_EMPTY_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

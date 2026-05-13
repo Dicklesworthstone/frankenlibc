@@ -687,9 +687,10 @@ pub fn execute_fixture_case(
         | "chmod" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
-        | "_IO_peekc_locked" | "_IO_putc" => {
-            execute_stdio_libio_symbols_case(function, inputs, mode)
-        }
+        | "_IO_peekc_locked" | "_IO_putc" | "_IO_puts" | "_IO_seekoff" | "_IO_seekpos"
+        | "_IO_sgetn" | "__isoc23_fscanf" | "__isoc23_scanf" | "__isoc23_sscanf"
+        | "__isoc23_vfscanf" | "__isoc23_vscanf" | "__isoc23_vsscanf" | "__isoc99_fscanf"
+        | "__isoc99_scanf" => execute_stdio_libio_symbols_case(function, inputs, mode),
         "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
         "compute_relocation" => execute_compute_relocation_case(inputs, mode),
         "elf_hash" => execute_elf_hash_case(inputs, mode),
@@ -16352,8 +16353,145 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
                 Ok(format!("CHAR_RC_{rc}"))
             }
         }),
+        "_IO_puts" => {
+            let rc = unsafe { frankenlibc_abi::stdio_abi::_IO_puts(std::ptr::null()) };
+            if rc == libc::EOF {
+                Ok(String::from("IO_PUTS_NULL_EOF"))
+            } else {
+                Ok(format!("IO_PUTS_NULL_RC_{rc}"))
+            }
+        }
+        "_IO_seekoff" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"abcdef")?;
+            let pos =
+                unsafe { frankenlibc_abi::stdio_abi::_IO_seekoff(stream, 2, libc::SEEK_SET, 0) };
+            Ok(format!("SEEKOFF_POS_{pos}"))
+        }),
+        "_IO_seekpos" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"abcdef")?;
+            let pos = unsafe { frankenlibc_abi::stdio_abi::_IO_seekpos(stream, 3, 0) };
+            Ok(format!("SEEKPOS_POS_{pos}"))
+        }),
+        "_IO_sgetn" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"libio")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let mut buf = [0u8; 5];
+            let n = unsafe {
+                frankenlibc_abi::stdio_abi::_IO_sgetn(
+                    stream,
+                    buf.as_mut_ptr().cast::<c_void>(),
+                    buf.len(),
+                )
+            };
+            let text = String::from_utf8_lossy(&buf[..n.min(buf.len())]);
+            Ok(format!("SGETN_{n}_TEXT_{text}"))
+        }),
+        "__isoc23_fscanf" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"23")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let mut value: c_int = -99;
+            let rc = unsafe {
+                frankenlibc_abi::stdio_abi::fscanf(stream, fmt.as_ptr(), &mut value as *mut c_int)
+            };
+            Ok(format!("ISOC23_FSCANF_RC_{rc}_VALUE_{value}"))
+        }),
+        "__isoc23_scanf" => {
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let rc = unsafe { frankenlibc_abi::stdio_abi::scanf(fmt.as_ptr()) };
+            Ok(format!("ISOC23_SCANF_EMPTY_RC_{rc}"))
+        }
+        "__isoc23_sscanf" => {
+            let input = CString::new("23").map_err(|_| "scanf input has NUL".to_string())?;
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let mut value: c_int = -99;
+            let rc = unsafe {
+                frankenlibc_abi::stdio_abi::sscanf(
+                    input.as_ptr(),
+                    fmt.as_ptr(),
+                    &mut value as *mut c_int,
+                )
+            };
+            Ok(format!("ISOC23_SSCANF_RC_{rc}_VALUE_{value}"))
+        }
+        "__isoc23_vfscanf" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"31")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let mut value: c_int = -99;
+            let mut destinations = [&mut value as *mut c_int as *mut c_void];
+            let rc = with_scanf_destination_va_list(&mut destinations, |ap| unsafe {
+                frankenlibc_abi::stdio_abi::vfscanf(stream, fmt.as_ptr(), ap)
+            });
+            Ok(format!("ISOC23_VFSCANF_RC_{rc}_VALUE_{value}"))
+        }),
+        "__isoc23_vscanf" => {
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let mut value: c_int = -99;
+            let mut destinations = [&mut value as *mut c_int as *mut c_void];
+            let rc = with_scanf_destination_va_list(&mut destinations, |ap| unsafe {
+                frankenlibc_abi::stdio_abi::vscanf(fmt.as_ptr(), ap)
+            });
+            Ok(format!("ISOC23_VSCANF_EMPTY_RC_{rc}_VALUE_{value}"))
+        }
+        "__isoc23_vsscanf" => {
+            let input = CString::new("37").map_err(|_| "scanf input has NUL".to_string())?;
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let mut value: c_int = -99;
+            let mut destinations = [&mut value as *mut c_int as *mut c_void];
+            let rc = with_scanf_destination_va_list(&mut destinations, |ap| unsafe {
+                frankenlibc_abi::stdio_abi::vsscanf(input.as_ptr(), fmt.as_ptr(), ap)
+            });
+            Ok(format!("ISOC23_VSSCANF_RC_{rc}_VALUE_{value}"))
+        }
+        "__isoc99_fscanf" => stdio_libio_tmpfile(|stream| {
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let rc = unsafe {
+                frankenlibc_abi::stdio_abi::__isoc99_fscanf(std::ptr::null_mut(), fmt.as_ptr())
+            };
+            let _ = stream;
+            Ok(format!("ISOC99_FSCANF_NULL_RC_{rc}"))
+        }),
+        "__isoc99_scanf" => {
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let rc = unsafe { frankenlibc_abi::stdio_abi::__isoc99_scanf(fmt.as_ptr()) };
+            Ok(format!("ISOC99_SCANF_EMPTY_RC_{rc}"))
+        }
         other => Err(format!("unsupported stdio/libio fixture: {other}")),
     }
+}
+
+fn write_controlled_stream_bytes(stream: *mut c_void, bytes: &[u8]) -> Result<(), String> {
+    let written = unsafe {
+        frankenlibc_abi::stdio_abi::fwrite(bytes.as_ptr().cast::<c_void>(), 1, bytes.len(), stream)
+    };
+    if written == bytes.len() {
+        Ok(())
+    } else {
+        Err(format!(
+            "controlled fwrite wrote {written} of {}",
+            bytes.len()
+        ))
+    }
+}
+
+fn with_scanf_destination_va_list<T>(
+    destinations: &mut [*mut c_void],
+    f: impl FnOnce(*mut c_void) -> T,
+) -> T {
+    let mut slots: Vec<u64> = destinations.iter().map(|ptr| *ptr as u64).collect();
+    let overflow_arg_area = if slots.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        slots.as_mut_ptr().cast::<c_void>()
+    };
+    let mut tag = X86_64VaListTag {
+        gp_offset: 48,
+        fp_offset: 176,
+        overflow_arg_area,
+        reg_save_area: std::ptr::null_mut(),
+    };
+    f((&mut tag as *mut X86_64VaListTag).cast::<c_void>())
 }
 
 fn stdio_libio_alias_actual(symbol: &str) -> Result<String, String> {
