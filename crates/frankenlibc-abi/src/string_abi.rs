@@ -2018,13 +2018,42 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
         return std::ptr::null_mut();
     }
 
-    let (copy_len, clamped) = maybe_clamp_copy_len(
-        n,
-        known_remaining(src as usize),
-        known_remaining(dst as usize),
-        repair_enabled(mode.heals_enabled(), decision.action),
-    );
-    if copy_len == 0 {
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let mut adverse = false;
+    
+    let safe_dst_len = if repair {
+        match known_remaining(dst as usize) {
+            Some(b) if b < n => {
+                adverse = true;
+                global_healing_policy().record(&HealingAction::ClampSize {
+                    requested: n,
+                    clamped: b,
+                });
+                b
+            }
+            _ => n,
+        }
+    } else {
+        n
+    };
+
+    let safe_src_len = if repair {
+        match known_remaining(src as usize) {
+            Some(b) if b < n => {
+                adverse = true;
+                global_healing_policy().record(&HealingAction::ClampSize {
+                    requested: n,
+                    clamped: b,
+                });
+                b
+            }
+            _ => n,
+        }
+    } else {
+        n
+    };
+
+    if safe_dst_len == 0 {
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -2040,18 +2069,22 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
         return dst;
     }
 
-    // SAFETY: bounded by copy_len, which is either n or clamped in hardened mode.
+    // SAFETY: bounded by safe_dst_len and safe_src_len.
     unsafe {
         let mut i = 0usize;
-        while i < copy_len {
-            let ch = *src.add(i);
+        while i < safe_dst_len {
+            let ch = if i < safe_src_len {
+                *src.add(i)
+            } else {
+                0
+            };
             *dst.add(i) = ch;
             i += 1;
             if ch == 0 {
                 break;
             }
         }
-        while i < copy_len {
+        while i < safe_dst_len {
             *dst.add(i) = 0;
             i += 1;
         }
@@ -2059,8 +2092,8 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
-        runtime_policy::scaled_cost(8, copy_len),
-        clamped,
+        runtime_policy::scaled_cost(8, safe_dst_len),
+        adverse,
     );
     record_string_stage_outcome(
         &ordering,
