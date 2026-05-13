@@ -769,6 +769,26 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Compute the memory-pressure ppm composition pipeline via
+    /// `frankenlibc_membrane::runtime_math::sos_barrier::depth_to_arena_utilization_ppm`
+    /// (depth -> ppm) and
+    /// `frankenlibc_membrane::runtime_math::sos_barrier::compose_memory_pressure_ppm`
+    /// (depth + EWMA pressure + raw pressure -> composed ppm).
+    ComputeMemoryPressurePpm {
+        /// Quarantine ring depth (entries).
+        #[arg(long)]
+        depth: u32,
+        /// EWMA pressure score in milli-units (0..100_000).
+        #[arg(long)]
+        pressure_score_milli: u64,
+        /// Raw pressure score in milli-units (0..100_000) used to detect
+        /// sudden bursts not yet captured by EWMA lag.
+        #[arg(long)]
+        pressure_raw_score_milli: u64,
+        /// Output JSONL path: one memory_pressure_ppm record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Evaluate the quarantine-depth admissibility barrier (Invariant A)
     /// via `frankenlibc_membrane::runtime_math::sos_barrier::evaluate_quarantine_barrier`.
     /// Returns barrier value in milli-units; positive => certified safe,
@@ -2792,6 +2812,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::ComputeMemoryPressurePpm {
+            depth,
+            pressure_score_milli,
+            pressure_raw_score_milli,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::sos_barrier::{
+                compose_memory_pressure_ppm, depth_to_arena_utilization_ppm,
+            };
+            let depth_ppm = depth_to_arena_utilization_ppm(depth);
+            let composed_ppm = compose_memory_pressure_ppm(
+                depth,
+                pressure_score_milli,
+                pressure_raw_score_milli,
+            );
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "memory_pressure_ppm",
+                "depth": depth,
+                "pressure_score_milli": pressure_score_milli,
+                "pressure_raw_score_milli": pressure_raw_score_milli,
+                "depth_arena_utilization_ppm": depth_ppm,
+                "composed_pressure_ppm": composed_ppm,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "compute-memory-pressure-ppm: depth={depth} score_milli={pressure_score_milli} raw_milli={pressure_raw_score_milli} -> depth_ppm={depth_ppm} composed_ppm={composed_ppm}"
+            );
         }
         Command::EvaluateQuarantineBarrier {
             depth,

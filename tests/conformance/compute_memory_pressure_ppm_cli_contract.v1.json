@@ -1,0 +1,57 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "compute-memory-pressure-ppm-cli-contract",
+  "bead": "bd-vd6rg",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "7ec8a1c7",
+  "purpose": "Pin the harness binary subcommand that exposes the memory-pressure ppm composition pipeline: frankenlibc_membrane::runtime_math::sos_barrier::depth_to_arena_utilization_ppm(depth: u32) -> u32 (clamps depth to [64, 65536] and linearly normalizes to 0..1_000_000 ppm) AND frankenlibc_membrane::runtime_math::sos_barrier::compose_memory_pressure_ppm(depth, pressure_score_milli, pressure_raw_score_milli) -> u32 (composes depth-derived arena pressure with EWMA+raw pressure-sensor telemetry, applying a surge projection so sudden bursts are not hidden by EWMA lag). Returns max(depth_ppm, projected_pressure_ppm) clamped to [0, 1_000_000]. Previously reachable only from Rust callers; the CLI bridge lets CI verify both pipeline stages without compiling.",
+  "subcommand_name": "compute-memory-pressure-ppm",
+  "binary_target": "harness",
+  "required_flags": [
+    "--depth",
+    "--pressure-score-milli",
+    "--pressure-raw-score-milli",
+    "--output"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::runtime_math::sos_barrier::depth_to_arena_utilization_ppm",
+    "frankenlibc_membrane::runtime_math::sos_barrier::compose_memory_pressure_ppm"
+  ],
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "memory_pressure_ppm",
+    "required_fields": [
+      "kind",
+      "depth",
+      "pressure_score_milli",
+      "pressure_raw_score_milli",
+      "depth_arena_utilization_ppm",
+      "composed_pressure_ppm"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "echoes_inputs_into_output_record": true,
+    "deterministic_given_inputs": true,
+    "depth_at_or_below_floor_yields_zero_arena_ppm": true,
+    "depth_at_max_yields_maximum_arena_ppm": true,
+    "depth_arena_ppm_is_monotone_nondecreasing_in_depth": true,
+    "composed_ppm_at_or_above_depth_arena_ppm": true,
+    "composed_ppm_clamped_to_unit_ppm_max": true,
+    "all_zero_pressure_with_floor_depth_yields_zero_composed": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "depth_ppm_decreases_with_increasing_depth",
+    "composed_ppm_below_depth_arena_ppm",
+    "composed_ppm_exceeds_unit_ppm_max"
+  ],
+  "summary": {
+    "bead": "bd-vd6rg",
+    "subcommand": "compute-memory-pressure-ppm",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
