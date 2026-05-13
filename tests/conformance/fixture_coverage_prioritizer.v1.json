@@ -383,60 +383,6 @@
       ]
     },
     {
-      "campaign_id": "fcq-socket-network",
-      "current_coverage_pct": 44.44,
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "expected_coverage_after_first_wave_pct": 100.0,
-      "first_wave_fixture_count": 10,
-      "first_wave_symbols": [
-        "accept",
-        "accept4",
-        "connect",
-        "getpeername",
-        "recvfrom",
-        "recvmsg",
-        "sendmsg",
-        "sendto",
-        "setsockopt",
-        "socketpair"
-      ],
-      "module": "socket_abi",
-      "next_step": "Add loopback-only socket fixtures with deterministic peer, timeout, and errno normalization.",
-      "oracle_kind": "loopback_network_replay",
-      "rank": 8,
-      "risk_tags": [
-        "errno_mapping",
-        "mode_pair_mismatch",
-        "network_semantics",
-        "timeout_policy"
-      ],
-      "scores": {
-        "coverage_gap_score": 10,
-        "feature_gap_risk_score": 0,
-        "hard_parts_risk_tags": [],
-        "implementation_complexity_score": 4,
-        "parity_risk_score": 4,
-        "priority_score": 2110,
-        "semantic_risk_score": 0,
-        "workload_risk_score": 5
-      },
-      "structured_log_fields": "required_log_fields",
-      "symbol_family": "accept/connect/socketpair/send/recv/socket options with loopback-only deterministic behavior",
-      "target_covered": 8,
-      "target_total": 18,
-      "target_uncovered": 10,
-      "title": "socket send/recv/connect fixture wave",
-      "workload_domains": [
-        "threaded_services",
-        "package_manager",
-        "language_runtimes",
-        "resolver_nss"
-      ]
-    },
-    {
       "campaign_id": "fcq-fortify-bounds",
       "current_coverage_pct": 0.0,
       "deterministic_e2e_scripts": [
@@ -462,7 +408,7 @@
       "module": "fortify_abi",
       "next_step": "Add positive and negative checked-wrapper fixtures before fortify safety claims expand.",
       "oracle_kind": "hardened_bounds_oracle",
-      "rank": 9,
+      "rank": 8,
       "risk_tags": [
         "buffer_boundary",
         "claim_blocked",
@@ -513,7 +459,7 @@
       "module": "locale_abi",
       "next_step": "Add pinned-locale fixtures before user-facing locale or transliteration support claims advance.",
       "oracle_kind": "locale_fixture_oracle",
-      "rank": 10,
+      "rank": 9,
       "risk_tags": [
         "claim_blocked",
         "locale",
@@ -572,7 +518,7 @@
       "module": "time_abi",
       "next_step": "Add pinned-time and invalid-clock fixtures with deterministic tolerance rules.",
       "oracle_kind": "pinned_time_fixture_oracle",
-      "rank": 11,
+      "rank": 10,
       "risk_tags": [
         "errno_mapping",
         "semantic_divergence",
@@ -629,7 +575,7 @@
       "module": "math_abi",
       "next_step": "Start with finite aliases and fpclassification before expanding to the long libm tail.",
       "oracle_kind": "glibc_fixture_oracle",
-      "rank": 12,
+      "rank": 11,
       "risk_tags": [
         "fenv_adjacent",
         "numeric_boundary",
@@ -687,7 +633,7 @@
       "module": "signal_abi",
       "next_step": "Add deterministic signal-mask and alternate-stack fixtures before broader async-cancellation campaigns.",
       "oracle_kind": "mode_pair_process_replay",
-      "rank": 13,
+      "rank": 12,
       "risk_tags": [
         "async_signal",
         "diagnostics_gap",
@@ -741,7 +687,7 @@
       "module": "glibc_internal_abi",
       "next_step": "Split compatibility internals into supported, deterministic-fallback, and claim-blocked fixture groups.",
       "oracle_kind": "symbol_coverage_gate",
-      "rank": 14,
+      "rank": 13,
       "risk_tags": [
         "compatibility_internal",
         "diagnostics_gap",
@@ -795,7 +741,7 @@
       "module": "rpc_abi",
       "next_step": "Add deterministic compatibility/unsupported fixtures before claiming RPC-related coverage.",
       "oracle_kind": "claim_reconciliation_gate",
-      "rank": 15,
+      "rank": 14,
       "risk_tags": [
         "deterministic_fallback",
         "legacy_network",
@@ -1096,8 +1042,8 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3471,
-    "campaign_count": 15,
+    "all_uncovered_target_symbols": 3461,
+    "campaign_count": 14,
     "covered_modules": [
       "fortify_abi",
       "glibc_internal_abi",
@@ -1108,7 +1054,6 @@
       "pthread_abi",
       "rpc_abi",
       "signal_abi",
-      "socket_abi",
       "stdio_abi",
       "string_abi",
       "time_abi",
@@ -1132,7 +1077,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3117,
-    "total_first_wave_fixture_count": 163
+    "selected_target_uncovered_symbols": 3107,
+    "total_first_wave_fixture_count": 153
   }
 }

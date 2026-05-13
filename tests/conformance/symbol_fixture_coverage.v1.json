@@ -3903,42 +3903,6 @@
     },
     {
       "covered_symbols": 8,
-      "milestone_beads": [],
-      "module": "socket_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 1002,
-      "status_breakdown": {
-        "RawSyscall": 18
-      },
-      "target_coverage_pct": 44.44,
-      "target_covered": 8,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 18,
-      "target_uncovered": 10,
-      "target_uncovered_symbols": [
-        "accept",
-        "accept4",
-        "connect",
-        "getpeername",
-        "recvfrom",
-        "recvmsg",
-        "sendmsg",
-        "sendto",
-        "setsockopt",
-        "socketpair"
-      ],
-      "total_symbols": 18,
-      "track": "network/socket",
-      "uncovered_symbols": 10,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "covered_symbols": 8,
       "milestone_beads": [
         "bd-3pe"
       ],
@@ -4496,6 +4460,31 @@
       "workload_ids": []
     },
     {
+      "covered_symbols": 18,
+      "milestone_beads": [],
+      "module": "socket_abi",
+      "recommended_bead": null,
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "RawSyscall": 18
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 18,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 18,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 18,
+      "track": "network/socket",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "covered_symbols": 70,
       "milestone_beads": [],
       "module": "stdbit_abi",
@@ -4525,9 +4514,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1742,
-    "fixture_json_files": 81,
-    "fixture_json_unique_functions": 663,
+    "fixture_json_cases": 1762,
+    "fixture_json_files": 82,
+    "fixture_json_unique_functions": 673,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4548,7 +4537,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 665
+    "unique_fixture_functions_total": 675
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -8199,28 +8188,6 @@
       "workload_ids": []
     },
     {
-      "milestone_beads": [],
-      "module": "socket_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 10,
-      "target_uncovered_symbols": [
-        "accept",
-        "accept4",
-        "connect",
-        "getpeername",
-        "recvfrom",
-        "recvmsg",
-        "sendmsg",
-        "sendto",
-        "setsockopt",
-        "socketpair"
-      ],
-      "track": "network/socket",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "milestone_beads": [
         "bd-3pe"
       ],
@@ -8404,28 +8371,28 @@
       "uncovered": 3138
     },
     "RawSyscall": {
-      "coverage_pct": 19.57,
-      "covered": 81,
+      "coverage_pct": 21.98,
+      "covered": 91,
       "total": 414,
-      "uncovered": 333
+      "uncovered": 323
     }
   },
   "summary": {
-    "coverage_pct": 15.73,
-    "covered_exported_symbols": 648,
-    "target_coverage_pct": 15.73,
-    "target_covered_symbols": 648,
+    "coverage_pct": 15.97,
+    "covered_exported_symbols": 658,
+    "target_coverage_pct": 15.97,
+    "target_covered_symbols": 658,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3471,
+    "target_uncovered_symbols": 3461,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3471,
+    "uncovered_exported_symbols": 3461,
     "uncovered_target_families": 2,
     "weak_family_threshold_pct": 80.0,
-    "weak_target_families": 26
+    "weak_target_families": 25
   },
   "symbols": [
     {
@@ -48302,13 +48269,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "socket_network_wave01"
+      ],
+      "fixture_files": [
+        "socket_network_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48316,13 +48292,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "socket_network_wave01"
+      ],
+      "fixture_files": [
+        "socket_network_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48356,13 +48341,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "socket_network_wave01"
+      ],
+      "fixture_files": [
+        "socket_network_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48370,13 +48364,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "socket_network_wave01"
+      ],
+      "fixture_files": [
+        "socket_network_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48480,13 +48483,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "socket_network_wave01"
+      ],
+      "fixture_files": [
+        "socket_network_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48494,13 +48506,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "socket_network_wave01"
+      ],
+      "fixture_files": [
+        "socket_network_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48534,13 +48555,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "socket_network_wave01"
+      ],
+      "fixture_files": [
+        "socket_network_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48548,13 +48578,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "socket_network_wave01"
+      ],
+      "fixture_files": [
+        "socket_network_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48562,13 +48601,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "socket_network_wave01"
+      ],
+      "fixture_files": [
+        "socket_network_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48629,13 +48677,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "socket_network_wave01"
+      ],
+      "fixture_files": [
+        "socket_network_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -74654,28 +74711,6 @@
         "sigwait"
       ],
       "track": "signal",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "module": "socket_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_coverage_pct": 44.44,
-      "target_uncovered_count": 10,
-      "target_uncovered_symbols": [
-        "accept",
-        "accept4",
-        "connect",
-        "getpeername",
-        "recvfrom",
-        "recvmsg",
-        "sendmsg",
-        "sendto",
-        "setsockopt",
-        "socketpair"
-      ],
-      "track": "network/socket",
       "workload_blocked_count": 0,
       "workload_ids": []
     },

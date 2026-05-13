@@ -883,6 +883,10 @@ pub fn execute_fixture_case(
         "pthread_equal" => execute_pthread_equal_case(inputs, mode),
         // socket ops
         "socket" => execute_socket_case(inputs, mode),
+        "accept" | "accept4" | "connect" | "getpeername" | "recvfrom" | "recvmsg" | "sendmsg"
+        | "sendto" | "setsockopt" | "socketpair" => {
+            execute_socket_network_wave01_case(function, inputs, mode)
+        }
         "bind" => execute_bind_case(inputs, mode),
         "listen" => execute_listen_case(inputs, mode),
         "send" => execute_send_case(inputs, mode),
@@ -17419,6 +17423,248 @@ fn execute_getsockopt_case(
         )))
     } else {
         Ok(non_host_execution("-1".to_string()))
+    }
+}
+
+fn execute_socket_network_wave01_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let expected = parse_string(inputs, "expected")?;
+    let actual = match function {
+        "accept" => socket_network_accept_actual(inputs),
+        "accept4" => socket_network_accept4_actual(inputs),
+        "connect" => socket_network_connect_actual(inputs),
+        "getpeername" => socket_network_getpeername_actual(inputs),
+        "recvfrom" => socket_network_recvfrom_actual(inputs),
+        "recvmsg" => socket_network_recvmsg_actual(inputs),
+        "sendmsg" => socket_network_sendmsg_actual(inputs),
+        "sendto" => socket_network_sendto_actual(inputs),
+        "setsockopt" => socket_network_setsockopt_actual(inputs),
+        "socketpair" => socket_network_socketpair_actual(inputs),
+        other => return Err(format!("unsupported socket/network wave symbol: {other}")),
+    }?;
+
+    Ok(non_host_execution(socket_network_wave01_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn socket_network_wave01_log(symbol: &str, mode: &str, expected: &str, actual: &str) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "socket_network_class_mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn socket_network_reset_errno() {
+    unsafe {
+        frankenlibc_abi::errno_abi::set_abi_errno(0);
+    }
+}
+
+fn socket_network_errno() -> i32 {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+fn socket_network_errno_class(errno: i32) -> &'static str {
+    match errno {
+        libc::EAFNOSUPPORT => "EAFNOSUPPORT",
+        libc::EADDRINUSE => "EADDRINUSE",
+        libc::EAGAIN => "EAGAIN",
+        libc::EBADF => "EBADF",
+        libc::EFAULT => "EFAULT",
+        libc::EINVAL => "EINVAL",
+        libc::ENOTCONN => "ENOTCONN",
+        libc::ENOTSOCK => "ENOTSOCK",
+        _ => "OTHER",
+    }
+}
+
+fn socket_network_error_class(prefix: &str, rc: isize) -> String {
+    if rc >= 0 {
+        format!("{prefix}_RC_{rc}")
+    } else {
+        format!(
+            "{prefix}_ERROR_{}",
+            socket_network_errno_class(socket_network_errno())
+        )
+    }
+}
+
+fn socket_network_fd_class(prefix: &str, fd: c_int) -> String {
+    if fd >= 0 {
+        close_socket_fd(fd);
+        format!("{prefix}_FD_CREATED")
+    } else {
+        format!(
+            "{prefix}_ERROR_{}",
+            socket_network_errno_class(socket_network_errno())
+        )
+    }
+}
+
+fn socket_network_loopback_addr() -> libc::sockaddr_in {
+    libc::sockaddr_in {
+        sin_family: libc::AF_INET as libc::sa_family_t,
+        sin_port: 9u16.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: 0x7f00_0001u32.to_be(),
+        },
+        sin_zero: [0; 8],
+    }
+}
+
+fn socket_network_accept_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    socket_network_reset_errno();
+    let fd = unsafe {
+        frankenlibc_abi::socket_abi::accept(sockfd, std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    Ok(socket_network_fd_class("ACCEPT", fd))
+}
+
+fn socket_network_accept4_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let flags = parse_i32(inputs, "flags").unwrap_or(0);
+    socket_network_reset_errno();
+    let fd = unsafe {
+        frankenlibc_abi::socket_abi::accept4(
+            sockfd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            flags,
+        )
+    };
+    Ok(socket_network_fd_class("ACCEPT4", fd))
+}
+
+fn socket_network_connect_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let addr = socket_network_loopback_addr();
+    socket_network_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::socket_abi::connect(
+            sockfd,
+            &addr as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as u32,
+        )
+    };
+    Ok(socket_network_error_class("CONNECT", rc as isize))
+}
+
+fn socket_network_getpeername_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let mut addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut addrlen = std::mem::size_of::<libc::sockaddr_storage>() as u32;
+    socket_network_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::socket_abi::getpeername(
+            sockfd,
+            &mut addr as *mut _ as *mut libc::sockaddr,
+            &mut addrlen,
+        )
+    };
+    Ok(socket_network_error_class("GETPEERNAME", rc as isize))
+}
+
+fn socket_network_recvfrom_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let flags = parse_i32(inputs, "flags").unwrap_or(0);
+    let len = parse_usize(inputs, "len").unwrap_or(8);
+    let mut buf = vec![0u8; len.max(1)];
+    socket_network_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::socket_abi::recvfrom(
+            sockfd,
+            buf.as_mut_ptr() as *mut c_void,
+            len,
+            flags,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    Ok(socket_network_error_class("RECVFROM", rc))
+}
+
+fn socket_network_recvmsg_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let flags = parse_i32(inputs, "flags").unwrap_or(0);
+    let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+    socket_network_reset_errno();
+    let rc = unsafe { frankenlibc_abi::socket_abi::recvmsg(sockfd, &mut msg, flags) };
+    Ok(socket_network_error_class("RECVMSG", rc))
+}
+
+fn socket_network_sendmsg_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let flags = parse_i32(inputs, "flags").unwrap_or(0);
+    let msg: libc::msghdr = unsafe { std::mem::zeroed() };
+    socket_network_reset_errno();
+    let rc = unsafe { frankenlibc_abi::socket_abi::sendmsg(sockfd, &msg, flags) };
+    Ok(socket_network_error_class("SENDMSG", rc))
+}
+
+fn socket_network_sendto_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let flags = parse_i32(inputs, "flags").unwrap_or(0);
+    let payload = payload_bytes(inputs);
+    socket_network_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::socket_abi::sendto(
+            sockfd,
+            payload.as_ptr() as *const c_void,
+            payload.len(),
+            flags,
+            std::ptr::null(),
+            0,
+        )
+    };
+    Ok(socket_network_error_class("SENDTO", rc))
+}
+
+fn socket_network_setsockopt_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let level = parse_i32(inputs, "level").unwrap_or(libc::SOL_SOCKET);
+    let optname = parse_i32(inputs, "optname").unwrap_or(libc::SO_REUSEADDR);
+    let value = parse_i32(inputs, "value").unwrap_or(1);
+    socket_network_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::socket_abi::setsockopt(
+            sockfd,
+            level,
+            optname,
+            &value as *const _ as *const c_void,
+            std::mem::size_of::<c_int>() as u32,
+        )
+    };
+    Ok(socket_network_error_class("SETSOCKOPT", rc as isize))
+}
+
+fn socket_network_socketpair_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let domain = parse_i32(inputs, "domain").unwrap_or(libc::AF_UNIX);
+    let sock_type = parse_i32(inputs, "type").unwrap_or(libc::SOCK_STREAM);
+    let protocol = parse_i32(inputs, "protocol").unwrap_or(0);
+    let mut sv = [-1, -1];
+    socket_network_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::socket_abi::socketpair(domain, sock_type, protocol, sv.as_mut_ptr())
+    };
+    if rc == 0 {
+        close_socket_fd(sv[0]);
+        close_socket_fd(sv[1]);
+        Ok(String::from("SOCKETPAIR_RC_0_FDS_CREATED"))
+    } else {
+        Ok(format!(
+            "SOCKETPAIR_ERROR_{}",
+            socket_network_errno_class(socket_network_errno())
+        ))
     }
 }
 
