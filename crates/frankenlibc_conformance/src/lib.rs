@@ -21272,10 +21272,10 @@ fn execute_signal_async_wave01_case(
         ("sigaltstack", "disable_then_query_without_stack_address") => {
             signal_async_sigaltstack_actual()
         }
-        ("sigandset", "intersection_int_term") => signal_async_sigandset_actual(),
+        ("sigandset", "intersection_sigterm_only") => signal_async_sigandset_actual(),
         ("sighold", "hold_restore_sigusr1") => signal_async_sighold_actual(),
-        ("sigignore", "invalid_signal_no_handler_change") => signal_async_sigignore_actual(),
-        ("siginterrupt", "invalid_signal_no_action_change") => signal_async_siginterrupt_actual(),
+        ("sigignore", "invalid_signal_error_class") => signal_async_sigignore_actual(),
+        ("siginterrupt", "invalid_signal_error_class") => signal_async_siginterrupt_actual(),
         _ => {
             return Err(format!(
                 "unsupported signal/async wave01 fixture: function={function}, scenario={scenario}"
