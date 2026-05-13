@@ -1400,7 +1400,6 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
             unsafe { *thread_out = host_thread };
             
             // Clear any stale registration from a previous thread that reused this pthread_t.
-            // Safe because the new child is blocked in wait_for_host_thread_handoff until we publish.
             HOST_THREAD_TID_REGISTRY
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -1941,13 +1940,17 @@ fn futex_rwlock_unlock(word: &AtomicI32) -> c_int {
 }
 
 fn futex_rwlock_tryrdlock(word: &AtomicI32) -> c_int {
-    let state = word.load(Ordering::Acquire);
-    if state < 0 || state == i32::MAX {
-        return libc::EBUSY;
-    }
-    match word.compare_exchange(state, state + 1, Ordering::Acquire, Ordering::Relaxed) {
-        Ok(_) => 0,
-        Err(_) => libc::EBUSY,
+    loop {
+        let state = word.load(Ordering::Acquire);
+        if state < 0 || state == i32::MAX {
+            return libc::EBUSY;
+        }
+        if word
+            .compare_exchange(state, state + 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            return 0;
+        }
     }
 }
 
@@ -5989,7 +5992,7 @@ pub unsafe extern "C" fn pthread_sigqueue(
                 Err(errno) => errno,
             }
         }
-        None => libc::ESRCH,
+        None => 301,
     }
 }
 
