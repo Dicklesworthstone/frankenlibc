@@ -1,0 +1,343 @@
+{
+  "version": "v1",
+  "family": "string_memory_hotpaths_wave14",
+  "captured_at": "2026-05-13T14:11:29Z",
+  "description": "Strict/hardened deterministic fixture wave for bounded string duplicate, length, search, tokenization, signal text, version compare, and transform helpers without recording pointers, allocation addresses, locale text, timestamps, process-global counters, or raw locale handles.",
+  "spec_reference": "POSIX/GNU strndup, strnlen, BSD strnstr, POSIX strpbrk, BSD strsep, POSIX strsignal, POSIX strspn, GNU strverscmp, and POSIX strxfrm semantics",
+  "campaign": {
+    "bead": "bd-r5k32.2",
+    "campaign_id": "fcq-string-memory-hotpaths",
+    "wave_id": "wave-14-string-memory-hotpaths",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture",
+    "first_wave_symbols": [
+      "strndup",
+      "strnlen",
+      "strnstr",
+      "strpbrk",
+      "strsep",
+      "strsignal",
+      "strspn",
+      "strverscmp",
+      "strxfrm"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "strndup_bounds_duplicate_length_strict",
+      "function": "strndup",
+      "spec_section": "GNU strndup",
+      "inputs": {
+        "symbol": "strndup",
+        "scenario": "prefix_boundary_duplicate",
+        "input": "prefix-boundary",
+        "n": 6,
+        "expected": "DUPN_LEN_6_TEXT_prefix",
+        "oracle_source": "GNU strndup pointer-free duplicate length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strndup;mode=strict;expected=DUPN_LEN_6_TEXT_prefix;actual=DUPN_LEN_6_TEXT_prefix;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strndup_bounds_duplicate_length_hardened",
+      "function": "strndup",
+      "spec_section": "GNU strndup",
+      "inputs": {
+        "symbol": "strndup",
+        "scenario": "prefix_boundary_duplicate",
+        "input": "prefix-boundary",
+        "n": 6,
+        "expected": "DUPN_LEN_6_TEXT_prefix",
+        "oracle_source": "GNU strndup pointer-free duplicate length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strndup;mode=hardened;expected=DUPN_LEN_6_TEXT_prefix;actual=DUPN_LEN_6_TEXT_prefix;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strnlen_stops_at_bound_strict",
+      "function": "strnlen",
+      "spec_section": "POSIX strnlen",
+      "inputs": {
+        "symbol": "strnlen",
+        "scenario": "maxlen_before_terminator",
+        "input": "bounded",
+        "n": 4,
+        "expected": "LEN_4",
+        "oracle_source": "POSIX strnlen bounded length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strnlen;mode=strict;expected=LEN_4;actual=LEN_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strnlen_stops_at_bound_hardened",
+      "function": "strnlen",
+      "spec_section": "POSIX strnlen",
+      "inputs": {
+        "symbol": "strnlen",
+        "scenario": "maxlen_before_terminator",
+        "input": "bounded",
+        "n": 4,
+        "expected": "LEN_4",
+        "oracle_source": "POSIX strnlen bounded length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strnlen;mode=hardened;expected=LEN_4;actual=LEN_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strnstr_reports_bounded_offset_strict",
+      "function": "strnstr",
+      "spec_section": "BSD strnstr",
+      "inputs": {
+        "symbol": "strnstr",
+        "scenario": "needle_ends_at_search_limit",
+        "haystack": "alpha-beta-alpha",
+        "needle": "beta",
+        "n": 10,
+        "expected": "STRNSTR_OFFSET_6",
+        "oracle_source": "BSD strnstr pointer-free bounded substring model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strnstr;mode=strict;expected=STRNSTR_OFFSET_6;actual=STRNSTR_OFFSET_6;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strnstr_reports_bounded_offset_hardened",
+      "function": "strnstr",
+      "spec_section": "BSD strnstr",
+      "inputs": {
+        "symbol": "strnstr",
+        "scenario": "needle_ends_at_search_limit",
+        "haystack": "alpha-beta-alpha",
+        "needle": "beta",
+        "n": 10,
+        "expected": "STRNSTR_OFFSET_6",
+        "oracle_source": "BSD strnstr pointer-free bounded substring model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strnstr;mode=hardened;expected=STRNSTR_OFFSET_6;actual=STRNSTR_OFFSET_6;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strpbrk_reports_first_accept_index_strict",
+      "function": "strpbrk",
+      "spec_section": "POSIX strpbrk",
+      "inputs": {
+        "symbol": "strpbrk",
+        "scenario": "accept_set_first_match",
+        "haystack": "abcdef",
+        "accept": "xzde",
+        "expected": "PBRK_INDEX_3",
+        "oracle_source": "POSIX strpbrk pointer-free offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strpbrk;mode=strict;expected=PBRK_INDEX_3;actual=PBRK_INDEX_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strpbrk_reports_first_accept_index_hardened",
+      "function": "strpbrk",
+      "spec_section": "POSIX strpbrk",
+      "inputs": {
+        "symbol": "strpbrk",
+        "scenario": "accept_set_first_match",
+        "haystack": "abcdef",
+        "accept": "xzde",
+        "expected": "PBRK_INDEX_3",
+        "oracle_source": "POSIX strpbrk pointer-free offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strpbrk;mode=hardened;expected=PBRK_INDEX_3;actual=PBRK_INDEX_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strsep_reports_token_and_rest_strict",
+      "function": "strsep",
+      "spec_section": "BSD strsep",
+      "inputs": {
+        "symbol": "strsep",
+        "scenario": "single_delimiter_token_split",
+        "input": "left:right",
+        "delimiters": ":",
+        "expected": "TOKEN_left_REST_right",
+        "oracle_source": "BSD strsep pointer-free token/rest model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strsep;mode=strict;expected=TOKEN_left_REST_right;actual=TOKEN_left_REST_right;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strsep_reports_token_and_rest_hardened",
+      "function": "strsep",
+      "spec_section": "BSD strsep",
+      "inputs": {
+        "symbol": "strsep",
+        "scenario": "single_delimiter_token_split",
+        "input": "left:right",
+        "delimiters": ":",
+        "expected": "TOKEN_left_REST_right",
+        "oracle_source": "BSD strsep pointer-free token/rest model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strsep;mode=hardened;expected=TOKEN_left_REST_right;actual=TOKEN_left_REST_right;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strsignal_reports_standard_signal_text_strict",
+      "function": "strsignal",
+      "spec_section": "POSIX strsignal",
+      "inputs": {
+        "symbol": "strsignal",
+        "scenario": "standard_signal_abrt",
+        "sig": 6,
+        "expected": "STRSIGNAL_Aborted",
+        "oracle_source": "POSIX strsignal deterministic signal description table",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strsignal;mode=strict;expected=STRSIGNAL_Aborted;actual=STRSIGNAL_Aborted;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strsignal_reports_standard_signal_text_hardened",
+      "function": "strsignal",
+      "spec_section": "POSIX strsignal",
+      "inputs": {
+        "symbol": "strsignal",
+        "scenario": "standard_signal_abrt",
+        "sig": 6,
+        "expected": "STRSIGNAL_Aborted",
+        "oracle_source": "POSIX strsignal deterministic signal description table",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strsignal;mode=hardened;expected=STRSIGNAL_Aborted;actual=STRSIGNAL_Aborted;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strspn_reports_accept_prefix_strict",
+      "function": "strspn",
+      "spec_section": "POSIX strspn",
+      "inputs": {
+        "symbol": "strspn",
+        "scenario": "accept_prefix_before_digit",
+        "haystack": "abc123",
+        "accept": "cba",
+        "expected": "SPAN_3",
+        "oracle_source": "POSIX strspn pointer-free prefix span model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strspn;mode=strict;expected=SPAN_3;actual=SPAN_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strspn_reports_accept_prefix_hardened",
+      "function": "strspn",
+      "spec_section": "POSIX strspn",
+      "inputs": {
+        "symbol": "strspn",
+        "scenario": "accept_prefix_before_digit",
+        "haystack": "abc123",
+        "accept": "cba",
+        "expected": "SPAN_3",
+        "oracle_source": "POSIX strspn pointer-free prefix span model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strspn;mode=hardened;expected=SPAN_3;actual=SPAN_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strverscmp_reports_numeric_order_strict",
+      "function": "strverscmp",
+      "spec_section": "GNU strverscmp",
+      "inputs": {
+        "symbol": "strverscmp",
+        "scenario": "numeric_version_segment_order",
+        "lhs": "file9",
+        "rhs": "file10",
+        "expected": "CMP_-1",
+        "oracle_source": "GNU strverscmp pointer-free sign bucket model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strverscmp;mode=strict;expected=CMP_-1;actual=CMP_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strverscmp_reports_numeric_order_hardened",
+      "function": "strverscmp",
+      "spec_section": "GNU strverscmp",
+      "inputs": {
+        "symbol": "strverscmp",
+        "scenario": "numeric_version_segment_order",
+        "lhs": "file9",
+        "rhs": "file10",
+        "expected": "CMP_-1",
+        "oracle_source": "GNU strverscmp pointer-free sign bucket model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strverscmp;mode=hardened;expected=CMP_-1;actual=CMP_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strxfrm_reports_needed_length_and_text_strict",
+      "function": "strxfrm",
+      "spec_section": "POSIX strxfrm",
+      "inputs": {
+        "symbol": "strxfrm",
+        "scenario": "c_locale_transform_copy",
+        "input": "sort",
+        "n": 5,
+        "dst_len": 5,
+        "expected": "XFRM_LEN_4_TEXT_sort",
+        "oracle_source": "POSIX strxfrm C-locale pointer-free transform model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strxfrm;mode=strict;expected=XFRM_LEN_4_TEXT_sort;actual=XFRM_LEN_4_TEXT_sort;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strxfrm_reports_needed_length_and_text_hardened",
+      "function": "strxfrm",
+      "spec_section": "POSIX strxfrm",
+      "inputs": {
+        "symbol": "strxfrm",
+        "scenario": "c_locale_transform_copy",
+        "input": "sort",
+        "n": 5,
+        "dst_len": 5,
+        "expected": "XFRM_LEN_4_TEXT_sort",
+        "oracle_source": "POSIX strxfrm C-locale pointer-free transform model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strxfrm;mode=hardened;expected=XFRM_LEN_4_TEXT_sort;actual=XFRM_LEN_4_TEXT_sort;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

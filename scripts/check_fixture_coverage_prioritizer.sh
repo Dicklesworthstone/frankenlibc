@@ -125,6 +125,15 @@ REQUIRED_DEFERRED_FIELDS = [
     "deferral_reason",
     "next_step",
 ]
+REQUIRED_FULLY_COVERED_DOMAIN_SOURCE_FIELDS = [
+    "module",
+    "target_total",
+    "target_covered",
+    "target_uncovered",
+    "current_coverage_pct",
+    "coverage_state",
+    "workload_domains",
+]
 REQUIRED_FIXTURE_WAVE_LIFECYCLE_REPORT_FIELDS = [
     "fixture_file",
     "fixture_family",
@@ -292,10 +301,12 @@ support_modules = {symbol.get("module") for symbol in support.get("symbols", [])
 required_domains = set(workloads.get("required_domains", []))
 
 campaigns = artifact.get("campaigns", [])
+fully_covered_domain_sources = artifact.get("fully_covered_workload_domain_sources", [])
 campaign_ids = [campaign.get("campaign_id") for campaign in campaigns]
 ranks = [campaign.get("rank") for campaign in campaigns]
 modules = []
 domain_coverage = Counter()
+fully_covered_domain_coverage = Counter()
 first_wave_total = 0
 selected_target_uncovered = 0
 campaign_ok = bool(campaigns) and len(campaign_ids) == len(set(campaign_ids)) and ranks == list(range(1, len(campaigns) + 1))
@@ -397,6 +408,52 @@ for campaign in campaigns:
     selected_target_uncovered += campaign.get("target_uncovered", 0)
 
 checks["campaign_schema"] = "pass" if campaign_ok else "fail"
+
+fully_covered_sources_ok = isinstance(fully_covered_domain_sources, list)
+if not fully_covered_sources_ok:
+    errors.append("fully_covered_workload_domain_sources must be a list")
+    fully_covered_domain_sources = []
+
+seen_fully_covered_modules = set()
+for source in fully_covered_domain_sources:
+    for field in REQUIRED_FULLY_COVERED_DOMAIN_SOURCE_FIELDS:
+        if field not in source:
+            fully_covered_sources_ok = False
+            errors.append(f"fully-covered workload domain source missing field {field}")
+
+    module = source.get("module")
+    if module in seen_fully_covered_modules:
+        fully_covered_sources_ok = False
+        errors.append(f"{module}: duplicate fully-covered workload domain source")
+    seen_fully_covered_modules.add(module)
+
+    family = families.get(module)
+    if family is None:
+        fully_covered_sources_ok = False
+        errors.append(f"{module}: fully-covered workload domain source not in symbol fixture coverage")
+        continue
+    for src_key, source_key in [
+        ("target_total", "target_total"),
+        ("target_covered", "target_covered"),
+        ("target_uncovered", "target_uncovered"),
+        ("target_coverage_pct", "current_coverage_pct"),
+    ]:
+        if source.get(source_key) != family.get(src_key):
+            fully_covered_sources_ok = False
+            errors.append(f"{module}: fully-covered {source_key} does not match symbol_fixture_coverage")
+    if family.get("target_total", 0) <= 0 or family.get("target_uncovered", 0) != 0:
+        fully_covered_sources_ok = False
+        errors.append(f"{module}: fully-covered workload domain source must have complete target coverage")
+    if source.get("coverage_state") != "covered":
+        fully_covered_sources_ok = False
+        errors.append(f"{module}: fully-covered workload domain source must have covered coverage_state")
+    if not source.get("workload_domains"):
+        fully_covered_sources_ok = False
+        errors.append(f"{module}: fully-covered workload domain source must list workload_domains")
+    for domain in source.get("workload_domains", []):
+        fully_covered_domain_coverage[domain] += 1
+
+checks["fully_covered_workload_domain_sources"] = "pass" if fully_covered_sources_ok else "fail"
 
 completed_unistd_ok = True
 fixture_path = root / COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIXTURE
@@ -955,7 +1012,8 @@ else:
     checks["priority_order"] = "fail"
     errors.append("campaigns are not sorted by priority_score desc, target_uncovered desc, module asc")
 
-missing_required_domains = sorted(required_domains - set(domain_coverage))
+workload_domain_coverage = set(domain_coverage) | set(fully_covered_domain_coverage)
+missing_required_domains = sorted(required_domains - workload_domain_coverage)
 if not missing_required_domains:
     checks["workload_domain_coverage"] = "pass"
 else:

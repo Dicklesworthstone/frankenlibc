@@ -1163,9 +1163,18 @@ fn should_use_string_memory_hotpath_fixture(function: &str, inputs: &serde_json:
                 | "strcoll"
                 | "strcspn"
                 | "strdup"
+                | "strndup"
                 | "strncasecmp"
                 | "strncasecmp_l"
+                | "strnlen"
+                | "strnstr"
                 | "strncmp"
+                | "strpbrk"
+                | "strsep"
+                | "strsignal"
+                | "strspn"
+                | "strverscmp"
+                | "strxfrm"
         )
 }
 
@@ -8383,7 +8392,7 @@ fn string_memory_hotpath_actual(
             let cmp = frankenlibc_core::string::str::strncasecmp(&lhs, &rhs, n).signum();
             Ok(format!("CMP_{cmp}"))
         }
-        "__strndup" => {
+        "strndup" | "__strndup" => {
             let input = parse_string(inputs, "input")?;
             let n = parse_usize(inputs, "n")?;
             let dup = frankenlibc_core::string::str::strndup_bytes(input.as_bytes(), n);
@@ -8393,6 +8402,31 @@ fn string_memory_hotpath_actual(
                 c_fixture_text(&dup)
             ))
         }
+        "strnlen" => {
+            let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
+            let n = parse_usize(inputs, "n")?;
+            Ok(format!(
+                "LEN_{}",
+                frankenlibc_core::string::str::strnlen(&input, n)
+            ))
+        }
+        "strnstr" => {
+            let haystack = nul_terminated_bytes(&parse_string(inputs, "haystack")?);
+            let needle = nul_terminated_bytes(&parse_string(inputs, "needle")?);
+            let n = parse_usize(inputs, "n")?;
+            match frankenlibc_core::string::str::strnstr(&haystack, &needle, n) {
+                Some(index) => Ok(format!("STRNSTR_OFFSET_{index}")),
+                None => Ok(String::from("STRNSTR_NONE")),
+            }
+        }
+        "strpbrk" => {
+            let haystack = nul_terminated_bytes(&parse_string(inputs, "haystack")?);
+            let accept = nul_terminated_bytes(&parse_string(inputs, "accept")?);
+            match frankenlibc_core::string::str::strpbrk(&haystack, &accept) {
+                Some(index) => Ok(format!("PBRK_INDEX_{index}")),
+                None => Ok(String::from("PBRK_NONE")),
+            }
+        }
         "__strpbrk_c2" | "__strpbrk_c3" => {
             let haystack = nul_terminated_bytes(&parse_string(inputs, "haystack")?);
             let accept = accept_set_bytes(inputs, function)?;
@@ -8400,6 +8434,14 @@ fn string_memory_hotpath_actual(
                 Some(index) => Ok(format!("PBRK_INDEX_{index}")),
                 None => Ok(String::from("PBRK_NONE")),
             }
+        }
+        "strspn" => {
+            let haystack = nul_terminated_bytes(&parse_string(inputs, "haystack")?);
+            let accept = nul_terminated_bytes(&parse_string(inputs, "accept")?);
+            Ok(format!(
+                "SPAN_{}",
+                frankenlibc_core::string::str::strspn(&haystack, &accept)
+            ))
         }
         "__strspn_c1" | "__strspn_c2" | "__strspn_c3" => {
             let haystack = nul_terminated_bytes(&parse_string(inputs, "haystack")?);
@@ -8409,7 +8451,7 @@ fn string_memory_hotpath_actual(
                 frankenlibc_core::string::str::strspn(&haystack, &accept)
             ))
         }
-        "__strsep_1c" | "__strsep_2c" | "__strsep_3c" | "__strsep_g" => {
+        "strsep" | "__strsep_1c" | "__strsep_2c" | "__strsep_3c" | "__strsep_g" => {
             let input = parse_string(inputs, "input")?;
             let delimiters = string_memory_delimiters(inputs, function)?;
             let split = input
@@ -8438,6 +8480,12 @@ fn string_memory_hotpath_actual(
                 )),
                 None => Ok(String::from("TOKEN_NONE_SAVE_0")),
             }
+        }
+        "strsignal" => {
+            let sig = parse_i32(inputs, "sig")?;
+            let mut message = Vec::new();
+            frankenlibc_abi::string_abi::signal_description_into(sig as c_int, &mut message);
+            Ok(format!("STRSIGNAL_{}", String::from_utf8_lossy(&message)))
         }
         "__strtol_internal" | "__strtol_l" => {
             let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
@@ -8479,13 +8527,13 @@ fn string_memory_hotpath_actual(
                 fixture_float_token(f64::from(value))
             ))
         }
-        "__strverscmp" => {
+        "strverscmp" | "__strverscmp" => {
             let lhs = nul_terminated_bytes(&parse_string(inputs, "lhs")?);
             let rhs = nul_terminated_bytes(&parse_string(inputs, "rhs")?);
             let cmp = string_hotpath_strverscmp(&lhs, &rhs).signum();
             Ok(format!("CMP_{cmp}"))
         }
-        "__strxfrm_l" => {
+        "strxfrm" | "__strxfrm_l" => {
             let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
             let n = parse_usize(inputs, "n")?;
             let dst_len = parse_usize(inputs, "dst_len")?;
@@ -23662,6 +23710,43 @@ mod tests {
                     case.name
                 );
             }
+        }
+    }
+
+    #[test]
+    fn string_memory_hotpaths_wave14_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/string_memory_hotpaths_wave14.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("string_memory_hotpaths_wave14 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
         }
     }
 

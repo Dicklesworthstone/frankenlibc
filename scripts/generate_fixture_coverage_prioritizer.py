@@ -634,6 +634,30 @@ def build_deferred(module: str, family: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def fully_covered_workload_domain_sources(families: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    sources = []
+    for module, policy in sorted(CAMPAIGN_POLICIES.items()):
+        family = families.get(module)
+        if family is None:
+            continue
+        if int(family.get("target_total", 0)) <= 0:
+            continue
+        if int(family.get("target_uncovered", 0)) != 0:
+            continue
+        sources.append(
+            {
+                "module": module,
+                "target_total": int(family.get("target_total", 0)),
+                "target_covered": int(family.get("target_covered", 0)),
+                "target_uncovered": int(family.get("target_uncovered", 0)),
+                "current_coverage_pct": family.get("target_coverage_pct"),
+                "coverage_state": coverage_state(family),
+                "workload_domains": list(policy.workload_domains),
+            }
+        )
+    return sources
+
+
 def build_payload(root: Path, paths: dict[str, str]) -> dict[str, Any]:
     data = {key: load_json(root / rel_path) for key, rel_path in paths.items() if rel_path.endswith(".json")}
     validate_inputs(root, paths, data)
@@ -682,10 +706,16 @@ def build_payload(root: Path, paths: dict[str, str]) -> dict[str, Any]:
     campaign_domains = {
         domain for campaign in campaigns for domain in campaign["workload_domains"]
     }
+    fully_covered_sources = fully_covered_workload_domain_sources(families)
+    fully_covered_domains = {
+        domain for source in fully_covered_sources for domain in source["workload_domains"]
+    }
     required_domains = sorted(
         data["user_workload_acceptance_matrix"].get("required_domains", [])
     )
-    missing_required_domains = sorted(set(required_domains) - campaign_domains)
+    missing_required_domains = sorted(
+        set(required_domains) - campaign_domains - fully_covered_domains
+    )
     if missing_required_domains:
         raise ValueError(
             "campaign policies do not cover required workload domains: "
@@ -726,6 +756,7 @@ def build_payload(root: Path, paths: dict[str, str]) -> dict[str, Any]:
         },
         "required_log_fields": REQUIRED_LOG_FIELDS,
         "campaigns": campaigns,
+        "fully_covered_workload_domain_sources": fully_covered_sources,
         "deferred_modules": deferred_modules,
         "summary": {
             "campaign_count": len(campaigns),
