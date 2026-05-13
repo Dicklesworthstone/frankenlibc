@@ -737,6 +737,26 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Drive `read_mostly_fast_path_prototype::isomorphism_witness`
+    /// against an explicit write history and emit a JSONL report
+    /// asserting that the conservative and seqlock lanes observed
+    /// identical value sequences. This is the deterministic isomorphism
+    /// proof for the read_mostly fast path, exposed as a CLI so CI can
+    /// run it without linking to the crate.
+    LaneIsomorphism {
+        /// Initial value written to both lanes before any writes.
+        #[arg(long, default_value_t = 0_u32)]
+        initial: u32,
+        /// Comma-separated u32 write history applied to both lanes.
+        #[arg(long, default_value = "1,2,3,4")]
+        writes: String,
+        /// Number of reads drained from each lane between writes.
+        #[arg(long, default_value_t = 4_usize)]
+        reads_per_phase: usize,
+        /// Output JSONL path: one isomorphism_report record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Dump this binary's compile-time tooling contract as one JSONL
     /// record, exposing
     /// `explainability_workbench::tooling_contract` so CI workflows
@@ -2099,6 +2119,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!(
                 "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
                 output.display()
+            );
+        }
+        Command::LaneIsomorphism {
+            initial,
+            writes,
+            reads_per_phase,
+            output,
+        } => {
+            use frankenlibc_harness::read_mostly_fast_path_prototype::isomorphism_witness;
+            let parsed_writes: Vec<u32> = writes
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    s.parse::<u32>()
+                        .map_err(|e| format!("--writes contains non-u32 token `{s}`: {e}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if parsed_writes.is_empty() {
+                return Err("--writes must contain at least one u32 token".into());
+            }
+            if reads_per_phase == 0 {
+                return Err("--reads-per-phase must be > 0".into());
+            }
+            let report = isomorphism_witness(initial, &parsed_writes, reads_per_phase);
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "isomorphism_report",
+                "initial": initial,
+                "writes": parsed_writes,
+                "reads_per_phase": reads_per_phase,
+                "conservative_outcomes": report.conservative_outcomes,
+                "seqlock_outcomes": report.seqlock_outcomes,
+                "outcomes_identical": report.outcomes_identical,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "lane-isomorphism: wrote 1 isomorphism_report JSONL record to {} (outcomes_identical={})",
+                output.display(),
+                report.outcomes_identical
             );
         }
         Command::ToolingContract { output } => {

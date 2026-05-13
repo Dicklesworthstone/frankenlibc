@@ -1,0 +1,55 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "lane-isomorphism-cli-contract",
+  "bead": "bd-r0315",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "f282a1f6a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes read_mostly_fast_path_prototype::isomorphism_witness as a standalone CLI. The function is the deterministic isomorphism proof for the read_mostly fast path: it drives conservative + seqlock lanes through the same write history and asserts both lanes observed identical value sequences. Previously this was reachable only via Rust unit tests; the CLI surface lets CI run the proof without linking.",
+  "subcommand_name": "lane-isomorphism",
+  "binary_target": "harness",
+  "required_flags": [
+    "--output"
+  ],
+  "optional_flags": [
+    "--initial",
+    "--writes",
+    "--reads-per-phase"
+  ],
+  "underlying_lib_function": "frankenlibc_harness::read_mostly_fast_path_prototype::isomorphism_witness",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "isomorphism_report",
+    "required_fields": [
+      "kind",
+      "initial",
+      "writes",
+      "reads_per_phase",
+      "conservative_outcomes",
+      "seqlock_outcomes",
+      "outcomes_identical"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "outcomes_identical_must_be_true_for_well_formed_inputs": true,
+    "conservative_outcome_length_must_equal_writes_times_reads_per_phase": true,
+    "seqlock_outcome_length_must_equal_writes_times_reads_per_phase": true,
+    "fail_closed_on_empty_writes": true,
+    "fail_closed_on_zero_reads_per_phase": true,
+    "writes_array_in_output_must_echo_parsed_input": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_output_flag",
+    "wrong_record_kind",
+    "outcomes_identical_false_for_well_formed_inputs",
+    "lane_outcome_length_mismatch",
+    "empty_writes_accepted",
+    "zero_reads_accepted"
+  ],
+  "summary": {
+    "bead": "bd-r0315",
+    "subcommand": "lane-isomorphism",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
