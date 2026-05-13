@@ -1,0 +1,384 @@
+{
+  "version": "v1",
+  "family": "time/clock",
+  "captured_at": "2026-05-13T00:00:00Z",
+  "description": "Deterministic time/clock calendar fixture wave for fixed UTC calendar conversions, invalid-clock error classes, zero-duration sleep, coarse gettimeofday success classification, and environment global shape without capturing host wall-clock values, raw environment text, raw pointers, pids, tids, stdout, or stderr.",
+  "spec_reference": "POSIX asctime/asctime_r, ctime/ctime_r, gmtime, difftime, gettimeofday, clock_getres, clock_nanosleep, clock_settime; Linux clock_adjtime; glibc environ global",
+  "campaign": {
+    "bead": "bd-r5k32.10",
+    "campaign_id": "fcq-time-clock",
+    "wave_id": "wave-01-time-clock-calendar",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture",
+    "first_wave_symbols": [
+      "asctime",
+      "asctime_r",
+      "clock_adjtime",
+      "clock_getres",
+      "clock_nanosleep",
+      "clock_settime",
+      "ctime",
+      "ctime_r",
+      "difftime",
+      "environ",
+      "gettimeofday",
+      "gmtime"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "asctime_fixed_utc_leap_day_strict",
+      "function": "asctime",
+      "spec_section": "POSIX asctime fixed broken-down UTC calendar class",
+      "inputs": {
+        "symbol": "asctime",
+        "scenario": "fixed_utc_leap_day_static_buffer",
+        "expected": "ASCTIME_LEAP_DAY_STRING",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=asctime;mode=strict;expected=ASCTIME_LEAP_DAY_STRING;actual=ASCTIME_LEAP_DAY_STRING;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "asctime_fixed_utc_leap_day_hardened",
+      "function": "asctime",
+      "spec_section": "POSIX asctime fixed broken-down UTC calendar class",
+      "inputs": {
+        "symbol": "asctime",
+        "scenario": "fixed_utc_leap_day_static_buffer",
+        "expected": "ASCTIME_LEAP_DAY_STRING",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=asctime;mode=hardened;expected=ASCTIME_LEAP_DAY_STRING;actual=ASCTIME_LEAP_DAY_STRING;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "asctime_r_fixed_utc_leap_day_strict",
+      "function": "asctime_r",
+      "spec_section": "POSIX asctime_r fixed broken-down UTC caller-buffer class",
+      "inputs": {
+        "symbol": "asctime_r",
+        "scenario": "fixed_utc_leap_day_caller_buffer",
+        "expected": "ASCTIME_R_LEAP_DAY_STRING",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=asctime_r;mode=strict;expected=ASCTIME_R_LEAP_DAY_STRING;actual=ASCTIME_R_LEAP_DAY_STRING;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "asctime_r_fixed_utc_leap_day_hardened",
+      "function": "asctime_r",
+      "spec_section": "POSIX asctime_r fixed broken-down UTC caller-buffer class",
+      "inputs": {
+        "symbol": "asctime_r",
+        "scenario": "fixed_utc_leap_day_caller_buffer",
+        "expected": "ASCTIME_R_LEAP_DAY_STRING",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=asctime_r;mode=hardened;expected=ASCTIME_R_LEAP_DAY_STRING;actual=ASCTIME_R_LEAP_DAY_STRING;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clock_adjtime_invalid_clock_strict",
+      "function": "clock_adjtime",
+      "spec_section": "Linux clock_adjtime invalid clock id does not adjust host clock",
+      "inputs": {
+        "symbol": "clock_adjtime",
+        "scenario": "invalid_clock_no_adjustment",
+        "expected": "CLOCK_ADJTIME_INVALID_RC_-1",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=clock_adjtime;mode=strict;expected=CLOCK_ADJTIME_INVALID_RC_-1;actual=CLOCK_ADJTIME_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clock_adjtime_invalid_clock_hardened",
+      "function": "clock_adjtime",
+      "spec_section": "Linux clock_adjtime invalid clock id does not adjust host clock",
+      "inputs": {
+        "symbol": "clock_adjtime",
+        "scenario": "invalid_clock_no_adjustment",
+        "expected": "CLOCK_ADJTIME_INVALID_RC_-1",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=clock_adjtime;mode=hardened;expected=CLOCK_ADJTIME_INVALID_RC_-1;actual=CLOCK_ADJTIME_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clock_getres_monotonic_class_strict",
+      "function": "clock_getres",
+      "spec_section": "POSIX clock_getres CLOCK_MONOTONIC resolution class",
+      "inputs": {
+        "symbol": "clock_getres",
+        "scenario": "monotonic_resolution_class",
+        "expected": "CLOCK_GETRES_MONOTONIC_OK",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=clock_getres;mode=strict;expected=CLOCK_GETRES_MONOTONIC_OK;actual=CLOCK_GETRES_MONOTONIC_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clock_getres_monotonic_class_hardened",
+      "function": "clock_getres",
+      "spec_section": "POSIX clock_getres CLOCK_MONOTONIC resolution class",
+      "inputs": {
+        "symbol": "clock_getres",
+        "scenario": "monotonic_resolution_class",
+        "expected": "CLOCK_GETRES_MONOTONIC_OK",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=clock_getres;mode=hardened;expected=CLOCK_GETRES_MONOTONIC_OK;actual=CLOCK_GETRES_MONOTONIC_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clock_nanosleep_zero_duration_strict",
+      "function": "clock_nanosleep",
+      "spec_section": "POSIX clock_nanosleep zero-duration monotonic class",
+      "inputs": {
+        "symbol": "clock_nanosleep",
+        "scenario": "zero_duration_monotonic_sleep",
+        "expected": "CLOCK_NANOSLEEP_ZERO_RC_0",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=clock_nanosleep;mode=strict;expected=CLOCK_NANOSLEEP_ZERO_RC_0;actual=CLOCK_NANOSLEEP_ZERO_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clock_nanosleep_zero_duration_hardened",
+      "function": "clock_nanosleep",
+      "spec_section": "POSIX clock_nanosleep zero-duration monotonic class",
+      "inputs": {
+        "symbol": "clock_nanosleep",
+        "scenario": "zero_duration_monotonic_sleep",
+        "expected": "CLOCK_NANOSLEEP_ZERO_RC_0",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=clock_nanosleep;mode=hardened;expected=CLOCK_NANOSLEEP_ZERO_RC_0;actual=CLOCK_NANOSLEEP_ZERO_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clock_settime_invalid_clock_strict",
+      "function": "clock_settime",
+      "spec_section": "POSIX clock_settime invalid clock id does not set host clock",
+      "inputs": {
+        "symbol": "clock_settime",
+        "scenario": "invalid_clock_no_set",
+        "expected": "CLOCK_SETTIME_INVALID_RC_-1",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=clock_settime;mode=strict;expected=CLOCK_SETTIME_INVALID_RC_-1;actual=CLOCK_SETTIME_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clock_settime_invalid_clock_hardened",
+      "function": "clock_settime",
+      "spec_section": "POSIX clock_settime invalid clock id does not set host clock",
+      "inputs": {
+        "symbol": "clock_settime",
+        "scenario": "invalid_clock_no_set",
+        "expected": "CLOCK_SETTIME_INVALID_RC_-1",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=clock_settime;mode=hardened;expected=CLOCK_SETTIME_INVALID_RC_-1;actual=CLOCK_SETTIME_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ctime_fixed_epoch_strict",
+      "function": "ctime",
+      "spec_section": "POSIX ctime fixed epoch class",
+      "inputs": {
+        "symbol": "ctime",
+        "scenario": "fixed_epoch_static_buffer",
+        "epoch": 951782400,
+        "expected": "CTIME_LEAP_DAY_STRING",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=ctime;mode=strict;expected=CTIME_LEAP_DAY_STRING;actual=CTIME_LEAP_DAY_STRING;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ctime_fixed_epoch_hardened",
+      "function": "ctime",
+      "spec_section": "POSIX ctime fixed epoch class",
+      "inputs": {
+        "symbol": "ctime",
+        "scenario": "fixed_epoch_static_buffer",
+        "epoch": 951782400,
+        "expected": "CTIME_LEAP_DAY_STRING",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=ctime;mode=hardened;expected=CTIME_LEAP_DAY_STRING;actual=CTIME_LEAP_DAY_STRING;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ctime_r_fixed_epoch_strict",
+      "function": "ctime_r",
+      "spec_section": "POSIX ctime_r fixed epoch caller-buffer class",
+      "inputs": {
+        "symbol": "ctime_r",
+        "scenario": "fixed_epoch_caller_buffer",
+        "epoch": 951782400,
+        "expected": "CTIME_R_LEAP_DAY_STRING",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=ctime_r;mode=strict;expected=CTIME_R_LEAP_DAY_STRING;actual=CTIME_R_LEAP_DAY_STRING;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ctime_r_fixed_epoch_hardened",
+      "function": "ctime_r",
+      "spec_section": "POSIX ctime_r fixed epoch caller-buffer class",
+      "inputs": {
+        "symbol": "ctime_r",
+        "scenario": "fixed_epoch_caller_buffer",
+        "epoch": 951782400,
+        "expected": "CTIME_R_LEAP_DAY_STRING",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=ctime_r;mode=hardened;expected=CTIME_R_LEAP_DAY_STRING;actual=CTIME_R_LEAP_DAY_STRING;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "difftime_positive_delta_strict",
+      "function": "difftime",
+      "spec_section": "POSIX difftime fixed positive delta",
+      "inputs": {
+        "symbol": "difftime",
+        "scenario": "positive_delta",
+        "start": 4,
+        "end": 10,
+        "expected": "DIFFTIME_DELTA_6",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=difftime;mode=strict;expected=DIFFTIME_DELTA_6;actual=DIFFTIME_DELTA_6;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "difftime_positive_delta_hardened",
+      "function": "difftime",
+      "spec_section": "POSIX difftime fixed positive delta",
+      "inputs": {
+        "symbol": "difftime",
+        "scenario": "positive_delta",
+        "start": 4,
+        "end": 10,
+        "expected": "DIFFTIME_DELTA_6",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=difftime;mode=hardened;expected=DIFFTIME_DELTA_6;actual=DIFFTIME_DELTA_6;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "environ_global_shape_strict",
+      "function": "environ",
+      "spec_section": "glibc environ exported global shape class",
+      "inputs": {
+        "symbol": "environ",
+        "scenario": "global_environment_shape",
+        "expected": "ENVIRON_GLOBAL_NULL",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=environ;mode=strict;expected=ENVIRON_GLOBAL_NULL;actual=ENVIRON_GLOBAL_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "environ_global_shape_hardened",
+      "function": "environ",
+      "spec_section": "glibc environ exported global shape class",
+      "inputs": {
+        "symbol": "environ",
+        "scenario": "global_environment_shape",
+        "expected": "ENVIRON_GLOBAL_NULL",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=environ;mode=hardened;expected=ENVIRON_GLOBAL_NULL;actual=ENVIRON_GLOBAL_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "gettimeofday_coarse_success_strict",
+      "function": "gettimeofday",
+      "spec_section": "POSIX gettimeofday coarse success class without timestamp capture",
+      "inputs": {
+        "symbol": "gettimeofday",
+        "scenario": "coarse_success_class",
+        "expected": "GETTIMEOFDAY_OK_CLASS",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=gettimeofday;mode=strict;expected=GETTIMEOFDAY_OK_CLASS;actual=GETTIMEOFDAY_OK_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "gettimeofday_coarse_success_hardened",
+      "function": "gettimeofday",
+      "spec_section": "POSIX gettimeofday coarse success class without timestamp capture",
+      "inputs": {
+        "symbol": "gettimeofday",
+        "scenario": "coarse_success_class",
+        "expected": "GETTIMEOFDAY_OK_CLASS",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=gettimeofday;mode=hardened;expected=GETTIMEOFDAY_OK_CLASS;actual=GETTIMEOFDAY_OK_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "gmtime_fixed_epoch_strict",
+      "function": "gmtime",
+      "spec_section": "POSIX gmtime fixed epoch UTC class",
+      "inputs": {
+        "symbol": "gmtime",
+        "scenario": "fixed_epoch_utc_tm",
+        "epoch": 951782400,
+        "expected": "GMTIME_UTC_2000-02-29T00:00:00Z",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=gmtime;mode=strict;expected=GMTIME_UTC_2000-02-29T00:00:00Z;actual=GMTIME_UTC_2000-02-29T00:00:00Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "gmtime_fixed_epoch_hardened",
+      "function": "gmtime",
+      "spec_section": "POSIX gmtime fixed epoch UTC class",
+      "inputs": {
+        "symbol": "gmtime",
+        "scenario": "fixed_epoch_utc_tm",
+        "epoch": 951782400,
+        "expected": "GMTIME_UTC_2000-02-29T00:00:00Z",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=gmtime;mode=hardened;expected=GMTIME_UTC_2000-02-29T00:00:00Z;actual=GMTIME_UTC_2000-02-29T00:00:00Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

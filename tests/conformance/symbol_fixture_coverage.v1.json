@@ -3479,55 +3479,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 4,
-      "milestone_beads": [],
-      "module": "time_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 2202,
-      "status_breakdown": {
-        "Implemented": 16,
-        "RawSyscall": 10
-      },
-      "target_coverage_pct": 15.38,
-      "target_covered": 4,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 26,
-      "target_uncovered": 22,
-      "target_uncovered_symbols": [
-        "asctime",
-        "asctime_r",
-        "clock_adjtime",
-        "clock_getres",
-        "clock_nanosleep",
-        "clock_settime",
-        "ctime",
-        "ctime_r",
-        "difftime",
-        "environ",
-        "gettimeofday",
-        "gmtime",
-        "gmtime_r",
-        "localtime",
-        "mktime",
-        "nanosleep",
-        "strptime",
-        "timegm",
-        "timespec_get",
-        "timespec_getres",
-        "timezone",
-        "tzset"
-      ],
-      "total_symbols": 26,
-      "track": "time",
-      "uncovered_symbols": 22,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 9,
       "milestone_beads": [],
       "module": "signal_abi",
@@ -3646,6 +3597,43 @@
       ],
       "total_symbols": 17,
       "track": "network/inet",
+      "uncovered_symbols": 10,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 16,
+      "milestone_beads": [],
+      "module": "time_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "severity_score": 1002,
+      "status_breakdown": {
+        "Implemented": 16,
+        "RawSyscall": 10
+      },
+      "target_coverage_pct": 61.54,
+      "target_covered": 16,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 26,
+      "target_uncovered": 10,
+      "target_uncovered_symbols": [
+        "gmtime_r",
+        "localtime",
+        "mktime",
+        "nanosleep",
+        "strptime",
+        "timegm",
+        "timespec_get",
+        "timespec_getres",
+        "timezone",
+        "tzset"
+      ],
+      "total_symbols": 26,
+      "track": "time",
       "uncovered_symbols": 10,
       "workload_blocked_count": 0,
       "workload_ids": []
@@ -4278,9 +4266,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 2224,
-    "fixture_json_files": 102,
-    "fixture_json_unique_functions": 906,
+    "fixture_json_cases": 2248,
+    "fixture_json_files": 103,
+    "fixture_json_unique_functions": 918,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4301,7 +4289,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 908
+    "unique_fixture_functions_total": 920
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -7604,40 +7592,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "time_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 22,
-      "target_uncovered_symbols": [
-        "asctime",
-        "asctime_r",
-        "clock_adjtime",
-        "clock_getres",
-        "clock_nanosleep",
-        "clock_settime",
-        "ctime",
-        "ctime_r",
-        "difftime",
-        "environ",
-        "gettimeofday",
-        "gmtime",
-        "gmtime_r",
-        "localtime",
-        "mktime",
-        "nanosleep",
-        "strptime",
-        "timegm",
-        "timespec_get",
-        "timespec_getres",
-        "timezone",
-        "tzset"
-      ],
-      "track": "time",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "signal_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -7712,6 +7666,28 @@
         "inet_ntoa"
       ],
       "track": "network/inet",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
+      "module": "time_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "target_uncovered_count": 10,
+      "target_uncovered_symbols": [
+        "gmtime_r",
+        "localtime",
+        "mktime",
+        "nanosleep",
+        "strptime",
+        "timegm",
+        "timespec_get",
+        "timespec_getres",
+        "timezone",
+        "tzset"
+      ],
+      "track": "time",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -7858,31 +7834,31 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 21.16,
-      "covered": 784,
+      "coverage_pct": 21.35,
+      "covered": 791,
       "total": 3705,
-      "uncovered": 2921
+      "uncovered": 2914
     },
     "RawSyscall": {
-      "coverage_pct": 25.85,
-      "covered": 107,
+      "coverage_pct": 27.05,
+      "covered": 112,
       "total": 414,
-      "uncovered": 307
+      "uncovered": 302
     }
   },
   "summary": {
-    "coverage_pct": 21.63,
-    "covered_exported_symbols": 891,
-    "target_coverage_pct": 21.63,
-    "target_covered_symbols": 891,
+    "coverage_pct": 21.92,
+    "covered_exported_symbols": 903,
+    "target_coverage_pct": 21.92,
+    "target_covered_symbols": 903,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3228,
+    "target_uncovered_symbols": 3216,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3228,
+    "uncovered_exported_symbols": 3216,
     "uncovered_target_families": 1,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 24
@@ -59260,13 +59236,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -59274,13 +59259,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -59310,13 +59304,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "unknown",
       "status": "RawSyscall",
@@ -59324,13 +59327,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -59361,13 +59373,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -59375,13 +59396,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "default",
       "status": "RawSyscall",
@@ -59389,13 +59419,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -59403,13 +59442,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -59417,13 +59465,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -59431,13 +59488,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -59445,13 +59511,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -59459,13 +59534,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "time/clock"
+      ],
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "time_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -76411,21 +76495,9 @@
       "module": "time_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 15.38,
-      "target_uncovered_count": 22,
+      "target_coverage_pct": 61.54,
+      "target_uncovered_count": 10,
       "target_uncovered_symbols": [
-        "asctime",
-        "asctime_r",
-        "clock_adjtime",
-        "clock_getres",
-        "clock_nanosleep",
-        "clock_settime",
-        "ctime",
-        "ctime_r",
-        "difftime",
-        "environ",
-        "gettimeofday",
-        "gmtime",
         "gmtime_r",
         "localtime",
         "mktime",

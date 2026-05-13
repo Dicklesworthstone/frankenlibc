@@ -339,26 +339,24 @@
     },
     {
       "campaign_id": "fcq-time-clock",
-      "current_coverage_pct": 15.38,
+      "current_coverage_pct": 61.54,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 61.54,
-      "first_wave_fixture_count": 12,
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "first_wave_fixture_count": 10,
       "first_wave_symbols": [
-        "asctime",
-        "asctime_r",
-        "clock_adjtime",
-        "clock_getres",
-        "clock_nanosleep",
-        "clock_settime",
-        "ctime",
-        "ctime_r",
-        "difftime",
-        "environ",
-        "gettimeofday",
-        "gmtime"
+        "gmtime_r",
+        "localtime",
+        "mktime",
+        "nanosleep",
+        "strptime",
+        "timegm",
+        "timespec_get",
+        "timespec_getres",
+        "timezone",
+        "tzset"
       ],
       "module": "time_abi",
       "next_step": "Add pinned-time and invalid-clock fixtures with deterministic tolerance rules.",
@@ -372,22 +370,22 @@
         "timeout_policy"
       ],
       "scores": {
-        "coverage_gap_score": 22,
+        "coverage_gap_score": 10,
         "feature_gap_risk_score": 3,
         "hard_parts_risk_tags": [
           "threading"
         ],
         "implementation_complexity_score": 3,
         "parity_risk_score": 4,
-        "priority_score": 1872,
+        "priority_score": 1860,
         "semantic_risk_score": 0,
         "workload_risk_score": 4
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "clock_gettime, timers, tz-sensitive calendar conversion, and pinned-time behavior",
-      "target_covered": 4,
+      "target_covered": 16,
       "target_total": 26,
-      "target_uncovered": 22,
+      "target_uncovered": 10,
       "title": "time clock and calendar fixture wave",
       "workload_domains": [
         "build_tools",
@@ -985,7 +983,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3228,
+    "all_uncovered_target_symbols": 3216,
     "campaign_count": 11,
     "covered_modules": [
       "fortify_abi",
@@ -1017,7 +1015,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2874,
-    "total_first_wave_fixture_count": 132
+    "selected_target_uncovered_symbols": 2862,
+    "total_first_wave_fixture_count": 130
   }
 }

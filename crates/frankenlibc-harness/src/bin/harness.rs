@@ -769,6 +769,24 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Evaluate the size-class admissibility barrier certificate via
+    /// `frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier`.
+    /// Positive headroom => certified safe; negative => violation.
+    EvaluateSizeClassBarrier {
+        /// Caller-requested allocation size in bytes.
+        #[arg(long)]
+        requested_size: usize,
+        /// Size-class bytes selected by the allocator mapping.
+        #[arg(long)]
+        mapped_class_size: usize,
+        /// Whether `mapped_class_size` belongs to the active
+        /// allocator size-class table.
+        #[arg(long, default_value_t = false)]
+        class_membership_valid: bool,
+        /// Output JSONL path: one size_class_barrier record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Evaluate the thread-safety barrier certificate via
     /// `frankenlibc_membrane::runtime_math::sos_barrier::evaluate_thread_safety_barrier`.
     /// Positive headroom => certified safe; negative => violation.
@@ -2733,6 +2751,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::EvaluateSizeClassBarrier {
+            requested_size,
+            mapped_class_size,
+            class_membership_valid,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier;
+            let headroom = evaluate_size_class_barrier(
+                requested_size,
+                mapped_class_size,
+                class_membership_valid,
+            );
+            let safe = headroom >= 0;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "size_class_barrier",
+                "requested_size": requested_size,
+                "mapped_class_size": mapped_class_size,
+                "class_membership_valid": class_membership_valid,
+                "headroom": headroom,
+                "safe": safe,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "evaluate-size-class-barrier: requested={requested_size} mapped={mapped_class_size} membership_valid={class_membership_valid} → headroom={headroom} safe={safe}"
+            );
         }
         Command::EvaluateThreadSafetyBarrier {
             thread_count,

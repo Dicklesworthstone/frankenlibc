@@ -1070,6 +1070,9 @@ pub fn execute_fixture_case(
         "clock" => execute_clock_case(mode),
         "clock_gettime" => execute_clock_gettime_case(inputs, mode),
         "localtime_r" => execute_localtime_r_case(inputs, mode),
+        "asctime" | "asctime_r" | "clock_adjtime" | "clock_getres" | "clock_nanosleep"
+        | "clock_settime" | "ctime" | "ctime_r" | "difftime" | "environ" | "gettimeofday"
+        | "gmtime" => execute_time_clock_wave01_case(function, inputs, mode),
         // dirent ops
         "opendir" => execute_opendir_case(inputs, mode),
         "readdir" => execute_readdir_case(inputs, mode),
@@ -20976,6 +20979,247 @@ fn execute_localtime_r_case(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// time/clock wave-01 conformance executors (bd-r5k32.10)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TIME_CLOCK_LEAP_EPOCH: libc::time_t = 951_782_400;
+const TIME_CLOCK_LEAP_ASCTIME: &str = "Tue Feb 29 00:00:00 2000\n";
+
+fn execute_time_clock_wave01_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "time/clock wave01 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = time_clock_wave01_actual(function, inputs)?;
+    Ok(non_host_execution(time_clock_wave01_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn time_clock_wave01_log(symbol: &str, mode: &str, expected: &str, actual: &str) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn time_clock_wave01_actual(function: &str, inputs: &serde_json::Value) -> Result<String, String> {
+    let scenario = parse_string(inputs, "scenario")?;
+    match (function, scenario.as_str()) {
+        ("asctime", "fixed_utc_leap_day_static_buffer") => time_clock_asctime_actual(),
+        ("asctime_r", "fixed_utc_leap_day_caller_buffer") => time_clock_asctime_r_actual(),
+        ("clock_adjtime", "invalid_clock_no_adjustment") => Ok(time_clock_clock_adjtime_actual()),
+        ("clock_getres", "monotonic_resolution_class") => Ok(time_clock_clock_getres_actual()),
+        ("clock_nanosleep", "zero_duration_monotonic_sleep") => {
+            Ok(time_clock_clock_nanosleep_actual())
+        }
+        ("clock_settime", "invalid_clock_no_set") => Ok(time_clock_clock_settime_actual()),
+        ("ctime", "fixed_epoch_static_buffer") => time_clock_ctime_actual(inputs),
+        ("ctime_r", "fixed_epoch_caller_buffer") => time_clock_ctime_r_actual(inputs),
+        ("difftime", "positive_delta") => Ok(time_clock_difftime_actual(inputs)),
+        ("environ", "global_environment_shape") => Ok(time_clock_environ_actual()),
+        ("gettimeofday", "coarse_success_class") => Ok(time_clock_gettimeofday_actual()),
+        ("gmtime", "fixed_epoch_utc_tm") => time_clock_gmtime_actual(inputs),
+        _ => Err(format!(
+            "unsupported time/clock wave01 fixture: function={function}, scenario={scenario}"
+        )),
+    }
+}
+
+fn time_clock_leap_tm() -> libc::tm {
+    // SAFETY: libc::tm is a plain C struct and all-zero is a valid baseline
+    // before populating the calendar fields used by asctime/asctime_r.
+    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
+    tm.tm_sec = 0;
+    tm.tm_min = 0;
+    tm.tm_hour = 0;
+    tm.tm_mday = 29;
+    tm.tm_mon = 1;
+    tm.tm_year = 100;
+    tm.tm_wday = 2;
+    tm.tm_yday = 59;
+    tm.tm_isdst = 0;
+    tm
+}
+
+fn time_clock_epoch(inputs: &serde_json::Value) -> libc::time_t {
+    inputs
+        .get("epoch")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(TIME_CLOCK_LEAP_EPOCH)
+}
+
+fn time_clock_classify_asctime_ptr(ptr: *const c_char, symbol: &str) -> String {
+    if ptr.is_null() {
+        return format!("{symbol}_NULL");
+    }
+    // SAFETY: ptr is non-null and returned by the time ABI conversion function;
+    // the fixture reads only the NUL-terminated string for class comparison.
+    let observed = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    if observed == TIME_CLOCK_LEAP_ASCTIME.as_bytes() {
+        format!("{symbol}_LEAP_DAY_STRING")
+    } else {
+        format!("{symbol}_OTHER_STRING")
+    }
+}
+
+fn time_clock_asctime_actual() -> Result<String, String> {
+    let tm = time_clock_leap_tm();
+    // SAFETY: tm points at a fully initialized fixture-owned broken-down time.
+    let ptr = unsafe { frankenlibc_abi::time_abi::asctime(&tm) };
+    Ok(time_clock_classify_asctime_ptr(ptr, "ASCTIME"))
+}
+
+fn time_clock_asctime_r_actual() -> Result<String, String> {
+    let tm = time_clock_leap_tm();
+    let mut buf = [0 as c_char; 26];
+    // SAFETY: tm is initialized and buf is the POSIX-required 26-byte output
+    // buffer for asctime_r.
+    let ptr = unsafe { frankenlibc_abi::time_abi::asctime_r(&tm, buf.as_mut_ptr()) };
+    Ok(time_clock_classify_asctime_ptr(ptr, "ASCTIME_R"))
+}
+
+fn time_clock_clock_adjtime_actual() -> String {
+    // SAFETY: libc::timex is a plain C struct; an all-zero query buffer is valid
+    // for the invalid-clock class and no kernel clock adjustment is requested.
+    let mut timex = unsafe { std::mem::zeroed::<libc::timex>() };
+    // SAFETY: timex is a valid output buffer and the invalid clock id prevents
+    // mutation of a real process or system clock.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::clock_adjtime(-9999, &mut timex) };
+    format!("CLOCK_ADJTIME_INVALID_RC_{rc}")
+}
+
+fn time_clock_clock_getres_actual() -> String {
+    // SAFETY: libc::timespec is a plain C struct and zero is a valid baseline
+    // before clock_getres writes the resolution.
+    let mut ts = unsafe { std::mem::zeroed::<libc::timespec>() };
+    // SAFETY: ts is a valid output buffer for CLOCK_MONOTONIC resolution.
+    let rc = unsafe { frankenlibc_abi::time_abi::clock_getres(libc::CLOCK_MONOTONIC, &mut ts) };
+    if rc == 0 && ts.tv_sec >= 0 && (0..1_000_000_000).contains(&ts.tv_nsec) {
+        String::from("CLOCK_GETRES_MONOTONIC_OK")
+    } else {
+        format!("CLOCK_GETRES_RC_{rc}")
+    }
+}
+
+fn time_clock_clock_nanosleep_actual() -> String {
+    let req = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: req is a valid zero-duration sleep request and rem is not needed
+    // because the request cannot be partially slept.
+    let rc = unsafe {
+        frankenlibc_abi::time_abi::clock_nanosleep(
+            libc::CLOCK_MONOTONIC,
+            0,
+            &req,
+            std::ptr::null_mut(),
+        )
+    };
+    format!("CLOCK_NANOSLEEP_ZERO_RC_{rc}")
+}
+
+fn time_clock_clock_settime_actual() -> String {
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: ts is a valid timespec and the invalid clock id prevents setting
+    // any real process or system clock.
+    let rc = unsafe { frankenlibc_abi::time_abi::clock_settime(-9999, &ts) };
+    format!("CLOCK_SETTIME_INVALID_RC_{rc}")
+}
+
+fn time_clock_ctime_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let epoch = time_clock_epoch(inputs);
+    // SAFETY: epoch points at a fixture-owned time_t value.
+    let ptr = unsafe { frankenlibc_abi::time_abi::ctime(&epoch) };
+    Ok(time_clock_classify_asctime_ptr(ptr, "CTIME"))
+}
+
+fn time_clock_ctime_r_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let epoch = time_clock_epoch(inputs);
+    let mut buf = [0 as c_char; 26];
+    // SAFETY: epoch points at a fixture-owned time_t and buf is the
+    // POSIX-required 26-byte output buffer for ctime_r.
+    let ptr = unsafe { frankenlibc_abi::time_abi::ctime_r(&epoch, buf.as_mut_ptr()) };
+    Ok(time_clock_classify_asctime_ptr(ptr, "CTIME_R"))
+}
+
+fn time_clock_difftime_actual(inputs: &serde_json::Value) -> String {
+    let end = inputs
+        .get("end")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(10);
+    let start = inputs
+        .get("start")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(4);
+    // SAFETY: difftime accepts time_t values by value and has no pointer or
+    // ambient-state preconditions.
+    let delta = unsafe { frankenlibc_abi::time_abi::difftime(end, start) };
+    format!("DIFFTIME_DELTA_{delta:.0}")
+}
+
+fn time_clock_environ_actual() -> String {
+    // SAFETY: reading the exported environ pointer does not dereference it or
+    // capture process environment text.
+    let envp = unsafe { frankenlibc_abi::glibc_internal_abi::environ };
+    if envp.is_null() {
+        String::from("ENVIRON_GLOBAL_NULL")
+    } else {
+        String::from("ENVIRON_GLOBAL_ARRAY")
+    }
+}
+
+fn time_clock_gettimeofday_actual() -> String {
+    // SAFETY: libc::timeval is a plain C struct and zero is a valid baseline
+    // before gettimeofday writes the current coarse time.
+    let mut tv = unsafe { std::mem::zeroed::<libc::timeval>() };
+    // SAFETY: tv is a valid output buffer and the obsolete timezone pointer is
+    // intentionally null.
+    let rc = unsafe { frankenlibc_abi::time_abi::gettimeofday(&mut tv, std::ptr::null_mut()) };
+    if rc == 0 && tv.tv_sec >= 0 && (0..1_000_000).contains(&tv.tv_usec) {
+        String::from("GETTIMEOFDAY_OK_CLASS")
+    } else {
+        format!("GETTIMEOFDAY_RC_{rc}")
+    }
+}
+
+fn time_clock_gmtime_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let epoch = time_clock_epoch(inputs);
+    // SAFETY: epoch points at a fixture-owned time_t value.
+    let ptr = unsafe { frankenlibc_abi::time_abi::gmtime(&epoch) };
+    if ptr.is_null() {
+        return Ok(String::from("GMTIME_NULL"));
+    }
+    // SAFETY: ptr is non-null and points at the time ABI thread-local tm buffer.
+    let tm = unsafe { *ptr };
+    Ok(format!(
+        "GMTIME_UTC_{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec
+    ))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // dirent_ops conformance executors (bd-ihl3)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -25463,6 +25707,47 @@ mod tests {
         let raw = include_str!("../../../tests/conformance/fixtures/locale_catalog_wave01.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("locale catalog wave01 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn time_clock_wave01_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/time_clock_wave01.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("time/clock wave01 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

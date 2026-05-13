@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T17:57:48Z",
-  "report_hash": "f68f0501f4ed7564",
+  "generated_at": "2026-05-13T18:13:20Z",
+  "report_hash": "c6b7861093c5a744",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 889,
-    "symbols_without_fixtures": 3230,
-    "fixture_coverage_pct": 21.6,
-    "implemented_coverage_pct": 21.2,
-    "total_fixture_files": 102,
-    "total_cases": 2224,
+    "symbols_with_fixtures": 901,
+    "symbols_without_fixtures": 3218,
+    "fixture_coverage_pct": 21.9,
+    "implemented_coverage_pct": 21.3,
+    "total_fixture_files": 103,
+    "total_cases": 2248,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 542,
-    "symbols_with_errno_checks": 886,
-    "total_quality_issues": 3502,
-    "uncovered_action_count": 3230
+    "symbols_with_edge_cases": 550,
+    "symbols_with_errno_checks": 898,
+    "total_quality_issues": 3499,
+    "uncovered_action_count": 3218
   },
   "fixture_file_analyses": [
     {
@@ -704,6 +704,14 @@
       "valid": true,
       "total_cases": 8,
       "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "time_clock_wave01.json",
+      "family": "time/clock",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
       "issues": []
     },
     {
@@ -16751,14 +16759,19 @@
       "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -16766,14 +16779,19 @@
       "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -20954,12 +20972,19 @@
       "status": "RawSyscall",
       "module": "time_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -20987,13 +21012,20 @@
       "status": "RawSyscall",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "clock_gettime",
@@ -21020,12 +21052,19 @@
       "status": "RawSyscall",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -21033,12 +21072,19 @@
       "status": "RawSyscall",
       "module": "time_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -23571,30 +23617,40 @@
       "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "ctime_r",
       "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "cuserid",
@@ -23791,15 +23847,20 @@
       "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "dirfd",
@@ -24778,15 +24839,20 @@
       "status": "Implemented",
       "module": "time_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "envz_add",
@@ -35256,13 +35322,20 @@
       "status": "RawSyscall",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "getttyent",
@@ -35687,15 +35760,20 @@
       "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_clock_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "gmtime_r",
@@ -71464,20 +71542,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "asctime",
-      "status": "Implemented",
-      "module": "time_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "asctime_r",
-      "status": "Implemented",
-      "module": "time_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "asinf",
       "status": "Implemented",
       "module": "math_abi",
@@ -73004,34 +73068,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "clock_adjtime",
-      "status": "RawSyscall",
-      "module": "time_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "clock_getres",
-      "status": "RawSyscall",
-      "module": "time_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "clock_nanosleep",
-      "status": "RawSyscall",
-      "module": "time_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "clock_settime",
-      "status": "RawSyscall",
-      "module": "time_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "clog",
       "status": "Implemented",
       "module": "math_abi",
@@ -73949,20 +73985,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "ctime",
-      "status": "Implemented",
-      "module": "time_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "ctime_r",
-      "status": "Implemented",
-      "module": "time_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "daddl",
       "status": "Implemented",
       "module": "math_abi",
@@ -74001,13 +74023,6 @@
       "symbol": "dfmal",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "difftime",
-      "status": "Implemented",
-      "module": "time_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -74162,13 +74177,6 @@
       "symbol": "endusershell",
       "status": "Implemented",
       "module": "stdlib_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "environ",
-      "status": "Implemented",
-      "module": "time_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -77904,13 +77912,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "gettimeofday",
-      "status": "RawSyscall",
-      "module": "time_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "getttyent",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -78075,13 +78076,6 @@
       "symbol": "globfree64",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "gmtime",
-      "status": "Implemented",
-      "module": "time_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
