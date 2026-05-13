@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T09:25:27Z",
-  "report_hash": "5cefe04b28dedad6",
+  "generated_at": "2026-05-13T10:04:22Z",
+  "report_hash": "57f1c4bdd13ed6ca",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 680,
-    "symbols_without_fixtures": 3439,
-    "fixture_coverage_pct": 16.5,
-    "implemented_coverage_pct": 16.0,
-    "total_fixture_files": 84,
-    "total_cases": 1810,
+    "symbols_with_fixtures": 692,
+    "symbols_without_fixtures": 3427,
+    "fixture_coverage_pct": 16.8,
+    "implemented_coverage_pct": 16.2,
+    "total_fixture_files": 85,
+    "total_cases": 1834,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 446,
-    "symbols_with_errno_checks": 677,
-    "total_quality_issues": 3571,
-    "uncovered_action_count": 3439
+    "symbols_with_edge_cases": 451,
+    "symbols_with_errno_checks": 689,
+    "total_quality_issues": 3567,
+    "uncovered_action_count": 3427
   },
   "fixture_file_analyses": [
     {
@@ -557,6 +557,14 @@
     {
       "file": "string_memory_hotpaths_wave11.json",
       "family": "string_memory_hotpaths_wave11",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave12.json",
+      "family": "string_memory_hotpaths_wave12",
       "valid": true,
       "total_cases": 24,
       "unique_symbols": 12,
@@ -41236,15 +41244,20 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "memrchr",
@@ -46043,12 +46056,19 @@
       "status": "RawSyscall",
       "module": "string_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -48794,14 +48814,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "hot",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -48854,14 +48879,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -48869,14 +48899,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -48899,14 +48934,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -48914,14 +48954,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -48944,44 +48989,59 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "re_search_2",
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "re_set_registers",
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -48989,15 +49049,20 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "re_syntax_options",
@@ -49364,14 +49429,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -80479,13 +80549,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "mempcpy",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "high"
-    },
-    {
       "symbol": "mincore",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -82502,13 +82565,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "psignal",
-      "status": "RawSyscall",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "pthread_atfork",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -83538,13 +83594,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "rawmemchr",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "rcmd",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -83566,20 +83615,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "re_compile_fastmap",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "re_compile_pattern",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "re_exec",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -83587,51 +83622,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "re_match",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "re_match_2",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "re_max_failures",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "re_search",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "re_search_2",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "re_set_registers",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "re_set_syntax",
-      "status": "Implemented",
-      "module": "string_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -83737,13 +83730,6 @@
       "symbol": "recvmmsg",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "regerror",
-      "status": "Implemented",
-      "module": "string_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

@@ -1,0 +1,472 @@
+{
+  "version": "v1",
+  "family": "string_memory_hotpaths_wave12",
+  "captured_at": "2026-05-13T09:58:00Z",
+  "description": "Strict/hardened deterministic fixture wave for string ABI hotpath and legacy regex helpers without recording pointers, allocation addresses, stderr bytes, locale text, timestamps, or process-global counters.",
+  "spec_reference": "GNU mempcpy, rawmemchr, psignal, re_compile_fastmap, re_compile_pattern, re_match, re_match_2, re_search, re_search_2, re_set_registers, re_set_syntax, and POSIX regerror semantics",
+  "campaign": {
+    "bead": "bd-kgy3r.8",
+    "campaign_id": "fcq-string-memory-hotpaths",
+    "wave_id": "wave-12-string-memory-hotpaths",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture",
+    "first_wave_symbols": [
+      "mempcpy",
+      "psignal",
+      "rawmemchr",
+      "re_compile_fastmap",
+      "re_compile_pattern",
+      "re_match",
+      "re_match_2",
+      "re_search",
+      "re_search_2",
+      "re_set_registers",
+      "re_set_syntax",
+      "regerror"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "mempcpy_records_return_offset_strict",
+      "function": "mempcpy",
+      "spec_section": "GNU mempcpy",
+      "inputs": {
+        "symbol": "mempcpy",
+        "scenario": "copy_bytes_return_end_offset",
+        "src": "ABCD",
+        "dst_len": 6,
+        "n": 4,
+        "expected": "MEMPCPY_RETURN_4_LEN_6_HEX_414243440000",
+        "oracle_source": "GNU mempcpy pointer-free return-offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=mempcpy;mode=strict;expected=MEMPCPY_RETURN_4_LEN_6_HEX_414243440000;actual=MEMPCPY_RETURN_4_LEN_6_HEX_414243440000;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "mempcpy_records_return_offset_hardened",
+      "function": "mempcpy",
+      "spec_section": "GNU mempcpy",
+      "inputs": {
+        "symbol": "mempcpy",
+        "scenario": "copy_bytes_return_end_offset",
+        "src": "ABCD",
+        "dst_len": 6,
+        "n": 4,
+        "expected": "MEMPCPY_RETURN_4_LEN_6_HEX_414243440000",
+        "oracle_source": "GNU mempcpy pointer-free return-offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=mempcpy;mode=hardened;expected=MEMPCPY_RETURN_4_LEN_6_HEX_414243440000;actual=MEMPCPY_RETURN_4_LEN_6_HEX_414243440000;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "psignal_formats_stable_signal_text_strict",
+      "function": "psignal",
+      "spec_section": "POSIX psignal",
+      "inputs": {
+        "symbol": "psignal",
+        "scenario": "prefixed_signal_description",
+        "sig": 10,
+        "prefix": "probe",
+        "expected": "PSIGNAL_TEXT_probe:_User_defined_signal_1",
+        "oracle_source": "psignal and strsignal shared signal-description model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=psignal;mode=strict;expected=PSIGNAL_TEXT_probe:_User_defined_signal_1;actual=PSIGNAL_TEXT_probe:_User_defined_signal_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "psignal_formats_stable_signal_text_hardened",
+      "function": "psignal",
+      "spec_section": "POSIX psignal",
+      "inputs": {
+        "symbol": "psignal",
+        "scenario": "prefixed_signal_description",
+        "sig": 10,
+        "prefix": "probe",
+        "expected": "PSIGNAL_TEXT_probe:_User_defined_signal_1",
+        "oracle_source": "psignal and strsignal shared signal-description model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=psignal;mode=hardened;expected=PSIGNAL_TEXT_probe:_User_defined_signal_1;actual=PSIGNAL_TEXT_probe:_User_defined_signal_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "rawmemchr_reports_first_byte_offset_strict",
+      "function": "rawmemchr",
+      "spec_section": "GNU rawmemchr",
+      "inputs": {
+        "symbol": "rawmemchr",
+        "scenario": "first_matching_byte_offset",
+        "s": "abcabc",
+        "c": "c",
+        "expected": "RAWMEMCHR_OFFSET_2",
+        "oracle_source": "GNU rawmemchr pointer-free offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=rawmemchr;mode=strict;expected=RAWMEMCHR_OFFSET_2;actual=RAWMEMCHR_OFFSET_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "rawmemchr_reports_first_byte_offset_hardened",
+      "function": "rawmemchr",
+      "spec_section": "GNU rawmemchr",
+      "inputs": {
+        "symbol": "rawmemchr",
+        "scenario": "first_matching_byte_offset",
+        "s": "abcabc",
+        "c": "c",
+        "expected": "RAWMEMCHR_OFFSET_2",
+        "oracle_source": "GNU rawmemchr pointer-free offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=rawmemchr;mode=hardened;expected=RAWMEMCHR_OFFSET_2;actual=RAWMEMCHR_OFFSET_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "re_compile_fastmap_accepts_extended_pattern_strict",
+      "function": "re_compile_fastmap",
+      "spec_section": "GNU old regex re_compile_fastmap",
+      "inputs": {
+        "symbol": "re_compile_fastmap",
+        "scenario": "compiled_pattern_fastmap_ready",
+        "pattern": "ab+c",
+        "extended": true,
+        "expected": "RE_COMPILE_FASTMAP_OK",
+        "oracle_source": "GNU old regex fastmap success class model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_compile_fastmap;mode=strict;expected=RE_COMPILE_FASTMAP_OK;actual=RE_COMPILE_FASTMAP_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "re_compile_fastmap_accepts_extended_pattern_hardened",
+      "function": "re_compile_fastmap",
+      "spec_section": "GNU old regex re_compile_fastmap",
+      "inputs": {
+        "symbol": "re_compile_fastmap",
+        "scenario": "compiled_pattern_fastmap_ready",
+        "pattern": "ab+c",
+        "extended": true,
+        "expected": "RE_COMPILE_FASTMAP_OK",
+        "oracle_source": "GNU old regex fastmap success class model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_compile_fastmap;mode=hardened;expected=RE_COMPILE_FASTMAP_OK;actual=RE_COMPILE_FASTMAP_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "re_compile_pattern_counts_groups_strict",
+      "function": "re_compile_pattern",
+      "spec_section": "GNU old regex re_compile_pattern",
+      "inputs": {
+        "symbol": "re_compile_pattern",
+        "scenario": "extended_group_count",
+        "pattern": "(ab)(c)",
+        "extended": true,
+        "expected": "RE_COMPILE_PATTERN_OK_NSUB_2",
+        "oracle_source": "GNU old regex compile group-count model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_compile_pattern;mode=strict;expected=RE_COMPILE_PATTERN_OK_NSUB_2;actual=RE_COMPILE_PATTERN_OK_NSUB_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "re_compile_pattern_counts_groups_hardened",
+      "function": "re_compile_pattern",
+      "spec_section": "GNU old regex re_compile_pattern",
+      "inputs": {
+        "symbol": "re_compile_pattern",
+        "scenario": "extended_group_count",
+        "pattern": "(ab)(c)",
+        "extended": true,
+        "expected": "RE_COMPILE_PATTERN_OK_NSUB_2",
+        "oracle_source": "GNU old regex compile group-count model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_compile_pattern;mode=hardened;expected=RE_COMPILE_PATTERN_OK_NSUB_2;actual=RE_COMPILE_PATTERN_OK_NSUB_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "re_match_reports_exact_match_length_strict",
+      "function": "re_match",
+      "spec_section": "GNU old regex re_match",
+      "inputs": {
+        "symbol": "re_match",
+        "scenario": "exact_start_match_length",
+        "pattern": "ab+c",
+        "haystack": "xxabbbc",
+        "start": 2,
+        "stop": 7,
+        "extended": true,
+        "expected": "RE_MATCH_LEN_5",
+        "oracle_source": "GNU old regex exact-position match model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_match;mode=strict;expected=RE_MATCH_LEN_5;actual=RE_MATCH_LEN_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "re_match_reports_exact_match_length_hardened",
+      "function": "re_match",
+      "spec_section": "GNU old regex re_match",
+      "inputs": {
+        "symbol": "re_match",
+        "scenario": "exact_start_match_length",
+        "pattern": "ab+c",
+        "haystack": "xxabbbc",
+        "start": 2,
+        "stop": 7,
+        "extended": true,
+        "expected": "RE_MATCH_LEN_5",
+        "oracle_source": "GNU old regex exact-position match model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_match;mode=hardened;expected=RE_MATCH_LEN_5;actual=RE_MATCH_LEN_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "re_match_2_reports_split_match_length_strict",
+      "function": "re_match_2",
+      "spec_section": "GNU old regex re_match_2",
+      "inputs": {
+        "symbol": "re_match_2",
+        "scenario": "split_string_exact_match",
+        "pattern": "abc",
+        "string1": "xxab",
+        "string2": "czz",
+        "start": 2,
+        "stop": 5,
+        "expected": "RE_MATCH_2_LEN_3",
+        "oracle_source": "GNU old regex split-string exact-position model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_match_2;mode=strict;expected=RE_MATCH_2_LEN_3;actual=RE_MATCH_2_LEN_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "re_match_2_reports_split_match_length_hardened",
+      "function": "re_match_2",
+      "spec_section": "GNU old regex re_match_2",
+      "inputs": {
+        "symbol": "re_match_2",
+        "scenario": "split_string_exact_match",
+        "pattern": "abc",
+        "string1": "xxab",
+        "string2": "czz",
+        "start": 2,
+        "stop": 5,
+        "expected": "RE_MATCH_2_LEN_3",
+        "oracle_source": "GNU old regex split-string exact-position model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_match_2;mode=hardened;expected=RE_MATCH_2_LEN_3;actual=RE_MATCH_2_LEN_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "re_search_reports_offset_strict",
+      "function": "re_search",
+      "spec_section": "GNU old regex re_search",
+      "inputs": {
+        "symbol": "re_search",
+        "scenario": "search_offset",
+        "pattern": "cat",
+        "haystack": "xxcatzz",
+        "start": 0,
+        "range": 7,
+        "stop": 7,
+        "expected": "RE_SEARCH_OFFSET_2",
+        "oracle_source": "GNU old regex search-offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_search;mode=strict;expected=RE_SEARCH_OFFSET_2;actual=RE_SEARCH_OFFSET_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "re_search_reports_offset_hardened",
+      "function": "re_search",
+      "spec_section": "GNU old regex re_search",
+      "inputs": {
+        "symbol": "re_search",
+        "scenario": "search_offset",
+        "pattern": "cat",
+        "haystack": "xxcatzz",
+        "start": 0,
+        "range": 7,
+        "stop": 7,
+        "expected": "RE_SEARCH_OFFSET_2",
+        "oracle_source": "GNU old regex search-offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_search;mode=hardened;expected=RE_SEARCH_OFFSET_2;actual=RE_SEARCH_OFFSET_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "re_search_2_reports_split_offset_strict",
+      "function": "re_search_2",
+      "spec_section": "GNU old regex re_search_2",
+      "inputs": {
+        "symbol": "re_search_2",
+        "scenario": "split_string_search_offset",
+        "pattern": "abc",
+        "string1": "xxab",
+        "string2": "czz",
+        "start": 0,
+        "range": 7,
+        "stop": 7,
+        "expected": "RE_SEARCH_2_OFFSET_2",
+        "oracle_source": "GNU old regex split-string search-offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_search_2;mode=strict;expected=RE_SEARCH_2_OFFSET_2;actual=RE_SEARCH_2_OFFSET_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "re_search_2_reports_split_offset_hardened",
+      "function": "re_search_2",
+      "spec_section": "GNU old regex re_search_2",
+      "inputs": {
+        "symbol": "re_search_2",
+        "scenario": "split_string_search_offset",
+        "pattern": "abc",
+        "string1": "xxab",
+        "string2": "czz",
+        "start": 0,
+        "range": 7,
+        "stop": 7,
+        "expected": "RE_SEARCH_2_OFFSET_2",
+        "oracle_source": "GNU old regex split-string search-offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_search_2;mode=hardened;expected=RE_SEARCH_2_OFFSET_2;actual=RE_SEARCH_2_OFFSET_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "re_set_registers_records_fixed_storage_strict",
+      "function": "re_set_registers",
+      "spec_section": "GNU old regex re_set_registers",
+      "inputs": {
+        "symbol": "re_set_registers",
+        "scenario": "caller_owned_register_storage",
+        "num_regs": 3,
+        "storage": "fixed",
+        "expected": "RE_SET_REGISTERS_FIXED_3",
+        "oracle_source": "GNU old regex caller-register ownership model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_set_registers;mode=strict;expected=RE_SET_REGISTERS_FIXED_3;actual=RE_SET_REGISTERS_FIXED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "re_set_registers_records_fixed_storage_hardened",
+      "function": "re_set_registers",
+      "spec_section": "GNU old regex re_set_registers",
+      "inputs": {
+        "symbol": "re_set_registers",
+        "scenario": "caller_owned_register_storage",
+        "num_regs": 3,
+        "storage": "fixed",
+        "expected": "RE_SET_REGISTERS_FIXED_3",
+        "oracle_source": "GNU old regex caller-register ownership model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_set_registers;mode=hardened;expected=RE_SET_REGISTERS_FIXED_3;actual=RE_SET_REGISTERS_FIXED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "re_set_syntax_returns_previous_bits_strict",
+      "function": "re_set_syntax",
+      "spec_section": "GNU old regex re_set_syntax",
+      "inputs": {
+        "symbol": "re_set_syntax",
+        "scenario": "swap_default_syntax_bits",
+        "previous": 0,
+        "syntax": 1,
+        "expected": "RE_SET_SYNTAX_PREV_0_NEW_1",
+        "oracle_source": "GNU old regex default-syntax swap model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_set_syntax;mode=strict;expected=RE_SET_SYNTAX_PREV_0_NEW_1;actual=RE_SET_SYNTAX_PREV_0_NEW_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "re_set_syntax_returns_previous_bits_hardened",
+      "function": "re_set_syntax",
+      "spec_section": "GNU old regex re_set_syntax",
+      "inputs": {
+        "symbol": "re_set_syntax",
+        "scenario": "swap_default_syntax_bits",
+        "previous": 0,
+        "syntax": 1,
+        "expected": "RE_SET_SYNTAX_PREV_0_NEW_1",
+        "oracle_source": "GNU old regex default-syntax swap model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=re_set_syntax;mode=hardened;expected=RE_SET_SYNTAX_PREV_0_NEW_1;actual=RE_SET_SYNTAX_PREV_0_NEW_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "regerror_reports_nomatch_text_strict",
+      "function": "regerror",
+      "spec_section": "POSIX regerror",
+      "inputs": {
+        "symbol": "regerror",
+        "scenario": "nomatch_error_text",
+        "errcode": 1,
+        "expected": "REGERROR_TEXT_No_match",
+        "oracle_source": "POSIX regex error message table model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=regerror;mode=strict;expected=REGERROR_TEXT_No_match;actual=REGERROR_TEXT_No_match;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "regerror_reports_nomatch_text_hardened",
+      "function": "regerror",
+      "spec_section": "POSIX regerror",
+      "inputs": {
+        "symbol": "regerror",
+        "scenario": "nomatch_error_text",
+        "errcode": 1,
+        "expected": "REGERROR_TEXT_No_match",
+        "oracle_source": "POSIX regex error message table model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=regerror;mode=hardened;expected=REGERROR_TEXT_No_match;actual=REGERROR_TEXT_No_match;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

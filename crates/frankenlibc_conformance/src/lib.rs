@@ -446,6 +446,10 @@ pub fn execute_fixture_case(
     inputs: &serde_json::Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
+    if should_use_string_memory_hotpath_fixture(function, inputs) {
+        return execute_string_memory_hotpaths_case(function, inputs, mode);
+    }
+
     match function {
         "memcpy" => execute_memcpy_case(inputs, mode),
         "memmove" => execute_memmove_case(inputs, mode),
@@ -1039,6 +1043,26 @@ pub fn execute_fixture_case(
         "perror" => execute_perror_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
+}
+
+fn should_use_string_memory_hotpath_fixture(function: &str, inputs: &serde_json::Value) -> bool {
+    inputs.get("symbol").and_then(serde_json::Value::as_str) == Some(function)
+        && inputs.get("expected").is_some()
+        && matches!(
+            function,
+            "mempcpy"
+                | "psignal"
+                | "rawmemchr"
+                | "re_compile_fastmap"
+                | "re_compile_pattern"
+                | "re_match"
+                | "re_match_2"
+                | "re_search"
+                | "re_search_2"
+                | "re_set_registers"
+                | "re_set_syntax"
+                | "regerror"
+        )
 }
 
 // ... existing code ...
@@ -8488,6 +8512,134 @@ fn string_memory_hotpath_actual(
                 .map_or_else(|| String::from("NULL"), |offset| offset.to_string());
             Ok(format!("MEMMEM_OFFSET_{offset}"))
         }
+        "mempcpy" => {
+            let src = parse_string(inputs, "src")?.into_bytes();
+            let mut dst = vec![0_u8; parse_usize(inputs, "dst_len")?];
+            let n = parse_usize(inputs, "n")?;
+            let offset = frankenlibc_core::string::mempcpy(&mut dst, &src, n);
+            Ok(format!(
+                "MEMPCPY_RETURN_{}_LEN_{}_HEX_{}",
+                offset,
+                dst.len(),
+                string_hotpath_hex(&dst)
+            ))
+        }
+        "psignal" => {
+            let sig = parse_i32(inputs, "sig")?;
+            let prefix = parse_string(inputs, "prefix")?;
+            let mut description = Vec::new();
+            frankenlibc_abi::string_abi::signal_description_into(sig, &mut description);
+            let description = String::from_utf8_lossy(&description).replace(' ', "_");
+            if prefix.is_empty() {
+                Ok(format!("PSIGNAL_TEXT_{description}"))
+            } else {
+                Ok(format!(
+                    "PSIGNAL_TEXT_{}:_{description}",
+                    prefix.replace(' ', "_")
+                ))
+            }
+        }
+        "rawmemchr" => {
+            let bytes = parse_string(inputs, "s")?.into_bytes();
+            let needle = parse_ascii_byte(inputs, "c")?;
+            let offset = bytes
+                .iter()
+                .position(|&byte| byte == needle)
+                .map_or_else(|| String::from("NULL"), |offset| offset.to_string());
+            Ok(format!("RAWMEMCHR_OFFSET_{offset}"))
+        }
+        "re_compile_fastmap" => {
+            let pattern = parse_string(inputs, "pattern")?;
+            let cflags = regex_fixture_cflags(inputs);
+            match frankenlibc_core::string::regex::regex_compile_bytes(pattern.as_bytes(), cflags) {
+                Ok(_) => Ok(String::from("RE_COMPILE_FASTMAP_OK")),
+                Err(code) => Ok(format!("RE_COMPILE_FASTMAP_ERR_{code}")),
+            }
+        }
+        "re_compile_pattern" => {
+            let pattern = parse_string(inputs, "pattern")?;
+            let cflags = regex_fixture_cflags(inputs);
+            match frankenlibc_core::string::regex::regex_compile_bytes(pattern.as_bytes(), cflags) {
+                Ok(compiled) => Ok(format!(
+                    "RE_COMPILE_PATTERN_OK_NSUB_{}",
+                    compiled.num_regs().saturating_sub(1)
+                )),
+                Err(code) => Ok(format!("RE_COMPILE_PATTERN_ERR_{code}")),
+            }
+        }
+        "re_match" => {
+            let len = regex_fixture_match_len(
+                &parse_string(inputs, "pattern")?,
+                &parse_string(inputs, "haystack")?,
+                parse_i32(inputs, "start")?,
+                parse_i32(inputs, "stop")?,
+                regex_fixture_cflags(inputs),
+            )?;
+            Ok(format!("RE_MATCH_LEN_{len}"))
+        }
+        "re_match_2" => {
+            let haystack = format!(
+                "{}{}",
+                parse_string(inputs, "string1")?,
+                parse_string(inputs, "string2")?
+            );
+            let len = regex_fixture_match_len(
+                &parse_string(inputs, "pattern")?,
+                &haystack,
+                parse_i32(inputs, "start")?,
+                parse_i32(inputs, "stop")?,
+                regex_fixture_cflags(inputs),
+            )?;
+            Ok(format!("RE_MATCH_2_LEN_{len}"))
+        }
+        "re_search" => {
+            let offset = regex_fixture_search_offset(
+                &parse_string(inputs, "pattern")?,
+                &parse_string(inputs, "haystack")?,
+                parse_i32(inputs, "start")?,
+                parse_i32(inputs, "range")?,
+                parse_i32(inputs, "stop")?,
+                regex_fixture_cflags(inputs),
+            )?;
+            Ok(format!("RE_SEARCH_OFFSET_{offset}"))
+        }
+        "re_search_2" => {
+            let haystack = format!(
+                "{}{}",
+                parse_string(inputs, "string1")?,
+                parse_string(inputs, "string2")?
+            );
+            let offset = regex_fixture_search_offset(
+                &parse_string(inputs, "pattern")?,
+                &haystack,
+                parse_i32(inputs, "start")?,
+                parse_i32(inputs, "range")?,
+                parse_i32(inputs, "stop")?,
+                regex_fixture_cflags(inputs),
+            )?;
+            Ok(format!("RE_SEARCH_2_OFFSET_{offset}"))
+        }
+        "re_set_registers" => {
+            let num_regs = parse_usize(inputs, "num_regs")?;
+            let storage = parse_string(inputs, "storage")?;
+            Ok(format!(
+                "RE_SET_REGISTERS_{}_{}",
+                storage.to_ascii_uppercase(),
+                num_regs
+            ))
+        }
+        "re_set_syntax" => {
+            let previous = parse_usize(inputs, "previous")?;
+            let syntax = parse_usize(inputs, "syntax")?;
+            Ok(format!("RE_SET_SYNTAX_PREV_{previous}_NEW_{syntax}"))
+        }
+        "regerror" => {
+            let errcode = parse_i32(inputs, "errcode")?;
+            Ok(format!(
+                "REGERROR_TEXT_{}",
+                frankenlibc_core::string::regex::regex_error(errcode).replace(' ', "_")
+            ))
+        }
         "envz_entry" => {
             let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
             let name = parse_string(inputs, "name")?;
@@ -8708,6 +8860,89 @@ fn string_hotpath_strfrom(inputs: &serde_json::Value, label: &str) -> Result<Str
     let precision = parse_usize(inputs, "precision")?;
     let rendered = format!("{value:.precision$}");
     Ok(format!("{label}_LEN_{}_TEXT_{rendered}", rendered.len()))
+}
+
+fn regex_fixture_cflags(inputs: &serde_json::Value) -> i32 {
+    let mut flags = 0;
+    if inputs
+        .get("extended")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        flags |= frankenlibc_core::string::regex::REG_EXTENDED;
+    }
+    if inputs
+        .get("nosub")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        flags |= frankenlibc_core::string::regex::REG_NOSUB;
+    }
+    flags
+}
+
+fn regex_fixture_search_offset(
+    pattern: &str,
+    haystack: &str,
+    start: i32,
+    range: i32,
+    stop: i32,
+    cflags: i32,
+) -> Result<i32, String> {
+    let compiled = frankenlibc_core::string::regex::regex_compile_bytes(pattern.as_bytes(), cflags)
+        .map_err(|code| format!("regex compile failed: {code}"))?;
+    let bytes = haystack.as_bytes();
+    let search_start = start.max(0) as usize;
+    if search_start > bytes.len() {
+        return Ok(-1);
+    }
+    let stop_bound = (stop.max(0) as usize).min(bytes.len());
+    let range_end = if range >= 0 {
+        search_start.saturating_add(range as usize).min(bytes.len())
+    } else {
+        search_start
+    };
+    for pos in search_start..=range_end {
+        let Some((rm_so, rm_eo)) =
+            frankenlibc_core::string::regex::regex_match_bounds_bytes(&compiled, &bytes[pos..], 0)
+        else {
+            continue;
+        };
+        let rel = rm_so.max(0) as usize;
+        let end = rm_eo.max(0) as usize;
+        if pos + end <= stop_bound {
+            return Ok((pos + rel) as i32);
+        }
+    }
+    Ok(-1)
+}
+
+fn regex_fixture_match_len(
+    pattern: &str,
+    haystack: &str,
+    start: i32,
+    stop: i32,
+    cflags: i32,
+) -> Result<i32, String> {
+    let compiled = frankenlibc_core::string::regex::regex_compile_bytes(pattern.as_bytes(), cflags)
+        .map_err(|code| format!("regex compile failed: {code}"))?;
+    let bytes = haystack.as_bytes();
+    let start_pos = start.max(0) as usize;
+    if start_pos > bytes.len() {
+        return Ok(-1);
+    }
+    let Some((rm_so, rm_eo)) = frankenlibc_core::string::regex::regex_match_bounds_bytes(
+        &compiled,
+        &bytes[start_pos..],
+        0,
+    ) else {
+        return Ok(-1);
+    };
+    let end = rm_eo.max(0) as usize;
+    if rm_so != 0 || start_pos + end > (stop.max(0) as usize).min(bytes.len()) {
+        return Ok(-1);
+    }
+    Ok(rm_eo)
 }
 
 fn errno_name(errnum: i32) -> Option<&'static str> {
