@@ -737,6 +737,23 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Compute repair-symbol sizing + maximum tolerated loss fraction
+    /// via `frankenlibc_membrane::runtime_math::evidence::
+    /// {derive_repair_symbol_count_v1, loss_fraction_max_ppm_v1}`
+    /// (bd-1es / bd-3a9). Pure numeric helpers; emits one JSONL
+    /// record describing the repair sizing for given inputs.
+    DeriveRepairMath {
+        /// Source symbol count K_source (u16).
+        #[arg(long)]
+        k_source: u16,
+        /// Overhead percent (u16). R = max(slack_decode,
+        /// ceil(K_source * overhead_percent / 100)).
+        #[arg(long)]
+        overhead_percent: u16,
+        /// Output JSONL path: one repair_math record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Render a text diff between two files via
     /// `harness::diff::render_diff`. Useful for surfacing
     /// expected-vs-actual divergences from CI without compiling.
@@ -2205,6 +2222,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!(
                 "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
                 output.display()
+            );
+        }
+        Command::DeriveRepairMath {
+            k_source,
+            overhead_percent,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::evidence::{
+                SLACK_DECODE_V1, derive_repair_symbol_count_v1, loss_fraction_max_ppm_v1,
+            };
+            let r_repair = derive_repair_symbol_count_v1(k_source, overhead_percent);
+            let loss_fraction_max_ppm = loss_fraction_max_ppm_v1(k_source, r_repair);
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "repair_math",
+                "k_source": k_source,
+                "overhead_percent": overhead_percent,
+                "r_repair": r_repair,
+                "loss_fraction_max_ppm": loss_fraction_max_ppm,
+                "slack_decode": SLACK_DECODE_V1,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "derive-repair-math: k_source={k_source} overhead_percent={overhead_percent} → r_repair={r_repair} loss_fraction_max_ppm={loss_fraction_max_ppm}"
             );
         }
         Command::RenderDiff {

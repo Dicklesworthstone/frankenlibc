@@ -1,0 +1,52 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "derive-repair-math-cli-contract",
+  "bead": "bd-qxh1x",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "ad64b4cba4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::evidence::{derive_repair_symbol_count_v1, loss_fraction_max_ppm_v1} (bd-1es / bd-3a9) as a standalone CLI. These deterministic numeric helpers size repair symbols + bound the maximum tolerated loss fraction for the runtime_math evidence pipeline. Previously reachable only from Rust callers; the CLI bridge lets CI verify repair-math invariants from the shell.",
+  "subcommand_name": "derive-repair-math",
+  "binary_target": "harness",
+  "required_flags": [
+    "--k-source",
+    "--overhead-percent",
+    "--output"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::runtime_math::evidence::derive_repair_symbol_count_v1",
+    "frankenlibc_membrane::runtime_math::evidence::loss_fraction_max_ppm_v1"
+  ],
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "repair_math",
+    "required_fields": [
+      "kind",
+      "k_source",
+      "overhead_percent",
+      "r_repair",
+      "loss_fraction_max_ppm",
+      "slack_decode"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "r_repair_zero_when_k_source_zero": true,
+    "loss_fraction_zero_when_k_source_zero": true,
+    "loss_fraction_max_ppm_at_or_below_1_000_000": true,
+    "r_repair_at_or_above_slack_decode_when_k_source_positive": true,
+    "echoes_inputs_into_output_record": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "loss_fraction_above_ppm_cap",
+    "r_repair_below_slack_decode_with_positive_k_source",
+    "inputs_not_echoed"
+  ],
+  "summary": {
+    "bead": "bd-qxh1x",
+    "subcommand": "derive-repair-math",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
