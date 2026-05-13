@@ -104,17 +104,11 @@ impl Drop for ArenaShard {
     }
 }
 
-use std::sync::Arc;
-
-use crate::ebr::QuarantineEbr;
-
 /// Thread-safe generational allocation arena.
 pub struct AllocationArena {
     shards: Box<[Mutex<ArenaShard>]>,
     /// Global generation counter.
     next_generation: std::sync::atomic::AtomicU64,
-    /// Optional EBR collector for safe deferred deallocation.
-    collector: Option<Arc<QuarantineEbr>>,
 }
 
 /// Result of a successful allocation in the arena.
@@ -139,7 +133,13 @@ impl AllocationArena {
     /// Create a new empty arena.
     #[must_use]
     pub fn new() -> Self {
-        Self::new_with_collector(None)
+        let shards: Vec<Mutex<ArenaShard>> = (0..NUM_SHARDS)
+            .map(|_| Mutex::new(ArenaShard::new()))
+            .collect();
+        Self {
+            shards: shards.into_boxed_slice(),
+            next_generation: std::sync::atomic::AtomicU64::new(1),
+        }
     }
 
     /// Prepare for a fork by acquiring all shard locks.
@@ -151,19 +151,6 @@ impl AllocationArena {
             guards.push(shard.lock());
         }
         ArenaAtforkGuard { _guards: guards }
-    }
-
-    /// Create a new empty arena with an EBR collector.
-    #[must_use]
-    pub fn new_with_collector(collector: Option<Arc<QuarantineEbr>>) -> Self {
-        let shards: Vec<Mutex<ArenaShard>> = (0..NUM_SHARDS)
-            .map(|_| Mutex::new(ArenaShard::new()))
-            .collect();
-        Self {
-            shards: shards.into_boxed_slice(),
-            next_generation: std::sync::atomic::AtomicU64::new(1),
-            collector,
-        }
     }
 
     /// Allocate memory with fingerprint header and canary.
@@ -254,6 +241,11 @@ impl AllocationArena {
     ///
     /// Returns the action taken and any drained quarantine entries.
     ///
+    /// Drained entries have been removed from the arena's live/quarantine
+    /// indexes but their backing allocation has not been reclaimed yet. The
+    /// caller must retire or deallocate each drained entry exactly once after
+    /// any external ownership indexes have been updated.
+    ///
     /// @separation-pre: `Owns(slot(ptr)) * Owns(ArenaMeta)` where `ptr` is a candidate
     /// user pointer and non-arena memory is frame `F`.
     /// @separation-post: slot transitions to `Quarantined`/`Freed` variants with
@@ -314,28 +306,6 @@ impl AllocationArena {
 
             (canary_ok, drained)
         }; // shard lock is released here!
-
-        // Actually release memory for all drained entries outside the lock.
-        for entry in &drained {
-            let layout = std::alloc::Layout::from_size_align(entry.total_size, entry.align)
-                .expect("valid layout");
-
-            if let Some(collector) = &self.collector {
-                let raw_base = entry.raw_base;
-                // Defer deallocation until grace period completes.
-                collector.retire_quarantined(move || {
-                    // SAFETY: raw_base was allocated with this layout.
-                    unsafe {
-                        std::alloc::dealloc(raw_base as *mut u8, layout);
-                    }
-                });
-            } else {
-                // Fallback: immediate deallocation (risky if validation is concurrent).
-                unsafe {
-                    std::alloc::dealloc(entry.raw_base as *mut u8, layout);
-                }
-            }
-        }
 
         if canary_ok {
             (FreeResult::Freed, drained)
@@ -488,6 +458,22 @@ impl AllocationArena {
 
         drained
     }
+
+    /// Immediate deallocation of drained entries.
+    ///
+    /// SAFETY: Must only be called if `retire_quarantined` is not managing
+    /// this entry's grace period, and each entry must be reclaimed exactly once.
+    pub(crate) unsafe fn deallocate_drained(drained: &[QuarantineEntry]) {
+        for entry in drained {
+            let layout = std::alloc::Layout::from_size_align(entry.total_size, entry.align)
+                .expect("valid layout");
+            // SAFETY: the caller guarantees each drained entry came from this
+            // arena and has not already been handed to deferred reclamation.
+            unsafe {
+                std::alloc::dealloc(entry.raw_base as *mut u8, layout);
+            }
+        }
+    }
 }
 
 impl Default for AllocationArena {
@@ -514,6 +500,7 @@ pub enum FreeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn allocate_and_free_cycle() {
@@ -527,7 +514,10 @@ mod tests {
             std::ptr::write_bytes(ptr.ptr, 0xAB, 256);
         }
 
-        let (result, _) = arena.free(ptr.ptr);
+        let (result, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
         assert_eq!(result, FreeResult::Freed);
     }
 
@@ -536,10 +526,16 @@ mod tests {
         let arena = AllocationArena::new();
         let ptr = arena.allocate(64).expect("allocation should succeed");
 
-        let (first, _) = arena.free(ptr.ptr);
+        let (first, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
         assert_eq!(first, FreeResult::Freed);
 
-        let (second, _) = arena.free(ptr.ptr);
+        let (second, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
         assert_eq!(second, FreeResult::DoubleFree);
     }
 
@@ -588,7 +584,10 @@ mod tests {
             std::ptr::write_bytes(canary_ptr, 0xFF, CANARY_SIZE);
         }
 
-        let (result, _) = arena.free(ptr.ptr);
+        let (result, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
         assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
     }
 
@@ -602,8 +601,14 @@ mod tests {
         let s2 = arena.lookup(p2.ptr as usize).unwrap();
         assert!(s2.generation > s1.generation);
 
-        let _ = arena.free(p1.ptr);
-        let _ = arena.free(p2.ptr);
+        let (_, drained) = arena.free(p1.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        let (_, drained) = arena.free(p2.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
     }
 
     #[test]
@@ -615,6 +620,9 @@ mod tests {
         assert_eq!(before.state, SafetyState::Valid);
 
         let (result, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
         assert_eq!(result, FreeResult::Freed);
         assert!(drained.is_empty(), "small free should not force drain");
 
@@ -735,7 +743,10 @@ mod tests {
         assert_eq!(live_slot.state, SafetyState::Valid);
 
         // Free: slot transitions to Quarantined with bumped generation
-        let (result, _) = arena.free(ptr.ptr);
+        let (result, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
         assert_eq!(result, FreeResult::Freed);
 
         let freed_slot = arena.lookup(addr).expect("should find quarantined slot");
@@ -783,7 +794,10 @@ mod tests {
             );
             prev_gen = slot.generation;
 
-            let (result, _) = arena.free(ptr.ptr);
+            let (result, drained) = arena.free(ptr.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
             assert_eq!(result, FreeResult::Freed);
 
             let freed = arena.lookup(ptr.ptr as usize).expect("freed lookup");
@@ -812,13 +826,19 @@ mod tests {
         for _ in 0..10 {
             let ptr = arena.allocate(256).expect("alloc");
 
-            let (first, _) = arena.free(ptr.ptr);
+            let (first, drained) = arena.free(ptr.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
             assert_eq!(first, FreeResult::Freed);
 
             // Intervening allocation to test isolation
             let _ = arena.allocate(128);
 
-            let (second, _) = arena.free(ptr.ptr);
+            let (second, drained) = arena.free(ptr.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
             assert_eq!(
                 second,
                 FreeResult::DoubleFree,
@@ -850,7 +870,10 @@ mod tests {
         // Free in order
         let mut free_order = Vec::new();
         for &ptr in &ptrs {
-            let (result, _) = arena.free(ptr.ptr);
+            let (result, drained) = arena.free(ptr.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
             assert_eq!(result, FreeResult::Freed);
             free_order.push(ptr.ptr as usize);
         }
@@ -909,7 +932,10 @@ mod tests {
             if ptr.is_null() {
                 continue; // null might special-case
             }
-            let (result, _) = arena.free(ptr);
+            let (result, drained) = arena.free(ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
             assert_eq!(
                 result,
                 FreeResult::ForeignPointer,
@@ -919,11 +945,17 @@ mod tests {
 
         // Address well outside any allocation
         let far_away = (real_addr + 1_000_000) as *mut u8;
-        let (result, _) = arena.free(far_away);
+        let (result, drained) = arena.free(far_away);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
         assert_eq!(result, FreeResult::ForeignPointer);
 
         // Cleanup
-        let _ = arena.free(real.ptr);
+        let (_, drained) = arena.free(real.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
     }
 
     #[test]
@@ -1048,65 +1080,6 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // INTEGRATION: Arena + EBR composition
-    //
-    // Verifies that the arena correctly integrates with the
-    // epoch-based reclamation collector for safe deferred cleanup.
-    // ═══════════════════════════════════════════════════════════════
-
-    #[test]
-    fn arena_with_ebr_collector_allocate_and_free() {
-        let ebr = Arc::new(crate::ebr::QuarantineEbr::new(2));
-        let arena = AllocationArena::new_with_collector(Some(Arc::clone(&ebr)));
-
-        let ptr = arena.allocate(128).expect("alloc should succeed");
-        assert!(!ptr.ptr.is_null());
-
-        let slot = arena
-            .lookup(ptr.ptr as usize)
-            .expect("should find allocation");
-        assert_eq!(slot.state, SafetyState::Valid);
-        assert_eq!(slot.user_size, 128);
-
-        let (result, _) = arena.free(ptr.ptr);
-        assert_eq!(result, FreeResult::Freed);
-
-        let freed_slot = arena.lookup(ptr.ptr as usize).expect("quarantined slot");
-        assert_eq!(freed_slot.state, SafetyState::Quarantined);
-    }
-
-    #[test]
-    fn arena_with_ebr_multiple_alloc_free_cycles() {
-        let ebr = Arc::new(crate::ebr::QuarantineEbr::new(1));
-        let arena = AllocationArena::new_with_collector(Some(Arc::clone(&ebr)));
-
-        let mut ptrs = Vec::new();
-        for size in [16, 64, 256, 1024, 4096] {
-            let ptr = arena.allocate(size).expect("alloc");
-            ptrs.push((ptr, size));
-        }
-
-        // Verify all allocations
-        for &(ptr, size) in &ptrs {
-            let slot = arena.lookup(ptr.ptr as usize).expect("lookup");
-            assert_eq!(slot.user_size, size);
-            assert_eq!(slot.state, SafetyState::Valid);
-        }
-
-        // Free all
-        for &(ptr, _) in &ptrs {
-            let (result, _) = arena.free(ptr.ptr);
-            assert_eq!(result, FreeResult::Freed);
-        }
-
-        // All should be quarantined
-        for &(ptr, _) in &ptrs {
-            let slot = arena.lookup(ptr.ptr as usize).expect("freed lookup");
-            assert_eq!(slot.state, SafetyState::Quarantined);
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
     // INTEGRATION: Arena free -> TLS cache epoch invalidation
     //
     // Verifies that freeing an allocation in the arena correctly
@@ -1144,7 +1117,10 @@ mod tests {
         }
 
         // Free the allocation - this bumps the TLS cache epoch
-        let (result, _) = arena.free(ptr.ptr);
+        let (result, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
         assert_eq!(result, FreeResult::Freed);
 
         let epoch_after = current_epoch();
@@ -1188,7 +1164,10 @@ mod tests {
         }
 
         // Free bumps epoch
-        let (_, _) = arena.free(ptr.ptr);
+        let (_, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
 
         // Re-insert with new epoch (simulating re-validation after free)
         {
@@ -1238,7 +1217,10 @@ mod tests {
                 let mut prev_epoch = 0u64;
                 for _ in 0..200 {
                     let ptr = arena.allocate(64).expect("alloc");
-                    let (result, _) = arena.free(ptr.ptr);
+                    let (result, drained) = arena.free(ptr.ptr);
+                    unsafe {
+                        AllocationArena::deallocate_drained(&drained);
+                    }
                     assert_eq!(result, FreeResult::Freed);
 
                     // Epoch must be monotonically non-decreasing
@@ -1291,7 +1273,10 @@ mod tests {
                     );
                     prev_gen = slot.generation;
 
-                    let (result, _) = arena.free(ptr.ptr);
+                    let (result, drained) = arena.free(ptr.ptr);
+                    unsafe {
+                        AllocationArena::deallocate_drained(&drained);
+                    }
                     assert_eq!(result, FreeResult::Freed);
 
                     let freed = arena.lookup(ptr.ptr as usize).expect("freed lookup");

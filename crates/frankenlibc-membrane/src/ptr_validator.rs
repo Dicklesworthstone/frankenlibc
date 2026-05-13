@@ -240,7 +240,7 @@ pub struct ValidationPipeline {
     /// Bloom filter for quick ownership check.
     pub bloom: PointerBloomFilter,
     /// Page-level ownership oracle.
-    pub page_oracle: PageOracle,
+    pub page_oracle: std::sync::Arc<PageOracle>,
     /// Runtime math kernel for online validation-depth/risk decisions.
     pub runtime_math: RuntimeMathKernel,
     /// EBR collector for safe deferred deallocation.
@@ -298,9 +298,9 @@ impl ValidationPipeline {
         let logging_enabled = std::env::var_os("FRANKENLIBC_LOG").is_some();
         let collector = std::sync::Arc::new(crate::ebr::QuarantineEbr::new(4));
         Self {
-            arena: AllocationArena::new_with_collector(Some(std::sync::Arc::clone(&collector))),
+            arena: AllocationArena::new(),
             bloom: PointerBloomFilter::new(),
-            page_oracle: PageOracle::new(),
+            page_oracle: std::sync::Arc::new(PageOracle::new()),
             runtime_math: RuntimeMathKernel::new(),
             collector,
             validation_logging_enabled: AtomicBool::new(logging_enabled),
@@ -1783,7 +1783,16 @@ impl ValidationPipeline {
         let (result, drained) = self.arena.free(ptr);
 
         for entry in drained {
-            self.deregister_allocation(entry.raw_base, entry.total_size);
+            let oracle = std::sync::Arc::clone(&self.page_oracle);
+
+            self.collector.retire_quarantined(move || {
+                oracle.remove(entry.raw_base, entry.total_size);
+                // SAFETY: this drained entry was removed from the arena exactly
+                // once, and reclamation runs after the EBR grace period.
+                unsafe {
+                    AllocationArena::deallocate_drained(std::slice::from_ref(&entry));
+                }
+            });
         }
 
         result
@@ -2140,6 +2149,33 @@ mod tests {
         let outcome = pipeline.validate(addr);
         assert!(!outcome.can_read());
         assert!(!outcome.can_write());
+    }
+
+    #[test]
+    fn drained_free_defers_page_oracle_removal_until_ebr_reclaim() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(64 * 1024 * 1024).expect("large alloc");
+        let addr = ptr as usize;
+
+        assert!(
+            pipeline.page_oracle.query(addr),
+            "allocated pointer should be page-owned before free"
+        );
+        assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+
+        assert!(
+            pipeline.page_oracle.query(addr),
+            "drained allocation should stay page-owned until deferred reclaim runs"
+        );
+
+        for _ in 0..8 {
+            let _ = pipeline.collector.try_advance();
+        }
+
+        assert!(
+            !pipeline.page_oracle.query(addr),
+            "page ownership should be removed when deferred reclamation executes"
+        );
     }
 
     #[test]
