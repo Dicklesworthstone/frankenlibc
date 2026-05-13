@@ -3,26 +3,26 @@
   "campaigns": [
     {
       "campaign_id": "fcq-unistd-process-filesystem",
-      "current_coverage_pct": 20.89,
+      "current_coverage_pct": 22.51,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 22.51,
+      "expected_coverage_after_first_wave_pct": 24.12,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "fchdir",
-        "fchmod",
-        "fchmodat",
-        "fchmodat2",
-        "fchown",
-        "fchownat",
-        "fcntl64",
-        "fcrypt",
-        "fdatasync",
-        "fexecve",
-        "fgetgrent",
-        "fgetgrent_r"
+        "fgetpwent",
+        "fgetpwent_r",
+        "fgetspent",
+        "fgetspent_r",
+        "fgetxattr",
+        "flistxattr",
+        "flock",
+        "fmtmsg",
+        "forkpty",
+        "fpathconf",
+        "freeifaddrs",
+        "fremovexattr"
       ],
       "module": "unistd_abi",
       "next_step": "Add strict/hardened fixtures for process, stat-family, and exit-path symbols before broad syscall tail work.",
@@ -46,9 +46,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "process control, filesystem metadata, cwd, exec, exit, and low-level unistd wrappers",
-      "target_covered": 155,
+      "target_covered": 167,
       "target_total": 742,
-      "target_uncovered": 587,
+      "target_uncovered": 575,
       "title": "unistd/process/filesystem syscall fixture wave",
       "workload_domains": [
         "shell_coreutils",
@@ -968,7 +968,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3108,
+    "all_uncovered_target_symbols": 3096,
     "campaign_count": 11,
     "covered_modules": [
       "fortify_abi",
@@ -1000,7 +1000,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2754,
+    "selected_target_uncovered_symbols": 2742,
     "total_first_wave_fixture_count": 115
   }
 }
