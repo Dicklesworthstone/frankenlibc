@@ -36,6 +36,17 @@ fn temp_report_path(label: &str) -> std::path::PathBuf {
     ))
 }
 
+fn temp_dir_path(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before Unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "frankenlibc-per-symbol-{label}-{}-{nanos}",
+        std::process::id()
+    ))
+}
+
 #[test]
 fn per_symbol_report_generates_successfully() {
     let root = repo_root();
@@ -223,5 +234,99 @@ fn per_symbol_report_reproducible() {
         data1["report_hash"].as_str(),
         data2["report_hash"].as_str(),
         "Report hash changed on regeneration"
+    );
+}
+
+#[test]
+fn per_symbol_validate_only_does_not_rewrite_canonical_report() {
+    let root = repo_root();
+    let report_path = temp_report_path("validate-only-canonical");
+    let generated_path = temp_report_path("validate-only-generated");
+
+    let output = Command::new("bash")
+        .arg(root.join("scripts/check_per_symbol_fixture_tests.sh"))
+        .env("FRANKENLIBC_PER_SYMBOL_FIXTURE_REPORT", &report_path)
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute per-symbol fixture gate");
+    assert!(
+        output.status.success(),
+        "default-mode gate failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let before = std::fs::read(&report_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", report_path.display(), e));
+
+    let output = Command::new("bash")
+        .arg(root.join("scripts/check_per_symbol_fixture_tests.sh"))
+        .arg("--validate-only")
+        .env("FRANKENLIBC_PER_SYMBOL_FIXTURE_REPORT", &report_path)
+        .env(
+            "FRANKENLIBC_PER_SYMBOL_FIXTURE_GENERATED_REPORT",
+            &generated_path,
+        )
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute per-symbol fixture gate");
+    assert!(
+        output.status.success(),
+        "validate-only gate failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let after = std::fs::read(&report_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", report_path.display(), e));
+    assert_eq!(
+        before, after,
+        "--validate-only must not rewrite the canonical per-symbol report"
+    );
+    assert!(
+        generated_path.exists(),
+        "--validate-only should write the regenerated report to the configured scratch path"
+    );
+}
+
+#[test]
+fn per_symbol_validate_only_rejects_real_canonical_drift() {
+    let root = repo_root();
+    let temp_dir = temp_dir_path("validate-only-drift");
+    std::fs::create_dir_all(&temp_dir)
+        .unwrap_or_else(|e| panic!("Failed to create {}: {}", temp_dir.display(), e));
+
+    let canonical_copy = temp_dir.join("per_symbol_fixture_tests.stale.v1.json");
+    let generated_path = temp_dir.join("per_symbol_fixture_tests.generated.v1.json");
+    let mut stale = load_json(&root.join("tests/conformance/per_symbol_fixture_tests.v1.json"));
+    stale["summary"]["total_cases"] = serde_json::json!(0);
+    std::fs::write(
+        &canonical_copy,
+        format!("{}\n", serde_json::to_string_pretty(&stale).unwrap()),
+    )
+    .unwrap_or_else(|e| panic!("Failed to write {}: {}", canonical_copy.display(), e));
+
+    let output = Command::new("bash")
+        .arg(root.join("scripts/check_per_symbol_fixture_tests.sh"))
+        .arg("--validate-only")
+        .env("FRANKENLIBC_PER_SYMBOL_FIXTURE_REPORT", &canonical_copy)
+        .env(
+            "FRANKENLIBC_PER_SYMBOL_FIXTURE_GENERATED_REPORT",
+            &generated_path,
+        )
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute per-symbol fixture gate");
+    assert!(
+        !output.status.success(),
+        "validate-only unexpectedly accepted stale canonical report:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("generated per-symbol fixture report differs from canonical report"),
+        "drift failure should identify the canonical/generated mismatch:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }

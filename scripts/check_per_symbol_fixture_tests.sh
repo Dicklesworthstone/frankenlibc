@@ -5,17 +5,94 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPORT="$REPO_ROOT/tests/conformance/per_symbol_fixture_tests.v1.json"
-BASELINE="$REPO_ROOT/tests/conformance/conformance_coverage_baseline.v1.json"
+CANONICAL_REPORT="${FRANKENLIBC_PER_SYMBOL_FIXTURE_REPORT:-$REPO_ROOT/tests/conformance/per_symbol_fixture_tests.v1.json}"
+GENERATED_REPORT="${FRANKENLIBC_PER_SYMBOL_FIXTURE_GENERATED_REPORT:-$REPO_ROOT/target/conformance/per_symbol_fixture_tests.generated.v1.json}"
+BASELINE="${FRANKENLIBC_PER_SYMBOL_FIXTURE_BASELINE:-$REPO_ROOT/tests/conformance/conformance_coverage_baseline.v1.json}"
+MODE="regenerate"
+
+usage() {
+    cat <<'USAGE'
+Usage: scripts/check_per_symbol_fixture_tests.sh [--validate-only]
+
+Modes:
+  default          Regenerate tests/conformance/per_symbol_fixture_tests.v1.json in place.
+  --validate-only  Regenerate to target/conformance, compare against the canonical
+                   report ignoring volatile generated_at metadata, and leave the
+                   canonical report unchanged.
+
+Environment overrides:
+  FRANKENLIBC_PER_SYMBOL_FIXTURE_REPORT
+  FRANKENLIBC_PER_SYMBOL_FIXTURE_GENERATED_REPORT
+  FRANKENLIBC_PER_SYMBOL_FIXTURE_BASELINE
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --validate-only)
+            MODE="validate-only"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "FAIL: unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
 
 echo "=== Per-Symbol Fixture Tests Gate (bd-ldj.5) ==="
 
-echo "--- Generating per-symbol fixture test report ---"
+if [ "$MODE" = "validate-only" ]; then
+    REPORT="$GENERATED_REPORT"
+    echo "--- Generating per-symbol fixture test report for validation ---"
+    mkdir -p "$(dirname "$GENERATED_REPORT")"
+else
+    REPORT="$CANONICAL_REPORT"
+    echo "--- Generating per-symbol fixture test report ---"
+fi
+
 python3 "$SCRIPT_DIR/generate_per_symbol_fixture_tests.py" -o "$REPORT" 2>&1 || true
 
 if [ ! -f "$REPORT" ]; then
     echo "FAIL: per-symbol fixture test report not generated"
     exit 1
+fi
+
+if [ "$MODE" = "validate-only" ]; then
+    if [ ! -f "$CANONICAL_REPORT" ]; then
+        echo "FAIL: canonical per-symbol fixture test report missing: $CANONICAL_REPORT"
+        exit 1
+    fi
+
+    python3 - "$CANONICAL_REPORT" "$GENERATED_REPORT" <<'PY'
+import json
+import sys
+
+canonical_path = sys.argv[1]
+generated_path = sys.argv[2]
+
+with open(canonical_path, encoding="utf-8") as f:
+    canonical = json.load(f)
+with open(generated_path, encoding="utf-8") as f:
+    generated = json.load(f)
+
+canonical.pop("generated_at", None)
+generated.pop("generated_at", None)
+
+if canonical != generated:
+    print("FAIL: generated per-symbol fixture report differs from canonical report")
+    print(f"  canonical: {canonical_path}")
+    print(f"  generated: {generated_path}")
+    print("  volatile field ignored: generated_at")
+    sys.exit(1)
+
+print("PASS: generated report matches canonical report ignoring generated_at")
+PY
 fi
 
 python3 - "$REPORT" "$BASELINE" <<'PY'
