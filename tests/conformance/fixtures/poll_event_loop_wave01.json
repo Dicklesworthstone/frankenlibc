@@ -1,0 +1,446 @@
+{
+  "version": "v1",
+  "family": "poll_event_loop_wave01",
+  "captured_at": "2026-05-13T07:45:00Z",
+  "description": "Strict/hardened deterministic poll/event-loop fixture wave using class-only outcomes for epoll, eventfd, ppoll, prctl, pselect, sched_yield, and timerfd without recording descriptor numbers, thread ids, timestamps, stderr bytes, scheduler timing, or process-global counters.",
+  "spec_reference": "Linux/POSIX epoll_create, epoll_create1, epoll_ctl, epoll_pwait, epoll_wait, eventfd, ppoll, prctl, pselect, sched_yield, timerfd_create, and timerfd_gettime event-loop semantics",
+  "campaign": {
+    "bead": "bd-kgy3r.2",
+    "campaign_id": "fcq-poll-event-loop",
+    "wave_id": "wave-01-poll-event-loop",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture",
+    "first_wave_symbols": [
+      "epoll_create",
+      "epoll_create1",
+      "epoll_ctl",
+      "epoll_pwait",
+      "epoll_wait",
+      "eventfd",
+      "ppoll",
+      "prctl",
+      "pselect",
+      "sched_yield",
+      "timerfd_create",
+      "timerfd_gettime"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "epoll_create_valid_size_strict",
+      "function": "epoll_create",
+      "spec_section": "Linux epoll_create",
+      "inputs": {
+        "symbol": "epoll_create",
+        "scenario": "valid_size_class",
+        "size": 1,
+        "expected": "EPOLL_CREATE_FD_CREATED",
+        "oracle_source": "class-only epoll descriptor creation with cleanup",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=epoll_create;mode=strict;expected=EPOLL_CREATE_FD_CREATED;actual=EPOLL_CREATE_FD_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "epoll_create_valid_size_hardened",
+      "function": "epoll_create",
+      "spec_section": "Linux epoll_create",
+      "inputs": {
+        "symbol": "epoll_create",
+        "scenario": "valid_size_class",
+        "size": 1,
+        "expected": "EPOLL_CREATE_FD_CREATED",
+        "oracle_source": "class-only epoll descriptor creation with cleanup",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=epoll_create;mode=hardened;expected=EPOLL_CREATE_FD_CREATED;actual=EPOLL_CREATE_FD_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "epoll_create1_zero_flags_strict",
+      "function": "epoll_create1",
+      "spec_section": "Linux epoll_create1",
+      "inputs": {
+        "symbol": "epoll_create1",
+        "scenario": "zero_flags_class",
+        "flags": 0,
+        "expected": "EPOLL_CREATE1_FD_CREATED",
+        "oracle_source": "class-only epoll descriptor creation with cleanup",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=epoll_create1;mode=strict;expected=EPOLL_CREATE1_FD_CREATED;actual=EPOLL_CREATE1_FD_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "epoll_create1_zero_flags_hardened",
+      "function": "epoll_create1",
+      "spec_section": "Linux epoll_create1",
+      "inputs": {
+        "symbol": "epoll_create1",
+        "scenario": "zero_flags_class",
+        "flags": 0,
+        "expected": "EPOLL_CREATE1_FD_CREATED",
+        "oracle_source": "class-only epoll descriptor creation with cleanup",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=epoll_create1;mode=hardened;expected=EPOLL_CREATE1_FD_CREATED;actual=EPOLL_CREATE1_FD_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "epoll_ctl_invalid_descriptors_strict",
+      "function": "epoll_ctl",
+      "spec_section": "Linux epoll_ctl",
+      "inputs": {
+        "symbol": "epoll_ctl",
+        "scenario": "invalid_descriptors_class",
+        "epfd": -1,
+        "fd": -1,
+        "op": 1,
+        "events": 1,
+        "token": 0,
+        "expected": "EPOLL_CTL_ERROR_EBADF",
+        "oracle_source": "class-only invalid descriptor error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=epoll_ctl;mode=strict;expected=EPOLL_CTL_ERROR_EBADF;actual=EPOLL_CTL_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "epoll_ctl_invalid_descriptors_hardened",
+      "function": "epoll_ctl",
+      "spec_section": "Linux epoll_ctl",
+      "inputs": {
+        "symbol": "epoll_ctl",
+        "scenario": "invalid_descriptors_class",
+        "epfd": -1,
+        "fd": -1,
+        "op": 1,
+        "events": 1,
+        "token": 0,
+        "expected": "EPOLL_CTL_ERROR_EBADF",
+        "oracle_source": "class-only invalid descriptor error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=epoll_ctl;mode=hardened;expected=EPOLL_CTL_ERROR_EBADF;actual=EPOLL_CTL_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "epoll_pwait_invalid_descriptor_strict",
+      "function": "epoll_pwait",
+      "spec_section": "Linux epoll_pwait",
+      "inputs": {
+        "symbol": "epoll_pwait",
+        "scenario": "invalid_descriptor_class",
+        "epfd": -1,
+        "maxevents": 1,
+        "timeout": 0,
+        "expected": "EPOLL_PWAIT_ERROR_EBADF",
+        "oracle_source": "class-only invalid descriptor error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=epoll_pwait;mode=strict;expected=EPOLL_PWAIT_ERROR_EBADF;actual=EPOLL_PWAIT_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "epoll_pwait_invalid_descriptor_hardened",
+      "function": "epoll_pwait",
+      "spec_section": "Linux epoll_pwait",
+      "inputs": {
+        "symbol": "epoll_pwait",
+        "scenario": "invalid_descriptor_class",
+        "epfd": -1,
+        "maxevents": 1,
+        "timeout": 0,
+        "expected": "EPOLL_PWAIT_ERROR_EBADF",
+        "oracle_source": "class-only invalid descriptor error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=epoll_pwait;mode=hardened;expected=EPOLL_PWAIT_ERROR_EBADF;actual=EPOLL_PWAIT_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "epoll_wait_invalid_descriptor_strict",
+      "function": "epoll_wait",
+      "spec_section": "Linux epoll_wait",
+      "inputs": {
+        "symbol": "epoll_wait",
+        "scenario": "invalid_descriptor_class",
+        "epfd": -1,
+        "maxevents": 1,
+        "timeout": 0,
+        "expected": "EPOLL_WAIT_ERROR_EBADF",
+        "oracle_source": "class-only invalid descriptor error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=epoll_wait;mode=strict;expected=EPOLL_WAIT_ERROR_EBADF;actual=EPOLL_WAIT_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "epoll_wait_invalid_descriptor_hardened",
+      "function": "epoll_wait",
+      "spec_section": "Linux epoll_wait",
+      "inputs": {
+        "symbol": "epoll_wait",
+        "scenario": "invalid_descriptor_class",
+        "epfd": -1,
+        "maxevents": 1,
+        "timeout": 0,
+        "expected": "EPOLL_WAIT_ERROR_EBADF",
+        "oracle_source": "class-only invalid descriptor error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=epoll_wait;mode=hardened;expected=EPOLL_WAIT_ERROR_EBADF;actual=EPOLL_WAIT_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "eventfd_zero_value_strict",
+      "function": "eventfd",
+      "spec_section": "Linux eventfd",
+      "inputs": {
+        "symbol": "eventfd",
+        "scenario": "zero_value_class",
+        "initval": 0,
+        "flags": 0,
+        "expected": "EVENTFD_FD_CREATED",
+        "oracle_source": "class-only event descriptor creation with cleanup",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=eventfd;mode=strict;expected=EVENTFD_FD_CREATED;actual=EVENTFD_FD_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "eventfd_zero_value_hardened",
+      "function": "eventfd",
+      "spec_section": "Linux eventfd",
+      "inputs": {
+        "symbol": "eventfd",
+        "scenario": "zero_value_class",
+        "initval": 0,
+        "flags": 0,
+        "expected": "EVENTFD_FD_CREATED",
+        "oracle_source": "class-only event descriptor creation with cleanup",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=eventfd;mode=hardened;expected=EVENTFD_FD_CREATED;actual=EVENTFD_FD_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ppoll_zero_timeout_strict",
+      "function": "ppoll",
+      "spec_section": "POSIX ppoll",
+      "inputs": {
+        "symbol": "ppoll",
+        "scenario": "empty_set_zero_timeout_class",
+        "timeout_sec": 0,
+        "timeout_nsec": 0,
+        "expected": "PPOLL_RC_0",
+        "oracle_source": "class-only empty set zero-timeout result",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=ppoll;mode=strict;expected=PPOLL_RC_0;actual=PPOLL_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ppoll_zero_timeout_hardened",
+      "function": "ppoll",
+      "spec_section": "POSIX ppoll",
+      "inputs": {
+        "symbol": "ppoll",
+        "scenario": "empty_set_zero_timeout_class",
+        "timeout_sec": 0,
+        "timeout_nsec": 0,
+        "expected": "PPOLL_RC_0",
+        "oracle_source": "class-only empty set zero-timeout result",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=ppoll;mode=hardened;expected=PPOLL_RC_0;actual=PPOLL_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "prctl_invalid_option_strict",
+      "function": "prctl",
+      "spec_section": "Linux prctl",
+      "inputs": {
+        "symbol": "prctl",
+        "scenario": "invalid_option_class",
+        "option": -1,
+        "expected": "PRCTL_ERROR_EINVAL",
+        "oracle_source": "class-only invalid option error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=prctl;mode=strict;expected=PRCTL_ERROR_EINVAL;actual=PRCTL_ERROR_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "prctl_invalid_option_hardened",
+      "function": "prctl",
+      "spec_section": "Linux prctl",
+      "inputs": {
+        "symbol": "prctl",
+        "scenario": "invalid_option_class",
+        "option": -1,
+        "expected": "PRCTL_ERROR_EINVAL",
+        "oracle_source": "class-only invalid option error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=prctl;mode=hardened;expected=PRCTL_ERROR_EINVAL;actual=PRCTL_ERROR_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "pselect_zero_timeout_strict",
+      "function": "pselect",
+      "spec_section": "POSIX pselect",
+      "inputs": {
+        "symbol": "pselect",
+        "scenario": "empty_set_zero_timeout_class",
+        "nfds": 0,
+        "timeout_sec": 0,
+        "timeout_nsec": 0,
+        "expected": "PSELECT_RC_0",
+        "oracle_source": "class-only empty set zero-timeout result",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=pselect;mode=strict;expected=PSELECT_RC_0;actual=PSELECT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pselect_zero_timeout_hardened",
+      "function": "pselect",
+      "spec_section": "POSIX pselect",
+      "inputs": {
+        "symbol": "pselect",
+        "scenario": "empty_set_zero_timeout_class",
+        "nfds": 0,
+        "timeout_sec": 0,
+        "timeout_nsec": 0,
+        "expected": "PSELECT_RC_0",
+        "oracle_source": "class-only empty set zero-timeout result",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=pselect;mode=hardened;expected=PSELECT_RC_0;actual=PSELECT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sched_yield_success_strict",
+      "function": "sched_yield",
+      "spec_section": "POSIX sched_yield",
+      "inputs": {
+        "symbol": "sched_yield",
+        "scenario": "success_class",
+        "expected": "SCHED_YIELD_RC_0",
+        "oracle_source": "class-only success result without timing capture",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=sched_yield;mode=strict;expected=SCHED_YIELD_RC_0;actual=SCHED_YIELD_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sched_yield_success_hardened",
+      "function": "sched_yield",
+      "spec_section": "POSIX sched_yield",
+      "inputs": {
+        "symbol": "sched_yield",
+        "scenario": "success_class",
+        "expected": "SCHED_YIELD_RC_0",
+        "oracle_source": "class-only success result without timing capture",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=sched_yield;mode=hardened;expected=SCHED_YIELD_RC_0;actual=SCHED_YIELD_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "timerfd_create_monotonic_strict",
+      "function": "timerfd_create",
+      "spec_section": "Linux timerfd_create",
+      "inputs": {
+        "symbol": "timerfd_create",
+        "scenario": "monotonic_clock_class",
+        "clockid": 1,
+        "flags": 0,
+        "expected": "TIMERFD_CREATE_FD_CREATED",
+        "oracle_source": "class-only timer descriptor creation with cleanup",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=timerfd_create;mode=strict;expected=TIMERFD_CREATE_FD_CREATED;actual=TIMERFD_CREATE_FD_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "timerfd_create_monotonic_hardened",
+      "function": "timerfd_create",
+      "spec_section": "Linux timerfd_create",
+      "inputs": {
+        "symbol": "timerfd_create",
+        "scenario": "monotonic_clock_class",
+        "clockid": 1,
+        "flags": 0,
+        "expected": "TIMERFD_CREATE_FD_CREATED",
+        "oracle_source": "class-only timer descriptor creation with cleanup",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=timerfd_create;mode=hardened;expected=TIMERFD_CREATE_FD_CREATED;actual=TIMERFD_CREATE_FD_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "timerfd_gettime_invalid_descriptor_strict",
+      "function": "timerfd_gettime",
+      "spec_section": "Linux timerfd_gettime",
+      "inputs": {
+        "symbol": "timerfd_gettime",
+        "scenario": "invalid_descriptor_class",
+        "fd": -1,
+        "expected": "TIMERFD_GETTIME_ERROR_EBADF",
+        "oracle_source": "class-only invalid descriptor error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=timerfd_gettime;mode=strict;expected=TIMERFD_GETTIME_ERROR_EBADF;actual=TIMERFD_GETTIME_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "timerfd_gettime_invalid_descriptor_hardened",
+      "function": "timerfd_gettime",
+      "spec_section": "Linux timerfd_gettime",
+      "inputs": {
+        "symbol": "timerfd_gettime",
+        "scenario": "invalid_descriptor_class",
+        "fd": -1,
+        "expected": "TIMERFD_GETTIME_ERROR_EBADF",
+        "oracle_source": "class-only invalid descriptor error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=timerfd_gettime;mode=hardened;expected=TIMERFD_GETTIME_ERROR_EBADF;actual=TIMERFD_GETTIME_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    }
+  ]
+}

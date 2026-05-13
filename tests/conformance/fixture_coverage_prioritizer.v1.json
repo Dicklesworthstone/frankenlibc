@@ -285,26 +285,15 @@
     },
     {
       "campaign_id": "fcq-poll-event-loop",
-      "current_coverage_pct": 13.33,
+      "current_coverage_pct": 93.33,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 93.33,
-      "first_wave_fixture_count": 12,
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "first_wave_fixture_count": 1,
       "first_wave_symbols": [
-        "epoll_create",
-        "epoll_create1",
-        "epoll_ctl",
-        "epoll_pwait",
-        "epoll_wait",
-        "eventfd",
-        "ppoll",
-        "prctl",
-        "pselect",
-        "sched_yield",
-        "timerfd_create",
-        "timerfd_gettime"
+        "timerfd_settime"
       ],
       "module": "poll_abi",
       "next_step": "Add deterministic timeout, readiness, invalid-fd, and mode-pair cases for event-loop syscalls.",
@@ -317,20 +306,20 @@
         "timeout_policy"
       ],
       "scores": {
-        "coverage_gap_score": 13,
+        "coverage_gap_score": 1,
         "feature_gap_risk_score": 0,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 3,
         "parity_risk_score": 4,
-        "priority_score": 2163,
+        "priority_score": 2151,
         "semantic_risk_score": 0,
         "workload_risk_score": 5
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "poll, select, epoll, eventfd, timerfd, pselect, ppoll, and scheduler-yield contracts",
-      "target_covered": 2,
+      "target_covered": 14,
       "target_total": 15,
-      "target_uncovered": 13,
+      "target_uncovered": 1,
       "title": "poll/epoll/eventfd/timerfd fixture wave",
       "workload_domains": [
         "threaded_services",
@@ -1107,7 +1096,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3483,
+    "all_uncovered_target_symbols": 3471,
     "campaign_count": 15,
     "covered_modules": [
       "fortify_abi",
@@ -1143,7 +1132,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3129,
-    "total_first_wave_fixture_count": 174
+    "selected_target_uncovered_symbols": 3117,
+    "total_first_wave_fixture_count": 163
   }
 }

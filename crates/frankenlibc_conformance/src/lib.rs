@@ -916,6 +916,9 @@ pub fn execute_fixture_case(
         "telldir" => execute_telldir_case(inputs, mode),
         "dirfd" => execute_dirfd_case(inputs, mode),
         // poll ops
+        "epoll_create" | "epoll_create1" | "epoll_ctl" | "epoll_pwait" | "epoll_wait"
+        | "eventfd" | "ppoll" | "prctl" | "pselect" | "sched_yield" | "timerfd_create"
+        | "timerfd_gettime" => execute_poll_event_loop_wave01_case(function, inputs, mode),
         "poll" => execute_poll_case(inputs, mode),
         "select" => execute_select_case(inputs, mode),
         // signal ops
@@ -18181,6 +18184,296 @@ fn execute_select_case(
     };
 
     Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_poll_event_loop_wave01_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let expected = parse_string(inputs, "expected")?;
+    let actual = match function {
+        "epoll_create" => poll_event_loop_epoll_create_actual(inputs),
+        "epoll_create1" => poll_event_loop_epoll_create1_actual(inputs),
+        "epoll_ctl" => poll_event_loop_epoll_ctl_actual(inputs),
+        "epoll_pwait" => poll_event_loop_epoll_pwait_actual(inputs),
+        "epoll_wait" => poll_event_loop_epoll_wait_actual(inputs),
+        "eventfd" => poll_event_loop_eventfd_actual(inputs),
+        "ppoll" => poll_event_loop_ppoll_actual(inputs),
+        "prctl" => poll_event_loop_prctl_actual(inputs),
+        "pselect" => poll_event_loop_pselect_actual(inputs),
+        "sched_yield" => poll_event_loop_sched_yield_actual(),
+        "timerfd_create" => poll_event_loop_timerfd_create_actual(inputs),
+        "timerfd_gettime" => poll_event_loop_timerfd_gettime_actual(inputs),
+        other => return Err(format!("unsupported poll/event-loop wave symbol: {other}")),
+    }?;
+
+    Ok(non_host_execution(poll_event_loop_wave01_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn poll_event_loop_wave01_log(symbol: &str, mode: &str, expected: &str, actual: &str) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "poll_event_loop_class_mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn poll_event_loop_reset_errno() {
+    unsafe {
+        frankenlibc_abi::errno_abi::set_abi_errno(0);
+    }
+}
+
+fn poll_event_loop_errno() -> i32 {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+fn poll_event_loop_errno_class(errno: i32) -> &'static str {
+    match errno {
+        libc::EBADF => "EBADF",
+        libc::EFAULT => "EFAULT",
+        libc::EINVAL => "EINVAL",
+        libc::ENOMEM => "ENOMEM",
+        libc::EPERM => "EPERM",
+        libc::ENOSYS => "ENOSYS",
+        _ => "OTHER",
+    }
+}
+
+fn poll_event_loop_close_fd(fd: c_int) {
+    if fd >= 0 {
+        unsafe {
+            libc::close(fd);
+        }
+    }
+}
+
+fn poll_event_loop_fd_class(prefix: &str, fd: c_int) -> String {
+    if fd >= 0 {
+        poll_event_loop_close_fd(fd);
+        format!("{prefix}_FD_CREATED")
+    } else {
+        let errno = poll_event_loop_errno_class(poll_event_loop_errno());
+        format!("{prefix}_ERROR_{errno}")
+    }
+}
+
+fn poll_event_loop_epoll_create_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let size = parse_i32(inputs, "size")?;
+    poll_event_loop_reset_errno();
+    let fd = unsafe { frankenlibc_abi::poll_abi::epoll_create(size) };
+    Ok(poll_event_loop_fd_class("EPOLL_CREATE", fd))
+}
+
+fn poll_event_loop_epoll_create1_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let flags = parse_i32(inputs, "flags")?;
+    poll_event_loop_reset_errno();
+    let fd = unsafe { frankenlibc_abi::poll_abi::epoll_create1(flags) };
+    Ok(poll_event_loop_fd_class("EPOLL_CREATE1", fd))
+}
+
+fn poll_event_loop_epoll_ctl_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let epfd = parse_i32(inputs, "epfd")?;
+    let op = parse_i32(inputs, "op")?;
+    let fd = parse_i32(inputs, "fd")?;
+    let mut event = libc::epoll_event {
+        events: inputs
+            .get("events")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(libc::EPOLLIN as u64) as u32,
+        u64: inputs
+            .get("token")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+    };
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::poll_abi::epoll_ctl(epfd, op, fd, &mut event) };
+    if rc == 0 {
+        Ok(String::from("EPOLL_CTL_RC_0"))
+    } else {
+        Ok(format!(
+            "EPOLL_CTL_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+fn poll_event_loop_epoll_wait_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let epfd = parse_i32(inputs, "epfd")?;
+    let maxevents = parse_i32(inputs, "maxevents")?;
+    let timeout = parse_i32(inputs, "timeout")?;
+    let mut event = libc::epoll_event { events: 0, u64: 0 };
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::poll_abi::epoll_wait(epfd, &mut event, maxevents, timeout) };
+    if rc >= 0 {
+        Ok(format!("EPOLL_WAIT_RC_{rc}"))
+    } else {
+        Ok(format!(
+            "EPOLL_WAIT_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+fn poll_event_loop_epoll_pwait_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let epfd = parse_i32(inputs, "epfd")?;
+    let maxevents = parse_i32(inputs, "maxevents")?;
+    let timeout = parse_i32(inputs, "timeout")?;
+    let mut event = libc::epoll_event { events: 0, u64: 0 };
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::poll_abi::epoll_pwait(
+            epfd,
+            &mut event,
+            maxevents,
+            timeout,
+            std::ptr::null(),
+        )
+    };
+    if rc >= 0 {
+        Ok(format!("EPOLL_PWAIT_RC_{rc}"))
+    } else {
+        Ok(format!(
+            "EPOLL_PWAIT_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+fn poll_event_loop_eventfd_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let initval = parse_u32(inputs, "initval")?;
+    let flags = parse_i32(inputs, "flags")?;
+    poll_event_loop_reset_errno();
+    let fd = unsafe { frankenlibc_abi::poll_abi::eventfd(initval, flags) };
+    Ok(poll_event_loop_fd_class("EVENTFD", fd))
+}
+
+fn poll_event_loop_ppoll_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let timeout_sec = inputs
+        .get("timeout_sec")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    let timeout_nsec = inputs
+        .get("timeout_nsec")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    let timeout = libc::timespec {
+        tv_sec: timeout_sec as libc::time_t,
+        tv_nsec: timeout_nsec as libc::c_long,
+    };
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::poll_abi::ppoll(std::ptr::null_mut(), 0, &timeout, std::ptr::null())
+    };
+    if rc >= 0 {
+        Ok(format!("PPOLL_RC_{rc}"))
+    } else {
+        Ok(format!(
+            "PPOLL_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+fn poll_event_loop_pselect_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let nfds = parse_i32(inputs, "nfds")?;
+    let timeout_sec = inputs
+        .get("timeout_sec")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    let timeout_nsec = inputs
+        .get("timeout_nsec")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    let timeout = libc::timespec {
+        tv_sec: timeout_sec as libc::time_t,
+        tv_nsec: timeout_nsec as libc::c_long,
+    };
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::poll_abi::pselect(
+            nfds,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &timeout,
+            std::ptr::null(),
+        )
+    };
+    if rc >= 0 {
+        Ok(format!("PSELECT_RC_{rc}"))
+    } else {
+        Ok(format!(
+            "PSELECT_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+fn poll_event_loop_prctl_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let option = parse_i32(inputs, "option")?;
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::poll_abi::prctl(option, 0, 0, 0, 0) };
+    if rc >= 0 {
+        Ok(format!("PRCTL_RC_{rc}"))
+    } else {
+        Ok(format!(
+            "PRCTL_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+fn poll_event_loop_sched_yield_actual() -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::poll_abi::sched_yield() };
+    if rc == 0 {
+        Ok(String::from("SCHED_YIELD_RC_0"))
+    } else {
+        Ok(format!(
+            "SCHED_YIELD_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
+}
+
+fn poll_event_loop_timerfd_create_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let clockid = parse_i32(inputs, "clockid")?;
+    let flags = parse_i32(inputs, "flags")?;
+    poll_event_loop_reset_errno();
+    let fd = unsafe { frankenlibc_abi::poll_abi::timerfd_create(clockid, flags) };
+    Ok(poll_event_loop_fd_class("TIMERFD_CREATE", fd))
+}
+
+fn poll_event_loop_timerfd_gettime_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let fd = parse_i32(inputs, "fd")?;
+    let mut spec = libc::itimerspec {
+        it_interval: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        it_value: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+    };
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::poll_abi::timerfd_gettime(fd, &mut spec) };
+    if rc == 0 {
+        Ok(String::from("TIMERFD_GETTIME_RC_0"))
+    } else {
+        Ok(format!(
+            "TIMERFD_GETTIME_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        ))
+    }
 }
 
 fn execute_raise_case(

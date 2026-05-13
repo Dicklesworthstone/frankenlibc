@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T07:19:34Z",
-  "report_hash": "a105c85747552d23",
+  "generated_at": "2026-05-13T07:54:07Z",
+  "report_hash": "0f5a8d65dc71e539",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 634,
-    "symbols_without_fixtures": 3485,
-    "fixture_coverage_pct": 15.4,
+    "symbols_with_fixtures": 646,
+    "symbols_without_fixtures": 3473,
+    "fixture_coverage_pct": 15.7,
     "implemented_coverage_pct": 15.3,
-    "total_fixture_files": 80,
-    "total_cases": 1718,
+    "total_fixture_files": 81,
+    "total_cases": 1742,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 410,
-    "symbols_with_errno_checks": 631,
-    "total_quality_issues": 3585,
-    "uncovered_action_count": 3485
+    "symbols_with_edge_cases": 421,
+    "symbols_with_errno_checks": 643,
+    "total_quality_issues": 3586,
+    "uncovered_action_count": 3473
   },
   "fixture_file_analyses": [
     {
@@ -208,6 +208,14 @@
       "valid": true,
       "total_cases": 6,
       "unique_symbols": 2,
+      "issues": []
+    },
+    {
+      "file": "poll_event_loop_wave01.json",
+      "family": "poll_event_loop_wave01",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
       "issues": []
     },
     {
@@ -24012,25 +24020,39 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "epoll_create1",
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -24038,12 +24060,20 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -24051,12 +24081,20 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -24077,12 +24115,20 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -24634,12 +24680,19 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -45484,12 +45537,19 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -45497,12 +45557,19 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -45767,12 +45834,19 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -51239,12 +51313,19 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -59152,12 +59233,19 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -59165,12 +59253,19 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "poll_event_loop_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -73549,44 +73644,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "epoll_create",
-      "status": "RawSyscall",
-      "module": "poll_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "epoll_create1",
-      "status": "RawSyscall",
-      "module": "poll_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "epoll_ctl",
-      "status": "RawSyscall",
-      "module": "poll_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "epoll_pwait",
-      "status": "RawSyscall",
-      "module": "poll_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "epoll_pwait2",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "epoll_wait",
-      "status": "RawSyscall",
-      "module": "poll_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -73804,13 +73864,6 @@
       "symbol": "euidaccess",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "eventfd",
-      "status": "RawSyscall",
-      "module": "poll_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -82299,20 +82352,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "ppoll",
-      "status": "RawSyscall",
-      "module": "poll_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "prctl",
-      "status": "RawSyscall",
-      "module": "poll_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "pread",
       "status": "RawSyscall",
       "module": "io_abi",
@@ -82428,13 +82467,6 @@
       "symbol": "program_invocation_short_name",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pselect",
-      "status": "RawSyscall",
-      "module": "poll_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -84668,13 +84700,6 @@
       "symbol": "sched_setscheduler",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "sched_yield",
-      "status": "RawSyscall",
-      "module": "poll_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -87125,20 +87150,6 @@
       "symbol": "timer_settime",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "timerfd_create",
-      "status": "RawSyscall",
-      "module": "poll_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "timerfd_gettime",
-      "status": "RawSyscall",
-      "module": "poll_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
