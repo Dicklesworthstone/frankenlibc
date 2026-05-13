@@ -737,6 +737,31 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Validate a ReplayRecord JSONL row and classify the outcome
+    /// against an observed-outputs JSONL list, exposing
+    /// `asupersync_lab_replay::{validate_replay, classify_outcome}`
+    /// (bd-juvqm.15) as a standalone CLI. Asupersync availability is
+    /// probed via `detect_asupersync_available` with default process
+    /// env, optionally overridden by `--override-var`.
+    ReplayClassify {
+        /// Input JSONL path: exactly one line carrying a ReplayRecord
+        /// object (schema_version, trace_class, virtual_time_seed,
+        /// schedule_decisions[], replay_inputs[], expected_outputs[],
+        /// artifact_refs[], source_commit).
+        #[arg(long)]
+        input: PathBuf,
+        /// Observed-outputs JSONL path: one line `{"observed_outputs":[...]}`.
+        #[arg(long)]
+        observed: PathBuf,
+        /// Override `FRANKENLIBC_ASUPERSYNC_AVAILABLE` for the
+        /// availability probe. When omitted, the detector reads the
+        /// process env.
+        #[arg(long)]
+        override_var: Option<String>,
+        /// Output JSONL path: one replay_outcome record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Expose `system_fingerprint::{detect_components,
     /// environment_fingerprint, from_components,
     /// validate_environment_fingerprint}` (bd-6epxt) as a standalone
@@ -2062,6 +2087,130 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&output, out)?;
             eprintln!(
                 "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
+                output.display()
+            );
+        }
+        Command::ReplayClassify {
+            input,
+            observed,
+            override_var,
+            output,
+        } => {
+            use frankenlibc_harness::asupersync_lab_replay::{
+                DetectionEnv, ReplayOutcome, ReplayRecord, classify_outcome,
+                detect_asupersync_available, validate_replay,
+            };
+            let record_body = std::fs::read_to_string(&input)
+                .map_err(|e| format!("read --input {}: {e}", input.display()))?;
+            let record_line = record_body
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .ok_or_else(|| "--input contained zero ReplayRecord rows".to_string())?;
+            let v: serde_json::Value =
+                serde_json::from_str(record_line).map_err(|e| format!("--input not JSON: {e}"))?;
+            let required_string = |k: &str| -> Result<String, String> {
+                v.get(k)
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("--input missing string field `{k}`"))
+            };
+            let required_u64 = |k: &str| -> Result<u64, String> {
+                v.get(k)
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or_else(|| format!("--input missing u64 field `{k}`"))
+            };
+            let string_array = |k: &str| -> Result<Vec<String>, String> {
+                v.get(k)
+                    .and_then(serde_json::Value::as_array)
+                    .ok_or_else(|| format!("--input missing array field `{k}`"))?
+                    .iter()
+                    .map(|x| {
+                        x.as_str().map(str::to_string).ok_or_else(|| {
+                            format!("--input field `{k}` must be an array of strings")
+                        })
+                    })
+                    .collect()
+            };
+            let record = ReplayRecord {
+                schema_version: required_string("schema_version")?,
+                trace_class: required_string("trace_class")?,
+                virtual_time_seed: required_u64("virtual_time_seed")?,
+                schedule_decisions: string_array("schedule_decisions")?,
+                replay_inputs: string_array("replay_inputs")?,
+                expected_outputs: string_array("expected_outputs")?,
+                artifact_refs: string_array("artifact_refs")?,
+                source_commit: required_string("source_commit")?,
+            };
+            validate_replay(&record).map_err(|e| format!("validate_replay: {e}"))?;
+
+            let observed_body = std::fs::read_to_string(&observed)
+                .map_err(|e| format!("read --observed {}: {e}", observed.display()))?;
+            let observed_line = observed_body
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .ok_or_else(|| "--observed contained zero rows".to_string())?;
+            let ov: serde_json::Value = serde_json::from_str(observed_line)
+                .map_err(|e| format!("--observed not JSON: {e}"))?;
+            let observed_outputs: Vec<String> = ov
+                .get("observed_outputs")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| "--observed missing array field `observed_outputs`".to_string())?
+                .iter()
+                .map(|x| {
+                    x.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| "`observed_outputs` must be an array of strings".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut env = DetectionEnv::from_process_env();
+            if let Some(ov) = override_var {
+                env.override_var = Some(ov);
+            }
+            let availability = detect_asupersync_available(&env);
+            let outcome =
+                classify_outcome(&record, availability.available, observed_outputs.as_slice());
+
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = match outcome {
+                ReplayOutcome::Pass => serde_json::json!({
+                    "kind": "replay_outcome",
+                    "outcome": "pass",
+                    "asupersync_available": availability.available,
+                    "detection_reason": availability.detection_reason,
+                    "trace_class": record.trace_class,
+                    "source_commit": record.source_commit,
+                }),
+                ReplayOutcome::CodeFailure { signature } => serde_json::json!({
+                    "kind": "replay_outcome",
+                    "outcome": "code_failure",
+                    "signature": signature,
+                    "asupersync_available": availability.available,
+                    "detection_reason": availability.detection_reason,
+                    "trace_class": record.trace_class,
+                    "source_commit": record.source_commit,
+                }),
+                ReplayOutcome::ToolFailure { reason } => serde_json::json!({
+                    "kind": "replay_outcome",
+                    "outcome": "tool_failure",
+                    "reason": reason,
+                    "asupersync_available": availability.available,
+                    "detection_reason": availability.detection_reason,
+                    "trace_class": record.trace_class,
+                    "source_commit": record.source_commit,
+                }),
+            };
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "replay-classify: wrote 1 replay_outcome JSONL record to {}",
                 output.display()
             );
         }

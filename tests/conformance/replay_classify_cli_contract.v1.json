@@ -1,0 +1,70 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "replay-classify-cli-contract",
+  "bead": "bd-tzx36",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "a03640e7a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes asupersync_lab_replay::{validate_replay, classify_outcome} (bd-juvqm.15) plus detect_asupersync_available (bd-qfbhc) as a standalone CLI. Previously these were reachable only via Rust callers in the conformance suite; the replay-classify subcommand makes the validation+classification pipeline invokable from rch cargo run and CI without writing Rust.",
+  "subcommand_name": "replay-classify",
+  "binary_target": "harness",
+  "required_flags": [
+    "--input",
+    "--observed",
+    "--output"
+  ],
+  "optional_flags": [
+    "--override-var"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::asupersync_lab_replay::validate_replay",
+    "frankenlibc_harness::asupersync_lab_replay::detect_asupersync_available",
+    "frankenlibc_harness::asupersync_lab_replay::classify_outcome"
+  ],
+  "input_record_required_fields": [
+    "schema_version",
+    "trace_class",
+    "virtual_time_seed",
+    "schedule_decisions",
+    "replay_inputs",
+    "expected_outputs",
+    "artifact_refs",
+    "source_commit"
+  ],
+  "observed_record_required_fields": [
+    "observed_outputs"
+  ],
+  "output_record_required_fields": [
+    "kind",
+    "outcome",
+    "asupersync_available",
+    "detection_reason",
+    "trace_class",
+    "source_commit"
+  ],
+  "valid_outcomes": [
+    "pass",
+    "code_failure",
+    "tool_failure"
+  ],
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "fail_closed_when_input_record_missing_required_field": true,
+    "fail_closed_when_observed_missing_observed_outputs": true,
+    "outcome_must_be_one_of_enum": true,
+    "tool_failure_when_asupersync_unavailable": true,
+    "code_failure_signature_must_be_non_empty": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "outcome_out_of_enum",
+    "tool_failure_without_reason",
+    "code_failure_without_signature"
+  ],
+  "summary": {
+    "bead": "bd-tzx36",
+    "subcommand": "replay-classify",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
