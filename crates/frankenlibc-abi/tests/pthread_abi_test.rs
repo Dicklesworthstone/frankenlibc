@@ -9,6 +9,10 @@ use std::ffi::{CStr, CString, c_int, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
+use frankenlibc_abi::glibc_internal_abi::{
+    pthread_mutex_getprioceiling, pthread_mutex_setprioceiling, pthread_mutexattr_getprioceiling,
+    pthread_mutexattr_setprioceiling,
+};
 use frankenlibc_abi::pthread_abi::*;
 use frankenlibc_abi::signal_abi::pthread_sigmask;
 
@@ -21,6 +25,30 @@ const PTHREAD_SCOPE_SYSTEM: c_int = 0;
 #[allow(dead_code)] // used via libc:: in inheritsched test; kept for reference
 const PTHREAD_INHERIT_SCHED: c_int = 0;
 const PTHREAD_EXPLICIT_SCHED: c_int = 1;
+
+unsafe extern "C" {
+    #[link_name = "pthread_mutex_getprioceiling"]
+    fn host_pthread_mutex_getprioceiling(
+        mutex: *const libc::pthread_mutex_t,
+        prioceiling: *mut c_int,
+    ) -> c_int;
+    #[link_name = "pthread_mutex_setprioceiling"]
+    fn host_pthread_mutex_setprioceiling(
+        mutex: *mut libc::pthread_mutex_t,
+        prioceiling: c_int,
+        old_prioceiling: *mut c_int,
+    ) -> c_int;
+    #[link_name = "pthread_mutexattr_getprioceiling"]
+    fn host_pthread_mutexattr_getprioceiling(
+        attr: *const libc::pthread_mutexattr_t,
+        prioceiling: *mut c_int,
+    ) -> c_int;
+    #[link_name = "pthread_mutexattr_setprioceiling"]
+    fn host_pthread_mutexattr_setprioceiling(
+        attr: *mut libc::pthread_mutexattr_t,
+        prioceiling: c_int,
+    ) -> c_int;
+}
 
 // ===========================================================================
 // Thread lifecycle: create, join, detach, self, equal
@@ -2537,6 +2565,110 @@ fn mutexattr_setprotocol_getprotocol() {
         assert_eq!(val, libc::PTHREAD_PRIO_NONE);
 
         pthread_mutexattr_destroy(&mut attr);
+    }
+}
+
+#[test]
+fn mutexattr_prioceiling_roundtrip_matches_host_libc() {
+    unsafe {
+        let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
+        let mut host_attr: libc::pthread_mutexattr_t = std::mem::zeroed();
+        assert_eq!(pthread_mutexattr_init(&mut attr), 0);
+        assert_eq!(libc::pthread_mutexattr_init(&mut host_attr), 0);
+
+        let mut native: c_int = -1;
+        let mut host: c_int = -1;
+        assert_eq!(
+            pthread_mutexattr_getprioceiling(
+                (&attr as *const libc::pthread_mutexattr_t).cast(),
+                &mut native
+            ),
+            host_pthread_mutexattr_getprioceiling(&host_attr, &mut host)
+        );
+        assert_eq!(native, host);
+
+        assert_eq!(
+            pthread_mutexattr_setprioceiling(
+                (&mut attr as *mut libc::pthread_mutexattr_t).cast(),
+                7
+            ),
+            host_pthread_mutexattr_setprioceiling(&mut host_attr, 7)
+        );
+        assert_eq!(
+            pthread_mutexattr_getprioceiling(
+                (&attr as *const libc::pthread_mutexattr_t).cast(),
+                &mut native
+            ),
+            host_pthread_mutexattr_getprioceiling(&host_attr, &mut host)
+        );
+        assert_eq!(native, 7);
+        assert_eq!(host, 7);
+
+        assert_eq!(
+            pthread_mutexattr_setprioceiling(
+                (&mut attr as *mut libc::pthread_mutexattr_t).cast(),
+                0
+            ),
+            libc::EINVAL
+        );
+        assert_eq!(
+            pthread_mutexattr_setprioceiling(
+                (&mut attr as *mut libc::pthread_mutexattr_t).cast(),
+                100
+            ),
+            libc::EINVAL
+        );
+        native = -1;
+        assert_eq!(
+            pthread_mutexattr_getprioceiling(
+                (&attr as *const libc::pthread_mutexattr_t).cast(),
+                &mut native
+            ),
+            0
+        );
+        assert_eq!(native, 7);
+
+        pthread_mutexattr_destroy(&mut attr);
+        libc::pthread_mutexattr_destroy(&mut host_attr);
+    }
+}
+
+#[test]
+fn mutex_prioceiling_regular_mutex_matches_host_libc_error() {
+    unsafe {
+        let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
+        let mut host_mutex: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(pthread_mutex_init(&mut mutex, std::ptr::null()), 0);
+        assert_eq!(
+            libc::pthread_mutex_init(&mut host_mutex, std::ptr::null()),
+            0
+        );
+
+        let mut native: c_int = -1;
+        let mut host: c_int = -1;
+        assert_eq!(
+            pthread_mutex_getprioceiling(
+                (&mutex as *const libc::pthread_mutex_t).cast(),
+                &mut native
+            ),
+            host_pthread_mutex_getprioceiling(&host_mutex, &mut host)
+        );
+        assert_eq!(native, host);
+
+        let mut native_old: c_int = -1;
+        let mut host_old: c_int = -1;
+        assert_eq!(
+            pthread_mutex_setprioceiling(
+                (&mut mutex as *mut libc::pthread_mutex_t).cast(),
+                7,
+                &mut native_old,
+            ),
+            host_pthread_mutex_setprioceiling(&mut host_mutex, 7, &mut host_old)
+        );
+        assert_eq!(native_old, host_old);
+
+        assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+        assert_eq!(libc::pthread_mutex_destroy(&mut host_mutex), 0);
     }
 }
 

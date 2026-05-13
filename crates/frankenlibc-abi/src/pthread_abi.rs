@@ -3492,12 +3492,18 @@ const MUTEXATTR_PROTOCOL_SHIFT: u32 = 2;
 const MUTEXATTR_PSHARED_BIT: c_int = 1 << 4;
 const MUTEXATTR_ROBUST_BIT: c_int = 1 << 5;
 const MUTEXATTR_VALID_BIT: c_int = 1 << 6;
+const MUTEXATTR_PRIOCEILING_SHIFT: u32 = 8;
+const MUTEXATTR_PRIOCEILING_MASK: c_int = 0xff << MUTEXATTR_PRIOCEILING_SHIFT;
+const MUTEXATTR_DEFAULT_PRIOCEILING: c_int = 1;
+const MUTEXATTR_MIN_PRIOCEILING: c_int = 1;
+const MUTEXATTR_MAX_PRIOCEILING: c_int = 99;
 const MUTEXATTR_DESTROYED_SENTINEL: c_int = 0x7fff_ffff;
 const MUTEXATTR_ALLOWED_MASK: c_int = MUTEXATTR_TYPE_MASK
     | MUTEXATTR_PROTOCOL_MASK
     | MUTEXATTR_PSHARED_BIT
     | MUTEXATTR_ROBUST_BIT
-    | MUTEXATTR_VALID_BIT;
+    | MUTEXATTR_VALID_BIT
+    | MUTEXATTR_PRIOCEILING_MASK;
 
 #[inline]
 fn encode_mutexattr(
@@ -3505,6 +3511,7 @@ fn encode_mutexattr(
     protocol: c_int,
     pshared: c_int,
     robust: c_int,
+    prioceiling: c_int,
 ) -> Option<c_int> {
     if !(0..=2).contains(&type_kind) {
         return None;
@@ -3521,9 +3528,13 @@ fn encode_mutexattr(
     if robust != libc::PTHREAD_MUTEX_STALLED && robust != libc::PTHREAD_MUTEX_ROBUST {
         return None;
     }
+    if !(MUTEXATTR_MIN_PRIOCEILING..=MUTEXATTR_MAX_PRIOCEILING).contains(&prioceiling) {
+        return None;
+    }
 
     let mut word = type_kind & MUTEXATTR_TYPE_MASK;
     word |= protocol_bits << MUTEXATTR_PROTOCOL_SHIFT;
+    word |= prioceiling << MUTEXATTR_PRIOCEILING_SHIFT;
     if pshared == libc::PTHREAD_PROCESS_SHARED {
         word |= MUTEXATTR_PSHARED_BIT;
     }
@@ -3544,7 +3555,10 @@ fn mutexattr_word_valid(word: c_int) -> bool {
     }
     let type_kind = word & MUTEXATTR_TYPE_MASK;
     let protocol_bits = (word & MUTEXATTR_PROTOCOL_MASK) >> MUTEXATTR_PROTOCOL_SHIFT;
-    (0..=2).contains(&type_kind) && (0..=2).contains(&protocol_bits)
+    let prioceiling = decode_mutexattr_prioceiling(word);
+    (0..=2).contains(&type_kind)
+        && (0..=2).contains(&protocol_bits)
+        && (MUTEXATTR_MIN_PRIOCEILING..=MUTEXATTR_MAX_PRIOCEILING).contains(&prioceiling)
 }
 
 #[inline]
@@ -3580,6 +3594,11 @@ fn decode_mutexattr_robust(word: c_int) -> c_int {
     }
 }
 
+#[inline]
+fn decode_mutexattr_prioceiling(word: c_int) -> c_int {
+    (word & MUTEXATTR_PRIOCEILING_MASK) >> MUTEXATTR_PRIOCEILING_SHIFT
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutexattr_init(attr: *mut libc::pthread_mutexattr_t) -> c_int {
     if attr.is_null() {
@@ -3590,6 +3609,7 @@ pub unsafe extern "C" fn pthread_mutexattr_init(attr: *mut libc::pthread_mutexat
         libc::PTHREAD_PRIO_NONE,
         libc::PTHREAD_PROCESS_PRIVATE,
         libc::PTHREAD_MUTEX_STALLED,
+        MUTEXATTR_DEFAULT_PRIOCEILING,
     )
     .unwrap_or(0);
     // SAFETY: attr is non-null; caller owns the memory.
@@ -3633,6 +3653,7 @@ pub unsafe extern "C" fn pthread_mutexattr_settype(
         decode_mutexattr_protocol(*word),
         decode_mutexattr_pshared(*word),
         decode_mutexattr_robust(*word),
+        decode_mutexattr_prioceiling(*word),
     ) else {
         return libc::EINVAL;
     };
@@ -5169,6 +5190,52 @@ pub unsafe extern "C" fn pthread_mutexattr_setprotocol(
         protocol,
         decode_mutexattr_pshared(*word),
         decode_mutexattr_robust(*word),
+        decode_mutexattr_prioceiling(*word),
+    ) else {
+        return libc::EINVAL;
+    };
+    *word = next_word;
+    0
+}
+
+pub(crate) unsafe fn native_pthread_mutexattr_getprioceiling(
+    attr: *const libc::pthread_mutexattr_t,
+    prioceiling: *mut c_int,
+) -> c_int {
+    if attr.is_null() || prioceiling.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    unsafe { *prioceiling = decode_mutexattr_prioceiling(word) };
+    0
+}
+
+pub(crate) unsafe fn native_pthread_mutexattr_setprioceiling(
+    attr: *mut libc::pthread_mutexattr_t,
+    prioceiling: c_int,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if *word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(*word) {
+        return libc::EINVAL;
+    }
+    let Some(next_word) = encode_mutexattr(
+        decode_mutexattr_type(*word),
+        decode_mutexattr_protocol(*word),
+        decode_mutexattr_pshared(*word),
+        decode_mutexattr_robust(*word),
+        prioceiling,
     ) else {
         return libc::EINVAL;
     };
@@ -5217,6 +5284,7 @@ pub unsafe extern "C" fn pthread_mutexattr_setpshared(
         decode_mutexattr_protocol(*word),
         pshared,
         decode_mutexattr_robust(*word),
+        decode_mutexattr_prioceiling(*word),
     ) else {
         return libc::EINVAL;
     };
@@ -5265,6 +5333,7 @@ pub unsafe extern "C" fn pthread_mutexattr_setrobust(
         decode_mutexattr_protocol(*word),
         decode_mutexattr_pshared(*word),
         robust,
+        decode_mutexattr_prioceiling(*word),
     ) else {
         return libc::EINVAL;
     };

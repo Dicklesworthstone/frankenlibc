@@ -288,28 +288,22 @@ pub unsafe extern "C" fn pthread_kill_other_threads_np() -> c_int {
 pub unsafe extern "C" fn pthread_mutex_consistent_np(mutex: *mut c_void) -> c_int {
     unsafe { super::pthread_abi::pthread_mutex_consistent(mutex.cast()) }
 }
-// pthread_mutex_getprioceiling: native — returns ENOSYS (priority ceiling not supported)
+// pthread_mutex_getprioceiling: native regular-mutex contract.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_getprioceiling(
     _mutex: *const c_void,
-    prioceiling: *mut c_int,
+    _prioceiling: *mut c_int,
 ) -> c_int {
-    if !prioceiling.is_null() {
-        unsafe { *prioceiling = 0 };
-    }
-    libc::ENOSYS // priority protocols not supported in native impl
+    libc::EINVAL
 }
-// pthread_mutex_setprioceiling: native — returns ENOSYS
+// pthread_mutex_setprioceiling: native regular-mutex contract.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_setprioceiling(
     _mutex: *mut c_void,
     _prioceiling: c_int,
-    old: *mut c_int,
+    _old: *mut c_int,
 ) -> c_int {
-    if !old.is_null() {
-        unsafe { *old = 0 };
-    }
-    libc::ENOSYS
+    libc::EINVAL
 }
 // pthread_mutexattr_getkind_np: GNU alias for pthread_mutexattr_gettype
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -319,16 +313,13 @@ pub unsafe extern "C" fn pthread_mutexattr_getkind_np(
 ) -> c_int {
     unsafe { super::pthread_abi::pthread_mutexattr_gettype(attr.cast(), kind) }
 }
-// pthread_mutexattr_getprioceiling: native — returns ENOSYS
+// pthread_mutexattr_getprioceiling: native managed-attribute round trip.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutexattr_getprioceiling(
-    _attr: *const c_void,
+    attr: *const c_void,
     prioceiling: *mut c_int,
 ) -> c_int {
-    if !prioceiling.is_null() {
-        unsafe { *prioceiling = 0 };
-    }
-    libc::ENOSYS
+    unsafe { super::pthread_abi::native_pthread_mutexattr_getprioceiling(attr.cast(), prioceiling) }
 }
 // pthread_mutexattr_getrobust_np: GNU alias for pthread_mutexattr_getrobust
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -343,13 +334,13 @@ pub unsafe extern "C" fn pthread_mutexattr_getrobust_np(
 pub unsafe extern "C" fn pthread_mutexattr_setkind_np(attr: *mut c_void, kind: c_int) -> c_int {
     unsafe { super::pthread_abi::pthread_mutexattr_settype(attr.cast(), kind) }
 }
-// pthread_mutexattr_setprioceiling: native — returns ENOSYS
+// pthread_mutexattr_setprioceiling: native managed-attribute round trip.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutexattr_setprioceiling(
-    _attr: *mut c_void,
-    _prioceiling: c_int,
+    attr: *mut c_void,
+    prioceiling: c_int,
 ) -> c_int {
-    libc::ENOSYS
+    unsafe { super::pthread_abi::native_pthread_mutexattr_setprioceiling(attr.cast(), prioceiling) }
 }
 // pthread_mutexattr_setrobust_np: GNU alias for pthread_mutexattr_setrobust
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
