@@ -466,12 +466,42 @@ pub fn execute_fixture_case(
         "strcasestr" | "__strcasestr" => execute_strcasestr_case(inputs, mode),
         "__strcoll_l" => execute_strcoll_l_case(inputs, mode),
         "__strcspn_c1" => execute_strcspn_c1_case(inputs, mode),
-        "__strcspn_c2" | "__strcspn_c3" | "__strdup" | "__strerror_r" | "__strfmon_l"
-        | "__strftime_l" | "__strncasecmp_l" | "__strndup" | "__strpbrk_c2" | "__strpbrk_c3"
-        | "__strsep_1c" | "__strsep_2c" | "__strsep_3c" | "__strsep_g" | "__strspn_c1"
-        | "__strspn_c2" | "__strspn_c3" | "__strtod_internal" | "__strtod_l"
-        | "__strtof_internal" | "__strtof_l" | "__strtok_r" | "__strtok_r_1c"
-        | "__strtol_internal" => execute_string_memory_hotpaths_case(function, inputs, mode),
+        "__strcspn_c2"
+        | "__strcspn_c3"
+        | "__strdup"
+        | "__strerror_r"
+        | "__strfmon_l"
+        | "__strftime_l"
+        | "__strncasecmp_l"
+        | "__strndup"
+        | "__strpbrk_c2"
+        | "__strpbrk_c3"
+        | "__strsep_1c"
+        | "__strsep_2c"
+        | "__strsep_3c"
+        | "__strsep_g"
+        | "__strspn_c1"
+        | "__strspn_c2"
+        | "__strspn_c3"
+        | "__strtod_internal"
+        | "__strtod_l"
+        | "__strtof_internal"
+        | "__strtof_l"
+        | "__strtok_r"
+        | "__strtok_r_1c"
+        | "__strtol_internal"
+        | "__strtol_l"
+        | "__strtold_internal"
+        | "__strtold_l"
+        | "__strtoll_internal"
+        | "__strtoll_l"
+        | "__strtoul_internal"
+        | "__strtoul_l"
+        | "__strtoull_internal"
+        | "__strtoull_l"
+        | "__strverscmp"
+        | "__strxfrm_l"
+        | "argz_add" => execute_string_memory_hotpaths_case(function, inputs, mode),
         "strcmp" => execute_strcmp_case(inputs, mode),
         "strcpy" => execute_strcpy_case(inputs, mode),
         "strncpy" => execute_strncpy_case(inputs, mode),
@@ -7862,13 +7892,31 @@ fn string_memory_hotpath_actual(
                 None => Ok(String::from("TOKEN_NONE_SAVE_0")),
             }
         }
-        "__strtol_internal" => {
+        "__strtol_internal" | "__strtol_l" => {
             let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
             let base = parse_i32(inputs, "base")?;
             let (value, consumed) = frankenlibc_core::stdlib::strtol(&input, base);
             Ok(format!("INT_{value}_END_{consumed}"))
         }
-        "__strtod_internal" | "__strtod_l" => {
+        "__strtoll_internal" | "__strtoll_l" => {
+            let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
+            let base = parse_i32(inputs, "base")?;
+            let (value, consumed) = frankenlibc_core::stdlib::strtoll(&input, base);
+            Ok(format!("INT_{value}_END_{consumed}"))
+        }
+        "__strtoul_internal" | "__strtoul_l" => {
+            let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
+            let base = parse_i32(inputs, "base")?;
+            let (value, consumed) = frankenlibc_core::stdlib::strtoul(&input, base);
+            Ok(format!("UINT_{value}_END_{consumed}"))
+        }
+        "__strtoull_internal" | "__strtoull_l" => {
+            let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
+            let base = parse_i32(inputs, "base")?;
+            let (value, consumed) = frankenlibc_core::stdlib::strtoull(&input, base);
+            Ok(format!("UINT_{value}_END_{consumed}"))
+        }
+        "__strtod_internal" | "__strtod_l" | "__strtold_internal" | "__strtold_l" => {
             let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
             let (value, consumed) = frankenlibc_core::stdlib::strtod(&input);
             Ok(format!(
@@ -7884,9 +7932,134 @@ fn string_memory_hotpath_actual(
                 fixture_float_token(f64::from(value))
             ))
         }
+        "__strverscmp" => {
+            let lhs = nul_terminated_bytes(&parse_string(inputs, "lhs")?);
+            let rhs = nul_terminated_bytes(&parse_string(inputs, "rhs")?);
+            let cmp = string_hotpath_strverscmp(&lhs, &rhs).signum();
+            Ok(format!("CMP_{cmp}"))
+        }
+        "__strxfrm_l" => {
+            let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
+            let n = parse_usize(inputs, "n")?;
+            let dst_len = parse_usize(inputs, "dst_len")?;
+            let mut dst = vec![0_u8; dst_len];
+            let needed = frankenlibc_core::string::str::strxfrm(&mut dst, &input, n);
+            Ok(format!("XFRM_LEN_{needed}_TEXT_{}", c_fixture_text(&dst)))
+        }
+        "argz_add" => {
+            let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let entry = parse_string(inputs, "entry")?;
+            let mut combined = entries;
+            combined.push(entry);
+            let len: usize = combined.iter().map(|item| item.len() + 1).sum();
+            Ok(format!(
+                "ARGZ_COUNT_{}_LEN_{len}_TEXT_{}",
+                combined.len(),
+                combined.join("|")
+            ))
+        }
         other => Err(format!(
             "unsupported string/memory hotpath fixture: {other}"
         )),
+    }
+}
+
+fn parse_argz_entries(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split('|').map(ToOwned::to_owned).collect()
+    }
+}
+
+fn string_hotpath_strvers_byte(bytes: &[u8], index: usize) -> u8 {
+    bytes.get(index).copied().unwrap_or(0)
+}
+
+fn string_hotpath_strverscmp(s1: &[u8], s2: &[u8]) -> i32 {
+    let mut i = 0usize;
+    loop {
+        let c1 = string_hotpath_strvers_byte(s1, i);
+        let c2 = string_hotpath_strvers_byte(s2, i);
+        if c1 == 0 && c2 == 0 {
+            return 0;
+        }
+
+        if c1.is_ascii_digit() && c2.is_ascii_digit() {
+            let leading_zero = c1 == b'0' || c2 == b'0';
+            if leading_zero {
+                let mut seen_nonzero = false;
+                loop {
+                    let d1 = string_hotpath_strvers_byte(s1, i);
+                    let d2 = string_hotpath_strvers_byte(s2, i);
+                    let is_d1 = d1.is_ascii_digit();
+                    let is_d2 = d2.is_ascii_digit();
+                    if !is_d1 && !is_d2 {
+                        break;
+                    }
+                    if !is_d1 {
+                        return if seen_nonzero {
+                            i32::from(d1) - i32::from(d2)
+                        } else {
+                            1
+                        };
+                    }
+                    if !is_d2 {
+                        return if seen_nonzero {
+                            i32::from(d1) - i32::from(d2)
+                        } else {
+                            -1
+                        };
+                    }
+                    if d1 != d2 {
+                        return i32::from(d1) - i32::from(d2);
+                    }
+                    if d1 != b'0' {
+                        seen_nonzero = true;
+                    }
+                    i += 1;
+                }
+            } else {
+                let start = i;
+                let mut len1 = 0usize;
+                let mut len2 = 0usize;
+                let mut diff = 0i32;
+                loop {
+                    let d1 = string_hotpath_strvers_byte(s1, start + len1);
+                    let d2 = string_hotpath_strvers_byte(s2, start + len2);
+                    let is_d1 = d1.is_ascii_digit();
+                    let is_d2 = d2.is_ascii_digit();
+                    if is_d1 {
+                        len1 += 1;
+                    }
+                    if is_d2 {
+                        len2 += 1;
+                    }
+                    if !is_d1 && !is_d2 {
+                        break;
+                    }
+                    if is_d1 && is_d2 && diff == 0 {
+                        diff = i32::from(d1) - i32::from(d2);
+                    }
+                    if !is_d1 || !is_d2 {
+                        break;
+                    }
+                }
+                if len1 != len2 {
+                    return if len1 > len2 { 1 } else { -1 };
+                }
+                if diff != 0 {
+                    return diff;
+                }
+                i = start + len1;
+            }
+            continue;
+        }
+
+        if c1 != c2 {
+            return i32::from(c1) - i32::from(c2);
+        }
+        i += 1;
     }
 }
 
