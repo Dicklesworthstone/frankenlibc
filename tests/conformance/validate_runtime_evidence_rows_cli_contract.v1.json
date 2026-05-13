@@ -1,0 +1,67 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "validate-runtime-evidence-rows-cli-contract",
+  "bead": "bd-7osqu",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "20471a6e",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::evidence::validate_runtime_evidence_row_v1 as a standalone CLI. The lib API validates a single parsed runtime_evidence JSONL row against the v1 fail-closed contract: 18 required top-level fields (schema, schema_version, timestamp, trace_id, bead_id, event, mode, runtime_mode, validation_profile, decision_path, healing_action, denied, latency_ns, api_family, symbol, context, source_commit, artifact_refs), plus exact-string match for schema/event, enum match for mode/runtime_mode (strict|hardened) and validation_profile (Fast|Full), bool/u64 type checks, non-empty string checks, and structural validation of context (must contain addr_hint_redacted, requested_bytes, is_write, contention_hint, bloom_negative) and artifact_refs (non-empty array of non-empty strings). Previously reachable only from Rust callers; the CLI bridge lets CI fail-closed gate evidence JSONL artifacts.",
+  "subcommand_name": "validate-runtime-evidence-rows",
+  "binary_target": "harness",
+  "required_flags": [
+    "--jsonl",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::validate_runtime_evidence_row_v1",
+  "jsonl_output_contract": {
+    "record_count": "N+1 (one per input row plus one summary)",
+    "per_row_record_kind_marker": "evidence_row_validation",
+    "summary_record_kind_marker": "evidence_row_validation_summary",
+    "per_row_required_fields": [
+      "kind",
+      "row_index",
+      "valid",
+      "error_kind",
+      "error_field"
+    ],
+    "summary_required_fields": [
+      "kind",
+      "total",
+      "valid",
+      "invalid"
+    ],
+    "error_kinds_enum": [
+      "not_object",
+      "missing_required_field",
+      "wrong_type",
+      "empty_string",
+      "empty_artifact_refs",
+      "unexpected_value",
+      "json_parse_error"
+    ]
+  },
+  "policy": {
+    "must_emit_one_record_per_input_row_plus_summary": true,
+    "summary_counts_match_per_row_aggregate": true,
+    "valid_row_certified_with_null_error_kind": true,
+    "missing_required_field_reports_field_name": true,
+    "wrong_schema_value_reports_unexpected_value_on_schema": true,
+    "wrong_type_reports_field_name": true,
+    "empty_string_reports_field_name": true,
+    "unparseable_jsonl_row_reports_json_parse_error": true,
+    "deterministic_given_inputs": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "valid_row_rejected_by_validator",
+    "invalid_row_certified_by_validator",
+    "summary_counts_diverge_from_per_row_aggregate"
+  ],
+  "summary": {
+    "bead": "bd-7osqu",
+    "subcommand": "validate-runtime-evidence-rows",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}

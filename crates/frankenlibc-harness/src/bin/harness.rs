@@ -769,6 +769,19 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Iterate a JSONL file of runtime_evidence.decision.v1 rows and
+    /// validate each via
+    /// `frankenlibc_membrane::runtime_math::evidence::validate_runtime_evidence_row_v1`.
+    /// Emits one per-row `evidence_row_validation` record plus a final
+    /// `evidence_row_validation_summary` record.
+    ValidateRuntimeEvidenceRows {
+        /// Input JSONL path (one runtime_evidence row per line).
+        #[arg(long)]
+        jsonl: PathBuf,
+        /// Output JSONL path: per-row validation records + final summary.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Look up the design-kernel cost in nanoseconds for a named runtime
     /// probe via `frankenlibc_membrane::runtime_math::design::probe_cost_ns`.
     /// Probe enum has 17 members (spectral..coupling).
@@ -2876,6 +2889,98 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::ValidateRuntimeEvidenceRows { jsonl, output } => {
+            use frankenlibc_membrane::runtime_math::evidence::{
+                RuntimeEvidenceRowValidationError, validate_runtime_evidence_row_v1,
+            };
+            let body = std::fs::read_to_string(&jsonl)
+                .map_err(|e| format!("read {}: {e}", jsonl.display()))?;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut out_body = String::new();
+            let mut total: u64 = 0;
+            let mut valid_count: u64 = 0;
+            let mut invalid_count: u64 = 0;
+            for (idx, line) in body.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                total += 1;
+                let parsed: serde_json::Value = match serde_json::from_str(trimmed) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        invalid_count += 1;
+                        let rec = serde_json::json!({
+                            "kind": "evidence_row_validation",
+                            "row_index": idx,
+                            "valid": false,
+                            "error_kind": "json_parse_error",
+                            "error_field": null,
+                            "parse_error": e.to_string(),
+                        });
+                        out_body.push_str(&rec.to_string());
+                        out_body.push('\n');
+                        continue;
+                    }
+                };
+                let (valid, error_kind, error_field) =
+                    match validate_runtime_evidence_row_v1(&parsed) {
+                        Ok(()) => {
+                            valid_count += 1;
+                            (true, None, None)
+                        }
+                        Err(err) => {
+                            invalid_count += 1;
+                            let (kind, field) = match err {
+                                RuntimeEvidenceRowValidationError::NotObject => {
+                                    ("not_object", None)
+                                }
+                                RuntimeEvidenceRowValidationError::MissingRequiredField(f) => {
+                                    ("missing_required_field", Some(f))
+                                }
+                                RuntimeEvidenceRowValidationError::WrongType(f) => {
+                                    ("wrong_type", Some(f))
+                                }
+                                RuntimeEvidenceRowValidationError::EmptyString(f) => {
+                                    ("empty_string", Some(f))
+                                }
+                                RuntimeEvidenceRowValidationError::EmptyArtifactRefs => {
+                                    ("empty_artifact_refs", None)
+                                }
+                                RuntimeEvidenceRowValidationError::UnexpectedValue(f) => {
+                                    ("unexpected_value", Some(f))
+                                }
+                            };
+                            (false, Some(kind), field)
+                        }
+                    };
+                let rec = serde_json::json!({
+                    "kind": "evidence_row_validation",
+                    "row_index": idx,
+                    "valid": valid,
+                    "error_kind": error_kind,
+                    "error_field": error_field,
+                });
+                out_body.push_str(&rec.to_string());
+                out_body.push('\n');
+            }
+            let summary = serde_json::json!({
+                "kind": "evidence_row_validation_summary",
+                "total": total,
+                "valid": valid_count,
+                "invalid": invalid_count,
+            });
+            out_body.push_str(&summary.to_string());
+            out_body.push('\n');
+            std::fs::write(&output, out_body)?;
+            eprintln!(
+                "validate-runtime-evidence-rows: total={total} valid={valid_count} invalid={invalid_count}"
+            );
         }
         Command::ProbeCostNs { probe, output } => {
             use frankenlibc_membrane::runtime_math::design::{Probe, probe_cost_ns};
