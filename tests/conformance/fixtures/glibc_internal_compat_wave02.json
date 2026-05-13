@@ -1,0 +1,418 @@
+{
+  "version": "v1",
+  "family": "glibc/internal-compat",
+  "captured_at": "2026-05-13T19:10:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the second glibc-internal compatibility wave. The cases cover no-op, static null-state, invalid-argument errno, zero-frame diagnostic, and base64 helper behavior without recording pointer values, stack frames, host paths, stderr bytes, pid values, timing, or process-global diagnostic text.",
+  "spec_reference": "glibc internal compatibility surface for _IO_enable_locks, __abort_msg, __adjtimex, __after_morecore_hook, __arch_prctl, __asprintf, __b64_ntop, __b64_pton, __backtrace, __backtrace_symbols, __backtrace_symbols_fd, and __bsd_getpgrp",
+  "campaign": {
+    "bead": "bd-r5k32.13",
+    "campaign_id": "fcq-glibc-internal-compat",
+    "wave_id": "wave-02-glibc-internal-compat-deterministic-diagnostics",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture",
+    "symbol_groups": {
+      "supported": [
+        "_IO_enable_locks",
+        "__b64_ntop",
+        "__b64_pton"
+      ],
+      "deterministic_fallback": [
+        "__abort_msg",
+        "__adjtimex",
+        "__after_morecore_hook",
+        "__arch_prctl",
+        "__asprintf",
+        "__backtrace",
+        "__backtrace_symbols",
+        "__backtrace_symbols_fd",
+        "__bsd_getpgrp"
+      ],
+      "claim_blocked": []
+    },
+    "first_wave_symbols": [
+      "_IO_enable_locks",
+      "__abort_msg",
+      "__adjtimex",
+      "__after_morecore_hook",
+      "__arch_prctl",
+      "__asprintf",
+      "__b64_ntop",
+      "__b64_pton",
+      "__backtrace",
+      "__backtrace_symbols",
+      "__backtrace_symbols_fd",
+      "__bsd_getpgrp"
+    ],
+    "residual_symbols": [],
+    "deferred_ambient_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "io_enable_locks_noop_strict",
+      "function": "_IO_enable_locks",
+      "spec_section": "glibc libio lock-enablement compatibility no-op",
+      "inputs": {
+        "symbol": "_IO_enable_locks",
+        "scenario": "libio_lock_enablement_noop",
+        "expected": "IO_ENABLE_LOCKS_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=_IO_enable_locks;mode=strict;expected=IO_ENABLE_LOCKS_NOOP;actual=IO_ENABLE_LOCKS_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "io_enable_locks_noop_hardened",
+      "function": "_IO_enable_locks",
+      "spec_section": "glibc libio lock-enablement compatibility no-op",
+      "inputs": {
+        "symbol": "_IO_enable_locks",
+        "scenario": "libio_lock_enablement_noop",
+        "expected": "IO_ENABLE_LOCKS_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=_IO_enable_locks;mode=hardened;expected=IO_ENABLE_LOCKS_NOOP;actual=IO_ENABLE_LOCKS_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "abort_msg_static_null_strict",
+      "function": "__abort_msg",
+      "spec_section": "glibc abort diagnostic pointer state without pointer capture",
+      "inputs": {
+        "symbol": "__abort_msg",
+        "scenario": "static_abort_message_pointer_null_state_only",
+        "expected": "ABORT_MSG_NULL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__abort_msg;mode=strict;expected=ABORT_MSG_NULL;actual=ABORT_MSG_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "abort_msg_static_null_hardened",
+      "function": "__abort_msg",
+      "spec_section": "glibc abort diagnostic pointer state without pointer capture",
+      "inputs": {
+        "symbol": "__abort_msg",
+        "scenario": "static_abort_message_pointer_null_state_only",
+        "expected": "ABORT_MSG_NULL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__abort_msg;mode=hardened;expected=ABORT_MSG_NULL;actual=ABORT_MSG_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "adjtimex_null_error_class_strict",
+      "function": "__adjtimex",
+      "spec_section": "glibc adjtimex internal alias null-buffer errno class",
+      "inputs": {
+        "symbol": "__adjtimex",
+        "scenario": "null_timex_buffer_error_class",
+        "expected": "ADJTIMEX_NULL_RC_-1_ERRNO_EFAULT",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__adjtimex;mode=strict;expected=ADJTIMEX_NULL_RC_-1_ERRNO_EFAULT;actual=ADJTIMEX_NULL_RC_-1_ERRNO_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "strict"
+    },
+    {
+      "name": "adjtimex_null_error_class_hardened",
+      "function": "__adjtimex",
+      "spec_section": "glibc adjtimex internal alias null-buffer errno class",
+      "inputs": {
+        "symbol": "__adjtimex",
+        "scenario": "null_timex_buffer_error_class",
+        "expected": "ADJTIMEX_NULL_RC_-1_ERRNO_EFAULT",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__adjtimex;mode=hardened;expected=ADJTIMEX_NULL_RC_-1_ERRNO_EFAULT;actual=ADJTIMEX_NULL_RC_-1_ERRNO_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "hardened"
+    },
+    {
+      "name": "after_morecore_hook_static_null_strict",
+      "function": "__after_morecore_hook",
+      "spec_section": "legacy malloc morecore hook null-state compatibility",
+      "inputs": {
+        "symbol": "__after_morecore_hook",
+        "scenario": "static_after_morecore_hook_null_state_only",
+        "expected": "AFTER_MORECORE_HOOK_NULL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__after_morecore_hook;mode=strict;expected=AFTER_MORECORE_HOOK_NULL;actual=AFTER_MORECORE_HOOK_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "after_morecore_hook_static_null_hardened",
+      "function": "__after_morecore_hook",
+      "spec_section": "legacy malloc morecore hook null-state compatibility",
+      "inputs": {
+        "symbol": "__after_morecore_hook",
+        "scenario": "static_after_morecore_hook_null_state_only",
+        "expected": "AFTER_MORECORE_HOOK_NULL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__after_morecore_hook;mode=hardened;expected=AFTER_MORECORE_HOOK_NULL;actual=AFTER_MORECORE_HOOK_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "arch_prctl_invalid_code_strict",
+      "function": "__arch_prctl",
+      "spec_section": "x86_64 arch_prctl invalid code errno class",
+      "inputs": {
+        "symbol": "__arch_prctl",
+        "scenario": "invalid_arch_prctl_code_zero",
+        "expected": "ARCH_PRCTL_INVALID_CODE_RC_-1_ERRNO_EINVAL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__arch_prctl;mode=strict;expected=ARCH_PRCTL_INVALID_CODE_RC_-1_ERRNO_EINVAL;actual=ARCH_PRCTL_INVALID_CODE_RC_-1_ERRNO_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "arch_prctl_invalid_code_hardened",
+      "function": "__arch_prctl",
+      "spec_section": "x86_64 arch_prctl invalid code errno class",
+      "inputs": {
+        "symbol": "__arch_prctl",
+        "scenario": "invalid_arch_prctl_code_zero",
+        "expected": "ARCH_PRCTL_INVALID_CODE_RC_-1_ERRNO_EINVAL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__arch_prctl;mode=hardened;expected=ARCH_PRCTL_INVALID_CODE_RC_-1_ERRNO_EINVAL;actual=ARCH_PRCTL_INVALID_CODE_RC_-1_ERRNO_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "asprintf_stub_error_strict",
+      "function": "__asprintf",
+      "spec_section": "glibc internal variadic asprintf alias deterministic unsupported contract",
+      "inputs": {
+        "symbol": "__asprintf",
+        "scenario": "variadic_alias_returns_enosys_and_null_output",
+        "expected": "ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__asprintf;mode=strict;expected=ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL;actual=ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL;failure_signature=none",
+      "expected_errno": 38,
+      "mode": "strict"
+    },
+    {
+      "name": "asprintf_stub_error_hardened",
+      "function": "__asprintf",
+      "spec_section": "glibc internal variadic asprintf alias deterministic unsupported contract",
+      "inputs": {
+        "symbol": "__asprintf",
+        "scenario": "variadic_alias_returns_enosys_and_null_output",
+        "expected": "ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__asprintf;mode=hardened;expected=ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL;actual=ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL;failure_signature=none",
+      "expected_errno": 38,
+      "mode": "hardened"
+    },
+    {
+      "name": "b64_ntop_basic_vector_strict",
+      "function": "__b64_ntop",
+      "spec_section": "libresolv internal base64 encoder canonical vector",
+      "inputs": {
+        "symbol": "__b64_ntop",
+        "scenario": "encode_franken_base64",
+        "expected": "B64_NTOP_RC_12_OUTPUT_ZnJhbmtlbg==",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__b64_ntop;mode=strict;expected=B64_NTOP_RC_12_OUTPUT_ZnJhbmtlbg==;actual=B64_NTOP_RC_12_OUTPUT_ZnJhbmtlbg==;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "b64_ntop_basic_vector_hardened",
+      "function": "__b64_ntop",
+      "spec_section": "libresolv internal base64 encoder canonical vector",
+      "inputs": {
+        "symbol": "__b64_ntop",
+        "scenario": "encode_franken_base64",
+        "expected": "B64_NTOP_RC_12_OUTPUT_ZnJhbmtlbg==",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__b64_ntop;mode=hardened;expected=B64_NTOP_RC_12_OUTPUT_ZnJhbmtlbg==;actual=B64_NTOP_RC_12_OUTPUT_ZnJhbmtlbg==;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "b64_pton_basic_vector_strict",
+      "function": "__b64_pton",
+      "spec_section": "libresolv internal base64 decoder canonical vector",
+      "inputs": {
+        "symbol": "__b64_pton",
+        "scenario": "decode_franken_base64",
+        "expected": "B64_PTON_RC_7_OUTPUT_FRANKEN",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__b64_pton;mode=strict;expected=B64_PTON_RC_7_OUTPUT_FRANKEN;actual=B64_PTON_RC_7_OUTPUT_FRANKEN;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "b64_pton_basic_vector_hardened",
+      "function": "__b64_pton",
+      "spec_section": "libresolv internal base64 decoder canonical vector",
+      "inputs": {
+        "symbol": "__b64_pton",
+        "scenario": "decode_franken_base64",
+        "expected": "B64_PTON_RC_7_OUTPUT_FRANKEN",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__b64_pton;mode=hardened;expected=B64_PTON_RC_7_OUTPUT_FRANKEN;actual=B64_PTON_RC_7_OUTPUT_FRANKEN;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "backtrace_zero_frames_strict",
+      "function": "__backtrace",
+      "spec_section": "glibc internal backtrace alias zero-frame count without frame capture",
+      "inputs": {
+        "symbol": "__backtrace",
+        "scenario": "zero_frame_backtrace_count_only",
+        "expected": "BACKTRACE_ZERO_FRAME_RC_0",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__backtrace;mode=strict;expected=BACKTRACE_ZERO_FRAME_RC_0;actual=BACKTRACE_ZERO_FRAME_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "backtrace_zero_frames_hardened",
+      "function": "__backtrace",
+      "spec_section": "glibc internal backtrace alias zero-frame count without frame capture",
+      "inputs": {
+        "symbol": "__backtrace",
+        "scenario": "zero_frame_backtrace_count_only",
+        "expected": "BACKTRACE_ZERO_FRAME_RC_0",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__backtrace;mode=hardened;expected=BACKTRACE_ZERO_FRAME_RC_0;actual=BACKTRACE_ZERO_FRAME_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "backtrace_symbols_zero_frames_strict",
+      "function": "__backtrace_symbols",
+      "spec_section": "glibc internal backtrace_symbols alias zero-frame allocation class",
+      "inputs": {
+        "symbol": "__backtrace_symbols",
+        "scenario": "zero_frame_symbol_pointer_class_only",
+        "expected": "BACKTRACE_SYMBOLS_ZERO_FRAME_NULL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__backtrace_symbols;mode=strict;expected=BACKTRACE_SYMBOLS_ZERO_FRAME_NULL;actual=BACKTRACE_SYMBOLS_ZERO_FRAME_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "backtrace_symbols_zero_frames_hardened",
+      "function": "__backtrace_symbols",
+      "spec_section": "glibc internal backtrace_symbols alias zero-frame allocation class",
+      "inputs": {
+        "symbol": "__backtrace_symbols",
+        "scenario": "zero_frame_symbol_pointer_class_only",
+        "expected": "BACKTRACE_SYMBOLS_ZERO_FRAME_NULL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__backtrace_symbols;mode=hardened;expected=BACKTRACE_SYMBOLS_ZERO_FRAME_NULL;actual=BACKTRACE_SYMBOLS_ZERO_FRAME_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "backtrace_symbols_fd_zero_frames_strict",
+      "function": "__backtrace_symbols_fd",
+      "spec_section": "glibc internal backtrace_symbols_fd zero-frame no-output class",
+      "inputs": {
+        "symbol": "__backtrace_symbols_fd",
+        "scenario": "zero_frame_fd_noop_without_output_capture",
+        "expected": "BACKTRACE_SYMBOLS_FD_ZERO_FRAME_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__backtrace_symbols_fd;mode=strict;expected=BACKTRACE_SYMBOLS_FD_ZERO_FRAME_NOOP;actual=BACKTRACE_SYMBOLS_FD_ZERO_FRAME_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "backtrace_symbols_fd_zero_frames_hardened",
+      "function": "__backtrace_symbols_fd",
+      "spec_section": "glibc internal backtrace_symbols_fd zero-frame no-output class",
+      "inputs": {
+        "symbol": "__backtrace_symbols_fd",
+        "scenario": "zero_frame_fd_noop_without_output_capture",
+        "expected": "BACKTRACE_SYMBOLS_FD_ZERO_FRAME_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__backtrace_symbols_fd;mode=hardened;expected=BACKTRACE_SYMBOLS_FD_ZERO_FRAME_NOOP;actual=BACKTRACE_SYMBOLS_FD_ZERO_FRAME_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "bsd_getpgrp_invalid_pid_strict",
+      "function": "__bsd_getpgrp",
+      "spec_section": "glibc BSD getpgrp alias invalid-pid errno class without pid capture",
+      "inputs": {
+        "symbol": "__bsd_getpgrp",
+        "scenario": "invalid_pid_minus_one_error_class",
+        "expected": "BSD_GETPGRP_INVALID_PID_RC_-1_ERRNO_ESRCH",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__bsd_getpgrp;mode=strict;expected=BSD_GETPGRP_INVALID_PID_RC_-1_ERRNO_ESRCH;actual=BSD_GETPGRP_INVALID_PID_RC_-1_ERRNO_ESRCH;failure_signature=none",
+      "expected_errno": 3,
+      "mode": "strict"
+    },
+    {
+      "name": "bsd_getpgrp_invalid_pid_hardened",
+      "function": "__bsd_getpgrp",
+      "spec_section": "glibc BSD getpgrp alias invalid-pid errno class without pid capture",
+      "inputs": {
+        "symbol": "__bsd_getpgrp",
+        "scenario": "invalid_pid_minus_one_error_class",
+        "expected": "BSD_GETPGRP_INVALID_PID_RC_-1_ERRNO_ESRCH",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__bsd_getpgrp;mode=hardened;expected=BSD_GETPGRP_INVALID_PID_RC_-1_ERRNO_ESRCH;actual=BSD_GETPGRP_INVALID_PID_RC_-1_ERRNO_ESRCH;failure_signature=none",
+      "expected_errno": 3,
+      "mode": "hardened"
+    }
+  ]
+}

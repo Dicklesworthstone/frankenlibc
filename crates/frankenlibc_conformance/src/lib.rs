@@ -673,6 +673,18 @@ pub fn execute_fixture_case(
         | "profil"
         | "__profile_frequency"
         | "tr_break" => execute_glibc_internal_bootstrap_wave01_case(function, inputs, mode),
+        "_IO_enable_locks"
+        | "__abort_msg"
+        | "__adjtimex"
+        | "__after_morecore_hook"
+        | "__arch_prctl"
+        | "__asprintf"
+        | "__b64_ntop"
+        | "__b64_pton"
+        | "__backtrace"
+        | "__backtrace_symbols"
+        | "__backtrace_symbols_fd"
+        | "__bsd_getpgrp" => execute_glibc_internal_compat_wave02_case(function, inputs, mode),
         "__rpc_thread_createerr"
         | "__rpc_thread_svc_fdset"
         | "__rpc_thread_svc_max_pollfd"
@@ -1499,6 +1511,179 @@ fn glibc_internal_bootstrap_wave01_actual(function: &str) -> Result<String, Stri
         other => Err(format!(
             "unsupported glibc-internal bootstrap fixture: {other}"
         )),
+    }
+}
+
+fn execute_glibc_internal_compat_wave02_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "glibc-internal compat fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = glibc_internal_compat_wave02_actual(function)?;
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    Ok(non_host_execution(format!(
+        "symbol={function};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )))
+}
+
+fn glibc_internal_compat_wave02_actual(function: &str) -> Result<String, String> {
+    match function {
+        "_IO_enable_locks" => {
+            unsafe { frankenlibc_abi::glibc_internal_abi::_IO_enable_locks() };
+            Ok(String::from("IO_ENABLE_LOCKS_NOOP"))
+        }
+        "__abort_msg" => {
+            let ptr = unsafe {
+                std::ptr::addr_of_mut!(frankenlibc_abi::glibc_internal_abi::__abort_msg).read()
+            };
+            if ptr.is_null() {
+                Ok(String::from("ABORT_MSG_NULL"))
+            } else {
+                Ok(String::from("ABORT_MSG_PRESENT"))
+            }
+        }
+        "__adjtimex" => {
+            glibc_internal_compat_reset_errno();
+            let rc =
+                unsafe { frankenlibc_abi::glibc_internal_abi::__adjtimex(std::ptr::null_mut()) };
+            let errno = glibc_internal_compat_errno_class(glibc_internal_compat_errno());
+            Ok(format!("ADJTIMEX_NULL_RC_{rc}_ERRNO_{errno}"))
+        }
+        "__after_morecore_hook" => {
+            let ptr = unsafe {
+                std::ptr::addr_of_mut!(frankenlibc_abi::glibc_internal_abi::__after_morecore_hook)
+                    .read()
+            };
+            if ptr.is_null() {
+                Ok(String::from("AFTER_MORECORE_HOOK_NULL"))
+            } else {
+                Ok(String::from("AFTER_MORECORE_HOOK_PRESENT"))
+            }
+        }
+        "__arch_prctl" => {
+            glibc_internal_compat_reset_errno();
+            let rc = unsafe { frankenlibc_abi::glibc_internal_abi::__arch_prctl(0, 0) };
+            let errno = glibc_internal_compat_errno_class(glibc_internal_compat_errno());
+            Ok(format!("ARCH_PRCTL_INVALID_CODE_RC_{rc}_ERRNO_{errno}"))
+        }
+        "__asprintf" => {
+            let mut out: *mut c_char = std::ptr::null_mut();
+            let fmt = CString::new("frankenlibc").map_err(|err| err.to_string())?;
+            glibc_internal_compat_reset_errno();
+            let rc =
+                unsafe { frankenlibc_abi::glibc_internal_abi::__asprintf(&mut out, fmt.as_ptr()) };
+            let errno = glibc_internal_compat_errno_class(glibc_internal_compat_errno());
+            let out_state = if out.is_null() {
+                "OUT_NULL"
+            } else {
+                "OUT_PRESENT"
+            };
+            Ok(format!("ASPRINTF_RC_{rc}_ERRNO_{errno}_{out_state}"))
+        }
+        "__b64_ntop" => {
+            let src = b"franken";
+            let mut target = [0 as c_char; 32];
+            let rc = unsafe {
+                frankenlibc_abi::glibc_internal_abi::__b64_ntop(
+                    src.as_ptr(),
+                    src.len(),
+                    target.as_mut_ptr(),
+                    target.len(),
+                )
+            };
+            let encoded = if rc >= 0 {
+                unsafe { CStr::from_ptr(target.as_ptr()) }
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                String::from("ERROR")
+            };
+            Ok(format!("B64_NTOP_RC_{rc}_OUTPUT_{encoded}"))
+        }
+        "__b64_pton" => {
+            let src = CString::new("ZnJhbmtlbg==").map_err(|err| err.to_string())?;
+            let mut target = [0u8; 16];
+            let rc = unsafe {
+                frankenlibc_abi::glibc_internal_abi::__b64_pton(
+                    src.as_ptr(),
+                    target.as_mut_ptr(),
+                    target.len(),
+                )
+            };
+            let decoded = if rc >= 0 {
+                let len = usize::try_from(rc).map_err(|err| err.to_string())?;
+                String::from_utf8_lossy(&target[..len]).into_owned()
+            } else {
+                String::from("ERROR")
+            };
+            Ok(format!(
+                "B64_PTON_RC_{rc}_OUTPUT_{}",
+                decoded.to_uppercase()
+            ))
+        }
+        "__backtrace" => {
+            let rc = unsafe {
+                frankenlibc_abi::glibc_internal_abi::__backtrace(std::ptr::null_mut(), 0)
+            };
+            Ok(format!("BACKTRACE_ZERO_FRAME_RC_{rc}"))
+        }
+        "__backtrace_symbols" => {
+            let ptr = unsafe {
+                frankenlibc_abi::glibc_internal_abi::__backtrace_symbols(std::ptr::null(), 0)
+            };
+            if ptr.is_null() {
+                Ok(String::from("BACKTRACE_SYMBOLS_ZERO_FRAME_NULL"))
+            } else {
+                unsafe { libc::free(ptr.cast::<c_void>()) };
+                Ok(String::from("BACKTRACE_SYMBOLS_ZERO_FRAME_NON_NULL_FREED"))
+            }
+        }
+        "__backtrace_symbols_fd" => {
+            unsafe {
+                frankenlibc_abi::glibc_internal_abi::__backtrace_symbols_fd(std::ptr::null(), 0, -1)
+            };
+            Ok(String::from("BACKTRACE_SYMBOLS_FD_ZERO_FRAME_NOOP"))
+        }
+        "__bsd_getpgrp" => {
+            glibc_internal_compat_reset_errno();
+            let rc = unsafe { frankenlibc_abi::glibc_internal_abi::__bsd_getpgrp(-1) };
+            let errno = glibc_internal_compat_errno_class(glibc_internal_compat_errno());
+            Ok(format!("BSD_GETPGRP_INVALID_PID_RC_{rc}_ERRNO_{errno}"))
+        }
+        other => Err(format!(
+            "unsupported glibc-internal compat fixture: {other}"
+        )),
+    }
+}
+
+fn glibc_internal_compat_reset_errno() {
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
+}
+
+fn glibc_internal_compat_errno() -> i32 {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+fn glibc_internal_compat_errno_class(errno: i32) -> &'static str {
+    match errno {
+        0 => "NONE",
+        libc::EFAULT => "EFAULT",
+        libc::EINVAL => "EINVAL",
+        libc::ENOSYS => "ENOSYS",
+        libc::ESRCH => "ESRCH",
+        _ => "OTHER",
     }
 }
 
@@ -26118,6 +26303,48 @@ mod tests {
         let raw = include_str!("../../../tests/conformance/fixtures/signal_async_wave01.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("signal/async wave01 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn glibc_internal_compat_wave02_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/glibc_internal_compat_wave02.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("glibc/internal compat wave02 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
