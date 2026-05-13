@@ -793,6 +793,17 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Pack a 7-stage membrane check ordering via
+    /// `frankenlibc_membrane::check_oracle::{pack_ordering, unpack_ordering}`.
+    ///
+    /// Stage names are `null`, `tls-cache`, `bloom`, `arena`, `fingerprint`,
+    /// `canary`, and `bounds`. Pass seven repeated `--stage <name>` flags or
+    /// one or more comma-separated `--stage` values.
+    PackCheckOrdering {
+        /// Validation stage name. Repeat seven times or pass comma-separated names.
+        #[arg(long = "stage", required = true, num_args = 1..)]
+        stages: Vec<String>,
+    },
     /// Convert a Unix-days timestamp (days since 1970-01-01) into a civil
     /// (year, month, day) tuple via
     /// `frankenlibc_membrane::util::civil_date_from_unix_days`
@@ -1479,6 +1490,83 @@ fn p99_delta_validator_error_kind(
             "ci_indistinguishable_but_over_budget"
         }
     }
+}
+
+fn check_stage_name(stage: frankenlibc_membrane::check_oracle::CheckStage) -> &'static str {
+    use frankenlibc_membrane::check_oracle::CheckStage;
+    match stage {
+        CheckStage::Null => "null",
+        CheckStage::TlsCache => "tls-cache",
+        CheckStage::Bloom => "bloom",
+        CheckStage::Arena => "arena",
+        CheckStage::Fingerprint => "fingerprint",
+        CheckStage::Canary => "canary",
+        CheckStage::Bounds => "bounds",
+    }
+}
+
+fn parse_check_stage_name(
+    name: &str,
+) -> Result<frankenlibc_membrane::check_oracle::CheckStage, String> {
+    use frankenlibc_membrane::check_oracle::CheckStage;
+    match name {
+        "null" => Ok(CheckStage::Null),
+        "tls-cache" => Ok(CheckStage::TlsCache),
+        "bloom" => Ok(CheckStage::Bloom),
+        "arena" => Ok(CheckStage::Arena),
+        "fingerprint" => Ok(CheckStage::Fingerprint),
+        "canary" => Ok(CheckStage::Canary),
+        "bounds" => Ok(CheckStage::Bounds),
+        _ => Err(format!(
+            "unknown check stage {name:?}; expected one of null,tls-cache,bloom,arena,fingerprint,canary,bounds"
+        )),
+    }
+}
+
+fn parse_check_ordering(
+    stage_args: &[String],
+) -> Result<
+    [frankenlibc_membrane::check_oracle::CheckStage;
+        frankenlibc_membrane::check_oracle::NUM_STAGES],
+    String,
+> {
+    use frankenlibc_membrane::check_oracle::{CheckStage, NUM_STAGES};
+
+    let names = stage_args
+        .iter()
+        .flat_map(|arg| arg.split(','))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    if names.len() != NUM_STAGES {
+        return Err(format!(
+            "pack-check-ordering requires exactly {NUM_STAGES} stages; got {}",
+            names.len()
+        ));
+    }
+
+    let mut ordering = [CheckStage::Null; NUM_STAGES];
+    let mut seen = [false; NUM_STAGES];
+    for (idx, name) in names.iter().enumerate() {
+        let stage = parse_check_stage_name(name)?;
+        let stage_idx = stage as usize;
+        if seen[stage_idx] {
+            return Err(format!(
+                "duplicate check stage {name:?}; ordering must be a permutation"
+            ));
+        }
+        seen[stage_idx] = true;
+        ordering[idx] = stage;
+    }
+
+    if let Some(missing_idx) = seen.iter().position(|stage_seen| !stage_seen) {
+        return Err(format!(
+            "missing check stage {:?}; ordering must be a permutation",
+            check_stage_name(CheckStage::from_u8(missing_idx as u8))
+        ));
+    }
+
+    Ok(ordering)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -3074,6 +3162,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             body.push('\n');
             std::fs::write(&output, body)?;
             eprintln!("compute-contention-score: score={score:.6}");
+        }
+        Command::PackCheckOrdering { stages } => {
+            use frankenlibc_membrane::check_oracle::{pack_ordering, unpack_ordering};
+
+            let ordering = parse_check_ordering(&stages)?;
+            let packed = pack_ordering(&ordering);
+            let unpacked = unpack_ordering(packed);
+            let stage_names = ordering
+                .iter()
+                .copied()
+                .map(check_stage_name)
+                .collect::<Vec<_>>();
+            let unpacked_stage_names = unpacked
+                .iter()
+                .copied()
+                .map(check_stage_name)
+                .collect::<Vec<_>>();
+            let line = serde_json::json!({
+                "kind": "check_ordering_pack",
+                "stages": stage_names,
+                "packed_u64": packed,
+                "packed_hex": format!("0x{packed:016x}"),
+                "unpacked_round_trip": unpacked_stage_names,
+                "round_trip_ok": ordering == unpacked,
+            });
+            println!("{line}");
         }
         Command::CivilDateFromUnixDays { unix_days, output } => {
             use frankenlibc_membrane::util::civil_date_from_unix_days;
