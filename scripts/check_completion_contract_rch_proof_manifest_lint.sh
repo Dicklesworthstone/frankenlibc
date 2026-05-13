@@ -34,9 +34,22 @@ REPORT_SCHEMA = "completion_contract_rch_proof_manifest_lint.report.v1"
 BEAD = "bd-waaa6.4"
 TRACE_ID = "bd-waaa6.4::completion-contract-rch-proof-lint::v1"
 RUST_TEST_RE = re.compile(r"crates/frankenlibc-harness/tests/([A-Za-z0-9_]+)\.rs")
-CARGO_RE = re.compile(r"(^|\s)cargo\s+(test|check|clippy)\b")
+CARGO_RE = re.compile(r"(?:^|[\s'\"])cargo\s+(test|check|clippy)\b")
 TEST_TARGET_RE = re.compile(r"--test\s+([A-Za-z0-9_]+)")
-TARGET_DIR_RE = re.compile(r"CARGO_TARGET_DIR=([^\s]+)")
+SHELL_WRAPPERS = {"bash", "sh", "zsh"}
+COMMAND_FIELD_NAMES = {
+    "command",
+    "commands",
+    "checker_command",
+    "completion_test_command",
+    "required_cargo_fuzz_command",
+    "required_commands",
+    "required_validation_commands",
+    "runtime_validation",
+    "targeted_test_command",
+    "validation_command",
+    "validation_commands",
+}
 
 errors: list[dict[str, str]] = []
 events: list[dict[str, Any]] = []
@@ -106,6 +119,23 @@ def all_strings(value: Any) -> list[str]:
     return []
 
 
+def command_strings(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        result: list[str] = []
+        for key, item in value.items():
+            if key in COMMAND_FIELD_NAMES:
+                result.extend(all_strings(item))
+            else:
+                result.extend(command_strings(item))
+        return result
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            result.extend(command_strings(item))
+        return result
+    return []
+
+
 def as_str_list(value: Any, context: str) -> list[str]:
     if not isinstance(value, list):
         add_error(rel(MANIFEST), "malformed_manifest", f"{context} must be an array")
@@ -118,7 +148,7 @@ def as_str_list(value: Any, context: str) -> list[str]:
 
 def cargo_kind(command: str) -> str | None:
     match = CARGO_RE.search(command)
-    return match.group(2) if match else None
+    return match.group(1) if match else None
 
 
 def test_target(command: str) -> str | None:
@@ -126,12 +156,18 @@ def test_target(command: str) -> str | None:
     return match.group(1) if match else None
 
 
-def contains_rch_exec(command: str) -> bool:
+def split_command(command: str) -> list[str]:
     try:
-        tokens = shlex.split(command)
+        return shlex.split(command)
     except ValueError:
-        tokens = command.split()
-    return any(left == "rch" and right == "exec" for left, right in zip(tokens, tokens[1:]))
+        return command.split()
+
+
+def rch_exec_index(tokens: list[str]) -> int | None:
+    for index, (left, right) in enumerate(zip(tokens, tokens[1:])):
+        if left == "rch" and right == "exec":
+            return index
+    return None
 
 
 def validate_remote_command(
@@ -148,20 +184,56 @@ def validate_remote_command(
     if required_remote_env not in command:
         add_error(contract_path, "missing_remote_env", f"cargo command lacks {required_remote_env}: {command}")
         signatures.append("missing_remote_env")
-    if not contains_rch_exec(command):
+
+    tokens = split_command(command)
+    exec_index = rch_exec_index(tokens)
+    if exec_index is None:
         add_error(contract_path, "missing_rch_exec", f"cargo command lacks rch exec launcher: {command}")
         signatures.append("missing_rch_exec")
-    target_match = TARGET_DIR_RE.search(command)
-    if not target_match:
-        add_error(contract_path, "missing_isolated_target_dir", f"cargo command lacks CARGO_TARGET_DIR: {command}")
-        signatures.append("missing_isolated_target_dir")
-    elif target_match.group(1) in forbidden_target_values:
+        return signatures
+
+    separator_index = exec_index + 2
+    if separator_index >= len(tokens) or tokens[separator_index] != "--":
+        add_error(contract_path, "missing_rch_exec", f"cargo command lacks rch exec -- separator: {command}")
+        signatures.append("missing_rch_exec")
+        return signatures
+
+    payload_index = separator_index + 1
+    if payload_index >= len(tokens) or tokens[payload_index] != "env":
         add_error(
             contract_path,
-            "missing_isolated_target_dir",
-            f"cargo command uses placeholder or empty CARGO_TARGET_DIR: {command}",
+            "missing_rch_exec_env",
+            f"cargo command must launch through rch exec -- env: {command}",
         )
+        signatures.append("missing_rch_exec_env")
+        if payload_index < len(tokens) and tokens[payload_index] in SHELL_WRAPPERS:
+            add_error(contract_path, "shell_wrapped_cargo", f"cargo command is shell-wrapped: {command}")
+            signatures.append("shell_wrapped_cargo")
+        return signatures
+
+    payload_tokens = tokens[payload_index + 1 :]
+    cargo_index = next((index for index, token in enumerate(payload_tokens) if token == "cargo"), None)
+    pre_cargo_tokens = payload_tokens if cargo_index is None else payload_tokens[:cargo_index]
+
+    if any(token in SHELL_WRAPPERS for token in pre_cargo_tokens):
+        add_error(contract_path, "shell_wrapped_cargo", f"cargo command is shell-wrapped: {command}")
+        signatures.append("shell_wrapped_cargo")
+
+    target_envs = [token for token in pre_cargo_tokens if token.startswith("CARGO_TARGET_DIR=")]
+    if not target_envs:
+        add_error(contract_path, "missing_isolated_target_dir", f"cargo command lacks CARGO_TARGET_DIR: {command}")
         signatures.append("missing_isolated_target_dir")
+    else:
+        for target_env in target_envs:
+            _, _, target_value = target_env.partition("=")
+            if target_value in forbidden_target_values:
+                add_error(
+                    contract_path,
+                    "missing_isolated_target_dir",
+                    f"cargo command uses placeholder or empty CARGO_TARGET_DIR: {command}",
+                )
+                signatures.append("missing_isolated_target_dir")
+                break
     return signatures
 
 
@@ -174,6 +246,8 @@ def primary_signature(signatures: list[str]) -> str:
         "bare_cargo_command",
         "missing_remote_env",
         "missing_rch_exec",
+        "missing_rch_exec_env",
+        "shell_wrapped_cargo",
         "missing_isolated_target_dir",
         "missing_targeted_test_lane",
         "missing_targeted_check_lane",
@@ -224,12 +298,20 @@ forbidden_target_values = set(as_str_list(policy.get("forbidden_target_dir_value
 forbidden_markers = as_str_list(policy.get("forbidden_proof_markers", ["[RCH] local"]), "policy.forbidden_proof_markers")
 completion_lanes = set(as_str_list(policy.get("required_completion_test_lanes", []), "policy.required_completion_test_lanes"))
 contract_paths = as_str_list(manifest.get("contract_paths", []), "contract_paths")
+launcher_only_contract_paths = as_str_list(
+    manifest.get("launcher_only_contract_paths", []),
+    "launcher_only_contract_paths",
+)
 
 contract_reports: list[dict[str, Any]] = []
 total_cargo_commands = 0
 total_rust_surfaces = 0
 
-for contract_path_text in contract_paths:
+contract_specs = [(contract_path, True) for contract_path in contract_paths] + [
+    (contract_path, False) for contract_path in launcher_only_contract_paths
+]
+
+for contract_path_text, enforce_lane_matrix in contract_specs:
     contract_path = resolve(contract_path_text)
     contract_errors_before = len(errors)
     contract_signatures: list[str] = []
@@ -249,7 +331,7 @@ for contract_path_text in contract_paths:
 
     rust_surfaces = sorted({match.group(1) for text in strings for match in RUST_TEST_RE.finditer(text)})
     completion_targets = sorted(surface for surface in rust_surfaces if surface.endswith("_completion_contract_test"))
-    cargo_commands = [text for text in strings if cargo_kind(text) is not None]
+    cargo_commands = [text for text in command_strings(contract) if cargo_kind(text) is not None]
     total_cargo_commands += len(cargo_commands)
     total_rust_surfaces += len(rust_surfaces)
 
@@ -263,17 +345,18 @@ for contract_path_text in contract_paths:
             validate_remote_command(contract_path_text, command, required_remote_env, forbidden_target_values)
         )
 
-    for surface in rust_surfaces:
-        if ("test", surface) not in command_index:
-            add_error(contract_path_text, "missing_targeted_test_lane", f"missing targeted cargo test lane for {surface}")
-            contract_signatures.append("missing_targeted_test_lane")
+    if enforce_lane_matrix:
+        for surface in rust_surfaces:
+            if ("test", surface) not in command_index:
+                add_error(contract_path_text, "missing_targeted_test_lane", f"missing targeted cargo test lane for {surface}")
+                contract_signatures.append("missing_targeted_test_lane")
 
-    for target in completion_targets:
-        for lane in sorted(completion_lanes):
-            if (lane, target) not in command_index:
-                signature = f"missing_targeted_{lane}_lane"
-                add_error(contract_path_text, signature, f"missing targeted cargo {lane} lane for {target}")
-                contract_signatures.append(signature)
+        for target in completion_targets:
+            for lane in sorted(completion_lanes):
+                if (lane, target) not in command_index:
+                    signature = f"missing_targeted_{lane}_lane"
+                    add_error(contract_path_text, signature, f"missing targeted cargo {lane} lane for {target}")
+                    contract_signatures.append(signature)
 
     new_errors = errors[contract_errors_before:]
     status = "pass" if not new_errors else "fail"
@@ -282,6 +365,7 @@ for contract_path_text in contract_paths:
         "rust_surfaces": rust_surfaces,
         "completion_targets": completion_targets,
         "cargo_command_count": len(cargo_commands),
+        "enforce_lane_matrix": enforce_lane_matrix,
         "targeted_lanes": sorted(f"{kind}:{target}" for (kind, target) in command_index),
         "error_count": len(new_errors),
     }
@@ -297,7 +381,9 @@ for contract_path_text in contract_paths:
 
 status = "pass" if not errors else "fail"
 summary = {
-    "contract_count": len(contract_paths),
+    "contract_count": len(contract_specs),
+    "strict_contract_count": len(contract_paths),
+    "launcher_only_contract_count": len(launcher_only_contract_paths),
     "passed_contracts": sum(1 for row in contract_reports if row["status"] == "pass"),
     "failed_contracts": sum(1 for row in contract_reports if row["status"] == "fail"),
     "rust_surface_count": total_rust_surfaces,

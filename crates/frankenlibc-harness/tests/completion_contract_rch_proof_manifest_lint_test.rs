@@ -118,6 +118,27 @@ fn strip_target_dir(command: &str) -> String {
     }
 }
 
+fn move_target_dir_before_rch_exec(command: &str) -> String {
+    const NEEDLE: &str = "rch exec -- env CARGO_TARGET_DIR=";
+    let Some(start) = command.find(NEEDLE) else {
+        return command.to_string();
+    };
+    let target_start = start + "rch exec -- env ".len();
+    let Some(cargo_offset) = command[target_start..].find(" cargo ") else {
+        return command.to_string();
+    };
+    let cargo_start = target_start + cargo_offset;
+    let target_env = &command[target_start..cargo_start];
+
+    let mut result = String::new();
+    result.push_str(&command[..start]);
+    result.push_str(target_env);
+    result.push(' ');
+    result.push_str("rch exec --");
+    result.push_str(&command[cargo_start..]);
+    result
+}
+
 fn write_variant_manifest(
     root: &Path,
     label: &str,
@@ -139,15 +160,19 @@ fn write_variant_manifest(
     Ok(manifest_path)
 }
 
-fn assert_failure_signature(report: &Value, signature: &str) {
+fn assert_failure_signature(report: &Value, expected_code: &str) {
     let found = report["errors"]
         .as_array()
         .expect("errors must be array")
         .iter()
-        .any(|error| error["failure_signature"].as_str() == Some(signature));
+        .any(|error| {
+            error["failure_signature"]
+                .as_str()
+                .is_some_and(|actual| actual.eq(expected_code))
+        });
     assert!(
         found,
-        "expected failure signature {signature}, report={report:#}"
+        "expected failure signature {expected_code}, report={report:#}"
     );
 }
 
@@ -180,6 +205,24 @@ fn manifest_names_positive_completion_contracts_and_policy() -> TestResult {
             "manifest missing positive contract {required}"
         );
     }
+    let launcher_only_contracts: Vec<&str> = manifest["launcher_only_contract_paths"]
+        .as_array()
+        .ok_or("launcher_only_contract_paths must be array")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(launcher_only_contracts.len(), 2);
+    for required in [
+        "raw_syscall_veneer_completion_contract.v1.json",
+        "math_core_diff_completion_contract.v1.json",
+    ] {
+        assert!(
+            launcher_only_contracts
+                .iter()
+                .any(|path| path.ends_with(required)),
+            "manifest missing launcher-only contract {required}"
+        );
+    }
     assert_eq!(
         manifest["policy"]["required_remote_env"].as_str(),
         Some("RCH_FORCE_REMOTE=true")
@@ -191,6 +234,25 @@ fn manifest_names_positive_completion_contracts_and_policy() -> TestResult {
             .iter()
             .any(|marker| marker.as_str() == Some("[RCH] local"))
     );
+    assert!(
+        manifest["policy"]["forbidden_proof_markers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|marker| marker.as_str() == Some("remote execution failed"))
+    );
+    for required_code in ["missing_rch_exec_env", "shell_wrapped_cargo"] {
+        assert!(
+            manifest["required_failure_signatures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry
+                    .as_str()
+                    .is_some_and(|actual| actual.eq(required_code))),
+            "manifest must require failure signature {required_code}"
+        );
+    }
     Ok(())
 }
 
@@ -208,13 +270,18 @@ fn checker_accepts_positive_contracts_and_emits_structured_artifacts() -> TestRe
         Some("completion_contract_rch_proof_manifest_lint.report.v1")
     );
     assert_eq!(report["status"].as_str(), Some("pass"));
-    assert_eq!(report["summary"]["contract_count"].as_u64(), Some(5));
+    assert_eq!(report["summary"]["contract_count"].as_u64(), Some(7));
+    assert_eq!(report["summary"]["strict_contract_count"].as_u64(), Some(5));
+    assert_eq!(
+        report["summary"]["launcher_only_contract_count"].as_u64(),
+        Some(2)
+    );
     assert_eq!(report["summary"]["failed_contracts"].as_u64(), Some(0));
     assert!(
         report["summary"]["cargo_command_count"]
             .as_u64()
             .unwrap_or(0)
-            >= 20
+            >= 31
     );
 
     let log = std::fs::read_to_string(
@@ -224,7 +291,7 @@ fn checker_accepts_positive_contracts_and_emits_structured_artifacts() -> TestRe
         .lines()
         .map(serde_json::from_str)
         .collect::<Result<_, _>>()?;
-    assert_eq!(rows.len(), 5);
+    assert_eq!(rows.len(), 7);
     for (index, line) in log.lines().enumerate() {
         validate_log_line(line, index + 1).map_err(|errors| {
             std::io::Error::other(format!("structured log validation failed: {errors:?}"))
@@ -301,6 +368,48 @@ fn checker_rejects_missing_rch_exec() -> TestResult {
 }
 
 #[test]
+fn checker_rejects_non_env_rch_exec_payload() -> TestResult {
+    let root = repo_root();
+    let manifest = write_variant_manifest(&root, "non_env_payload", |contract| {
+        let mut changed = false;
+        mutate_strings(contract, &mut |text| {
+            if !changed && text.contains("cargo test") {
+                *text = move_target_dir_before_rch_exec(text);
+                changed = true;
+            }
+        });
+    })?;
+    let out_dir = unique_out_dir(&root, "non_env_payload_out")?;
+    let output = run_checker(&root, &manifest, &out_dir)?;
+    assert!(!output.status.success(), "{}", output_text(&output));
+    let report =
+        read_json(&out_dir.join("completion_contract_rch_proof_manifest_lint.report.json"))?;
+    assert_failure_signature(&report, "missing_rch_exec_env");
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_shell_wrapped_cargo_payload() -> TestResult {
+    let root = repo_root();
+    let manifest = write_variant_manifest(&root, "shell_wrapped_payload", |contract| {
+        let mut changed = false;
+        mutate_strings(contract, &mut |text| {
+            if !changed && text.contains("cargo clippy") {
+                *text = "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- bash -c 'cargo clippy -p frankenlibc-harness --test completion_contract_rch_proof_manifest_lint_test -- -D warnings'".to_string();
+                changed = true;
+            }
+        });
+    })?;
+    let out_dir = unique_out_dir(&root, "shell_wrapped_payload_out")?;
+    let output = run_checker(&root, &manifest, &out_dir)?;
+    assert!(!output.status.success(), "{}", output_text(&output));
+    let report =
+        read_json(&out_dir.join("completion_contract_rch_proof_manifest_lint.report.json"))?;
+    assert_failure_signature(&report, "shell_wrapped_cargo");
+    Ok(())
+}
+
+#[test]
 fn checker_rejects_missing_isolated_target_dir() -> TestResult {
     let root = repo_root();
     let manifest = write_variant_manifest(&root, "missing_target_dir", |contract| {
@@ -340,7 +449,7 @@ fn checker_rejects_missing_targeted_clippy_lane() -> TestResult {
 fn checker_rejects_local_fallback_marker() -> TestResult {
     let root = repo_root();
     let manifest = write_variant_manifest(&root, "local_fallback_marker", |contract| {
-        contract["proof_note"] = serde_json::json!("[RCH] local (remote execution failed)");
+        contract["proof_note"] = serde_json::json!("remote execution failed");
     })?;
     let out_dir = unique_out_dir(&root, "local_fallback_marker_out")?;
     let output = run_checker(&root, &manifest, &out_dir)?;
