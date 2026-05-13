@@ -1,0 +1,117 @@
+{
+  "version": "v1",
+  "family": "poll_event_loop_wave02",
+  "captured_at": "2026-05-13T14:31:11Z",
+  "description": "Strict/hardened deterministic poll/event-loop fixture wave for timerfd_settime using class-only timer state outcomes without recording descriptor numbers, thread ids, timestamps, stderr bytes, scheduler timing, wall-clock samples, or process-global counters.",
+  "spec_reference": "Linux timerfd_settime event-loop semantics for relative timer programming, invalid descriptor errors, and class-only readable timerfd state",
+  "campaign": {
+    "bead": "bd-r5k32.6",
+    "campaign_id": "fcq-poll-event-loop",
+    "wave_id": "wave-02-poll-event-loop",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture",
+    "first_wave_symbols": [
+      "timerfd_settime"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "timerfd_settime_valid_relative_timer_strict",
+      "function": "timerfd_settime",
+      "spec_section": "Linux timerfd_settime",
+      "inputs": {
+        "symbol": "timerfd_settime",
+        "scenario": "valid_relative_timer_state_class",
+        "create_timer": true,
+        "clockid": 1,
+        "create_flags": 0,
+        "set_flags": 0,
+        "value_sec": 60,
+        "value_nsec": 0,
+        "interval_sec": 0,
+        "interval_nsec": 0,
+        "state_probe": true,
+        "expected": "TIMERFD_SETTIME_RC_0_STATE_ARMED_INTERVAL_ZERO",
+        "oracle_source": "class-only timerfd_settime success with readable armed-state probe",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=timerfd_settime;mode=strict;expected=TIMERFD_SETTIME_RC_0_STATE_ARMED_INTERVAL_ZERO;actual=TIMERFD_SETTIME_RC_0_STATE_ARMED_INTERVAL_ZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "timerfd_settime_valid_relative_timer_hardened",
+      "function": "timerfd_settime",
+      "spec_section": "Linux timerfd_settime",
+      "inputs": {
+        "symbol": "timerfd_settime",
+        "scenario": "valid_relative_timer_state_class",
+        "create_timer": true,
+        "clockid": 1,
+        "create_flags": 0,
+        "set_flags": 0,
+        "value_sec": 60,
+        "value_nsec": 0,
+        "interval_sec": 0,
+        "interval_nsec": 0,
+        "state_probe": true,
+        "expected": "TIMERFD_SETTIME_RC_0_STATE_ARMED_INTERVAL_ZERO",
+        "oracle_source": "class-only timerfd_settime success with readable armed-state probe",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=timerfd_settime;mode=hardened;expected=TIMERFD_SETTIME_RC_0_STATE_ARMED_INTERVAL_ZERO;actual=TIMERFD_SETTIME_RC_0_STATE_ARMED_INTERVAL_ZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "timerfd_settime_invalid_descriptor_strict",
+      "function": "timerfd_settime",
+      "spec_section": "Linux timerfd_settime",
+      "inputs": {
+        "symbol": "timerfd_settime",
+        "scenario": "invalid_descriptor_class",
+        "fd": -1,
+        "set_flags": 0,
+        "value_sec": 1,
+        "value_nsec": 0,
+        "interval_sec": 0,
+        "interval_nsec": 0,
+        "expected": "TIMERFD_SETTIME_ERROR_EBADF",
+        "oracle_source": "class-only timerfd_settime invalid descriptor error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=timerfd_settime;mode=strict;expected=TIMERFD_SETTIME_ERROR_EBADF;actual=TIMERFD_SETTIME_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "timerfd_settime_invalid_descriptor_hardened",
+      "function": "timerfd_settime",
+      "spec_section": "Linux timerfd_settime",
+      "inputs": {
+        "symbol": "timerfd_settime",
+        "scenario": "invalid_descriptor_class",
+        "fd": -1,
+        "set_flags": 0,
+        "value_sec": 1,
+        "value_nsec": 0,
+        "interval_sec": 0,
+        "interval_nsec": 0,
+        "expected": "TIMERFD_SETTIME_ERROR_EBADF",
+        "oracle_source": "class-only timerfd_settime invalid descriptor error",
+        "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture"
+      },
+      "expected_output": "symbol=timerfd_settime;mode=hardened;expected=TIMERFD_SETTIME_ERROR_EBADF;actual=TIMERFD_SETTIME_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    }
+  ]
+}

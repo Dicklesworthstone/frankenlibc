@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T14:15:31Z",
-  "report_hash": "b1939bc653f68d9e",
+  "generated_at": "2026-05-13T14:32:58Z",
+  "report_hash": "77b1db5f2c7f988e",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 796,
-    "symbols_without_fixtures": 3323,
+    "symbols_with_fixtures": 797,
+    "symbols_without_fixtures": 3322,
     "fixture_coverage_pct": 19.3,
     "implemented_coverage_pct": 18.9,
-    "total_fixture_files": 93,
-    "total_cases": 2036,
+    "total_fixture_files": 94,
+    "total_cases": 2040,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 493,
-    "symbols_with_errno_checks": 793,
+    "symbols_with_edge_cases": 494,
+    "symbols_with_errno_checks": 794,
     "total_quality_issues": 3541,
-    "uncovered_action_count": 3323
+    "uncovered_action_count": 3322
   },
   "fixture_file_analyses": [
     {
@@ -224,6 +224,14 @@
       "valid": true,
       "total_cases": 24,
       "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "poll_event_loop_wave02.json",
+      "family": "poll_event_loop_wave02",
+      "valid": true,
+      "total_cases": 4,
+      "unique_symbols": 1,
       "issues": []
     },
     {
@@ -60165,12 +60173,20 @@
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "poll_event_loop_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -87004,13 +87020,6 @@
       "symbol": "timer_settime",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "timerfd_settime",
-      "status": "RawSyscall",
-      "module": "poll_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

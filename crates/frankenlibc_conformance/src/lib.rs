@@ -1040,7 +1040,9 @@ pub fn execute_fixture_case(
         // poll ops
         "epoll_create" | "epoll_create1" | "epoll_ctl" | "epoll_pwait" | "epoll_wait"
         | "eventfd" | "ppoll" | "prctl" | "pselect" | "sched_yield" | "timerfd_create"
-        | "timerfd_gettime" => execute_poll_event_loop_wave01_case(function, inputs, mode),
+        | "timerfd_gettime" | "timerfd_settime" => {
+            execute_poll_event_loop_wave01_case(function, inputs, mode)
+        }
         "poll" => execute_poll_case(inputs, mode),
         "select" => execute_select_case(inputs, mode),
         // signal ops
@@ -20490,6 +20492,7 @@ fn execute_poll_event_loop_wave01_case(
         "sched_yield" => poll_event_loop_sched_yield_actual(),
         "timerfd_create" => poll_event_loop_timerfd_create_actual(inputs),
         "timerfd_gettime" => poll_event_loop_timerfd_gettime_actual(inputs),
+        "timerfd_settime" => poll_event_loop_timerfd_settime_actual(inputs),
         other => return Err(format!("unsupported poll/event-loop wave symbol: {other}")),
     }?;
 
@@ -20758,6 +20761,139 @@ fn poll_event_loop_timerfd_gettime_actual(inputs: &serde_json::Value) -> Result<
             poll_event_loop_errno_class(poll_event_loop_errno())
         ))
     }
+}
+
+fn poll_event_loop_timerfd_settime_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let create_timer = inputs
+        .get("create_timer")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let (fd, owned_fd) = if create_timer {
+        let clockid = parse_i32(inputs, "clockid")?;
+        let create_flags = inputs
+            .get("create_flags")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0) as c_int;
+        poll_event_loop_reset_errno();
+        let fd = unsafe { frankenlibc_abi::poll_abi::timerfd_create(clockid, create_flags) };
+        if fd < 0 {
+            return Ok(format!(
+                "TIMERFD_SETTIME_CREATE_ERROR_{}",
+                poll_event_loop_errno_class(poll_event_loop_errno())
+            ));
+        }
+        (fd, true)
+    } else {
+        (parse_i32(inputs, "fd")?, false)
+    };
+
+    let new_value = libc::itimerspec {
+        it_interval: libc::timespec {
+            tv_sec: inputs
+                .get("interval_sec")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0) as libc::time_t,
+            tv_nsec: inputs
+                .get("interval_nsec")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0) as libc::c_long,
+        },
+        it_value: libc::timespec {
+            tv_sec: inputs
+                .get("value_sec")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0) as libc::time_t,
+            tv_nsec: inputs
+                .get("value_nsec")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0) as libc::c_long,
+        },
+    };
+    let mut old_value = libc::itimerspec {
+        it_interval: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        it_value: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+    };
+    let old_value_ptr: *mut libc::itimerspec = if inputs
+        .get("capture_old")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        &mut old_value
+    } else {
+        std::ptr::null_mut()
+    };
+    let set_flags = inputs
+        .get("set_flags")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0) as c_int;
+
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::poll_abi::timerfd_settime(fd, set_flags, &new_value, old_value_ptr)
+    };
+    if rc != 0 {
+        let result = format!(
+            "TIMERFD_SETTIME_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        );
+        if owned_fd {
+            poll_event_loop_close_fd(fd);
+        }
+        return Ok(result);
+    }
+
+    if !inputs
+        .get("state_probe")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        if owned_fd {
+            poll_event_loop_close_fd(fd);
+        }
+        return Ok(String::from("TIMERFD_SETTIME_RC_0"));
+    }
+
+    let mut current = libc::itimerspec {
+        it_interval: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        it_value: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+    };
+    poll_event_loop_reset_errno();
+    let get_rc = unsafe { frankenlibc_abi::poll_abi::timerfd_gettime(fd, &mut current) };
+    let result = if get_rc == 0 {
+        let value_state = if current.it_value.tv_sec > 0 || current.it_value.tv_nsec > 0 {
+            "ARMED"
+        } else {
+            "DISARMED"
+        };
+        let interval_state = if current.it_interval.tv_sec == 0 && current.it_interval.tv_nsec == 0
+        {
+            "ZERO"
+        } else {
+            "PERIODIC"
+        };
+        format!("TIMERFD_SETTIME_RC_0_STATE_{value_state}_INTERVAL_{interval_state}")
+    } else {
+        format!(
+            "TIMERFD_SETTIME_RC_0_GETTIME_ERROR_{}",
+            poll_event_loop_errno_class(poll_event_loop_errno())
+        )
+    };
+    if owned_fd {
+        poll_event_loop_close_fd(fd);
+    }
+    Ok(result)
 }
 
 fn execute_raise_case(
@@ -22681,6 +22817,39 @@ mod tests {
         let raw = include_str!("../../../tests/conformance/fixtures/poll_ops.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("poll_ops fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn poll_event_loop_wave02_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/poll_event_loop_wave02.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("poll_event_loop_wave02 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

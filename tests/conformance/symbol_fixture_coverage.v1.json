@@ -4037,33 +4037,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 14,
-      "milestone_beads": [],
-      "module": "poll_abi",
-      "recommended_bead": null,
-      "severity": "medium",
-      "severity_score": 101,
-      "status_breakdown": {
-        "RawSyscall": 15
-      },
-      "target_coverage_pct": 93.33,
-      "target_covered": 14,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 15,
-      "target_uncovered": 1,
-      "target_uncovered_symbols": [
-        "timerfd_settime"
-      ],
-      "total_symbols": 15,
-      "track": "poll",
-      "uncovered_symbols": 1,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 7,
       "milestone_beads": [
         "bd-3rn"
@@ -4241,6 +4214,31 @@
       "workload_ids": []
     },
     {
+      "covered_symbols": 15,
+      "milestone_beads": [],
+      "module": "poll_abi",
+      "recommended_bead": null,
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "RawSyscall": 15
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 15,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 15,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 15,
+      "track": "poll",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "covered_symbols": 11,
       "milestone_beads": [
         "bd-66s"
@@ -4373,9 +4371,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 2036,
-    "fixture_json_files": 93,
-    "fixture_json_unique_functions": 813,
+    "fixture_json_cases": 2040,
+    "fixture_json_files": 94,
+    "fixture_json_unique_functions": 814,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4396,7 +4394,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 815
+    "unique_fixture_functions_total": 816
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -8018,19 +8016,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "poll_abi",
-      "recommended_bead": null,
-      "severity": "medium",
-      "target_uncovered_count": 1,
-      "target_uncovered_symbols": [
-        "timerfd_settime"
-      ],
-      "track": "poll",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "resource_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -8078,25 +8063,25 @@
       "uncovered": 3004
     },
     "RawSyscall": {
-      "coverage_pct": 23.43,
-      "covered": 97,
+      "coverage_pct": 23.67,
+      "covered": 98,
       "total": 414,
-      "uncovered": 317
+      "uncovered": 316
     }
   },
   "summary": {
-    "coverage_pct": 19.37,
-    "covered_exported_symbols": 798,
-    "target_coverage_pct": 19.37,
-    "target_covered_symbols": 798,
+    "coverage_pct": 19.4,
+    "covered_exported_symbols": 799,
+    "target_coverage_pct": 19.4,
+    "target_covered_symbols": 799,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3321,
+    "target_uncovered_symbols": 3320,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3321,
+    "uncovered_exported_symbols": 3320,
     "uncovered_target_families": 2,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 24
@@ -41753,13 +41738,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 4,
+      "fixture_families": [
+        "poll_event_loop_wave02"
+      ],
+      "fixture_files": [
+        "poll_event_loop_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
       "status": "RawSyscall",
