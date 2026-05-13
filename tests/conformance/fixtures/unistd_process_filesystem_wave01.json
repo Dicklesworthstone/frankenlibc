@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-13T10:30:00Z",
+  "description": "Deterministic unistd/process/filesystem wave-01 fixture rows for invalid path, invalid range, no-op logging, and class-only crypt salt surfaces without recording host paths, uid/gid ownership, file descriptors, generated salt bytes, timestamps, stderr bytes, or process-global counters.",
+  "spec_reference": "POSIX chown, creat, clock_getcpuclockid, and syslog closelog contracts; Linux close_range invalid range behavior; GNU/libcrypt crypt, crypt_checksalt, and crypt_gensalt family salt-method classes.",
+  "campaign": {
+    "bead": "bd-kgy3r.9",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-01-unistd-process-filesystem",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture",
+    "first_wave_symbols": [
+      "chown",
+      "clock_getcpuclockid",
+      "close_range",
+      "closelog",
+      "creat",
+      "creat64",
+      "crypt",
+      "crypt_checksalt",
+      "crypt_gensalt",
+      "crypt_gensalt_r",
+      "crypt_gensalt_ra",
+      "crypt_gensalt_rn"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "chown_null_path_error_class_strict",
+      "function": "chown",
+      "spec_section": "POSIX chown null-path error class",
+      "inputs": {
+        "symbol": "chown",
+        "scenario": "null_path_no_ownership_mutation",
+        "expected": "CHOWN_NULL_RC_-1",
+        "oracle_source": "FrankenLibC chown null path error class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=chown;mode=strict;expected=CHOWN_NULL_RC_-1;actual=CHOWN_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "chown_null_path_error_class_hardened",
+      "function": "chown",
+      "spec_section": "POSIX chown null-path error class",
+      "inputs": {
+        "symbol": "chown",
+        "scenario": "null_path_no_ownership_mutation",
+        "expected": "CHOWN_NULL_RC_-1",
+        "oracle_source": "FrankenLibC chown null path error class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=chown;mode=hardened;expected=CHOWN_NULL_RC_-1;actual=CHOWN_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clock_getcpuclockid_null_output_strict",
+      "function": "clock_getcpuclockid",
+      "spec_section": "POSIX clock_getcpuclockid null-output validation",
+      "inputs": {
+        "symbol": "clock_getcpuclockid",
+        "scenario": "null_clock_id_output",
+        "expected": "CLOCK_GETCPUCLOCKID_NULL_RC_22",
+        "oracle_source": "POSIX EINVAL class for null clock_id",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=clock_getcpuclockid;mode=strict;expected=CLOCK_GETCPUCLOCKID_NULL_RC_22;actual=CLOCK_GETCPUCLOCKID_NULL_RC_22;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clock_getcpuclockid_null_output_hardened",
+      "function": "clock_getcpuclockid",
+      "spec_section": "POSIX clock_getcpuclockid null-output validation",
+      "inputs": {
+        "symbol": "clock_getcpuclockid",
+        "scenario": "null_clock_id_output",
+        "expected": "CLOCK_GETCPUCLOCKID_NULL_RC_22",
+        "oracle_source": "POSIX EINVAL class for null clock_id",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=clock_getcpuclockid;mode=hardened;expected=CLOCK_GETCPUCLOCKID_NULL_RC_22;actual=CLOCK_GETCPUCLOCKID_NULL_RC_22;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "close_range_invalid_bounds_strict",
+      "function": "close_range",
+      "spec_section": "Linux close_range invalid first/last ordering",
+      "inputs": {
+        "symbol": "close_range",
+        "scenario": "first_greater_than_last_no_fd_close",
+        "expected": "CLOSE_RANGE_INVALID_RC_-1",
+        "oracle_source": "Linux close_range invalid range class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=close_range;mode=strict;expected=CLOSE_RANGE_INVALID_RC_-1;actual=CLOSE_RANGE_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "close_range_invalid_bounds_hardened",
+      "function": "close_range",
+      "spec_section": "Linux close_range invalid first/last ordering",
+      "inputs": {
+        "symbol": "close_range",
+        "scenario": "first_greater_than_last_no_fd_close",
+        "expected": "CLOSE_RANGE_INVALID_RC_-1",
+        "oracle_source": "Linux close_range invalid range class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=close_range;mode=hardened;expected=CLOSE_RANGE_INVALID_RC_-1;actual=CLOSE_RANGE_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "closelog_noop_strict",
+      "function": "closelog",
+      "spec_section": "POSIX syslog closelog process-global no-op class",
+      "inputs": {
+        "symbol": "closelog",
+        "scenario": "close_log_without_observing_global_state",
+        "expected": "CLOSELOG_NOOP",
+        "oracle_source": "FrankenLibC closelog no-op class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=closelog;mode=strict;expected=CLOSELOG_NOOP;actual=CLOSELOG_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "closelog_noop_hardened",
+      "function": "closelog",
+      "spec_section": "POSIX syslog closelog process-global no-op class",
+      "inputs": {
+        "symbol": "closelog",
+        "scenario": "close_log_without_observing_global_state",
+        "expected": "CLOSELOG_NOOP",
+        "oracle_source": "FrankenLibC closelog no-op class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=closelog;mode=hardened;expected=CLOSELOG_NOOP;actual=CLOSELOG_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "creat_null_path_error_class_strict",
+      "function": "creat",
+      "spec_section": "POSIX creat null-path error class",
+      "inputs": {
+        "symbol": "creat",
+        "scenario": "null_path_no_file_creation",
+        "expected": "CREAT_NULL_RC_-1",
+        "oracle_source": "FrankenLibC creat null path error class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=creat;mode=strict;expected=CREAT_NULL_RC_-1;actual=CREAT_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "creat_null_path_error_class_hardened",
+      "function": "creat",
+      "spec_section": "POSIX creat null-path error class",
+      "inputs": {
+        "symbol": "creat",
+        "scenario": "null_path_no_file_creation",
+        "expected": "CREAT_NULL_RC_-1",
+        "oracle_source": "FrankenLibC creat null path error class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=creat;mode=hardened;expected=CREAT_NULL_RC_-1;actual=CREAT_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "creat64_null_path_error_class_strict",
+      "function": "creat64",
+      "spec_section": "GNU creat64 null-path error class",
+      "inputs": {
+        "symbol": "creat64",
+        "scenario": "null_path_no_file_creation",
+        "expected": "CREAT64_NULL_RC_-1",
+        "oracle_source": "FrankenLibC creat64 null path error class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=creat64;mode=strict;expected=CREAT64_NULL_RC_-1;actual=CREAT64_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "creat64_null_path_error_class_hardened",
+      "function": "creat64",
+      "spec_section": "GNU creat64 null-path error class",
+      "inputs": {
+        "symbol": "creat64",
+        "scenario": "null_path_no_file_creation",
+        "expected": "CREAT64_NULL_RC_-1",
+        "oracle_source": "FrankenLibC creat64 null path error class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=creat64;mode=hardened;expected=CREAT64_NULL_RC_-1;actual=CREAT64_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "crypt_sha512_class_strict",
+      "function": "crypt",
+      "spec_section": "GNU/libcrypt crypt SHA-512 method class",
+      "inputs": {
+        "symbol": "crypt",
+        "scenario": "sha512_hash_class_without_hash_capture",
+        "expected": "CRYPT_SHA512_CLASS",
+        "oracle_source": "FrankenLibC crypt algorithm-class oracle",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt;mode=strict;expected=CRYPT_SHA512_CLASS;actual=CRYPT_SHA512_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "crypt_sha512_class_hardened",
+      "function": "crypt",
+      "spec_section": "GNU/libcrypt crypt SHA-512 method class",
+      "inputs": {
+        "symbol": "crypt",
+        "scenario": "sha512_hash_class_without_hash_capture",
+        "expected": "CRYPT_SHA512_CLASS",
+        "oracle_source": "FrankenLibC crypt algorithm-class oracle",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt;mode=hardened;expected=CRYPT_SHA512_CLASS;actual=CRYPT_SHA512_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "crypt_checksalt_sha512_class_strict",
+      "function": "crypt_checksalt",
+      "spec_section": "GNU/libcrypt crypt_checksalt method validation",
+      "inputs": {
+        "symbol": "crypt_checksalt",
+        "scenario": "sha512_setting_acceptance_class",
+        "expected": "CRYPT_CHECKSALT_SHA512_RC_0",
+        "oracle_source": "FrankenLibC crypt_checksalt SHA-512 class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt_checksalt;mode=strict;expected=CRYPT_CHECKSALT_SHA512_RC_0;actual=CRYPT_CHECKSALT_SHA512_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "crypt_checksalt_sha512_class_hardened",
+      "function": "crypt_checksalt",
+      "spec_section": "GNU/libcrypt crypt_checksalt method validation",
+      "inputs": {
+        "symbol": "crypt_checksalt",
+        "scenario": "sha512_setting_acceptance_class",
+        "expected": "CRYPT_CHECKSALT_SHA512_RC_0",
+        "oracle_source": "FrankenLibC crypt_checksalt SHA-512 class",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt_checksalt;mode=hardened;expected=CRYPT_CHECKSALT_SHA512_RC_0;actual=CRYPT_CHECKSALT_SHA512_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "crypt_gensalt_sha512_rounds_class_strict",
+      "function": "crypt_gensalt",
+      "spec_section": "GNU/libcrypt crypt_gensalt SHA-512 rounds class",
+      "inputs": {
+        "symbol": "crypt_gensalt",
+        "scenario": "sha512_rounds_salt_class_without_salt_capture",
+        "expected": "CRYPT_GENSALT_SHA512_ROUNDS_CLASS",
+        "oracle_source": "FrankenLibC crypt_gensalt algorithm-class oracle",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt_gensalt;mode=strict;expected=CRYPT_GENSALT_SHA512_ROUNDS_CLASS;actual=CRYPT_GENSALT_SHA512_ROUNDS_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "crypt_gensalt_sha512_rounds_class_hardened",
+      "function": "crypt_gensalt",
+      "spec_section": "GNU/libcrypt crypt_gensalt SHA-512 rounds class",
+      "inputs": {
+        "symbol": "crypt_gensalt",
+        "scenario": "sha512_rounds_salt_class_without_salt_capture",
+        "expected": "CRYPT_GENSALT_SHA512_ROUNDS_CLASS",
+        "oracle_source": "FrankenLibC crypt_gensalt algorithm-class oracle",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt_gensalt;mode=hardened;expected=CRYPT_GENSALT_SHA512_ROUNDS_CLASS;actual=CRYPT_GENSALT_SHA512_ROUNDS_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "crypt_gensalt_r_sha512_rounds_class_strict",
+      "function": "crypt_gensalt_r",
+      "spec_section": "GNU/libcrypt crypt_gensalt_r SHA-512 rounds class",
+      "inputs": {
+        "symbol": "crypt_gensalt_r",
+        "scenario": "sha512_rounds_salt_class_without_salt_capture",
+        "expected": "CRYPT_GENSALT_R_SHA512_ROUNDS_CLASS",
+        "oracle_source": "FrankenLibC crypt_gensalt_r algorithm-class oracle",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt_gensalt_r;mode=strict;expected=CRYPT_GENSALT_R_SHA512_ROUNDS_CLASS;actual=CRYPT_GENSALT_R_SHA512_ROUNDS_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "crypt_gensalt_r_sha512_rounds_class_hardened",
+      "function": "crypt_gensalt_r",
+      "spec_section": "GNU/libcrypt crypt_gensalt_r SHA-512 rounds class",
+      "inputs": {
+        "symbol": "crypt_gensalt_r",
+        "scenario": "sha512_rounds_salt_class_without_salt_capture",
+        "expected": "CRYPT_GENSALT_R_SHA512_ROUNDS_CLASS",
+        "oracle_source": "FrankenLibC crypt_gensalt_r algorithm-class oracle",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt_gensalt_r;mode=hardened;expected=CRYPT_GENSALT_R_SHA512_ROUNDS_CLASS;actual=CRYPT_GENSALT_R_SHA512_ROUNDS_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "crypt_gensalt_ra_sha512_rounds_class_strict",
+      "function": "crypt_gensalt_ra",
+      "spec_section": "GNU/libcrypt crypt_gensalt_ra SHA-512 rounds class",
+      "inputs": {
+        "symbol": "crypt_gensalt_ra",
+        "scenario": "sha512_rounds_salt_class_without_salt_capture",
+        "expected": "CRYPT_GENSALT_RA_SHA512_ROUNDS_CLASS",
+        "oracle_source": "FrankenLibC crypt_gensalt_ra algorithm-class oracle",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt_gensalt_ra;mode=strict;expected=CRYPT_GENSALT_RA_SHA512_ROUNDS_CLASS;actual=CRYPT_GENSALT_RA_SHA512_ROUNDS_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "crypt_gensalt_ra_sha512_rounds_class_hardened",
+      "function": "crypt_gensalt_ra",
+      "spec_section": "GNU/libcrypt crypt_gensalt_ra SHA-512 rounds class",
+      "inputs": {
+        "symbol": "crypt_gensalt_ra",
+        "scenario": "sha512_rounds_salt_class_without_salt_capture",
+        "expected": "CRYPT_GENSALT_RA_SHA512_ROUNDS_CLASS",
+        "oracle_source": "FrankenLibC crypt_gensalt_ra algorithm-class oracle",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt_gensalt_ra;mode=hardened;expected=CRYPT_GENSALT_RA_SHA512_ROUNDS_CLASS;actual=CRYPT_GENSALT_RA_SHA512_ROUNDS_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "crypt_gensalt_rn_sha512_rounds_class_strict",
+      "function": "crypt_gensalt_rn",
+      "spec_section": "GNU/libcrypt crypt_gensalt_rn SHA-512 rounds class",
+      "inputs": {
+        "symbol": "crypt_gensalt_rn",
+        "scenario": "sha512_rounds_salt_class_without_salt_capture",
+        "expected": "CRYPT_GENSALT_RN_SHA512_ROUNDS_CLASS",
+        "oracle_source": "FrankenLibC crypt_gensalt_rn algorithm-class oracle",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt_gensalt_rn;mode=strict;expected=CRYPT_GENSALT_RN_SHA512_ROUNDS_CLASS;actual=CRYPT_GENSALT_RN_SHA512_ROUNDS_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "crypt_gensalt_rn_sha512_rounds_class_hardened",
+      "function": "crypt_gensalt_rn",
+      "spec_section": "GNU/libcrypt crypt_gensalt_rn SHA-512 rounds class",
+      "inputs": {
+        "symbol": "crypt_gensalt_rn",
+        "scenario": "sha512_rounds_salt_class_without_salt_capture",
+        "expected": "CRYPT_GENSALT_RN_SHA512_ROUNDS_CLASS",
+        "oracle_source": "FrankenLibC crypt_gensalt_rn algorithm-class oracle",
+        "ambient_state_policy": "forbid_host_paths_uid_gid_fd_salt_timestamp_or_process_global_capture"
+      },
+      "expected_output": "symbol=crypt_gensalt_rn;mode=hardened;expected=CRYPT_GENSALT_RN_SHA512_ROUNDS_CLASS;actual=CRYPT_GENSALT_RN_SHA512_ROUNDS_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

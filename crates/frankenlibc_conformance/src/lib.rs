@@ -704,8 +704,20 @@ pub fn execute_fixture_case(
         | "canonicalize_file_name"
         | "capget"
         | "capset"
+        | "chown"
         | "chdir"
-        | "chmod" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        | "chmod"
+        | "clock_getcpuclockid"
+        | "close_range"
+        | "closelog"
+        | "creat"
+        | "creat64"
+        | "crypt"
+        | "crypt_checksalt"
+        | "crypt_gensalt"
+        | "crypt_gensalt_r"
+        | "crypt_gensalt_ra"
+        | "crypt_gensalt_rn" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
         | "_IO_peekc_locked" | "_IO_putc" | "_IO_puts" | "_IO_seekoff" | "_IO_seekpos"
@@ -16331,8 +16343,19 @@ fn execute_unistd_process_filesystem_case(
         "canonicalize_file_name" => canonicalize_file_name_fixture_actual()?,
         "capget" => capget_fixture_actual()?,
         "capset" => capset_fixture_actual()?,
+        "chown" => chown_fixture_actual()?,
         "chdir" => chdir_fixture_actual()?,
         "chmod" => chmod_fixture_actual()?,
+        "clock_getcpuclockid" => clock_getcpuclockid_fixture_actual()?,
+        "close_range" => close_range_fixture_actual()?,
+        "closelog" => closelog_fixture_actual()?,
+        "creat" | "creat64" => creat_fixture_actual(function)?,
+        "crypt" => crypt_fixture_actual()?,
+        "crypt_checksalt" => crypt_checksalt_fixture_actual()?,
+        "crypt_gensalt" => crypt_gensalt_fixture_actual()?,
+        "crypt_gensalt_r" => crypt_gensalt_r_fixture_actual()?,
+        "crypt_gensalt_ra" => crypt_gensalt_ra_fixture_actual()?,
+        "crypt_gensalt_rn" => crypt_gensalt_rn_fixture_actual()?,
         other => {
             return Err(format!(
                 "unsupported unistd process/filesystem fixture: {other}"
@@ -17172,6 +17195,13 @@ fn capset_fixture_actual() -> Result<String, String> {
     Ok(format!("CAPSET_NULL_RC_{rc}"))
 }
 
+fn chown_fixture_actual() -> Result<String, String> {
+    // SAFETY: Null path is a deterministic error class and cannot mutate
+    // filesystem ownership.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::chown(std::ptr::null(), 0, 0) };
+    Ok(format!("CHOWN_NULL_RC_{rc}"))
+}
+
 fn chdir_fixture_actual() -> Result<String, String> {
     // SAFETY: Null path is a deterministic error class and cannot change cwd.
     let rc = unsafe { frankenlibc_abi::unistd_abi::chdir(std::ptr::null()) };
@@ -17183,6 +17213,160 @@ fn chmod_fixture_actual() -> Result<String, String> {
     // filesystem.
     let rc = unsafe { frankenlibc_abi::unistd_abi::chmod(std::ptr::null(), 0o644) };
     Ok(format!("CHMOD_NULL_RC_{rc}"))
+}
+
+fn clock_getcpuclockid_fixture_actual() -> Result<String, String> {
+    // SAFETY: Null output pointer is the POSIX deterministic EINVAL class and
+    // does not inspect or record the current process clock id.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::clock_getcpuclockid(0, std::ptr::null_mut()) };
+    Ok(format!("CLOCK_GETCPUCLOCKID_NULL_RC_{rc}"))
+}
+
+fn close_range_fixture_actual() -> Result<String, String> {
+    // SAFETY: first > last is the stable invalid-range class and does not close
+    // any descriptor.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::close_range(5, 4, 0) };
+    Ok(format!("CLOSE_RANGE_INVALID_RC_{rc}"))
+}
+
+fn closelog_fixture_actual() -> Result<String, String> {
+    unsafe { frankenlibc_abi::unistd_abi::closelog() };
+    Ok(String::from("CLOSELOG_NOOP"))
+}
+
+fn creat_fixture_actual(function: &str) -> Result<String, String> {
+    // SAFETY: Null path is a deterministic error class and cannot create a
+    // host file.
+    let rc = unsafe {
+        match function {
+            "creat" => frankenlibc_abi::unistd_abi::creat(std::ptr::null(), 0o600),
+            "creat64" => frankenlibc_abi::unistd_abi::creat64(std::ptr::null(), 0o600),
+            _ => unreachable!("validated creat function"),
+        }
+    };
+    Ok(format!("{}_NULL_RC_{rc}", function.to_ascii_uppercase()))
+}
+
+fn crypt_fixture_actual() -> Result<String, String> {
+    let key =
+        CString::new("password").map_err(|_| "crypt key contains interior NUL".to_string())?;
+    let salt =
+        CString::new("$6$salt$").map_err(|_| "crypt salt contains interior NUL".to_string())?;
+    // SAFETY: key and salt are valid NUL-terminated C strings; the fixture
+    // records only the algorithm class, not the hash bytes.
+    let ptr = unsafe { frankenlibc_abi::unistd_abi::crypt(key.as_ptr(), salt.as_ptr()) };
+    if ptr.is_null() {
+        return Ok(String::from("CRYPT_NULL"));
+    }
+    let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    if bytes.starts_with(b"$6$") {
+        Ok(String::from("CRYPT_SHA512_CLASS"))
+    } else if bytes.starts_with(b"$5$") {
+        Ok(String::from("CRYPT_SHA256_CLASS"))
+    } else if bytes.starts_with(b"$1$") {
+        Ok(String::from("CRYPT_MD5_CLASS"))
+    } else {
+        Ok(String::from("CRYPT_OTHER_CLASS"))
+    }
+}
+
+fn crypt_checksalt_fixture_actual() -> Result<String, String> {
+    let setting = CString::new("$6$salt$hash")
+        .map_err(|_| "crypt_checksalt setting contains interior NUL".to_string())?;
+    // SAFETY: setting is a valid NUL-terminated C string.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::crypt_checksalt(setting.as_ptr()) };
+    Ok(format!("CRYPT_CHECKSALT_SHA512_RC_{rc}"))
+}
+
+fn crypt_gensalt_inputs() -> Result<(CString, [c_char; 12]), String> {
+    let prefix =
+        CString::new("$6$").map_err(|_| "crypt_gensalt prefix contains NUL".to_string())?;
+    let bytes = [17_u8, 31, 47, 63, 79, 95, 111, 127, 139, 151, 163, 179];
+    Ok((prefix, bytes.map(|byte| byte as c_char)))
+}
+
+fn crypt_gensalt_class(label: &str, ptr: *mut c_char) -> String {
+    if ptr.is_null() {
+        return format!("{label}_NULL");
+    }
+    let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    if bytes.starts_with(b"$6$rounds=5000$") {
+        format!("{label}_SHA512_ROUNDS_CLASS")
+    } else if bytes.starts_with(b"$6$") {
+        format!("{label}_SHA512_CLASS")
+    } else {
+        format!("{label}_OTHER_CLASS")
+    }
+}
+
+fn crypt_gensalt_fixture_actual() -> Result<String, String> {
+    let (prefix, rbytes) = crypt_gensalt_inputs()?;
+    // SAFETY: prefix and rbytes are valid fixture-owned inputs; output is
+    // classified without recording generated salt bytes.
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::crypt_gensalt(
+            prefix.as_ptr(),
+            5000 as libc::c_ulong,
+            rbytes.as_ptr(),
+            rbytes.len() as c_int,
+        )
+    };
+    Ok(crypt_gensalt_class("CRYPT_GENSALT", ptr))
+}
+
+fn crypt_gensalt_r_fixture_actual() -> Result<String, String> {
+    let (prefix, rbytes) = crypt_gensalt_inputs()?;
+    let mut output = [0 as c_char; 192];
+    // SAFETY: output points to writable storage large enough for the generated
+    // salt and the other inputs are fixture-owned.
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::crypt_gensalt_r(
+            prefix.as_ptr(),
+            5000 as libc::c_ulong,
+            rbytes.as_ptr(),
+            rbytes.len() as c_int,
+            output.as_mut_ptr(),
+            output.len() as c_int,
+        )
+    };
+    Ok(crypt_gensalt_class("CRYPT_GENSALT_R", ptr))
+}
+
+fn crypt_gensalt_rn_fixture_actual() -> Result<String, String> {
+    let (prefix, rbytes) = crypt_gensalt_inputs()?;
+    let mut output = [0 as c_char; 192];
+    // SAFETY: output points to writable storage large enough for the generated
+    // salt and the other inputs are fixture-owned.
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::crypt_gensalt_rn(
+            prefix.as_ptr(),
+            5000 as libc::c_ulong,
+            rbytes.as_ptr(),
+            rbytes.len() as c_int,
+            output.as_mut_ptr(),
+            output.len() as c_int,
+        )
+    };
+    Ok(crypt_gensalt_class("CRYPT_GENSALT_RN", ptr))
+}
+
+fn crypt_gensalt_ra_fixture_actual() -> Result<String, String> {
+    let (prefix, rbytes) = crypt_gensalt_inputs()?;
+    // SAFETY: prefix and rbytes are valid fixture-owned inputs; returned
+    // allocation is freed after classifying the algorithm shape.
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::crypt_gensalt_ra(
+            prefix.as_ptr(),
+            5000 as libc::c_ulong,
+            rbytes.as_ptr(),
+            rbytes.len() as c_int,
+        )
+    };
+    let class = crypt_gensalt_class("CRYPT_GENSALT_RA", ptr);
+    if !ptr.is_null() {
+        unsafe { frankenlibc_abi::malloc_abi::free(ptr.cast::<c_void>()) };
+    }
+    Ok(class)
 }
 
 fn wait_for_aio_completion(cb: &FixtureAiocb) -> c_int {
