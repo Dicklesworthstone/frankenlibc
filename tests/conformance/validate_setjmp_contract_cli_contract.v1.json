@@ -1,0 +1,64 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "validate-setjmp-contract-cli-contract",
+  "bead": "bd-b5gfg",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "2e44139ba4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes setjmp_contract::parse_contract_str + SetjmpSemanticsContract::validate_intrinsic as a standalone CLI. These are the canonical validators for tests/conformance/setjmp_semantics_contract.v1.json (bd-2xp3): parsing the document, then checking internal consistency (required symbols, no overlap between phase1_deferred and support_matrix_visible_now, ContractSummary totals match, ParityChecks references real artifacts). Previously reachable only from Rust callers; the CLI bridge lets CI validate the contract artifact without compiling.",
+  "subcommand_name": "validate-setjmp-contract",
+  "binary_target": "harness",
+  "required_flags": [
+    "--output"
+  ],
+  "optional_flags": [
+    "--contract"
+  ],
+  "default_contract_path": "tests/conformance/setjmp_semantics_contract.v1.json",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::setjmp_contract::parse_contract_str",
+    "frankenlibc_harness::setjmp_contract::SetjmpSemanticsContract::validate_intrinsic"
+  ],
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "setjmp_contract_validation",
+    "required_fields_when_ok_true": [
+      "kind",
+      "input",
+      "ok",
+      "intrinsic_errors"
+    ],
+    "required_fields_when_parse_failed": [
+      "kind",
+      "input",
+      "ok",
+      "parse_error",
+      "intrinsic_errors"
+    ],
+    "required_fields_when_intrinsic_failed": [
+      "kind",
+      "input",
+      "ok",
+      "intrinsic_errors"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "ok_true_iff_parse_and_intrinsic_both_pass": true,
+    "exit_non_zero_when_ok_false": true,
+    "intrinsic_errors_must_be_empty_array_when_ok_true": true,
+    "canonical_artifact_must_pass_validate_intrinsic": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_output_flag",
+    "wrong_record_kind",
+    "ok_true_with_nonempty_intrinsic_errors",
+    "ok_false_with_zero_exit",
+    "canonical_artifact_intrinsic_failure"
+  ],
+  "summary": {
+    "bead": "bd-b5gfg",
+    "subcommand": "validate-setjmp-contract",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}

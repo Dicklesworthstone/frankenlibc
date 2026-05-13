@@ -737,6 +737,23 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Parse a setjmp_semantics_contract.v1.json document and run
+    /// its intrinsic-consistency checks via
+    /// `setjmp_contract::{parse_contract_str, validate_intrinsic}`.
+    /// Emits one JSONL record describing the outcome; exits non-zero
+    /// when parsing fails or intrinsic checks return errors.
+    ValidateSetjmpContract {
+        /// Path to the setjmp_semantics_contract.v1.json document
+        /// to validate (default: tests/conformance/setjmp_semantics_contract.v1.json).
+        #[arg(
+            long,
+            default_value = "tests/conformance/setjmp_semantics_contract.v1.json"
+        )]
+        contract: PathBuf,
+        /// Output JSONL path: one setjmp_contract_validation record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Verify a runtime_evidence.decision.v1 JSONL log against the
     /// canonical membrane schema + replay-specific invariants
     /// (freshness, monotone timestamps, valid decision transitions,
@@ -2159,6 +2176,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
                 output.display()
             );
+        }
+        Command::ValidateSetjmpContract { contract, output } => {
+            use frankenlibc_harness::setjmp_contract::parse_contract_str;
+            let body = std::fs::read_to_string(&contract)
+                .map_err(|e| format!("read --contract {}: {e}", contract.display()))?;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let (line, ok) = match parse_contract_str(&body) {
+                Err(parse_error) => (
+                    serde_json::json!({
+                        "kind": "setjmp_contract_validation",
+                        "input": contract.display().to_string(),
+                        "ok": false,
+                        "parse_error": parse_error,
+                        "intrinsic_errors": serde_json::Value::Array(Vec::new()),
+                    }),
+                    false,
+                ),
+                Ok(parsed) => match parsed.validate_intrinsic() {
+                    Ok(()) => (
+                        serde_json::json!({
+                            "kind": "setjmp_contract_validation",
+                            "input": contract.display().to_string(),
+                            "ok": true,
+                            "intrinsic_errors": serde_json::Value::Array(Vec::new()),
+                        }),
+                        true,
+                    ),
+                    Err(errs) => (
+                        serde_json::json!({
+                            "kind": "setjmp_contract_validation",
+                            "input": contract.display().to_string(),
+                            "ok": false,
+                            "intrinsic_errors": errs,
+                        }),
+                        false,
+                    ),
+                },
+            };
+            let mut serialized = line.to_string();
+            serialized.push('\n');
+            std::fs::write(&output, serialized)?;
+            eprintln!(
+                "validate-setjmp-contract: ok={ok} → wrote 1 JSONL record to {}",
+                output.display()
+            );
+            if !ok {
+                return Err(format!(
+                    "validate-setjmp-contract: rejected {} — see {}",
+                    contract.display(),
+                    output.display()
+                )
+                .into());
+            }
         }
         Command::VerifyRuntimeEvidence {
             jsonl,
