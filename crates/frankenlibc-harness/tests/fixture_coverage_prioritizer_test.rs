@@ -5,7 +5,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const REQUIRED_LOG_FIELDS: &[&str] = &[
     "trace_id",
@@ -149,6 +150,49 @@ fn load_json(path: &Path) -> serde_json::Value {
 
 fn load_prioritizer() -> serde_json::Value {
     load_json(&workspace_root().join("tests/conformance/fixture_coverage_prioritizer.v1.json"))
+}
+
+fn write_json(path: &Path, value: &serde_json::Value) {
+    std::fs::write(
+        path,
+        format!("{}\n", serde_json::to_string_pretty(value).unwrap()),
+    )
+    .expect("failed to write fixture-wave lifecycle JSON");
+}
+
+fn unique_output_dir(root: &Path, label: &str) -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after Unix epoch")
+        .as_nanos();
+    let path = root
+        .join("target/conformance")
+        .join(format!("{label}-{}-{stamp}", std::process::id()));
+    std::fs::create_dir_all(&path).expect("failed to create fixture-wave lifecycle output dir");
+    path
+}
+
+fn run_prioritizer_gate(root: &Path, out_dir: &Path, envs: &[(&str, &Path)]) -> Output {
+    let script = root.join("scripts/check_fixture_coverage_prioritizer.sh");
+    let mut command = Command::new(&script);
+    command
+        .current_dir(root)
+        .env("FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_SKIP_REGEN", "1")
+        .env("FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_OUT_DIR", out_dir)
+        .env(
+            "FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_REPORT",
+            out_dir.join("fixture_coverage_prioritizer.report.json"),
+        )
+        .env(
+            "FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_LOG",
+            out_dir.join("fixture_coverage_prioritizer.log.jsonl"),
+        );
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    command
+        .output()
+        .expect("failed to run fixture coverage prioritizer gate")
 }
 
 #[test]
@@ -706,15 +750,24 @@ fn completed_unistd_wave04_claim_has_fixture_and_harness_evidence() {
             "completed wave-04 symbol {symbol} must not remain in the next first-wave claim"
         );
     }
-    assert_eq!(unistd_campaign["target_covered"].as_u64(), Some(83));
-    assert_eq!(unistd_campaign["target_uncovered"].as_u64(), Some(659));
-    assert_eq!(
-        unistd_campaign["current_coverage_pct"].as_f64(),
-        Some(11.19)
+    assert!(
+        unistd_campaign["target_covered"].as_u64().unwrap() >= 95,
+        "unistd target_covered must stay at or above the wave-05 closeout"
     );
-    assert_eq!(
-        unistd_campaign["expected_coverage_after_first_wave_pct"].as_f64(),
-        Some(12.8)
+    assert!(
+        unistd_campaign["target_uncovered"].as_u64().unwrap() <= 647,
+        "unistd target_uncovered must stay at or below the wave-05 closeout"
+    );
+    assert!(
+        unistd_campaign["current_coverage_pct"].as_f64().unwrap() >= 12.8,
+        "unistd coverage pct must stay at or above the wave-05 closeout"
+    );
+    assert!(
+        unistd_campaign["expected_coverage_after_first_wave_pct"]
+            .as_f64()
+            .unwrap()
+            >= 14.42,
+        "unistd next-wave expected coverage must stay at or above the wave-05 closeout"
     );
 }
 
@@ -1044,6 +1097,7 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         "completed_unistd_wave03_guard",
         "completed_unistd_wave04_guard",
         "completed_stdio_libio_first_wave_guard",
+        "fixture_wave_lifecycle",
         "deferred_module_inventory",
         "priority_order",
         "workload_domain_coverage",
@@ -1069,4 +1123,175 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
             "structured log row missing {key}"
         );
     }
+
+    let lifecycle_rows = report["fixture_wave_lifecycle"]
+        .as_array()
+        .expect("report should include fixture-wave lifecycle rows");
+    for fixture in [
+        "string_memory_hotpaths_wave05.json",
+        "string_memory_hotpaths_wave06.json",
+        "string_memory_hotpaths_wave10.json",
+        "string_memory_hotpaths_wave11.json",
+    ] {
+        let row = lifecycle_rows
+            .iter()
+            .find(|row| row["fixture_basename"].as_str() == Some(fixture))
+            .expect("missing lifecycle row for required string fixture");
+        assert_eq!(row["status"].as_str(), Some("pass"));
+        assert_eq!(row["failure_signature"].as_str(), Some("none"));
+        assert_eq!(row["contract_required"].as_bool(), Some(true));
+        assert_eq!(row["missing_completion_contract"].as_bool(), Some(false));
+        assert!(
+            row["completion_contract_path"].as_str().is_some(),
+            "{fixture} should bind to a completion contract"
+        );
+        for field in [
+            "fixture_file",
+            "fixture_family",
+            "wave_id",
+            "covered_symbols",
+            "missing_coverage_artifacts",
+            "missing_completion_contract",
+            "failure_signature",
+        ] {
+            assert!(row.get(field).is_some(), "lifecycle row missing {field}");
+        }
+    }
+
+    let lifecycle_log = std::fs::read_to_string(&log_path)
+        .expect("log should be readable")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .any(|row| {
+            row["bead_id"].as_str() == Some("bd-waaa6.3")
+                && row["fixture_file"]
+                    .as_str()
+                    .is_some_and(|file| file.ends_with("string_memory_hotpaths_wave05.json"))
+        });
+    assert!(
+        lifecycle_log,
+        "log should include fixture-wave lifecycle rows"
+    );
+}
+
+#[test]
+fn gate_rejects_copied_wave_fixture_missing_coverage_accounting() {
+    let root = workspace_root();
+    let out_dir = unique_output_dir(&root, "fixture-wave-missing-coverage");
+    let fixtures_dir = out_dir.join("fixtures");
+    std::fs::create_dir_all(&fixtures_dir).unwrap();
+
+    let mut fixture =
+        load_json(&root.join("tests/conformance/fixtures/string_memory_hotpaths_wave05.json"));
+    let missing_symbol = "__franken_missing_fixture_wave_symbol";
+    fixture["campaign"]["first_wave_symbols"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::Value::String(missing_symbol.to_string()));
+    let cases = fixture["cases"].as_array_mut().unwrap();
+    cases.push(serde_json::json!({
+        "name": "franken_missing_strict",
+        "function": missing_symbol,
+        "mode": "strict",
+        "expected_output": "symbol=__franken_missing_fixture_wave_symbol;mode=strict;expected=missing;actual=missing;failure_signature=none",
+        "expected_errno": 0
+    }));
+    cases.push(serde_json::json!({
+        "name": "franken_missing_hardened",
+        "function": missing_symbol,
+        "mode": "hardened",
+        "expected_output": "symbol=__franken_missing_fixture_wave_symbol;mode=hardened;expected=missing;actual=missing;failure_signature=none",
+        "expected_errno": 0
+    }));
+    write_json(
+        &fixtures_dir.join("string_memory_hotpaths_wave05.json"),
+        &fixture,
+    );
+
+    let output = run_prioritizer_gate(
+        &root,
+        &out_dir,
+        &[(
+            "FRANKENLIBC_FIXTURE_WAVE_LIFECYCLE_FIXTURES_DIR",
+            fixtures_dir.as_path(),
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "gate unexpectedly passed stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&out_dir.join("fixture_coverage_prioritizer.report.json"));
+    let row = report["fixture_wave_lifecycle"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["fixture_basename"].as_str() == Some("string_memory_hotpaths_wave05.json"))
+        .expect("copied wave fixture should have a lifecycle row");
+    assert_eq!(
+        row["failure_signature"].as_str(),
+        Some("missing_coverage_artifact")
+    );
+    let missing_artifacts: HashSet<_> = row["missing_coverage_artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert!(missing_artifacts.contains("symbol_fixture_coverage.v1.json"));
+    assert!(missing_artifacts.contains("per_symbol_fixture_tests.v1.json"));
+}
+
+#[test]
+fn gate_rejects_required_wave_fixture_without_completion_contract() {
+    let root = workspace_root();
+    let out_dir = unique_output_dir(&root, "fixture-wave-missing-contract");
+    let fixtures_dir = out_dir.join("fixtures");
+    let contracts_dir = out_dir.join("contracts");
+    std::fs::create_dir_all(&fixtures_dir).unwrap();
+    std::fs::create_dir_all(&contracts_dir).unwrap();
+
+    std::fs::copy(
+        root.join("tests/conformance/fixtures/string_memory_hotpaths_wave05.json"),
+        fixtures_dir.join("string_memory_hotpaths_wave05.json"),
+    )
+    .unwrap();
+    let empty_contract_glob = contracts_dir.join("*.json");
+
+    let output = run_prioritizer_gate(
+        &root,
+        &out_dir,
+        &[
+            (
+                "FRANKENLIBC_FIXTURE_WAVE_LIFECYCLE_FIXTURES_DIR",
+                fixtures_dir.as_path(),
+            ),
+            (
+                "FRANKENLIBC_FIXTURE_WAVE_LIFECYCLE_CONTRACT_GLOB",
+                empty_contract_glob.as_path(),
+            ),
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "gate unexpectedly passed stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&out_dir.join("fixture_coverage_prioritizer.report.json"));
+    let row = report["fixture_wave_lifecycle"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["fixture_basename"].as_str() == Some("string_memory_hotpaths_wave05.json"))
+        .expect("required wave fixture should have a lifecycle row");
+    assert_eq!(
+        row["failure_signature"].as_str(),
+        Some("missing_completion_contract")
+    );
+    assert_eq!(row["contract_required"].as_bool(), Some(true));
+    assert_eq!(row["missing_completion_contract"].as_bool(), Some(true));
 }

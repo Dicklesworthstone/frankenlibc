@@ -8,29 +8,34 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GEN="${ROOT}/scripts/generate_fixture_coverage_prioritizer.py"
-ARTIFACT="${ROOT}/tests/conformance/fixture_coverage_prioritizer.v1.json"
-COVERAGE="${ROOT}/tests/conformance/symbol_fixture_coverage.v1.json"
-PER_SYMBOL="${ROOT}/tests/conformance/per_symbol_fixture_tests.v1.json"
+ARTIFACT="${FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_ARTIFACT:-${ROOT}/tests/conformance/fixture_coverage_prioritizer.v1.json}"
+COVERAGE="${FRANKENLIBC_SYMBOL_FIXTURE_COVERAGE_ARTIFACT:-${ROOT}/tests/conformance/symbol_fixture_coverage.v1.json}"
+PER_SYMBOL="${FRANKENLIBC_PER_SYMBOL_FIXTURE_ARTIFACT:-${ROOT}/tests/conformance/per_symbol_fixture_tests.v1.json}"
 SUPPORT="${ROOT}/support_matrix.json"
 WORKLOADS="${ROOT}/tests/conformance/user_workload_acceptance_matrix.v1.json"
 FEATURE_GAPS="${ROOT}/tests/conformance/feature_parity_gap_groups.v1.json"
-OUT_DIR="${ROOT}/target/conformance"
+FIXTURES_DIR="${FRANKENLIBC_FIXTURE_WAVE_LIFECYCLE_FIXTURES_DIR:-${ROOT}/tests/conformance/fixtures}"
+COMPLETION_CONTRACT_GLOB="${FRANKENLIBC_FIXTURE_WAVE_LIFECYCLE_CONTRACT_GLOB:-tests/conformance/*completion_contract*.v1.json}"
+OUT_DIR="${FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_OUT_DIR:-${ROOT}/target/conformance}"
 GENERATED="${OUT_DIR}/fixture_coverage_prioritizer.regenerated.v1.json"
-REPORT="${OUT_DIR}/fixture_coverage_prioritizer.report.json"
-LOG="${OUT_DIR}/fixture_coverage_prioritizer.log.jsonl"
+REPORT="${FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_REPORT:-${OUT_DIR}/fixture_coverage_prioritizer.report.json}"
+LOG="${FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_LOG:-${OUT_DIR}/fixture_coverage_prioritizer.log.jsonl}"
 
 mkdir -p "${OUT_DIR}"
 
-python3 "${GEN}" --self-test >/dev/null
-python3 "${GEN}" --output "${GENERATED}" >/dev/null
-if ! cmp -s "${ARTIFACT}" "${GENERATED}"; then
-    echo "ERROR: fixture coverage prioritizer artifact drift detected" >&2
-    echo "       regenerate with: python3 scripts/generate_fixture_coverage_prioritizer.py --output tests/conformance/fixture_coverage_prioritizer.v1.json" >&2
-    exit 1
+if [[ "${FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_SKIP_REGEN:-0}" != "1" ]]; then
+    python3 "${GEN}" --self-test >/dev/null
+    python3 "${GEN}" --output "${GENERATED}" >/dev/null
+    if ! cmp -s "${ARTIFACT}" "${GENERATED}"; then
+        echo "ERROR: fixture coverage prioritizer artifact drift detected" >&2
+        echo "       regenerate with: python3 scripts/generate_fixture_coverage_prioritizer.py --output tests/conformance/fixture_coverage_prioritizer.v1.json" >&2
+        exit 1
+    fi
 fi
 
-python3 - "${ROOT}" "${ARTIFACT}" "${COVERAGE}" "${PER_SYMBOL}" "${SUPPORT}" "${WORKLOADS}" "${FEATURE_GAPS}" "${REPORT}" "${LOG}" <<'PY'
+python3 - "${ROOT}" "${ARTIFACT}" "${COVERAGE}" "${PER_SYMBOL}" "${SUPPORT}" "${WORKLOADS}" "${FEATURE_GAPS}" "${REPORT}" "${LOG}" "${FIXTURES_DIR}" "${COMPLETION_CONTRACT_GLOB}" <<'PY'
 import json
+import glob
 import subprocess
 import sys
 from collections import Counter
@@ -45,6 +50,8 @@ workloads_path = Path(sys.argv[6])
 feature_gaps_path = Path(sys.argv[7])
 report_path = Path(sys.argv[8])
 log_path = Path(sys.argv[9])
+fixtures_dir = Path(sys.argv[10])
+completion_contract_glob = sys.argv[11]
 
 errors = []
 checks = {}
@@ -118,6 +125,25 @@ REQUIRED_DEFERRED_FIELDS = [
     "deferral_reason",
     "next_step",
 ]
+REQUIRED_FIXTURE_WAVE_LIFECYCLE_REPORT_FIELDS = [
+    "fixture_file",
+    "fixture_family",
+    "wave_id",
+    "covered_symbols",
+    "missing_coverage_artifacts",
+    "missing_completion_contract",
+    "failure_signature",
+]
+CONTRACT_REQUIRED_WAVE_FIXTURES = {
+    "string_memory_hotpaths_wave05.json",
+    "string_memory_hotpaths_wave06.json",
+    "string_memory_hotpaths_wave10.json",
+    "string_memory_hotpaths_wave11.json",
+    "unistd_process_filesystem_wave02.json",
+    "unistd_process_filesystem_wave03.json",
+    "unistd_process_filesystem_wave04.json",
+    "unistd_process_filesystem_wave05.json",
+}
 COMPLETED_UNISTD_PROCESS_FILESYSTEM_FIRST_WAVE = [
     "_Exit",
     "_Fork",
@@ -668,6 +694,191 @@ else:
 
 checks["completed_stdio_libio_first_wave_guard"] = "pass" if completed_stdio_ok else "fail"
 
+def rel_path(path):
+    path = Path(path)
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except Exception:
+        return path.as_posix()
+
+def resolve_input_path(path):
+    path = Path(path)
+    return path if path.is_absolute() else root / path
+
+def contract_paths_from_glob(pattern_text):
+    paths = []
+    for raw_pattern in [part for part in pattern_text.split(":") if part.strip()]:
+        pattern = Path(raw_pattern)
+        glob_pattern = pattern if pattern.is_absolute() else root / pattern
+        paths.extend(Path(path) for path in glob.glob(str(glob_pattern)))
+    return sorted({path.resolve() for path in paths if path.is_file()})
+
+def matching_contract_path(fixture_rel, fixture_name, contract_texts):
+    for path, text in contract_texts:
+        if fixture_rel in text or fixture_name in text:
+            return rel_path(path)
+    return None
+
+coverage_rows_by_symbol = {}
+for row in coverage.get("symbols", []):
+    if isinstance(row, dict):
+        coverage_rows_by_symbol.setdefault(row.get("symbol"), []).append(row)
+per_symbol_rows_by_symbol = {}
+for row in per_symbol_rows:
+    if isinstance(row, dict):
+        per_symbol_rows_by_symbol.setdefault(row.get("symbol"), []).append(row)
+campaign_by_id = {
+    campaign.get("campaign_id"): campaign
+    for campaign in campaigns
+    if isinstance(campaign, dict) and isinstance(campaign.get("campaign_id"), str)
+}
+contract_texts = []
+for contract_path in contract_paths_from_glob(completion_contract_glob):
+    try:
+        contract_texts.append((contract_path, contract_path.read_text(encoding="utf-8")))
+    except Exception as exc:
+        errors.append(f"cannot read completion contract candidate {rel_path(contract_path)}: {exc}")
+
+fixture_wave_rows = []
+fixture_wave_ok = True
+resolved_fixtures_dir = resolve_input_path(fixtures_dir)
+if not resolved_fixtures_dir.is_dir():
+    fixture_wave_ok = False
+    errors.append(f"fixture wave lifecycle fixtures directory missing: {rel_path(resolved_fixtures_dir)}")
+    fixture_paths = []
+else:
+    fixture_paths = sorted(resolved_fixtures_dir.glob("*wave*.json"))
+    if not fixture_paths:
+        fixture_wave_ok = False
+        errors.append(f"fixture wave lifecycle found no wave fixtures under {rel_path(resolved_fixtures_dir)}")
+
+for fixture_path in fixture_paths:
+    fixture_rel = rel_path(fixture_path)
+    fixture_name = fixture_path.name
+    fixture = load_json(fixture_path)
+    missing_coverage_artifacts = set()
+    malformed_reasons = []
+    completed_stale_symbols = []
+    contract_required = fixture_name in CONTRACT_REQUIRED_WAVE_FIXTURES
+    completion_contract_path = matching_contract_path(fixture_rel, fixture_name, contract_texts)
+    missing_completion_contract = bool(contract_required and completion_contract_path is None)
+
+    if not isinstance(fixture, dict):
+        fixture = {}
+        malformed_reasons.append("fixture root must be an object")
+    family = fixture.get("family")
+    campaign = fixture.get("campaign")
+    if not isinstance(family, str) or not family:
+        malformed_reasons.append("fixture family must be a non-empty string")
+        family = "<missing family>"
+    if not isinstance(campaign, dict):
+        malformed_reasons.append("fixture campaign must be an object")
+        campaign = {}
+    wave_id = campaign.get("wave_id")
+    campaign_id = campaign.get("campaign_id")
+    declared_symbols = campaign.get("first_wave_symbols")
+    if not isinstance(wave_id, str) or not wave_id:
+        malformed_reasons.append("fixture campaign.wave_id must be a non-empty string")
+        wave_id = "<missing wave_id>"
+    if not isinstance(campaign_id, str) or not campaign_id:
+        missing_coverage_artifacts.add("fixture_coverage_prioritizer.v1.json")
+    if not isinstance(declared_symbols, list) or not all(isinstance(symbol, str) for symbol in declared_symbols):
+        malformed_reasons.append("fixture campaign.first_wave_symbols must be a string array")
+        declared_symbols = []
+    if len(declared_symbols) != len(set(declared_symbols)):
+        malformed_reasons.append("fixture campaign.first_wave_symbols contains duplicates")
+
+    cases = fixture.get("cases")
+    if not isinstance(cases, list):
+        malformed_reasons.append("fixture cases must be an array")
+        cases = []
+    case_modes_by_symbol = {}
+    for case in cases:
+        if not isinstance(case, dict):
+            malformed_reasons.append("fixture cases must contain objects")
+            continue
+        symbol = case.get("function")
+        mode = case.get("mode")
+        if isinstance(symbol, str) and isinstance(mode, str):
+            case_modes_by_symbol.setdefault(symbol, set()).add(mode)
+
+    campaign_row = campaign_by_id.get(campaign_id)
+    if campaign_id and campaign_row is None:
+        missing_coverage_artifacts.add("fixture_coverage_prioritizer.v1.json")
+    campaign_next_wave = set(campaign_row.get("first_wave_symbols", [])) if isinstance(campaign_row, dict) else set()
+
+    for symbol in declared_symbols:
+        modes = case_modes_by_symbol.get(symbol, set())
+        if not {"strict", "hardened"}.issubset(modes):
+            malformed_reasons.append(f"{symbol}: fixture lacks strict+hardened cases")
+
+        coverage_matches = [
+            row
+            for row in coverage_rows_by_symbol.get(symbol, [])
+            if fixture_name in row.get("fixture_files", [])
+        ]
+        if not coverage_matches or not any(row.get("covered") is True for row in coverage_matches):
+            missing_coverage_artifacts.add("symbol_fixture_coverage.v1.json")
+        elif not any({"strict", "hardened"}.issubset(set(row.get("fixture_modes", []))) for row in coverage_matches):
+            missing_coverage_artifacts.add("symbol_fixture_coverage.v1.json")
+
+        per_symbol_matches = [
+            row
+            for row in per_symbol_rows_by_symbol.get(symbol, [])
+            if fixture_name in row.get("fixture_files", [])
+        ]
+        if not per_symbol_matches:
+            missing_coverage_artifacts.add("per_symbol_fixture_tests.v1.json")
+        elif not any(
+            row.get("has_fixtures") is True
+            and int(row.get("case_count", 0)) >= 2
+            and {"strict", "hardened"}.issubset(set(row.get("modes_tested", [])))
+            for row in per_symbol_matches
+        ):
+            missing_coverage_artifacts.add("per_symbol_fixture_tests.v1.json")
+
+        if symbol in campaign_next_wave:
+            missing_coverage_artifacts.add("fixture_coverage_prioritizer.v1.json")
+            completed_stale_symbols.append(symbol)
+
+    if malformed_reasons:
+        failure_signature = "malformed_fixture_wave"
+    elif completed_stale_symbols:
+        failure_signature = "completed_symbol_still_claimed"
+    elif missing_coverage_artifacts:
+        failure_signature = "missing_coverage_artifact"
+    elif missing_completion_contract:
+        failure_signature = "missing_completion_contract"
+    else:
+        failure_signature = "none"
+
+    row = {
+        "fixture_file": fixture_rel,
+        "fixture_basename": fixture_name,
+        "fixture_family": family,
+        "wave_id": wave_id,
+        "campaign_id": campaign_id,
+        "covered_symbols": sorted(declared_symbols),
+        "missing_coverage_artifacts": sorted(missing_coverage_artifacts),
+        "contract_required": contract_required,
+        "missing_completion_contract": missing_completion_contract,
+        "completion_contract_path": completion_contract_path,
+        "completed_symbol_still_claimed": sorted(completed_stale_symbols),
+        "malformed_reasons": sorted(set(malformed_reasons)),
+        "failure_signature": failure_signature,
+        "status": "pass" if failure_signature == "none" else "fail",
+    }
+    for field in REQUIRED_FIXTURE_WAVE_LIFECYCLE_REPORT_FIELDS:
+        if field not in row:
+            fixture_wave_ok = False
+            row["failure_signature"] = "missing_required_report_field"
+    if row["status"] != "pass":
+        fixture_wave_ok = False
+        errors.append(f"{fixture_rel}: fixture wave lifecycle failed: {row['failure_signature']}")
+    fixture_wave_rows.append(row)
+
+checks["fixture_wave_lifecycle"] = "pass" if fixture_wave_ok else "fail"
+
 raw_deferred_modules = artifact.get("deferred_modules", [])
 deferred_modules = raw_deferred_modules if isinstance(raw_deferred_modules, list) else []
 uncovered_modules = {
@@ -787,6 +998,8 @@ artifact_refs = [
     "tests/conformance/symbol_fixture_coverage.v1.json",
     "tests/conformance/per_symbol_fixture_tests.v1.json",
     "tests/conformance/feature_parity_gap_groups.v1.json",
+    rel_path(resolved_fixtures_dir),
+    completion_contract_glob,
     "target/conformance/fixture_coverage_prioritizer.regenerated.v1.json",
     "target/conformance/fixture_coverage_prioritizer.report.json",
     "target/conformance/fixture_coverage_prioritizer.log.jsonl",
@@ -805,6 +1018,8 @@ report = {
     "covered_modules": sorted(modules),
     "required_workload_domains_covered": sorted(required_domains),
     "missing_required_domains": missing_required_domains,
+    "fixture_wave_lifecycle": fixture_wave_rows,
+    "fixture_wave_lifecycle_required_report_fields": REQUIRED_FIXTURE_WAVE_LIFECYCLE_REPORT_FIELDS,
     "top_campaigns": [
         {
             "campaign_id": campaign.get("campaign_id"),
@@ -868,6 +1083,46 @@ for campaign in campaigns:
             "total_first_wave_fixture_count": first_wave_total,
             "selected_target_uncovered_symbols": selected_target_uncovered,
             "deferred_target_uncovered_symbols": deferred_target_uncovered,
+        }
+    )
+
+for row in fixture_wave_rows:
+    events.append(
+        {
+            "trace_id": "bd-waaa6.3-fixture-wave-lifecycle",
+            "bead_id": "bd-waaa6.3",
+            "scenario_id": row.get("wave_id"),
+            "runtime_mode": "not_applicable",
+            "replacement_level": "L0,L1_conformance_lifecycle",
+            "api_family": row.get("campaign_id"),
+            "symbol": ",".join(row.get("covered_symbols", [])),
+            "oracle_kind": "fixture_wave_lifecycle_gate",
+            "expected": "wave fixtures are reflected in coverage artifacts, prioritizer state, and required completion contracts",
+            "actual": row.get("status"),
+            "errno": None,
+            "decision_path": ["fixture_wave_lifecycle"],
+            "healing_action": "none",
+            "latency_ns": 0,
+            "symbol_family": row.get("fixture_family"),
+            "score": 0,
+            "rank": None,
+            "coverage_state": "covered" if row.get("status") == "pass" else "drift",
+            "risk_factors": {
+                "missing_coverage_artifacts": row.get("missing_coverage_artifacts", []),
+                "missing_completion_contract": row.get("missing_completion_contract"),
+                "completed_symbol_still_claimed": row.get("completed_symbol_still_claimed", []),
+                "malformed_reasons": row.get("malformed_reasons", []),
+            },
+            "artifact_refs": artifact_refs,
+            "source_commit": source_commit,
+            "target_dir": str(root / "target/conformance"),
+            "failure_signature": row.get("failure_signature"),
+            "fixture_file": row.get("fixture_file"),
+            "fixture_family": row.get("fixture_family"),
+            "wave_id": row.get("wave_id"),
+            "covered_symbols": row.get("covered_symbols", []),
+            "missing_coverage_artifacts": row.get("missing_coverage_artifacts", []),
+            "missing_completion_contract": row.get("missing_completion_contract"),
         }
     )
 
