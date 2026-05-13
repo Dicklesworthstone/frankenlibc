@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T23:11:43Z",
-  "report_hash": "7ce43cb43e78073e",
+  "generated_at": "2026-05-13T23:28:05Z",
+  "report_hash": "39e98ca09cd23a00",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 1045,
-    "symbols_without_fixtures": 3074,
+    "symbols_with_fixtures": 1047,
+    "symbols_without_fixtures": 3072,
     "fixture_coverage_pct": 25.4,
     "implemented_coverage_pct": 24.6,
-    "total_fixture_files": 115,
-    "total_cases": 2536,
+    "total_fixture_files": 116,
+    "total_cases": 2548,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 626,
-    "symbols_with_errno_checks": 1042,
+    "symbols_with_edge_cases": 628,
+    "symbols_with_errno_checks": 1044,
     "total_quality_issues": 3447,
-    "uncovered_action_count": 3074
+    "uncovered_action_count": 3072
   },
   "fixture_file_analyses": [
     {
@@ -304,6 +304,14 @@
       "valid": true,
       "total_cases": 7,
       "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "process_spawn_wait_tail.json",
+      "family": "process/spawn",
+      "valid": true,
+      "total_cases": 12,
+      "unique_symbols": 2,
       "issues": []
     },
     {
@@ -63890,12 +63898,20 @@
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 6,
+      "fixture_files": [
+        "process_spawn_wait_tail.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -63903,12 +63919,20 @@
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 6,
+      "fixture_files": [
+        "process_spawn_wait_tail.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -87603,20 +87627,6 @@
       "symbol": "vwscanf",
       "status": "Implemented",
       "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "wait4",
-      "status": "RawSyscall",
-      "module": "process_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "waitid",
-      "status": "RawSyscall",
-      "module": "process_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

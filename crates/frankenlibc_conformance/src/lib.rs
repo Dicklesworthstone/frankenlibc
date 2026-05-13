@@ -1266,6 +1266,7 @@ pub fn execute_fixture_case(
         | "vfork"
         | "wait"
         | "wait3" => execute_process_spawn_wave02_case(function, inputs, mode),
+        "wait4" | "waitid" => execute_process_spawn_wait_tail_case(function, inputs, mode),
         "execve" => execute_execve_case(inputs, mode),
         "posix_spawn" => execute_posix_spawn_case(inputs, mode),
         "system" => execute_system_case(inputs, mode),
@@ -25868,6 +25869,7 @@ fn process_spawn_current_errno() -> i32 {
 fn process_spawn_errno_class(errno: i32) -> &'static str {
     match errno {
         libc::EACCES => "EACCES",
+        libc::ECHILD => "ECHILD",
         libc::EFAULT => "EFAULT",
         libc::EINVAL => "EINVAL",
         libc::ENOENT => "ENOENT",
@@ -26258,6 +26260,208 @@ fn process_spawn_wait3_actual(inputs: &serde_json::Value) -> Result<String, Stri
     }
     let status_class = process_spawn_wait_status("WAIT3", wait_status);
     Ok(format!("{status_class}_RUSAGE_ACCEPTED"))
+}
+
+fn execute_process_spawn_wait_tail_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "process/spawn wait-tail fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let scenario = parse_string(inputs, "scenario")?;
+    let expected = parse_string(inputs, "expected")?;
+    let actual = match (function, scenario.as_str()) {
+        ("wait4", "child_exit_status_and_rusage_without_pid_capture") => {
+            process_spawn_wait4_child_status_actual(inputs)?
+        }
+        ("wait4", "wnohang_running_child_without_pid_capture") => {
+            process_spawn_wait4_wnohang_actual()?
+        }
+        ("wait4", "no_child_errno_class_without_pid_capture") => {
+            process_spawn_wait4_no_child_actual()?
+        }
+        ("waitid", "child_exit_siginfo_without_pid_capture") => {
+            process_spawn_waitid_child_status_actual(inputs)?
+        }
+        ("waitid", "wnohang_running_child_without_pid_capture") => {
+            process_spawn_waitid_wnohang_actual()?
+        }
+        ("waitid", "no_child_errno_class_without_pid_capture") => {
+            process_spawn_waitid_no_child_actual()?
+        }
+        _ => {
+            return Err(format!(
+                "unsupported process/spawn wait-tail fixture: function={function}, scenario={scenario}"
+            ));
+        }
+    };
+
+    Ok(non_host_execution(process_spawn_wave01_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn process_spawn_fork_exit_child(status: c_int) -> Result<libc::pid_t, String> {
+    let child = unsafe { libc::fork() };
+    if child == 0 {
+        unsafe { libc::_exit(status) };
+    }
+    if child < 0 {
+        Err(String::from("FORK_FAILED"))
+    } else {
+        Ok(child)
+    }
+}
+
+fn process_spawn_fork_paused_child() -> Result<libc::pid_t, String> {
+    let child = unsafe { libc::fork() };
+    if child == 0 {
+        unsafe {
+            libc::pause();
+            libc::_exit(125);
+        }
+    }
+    if child < 0 {
+        Err(String::from("FORK_FAILED"))
+    } else {
+        Ok(child)
+    }
+}
+
+fn process_spawn_kill_and_reap(child: libc::pid_t) {
+    unsafe {
+        libc::kill(child, libc::SIGTERM);
+        let mut cleanup_status = 0;
+        libc::waitpid(child, &mut cleanup_status, 0);
+    }
+}
+
+fn process_spawn_wait4_child_status_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let status = parse_i32(inputs, "status").unwrap_or(31);
+    let child = process_spawn_fork_exit_child(status)?;
+    let mut wait_status = 0;
+    let mut rusage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    process_spawn_reset_errno();
+    let waited = unsafe {
+        frankenlibc_abi::process_abi::wait4(child, &mut wait_status, 0, rusage.as_mut_ptr())
+    };
+    if waited < 0 {
+        return Ok(process_spawn_errno_result("WAIT4", waited));
+    }
+    if waited != child {
+        return Ok(String::from("WAIT4_UNEXPECTED_CHILD"));
+    }
+    let status_class = process_spawn_wait_status("WAIT4", wait_status);
+    Ok(format!("{status_class}_RUSAGE_ACCEPTED"))
+}
+
+fn process_spawn_wait4_wnohang_actual() -> Result<String, String> {
+    let child = process_spawn_fork_paused_child()?;
+    let mut wait_status = 0;
+    process_spawn_reset_errno();
+    let waited = unsafe {
+        frankenlibc_abi::process_abi::wait4(
+            child,
+            &mut wait_status,
+            libc::WNOHANG,
+            std::ptr::null_mut(),
+        )
+    };
+    let result = if waited == 0 {
+        String::from("WAIT4_WNOHANG_NOT_READY_RC_0")
+    } else if waited < 0 {
+        process_spawn_errno_result("WAIT4_WNOHANG", waited)
+    } else {
+        process_spawn_wait_status("WAIT4_WNOHANG_READY", wait_status)
+    };
+    process_spawn_kill_and_reap(child);
+    Ok(result)
+}
+
+fn process_spawn_wait4_no_child_actual() -> Result<String, String> {
+    let mut wait_status = 0;
+    process_spawn_reset_errno();
+    let waited = unsafe {
+        frankenlibc_abi::process_abi::wait4(
+            -1,
+            &mut wait_status,
+            libc::WNOHANG,
+            std::ptr::null_mut(),
+        )
+    };
+    Ok(process_spawn_errno_result("WAIT4_NO_CHILD", waited))
+}
+
+fn process_spawn_waitid_child_status_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let status = parse_i32(inputs, "status").unwrap_or(33);
+    let child = process_spawn_fork_exit_child(status)?;
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    process_spawn_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::process_abi::waitid(
+            libc::P_PID as c_int,
+            child as libc::id_t,
+            &mut info,
+            libc::WEXITED,
+        )
+    };
+    if rc != 0 {
+        return Ok(process_spawn_errno_result("WAITID", rc));
+    }
+    let reported_status = unsafe { info.si_status() };
+    if info.si_signo == libc::SIGCHLD
+        && info.si_code == libc::CLD_EXITED
+        && reported_status == status
+    {
+        Ok(format!(
+            "WAITID_CHILD_EXIT_{reported_status}_SIGCHLD_CLD_EXITED"
+        ))
+    } else {
+        Ok(String::from("WAITID_CHILD_STATUS_OTHER"))
+    }
+}
+
+fn process_spawn_waitid_wnohang_actual() -> Result<String, String> {
+    let child = process_spawn_fork_paused_child()?;
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    process_spawn_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::process_abi::waitid(
+            libc::P_PID as c_int,
+            child as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG,
+        )
+    };
+    let result = if rc != 0 {
+        process_spawn_errno_result("WAITID_WNOHANG", rc)
+    } else if info.si_signo == 0 {
+        String::from("WAITID_WNOHANG_NOT_READY_RC_0_NO_EVENT")
+    } else {
+        String::from("WAITID_WNOHANG_READY_EVENT")
+    };
+    process_spawn_kill_and_reap(child);
+    Ok(result)
+}
+
+fn process_spawn_waitid_no_child_actual() -> Result<String, String> {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    process_spawn_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::process_abi::waitid(
+            libc::P_ALL as c_int,
+            0,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG,
+        )
+    };
+    Ok(process_spawn_errno_result("WAITID_NO_CHILD", rc))
 }
 
 fn execute_system_case(
@@ -28574,6 +28778,47 @@ mod tests {
         let raw = include_str!("../../../tests/conformance/fixtures/process_spawn_wave02.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("process/spawn wave02 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn process_spawn_wait_tail_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/process_spawn_wait_tail.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("process/spawn wait-tail fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

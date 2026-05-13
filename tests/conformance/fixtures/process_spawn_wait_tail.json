@@ -1,0 +1,212 @@
+{
+  "version": "v1",
+  "family": "process/spawn",
+  "captured_at": "2026-05-13T23:25:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-process-spawn wait tail covering wait4 and waitid child status, no-ready WNOHANG, rusage acceptance, siginfo status, and no-child errno classes without recording process ids, raw wait status words, raw siginfo pid fields, file descriptor numbers, filesystem paths, argv/envp payloads, child resource-usage values, stdout bytes, stderr bytes, or wall-clock timing.",
+  "spec_reference": "POSIX/BSD wait4 and POSIX waitid child-state semantics for wait4 and waitid, including WNOHANG no-ready behavior, child exit status classes, rusage pointer acceptance, siginfo status classes, and ECHILD no-child errno behavior",
+  "campaign": {
+    "bead": "bd-gmbqy.4",
+    "campaign_id": "fcq-process-spawn",
+    "wave_id": "wave-03-process-spawn-wait-tail",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture",
+    "first_wave_symbols": [
+      "wait4",
+      "waitid"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "wait4_child_status_rusage_strict",
+      "function": "wait4",
+      "spec_section": "BSD wait4 child exit status and rusage pointer acceptance",
+      "inputs": {
+        "symbol": "wait4",
+        "scenario": "child_exit_status_and_rusage_without_pid_capture",
+        "status": 31,
+        "expected": "WAIT4_CHILD_EXIT_31_RUSAGE_ACCEPTED",
+        "oracle_source": "FrankenLibC process_abi::wait4 child status and rusage replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=wait4;mode=strict;expected=WAIT4_CHILD_EXIT_31_RUSAGE_ACCEPTED;actual=WAIT4_CHILD_EXIT_31_RUSAGE_ACCEPTED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "wait4_child_status_rusage_hardened",
+      "function": "wait4",
+      "spec_section": "BSD wait4 child exit status and rusage pointer acceptance",
+      "inputs": {
+        "symbol": "wait4",
+        "scenario": "child_exit_status_and_rusage_without_pid_capture",
+        "status": 31,
+        "expected": "WAIT4_CHILD_EXIT_31_RUSAGE_ACCEPTED",
+        "oracle_source": "FrankenLibC process_abi::wait4 child status and rusage replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=wait4;mode=hardened;expected=WAIT4_CHILD_EXIT_31_RUSAGE_ACCEPTED;actual=WAIT4_CHILD_EXIT_31_RUSAGE_ACCEPTED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "wait4_wnohang_not_ready_strict",
+      "function": "wait4",
+      "spec_section": "BSD wait4 WNOHANG reports no ready child without consuming it",
+      "inputs": {
+        "symbol": "wait4",
+        "scenario": "wnohang_running_child_without_pid_capture",
+        "expected": "WAIT4_WNOHANG_NOT_READY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::wait4 WNOHANG no-ready replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=wait4;mode=strict;expected=WAIT4_WNOHANG_NOT_READY_RC_0;actual=WAIT4_WNOHANG_NOT_READY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "wait4_wnohang_not_ready_hardened",
+      "function": "wait4",
+      "spec_section": "BSD wait4 WNOHANG reports no ready child without consuming it",
+      "inputs": {
+        "symbol": "wait4",
+        "scenario": "wnohang_running_child_without_pid_capture",
+        "expected": "WAIT4_WNOHANG_NOT_READY_RC_0",
+        "oracle_source": "FrankenLibC process_abi::wait4 WNOHANG no-ready replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=wait4;mode=hardened;expected=WAIT4_WNOHANG_NOT_READY_RC_0;actual=WAIT4_WNOHANG_NOT_READY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "wait4_no_child_echild_strict",
+      "function": "wait4",
+      "spec_section": "BSD wait4 no-child errno class",
+      "inputs": {
+        "symbol": "wait4",
+        "scenario": "no_child_errno_class_without_pid_capture",
+        "expected": "WAIT4_NO_CHILD_RC_-1_ERRNO_ECHILD",
+        "oracle_source": "FrankenLibC process_abi::wait4 no-child errno replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=wait4;mode=strict;expected=WAIT4_NO_CHILD_RC_-1_ERRNO_ECHILD;actual=WAIT4_NO_CHILD_RC_-1_ERRNO_ECHILD;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "wait4_no_child_echild_hardened",
+      "function": "wait4",
+      "spec_section": "BSD wait4 no-child errno class",
+      "inputs": {
+        "symbol": "wait4",
+        "scenario": "no_child_errno_class_without_pid_capture",
+        "expected": "WAIT4_NO_CHILD_RC_-1_ERRNO_ECHILD",
+        "oracle_source": "FrankenLibC process_abi::wait4 no-child errno replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=wait4;mode=hardened;expected=WAIT4_NO_CHILD_RC_-1_ERRNO_ECHILD;actual=WAIT4_NO_CHILD_RC_-1_ERRNO_ECHILD;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "waitid_child_siginfo_strict",
+      "function": "waitid",
+      "spec_section": "POSIX waitid child exit siginfo status class",
+      "inputs": {
+        "symbol": "waitid",
+        "scenario": "child_exit_siginfo_without_pid_capture",
+        "status": 33,
+        "expected": "WAITID_CHILD_EXIT_33_SIGCHLD_CLD_EXITED",
+        "oracle_source": "FrankenLibC process_abi::waitid child siginfo replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=waitid;mode=strict;expected=WAITID_CHILD_EXIT_33_SIGCHLD_CLD_EXITED;actual=WAITID_CHILD_EXIT_33_SIGCHLD_CLD_EXITED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "waitid_child_siginfo_hardened",
+      "function": "waitid",
+      "spec_section": "POSIX waitid child exit siginfo status class",
+      "inputs": {
+        "symbol": "waitid",
+        "scenario": "child_exit_siginfo_without_pid_capture",
+        "status": 33,
+        "expected": "WAITID_CHILD_EXIT_33_SIGCHLD_CLD_EXITED",
+        "oracle_source": "FrankenLibC process_abi::waitid child siginfo replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=waitid;mode=hardened;expected=WAITID_CHILD_EXIT_33_SIGCHLD_CLD_EXITED;actual=WAITID_CHILD_EXIT_33_SIGCHLD_CLD_EXITED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "waitid_wnohang_no_event_strict",
+      "function": "waitid",
+      "spec_section": "POSIX waitid WNOHANG reports no ready event without consuming the child",
+      "inputs": {
+        "symbol": "waitid",
+        "scenario": "wnohang_running_child_without_pid_capture",
+        "expected": "WAITID_WNOHANG_NOT_READY_RC_0_NO_EVENT",
+        "oracle_source": "FrankenLibC process_abi::waitid WNOHANG no-event replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=waitid;mode=strict;expected=WAITID_WNOHANG_NOT_READY_RC_0_NO_EVENT;actual=WAITID_WNOHANG_NOT_READY_RC_0_NO_EVENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "waitid_wnohang_no_event_hardened",
+      "function": "waitid",
+      "spec_section": "POSIX waitid WNOHANG reports no ready event without consuming the child",
+      "inputs": {
+        "symbol": "waitid",
+        "scenario": "wnohang_running_child_without_pid_capture",
+        "expected": "WAITID_WNOHANG_NOT_READY_RC_0_NO_EVENT",
+        "oracle_source": "FrankenLibC process_abi::waitid WNOHANG no-event replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=waitid;mode=hardened;expected=WAITID_WNOHANG_NOT_READY_RC_0_NO_EVENT;actual=WAITID_WNOHANG_NOT_READY_RC_0_NO_EVENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "waitid_no_child_echild_strict",
+      "function": "waitid",
+      "spec_section": "POSIX waitid no-child errno class",
+      "inputs": {
+        "symbol": "waitid",
+        "scenario": "no_child_errno_class_without_pid_capture",
+        "expected": "WAITID_NO_CHILD_RC_-1_ERRNO_ECHILD",
+        "oracle_source": "FrankenLibC process_abi::waitid no-child errno replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=waitid;mode=strict;expected=WAITID_NO_CHILD_RC_-1_ERRNO_ECHILD;actual=WAITID_NO_CHILD_RC_-1_ERRNO_ECHILD;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "waitid_no_child_echild_hardened",
+      "function": "waitid",
+      "spec_section": "POSIX waitid no-child errno class",
+      "inputs": {
+        "symbol": "waitid",
+        "scenario": "no_child_errno_class_without_pid_capture",
+        "expected": "WAITID_NO_CHILD_RC_-1_ERRNO_ECHILD",
+        "oracle_source": "FrankenLibC process_abi::waitid no-child errno replay",
+        "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture"
+      },
+      "expected_output": "symbol=waitid;mode=hardened;expected=WAITID_NO_CHILD_RC_-1_ERRNO_ECHILD;actual=WAITID_NO_CHILD_RC_-1_ERRNO_ECHILD;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
