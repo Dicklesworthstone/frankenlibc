@@ -10,6 +10,9 @@ use frankenlibc_abi::glibc_internal_abi::{
     __asprintf,
     __call_tls_dtors,
     __copy_grp,
+    __cyg_profile_func_enter,
+    __cyg_profile_func_exit,
+    __fentry__,
     __file_change_detection_for_path,
     __file_change_detection_for_stat,
     __file_is_unchanged,
@@ -29,8 +32,10 @@ use frankenlibc_abi::glibc_internal_abi::{
     __inet_aton_exact,
     __inet_pton_length,
     __inet6_scopeid_pton,
+    __libc_init_first,
     __merge_grp,
     __mktemp,
+    __monstartup,
     __ns_name_compress,
     __ns_name_ntop,
     __ns_name_pack,
@@ -51,6 +56,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     __pread64,
     __pread64_nocancel,
     __printf_fp,
+    __profile_frequency,
     __read,
     __read_nocancel,
     // Session 13 additions:
@@ -77,6 +83,10 @@ use frankenlibc_abi::glibc_internal_abi::{
     __wuflow,
     __wunderflow,
     _dl_find_object,
+    _dl_mcount_wrapper,
+    _dl_mcount_wrapper_check,
+    _mcleanup,
+    _mcount,
     _obstack_allocated_p,
     _obstack_begin,
     _obstack_free,
@@ -102,6 +112,9 @@ use frankenlibc_abi::glibc_internal_abi::{
     inet6_rth_space,
     iruserok,
     iruserok_af,
+    mcount,
+    moncontrol,
+    monstartup,
     ns_name_compress,
     ns_name_ntop,
     ns_name_pack,
@@ -112,6 +125,8 @@ use frankenlibc_abi::glibc_internal_abi::{
     parse_printf_format,
     printf_size,
     printf_size_info,
+    profil,
+    pthread_kill_other_threads_np,
     putgrent,
     putpwent,
     rcmd,
@@ -138,6 +153,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     ruserok_af,
     ruserpass,
     sgetspent_r,
+    tr_break,
     wcswcs,
     xprt_register,
     xprt_unregister,
@@ -4567,6 +4583,44 @@ fn libc_csu_init_with_argv_envp_is_a_no_op() {
 #[test]
 fn libc_csu_fini_is_a_no_op() {
     unsafe { __libc_csu_fini() };
+}
+
+#[test]
+fn libc_init_first_accepts_null_startup_vectors() {
+    unsafe { __libc_init_first(0, ptr::null_mut(), ptr::null_mut()) };
+}
+
+#[test]
+fn deprecated_pthread_kill_other_threads_np_is_no_op_success() {
+    assert_eq!(unsafe { pthread_kill_other_threads_np() }, 0);
+}
+
+#[test]
+fn profiling_entry_hooks_are_no_ops() {
+    let self_pc = profiling_entry_hooks_are_no_ops as *const () as *mut c_void;
+    let caller = ptr::null_mut();
+
+    unsafe {
+        __cyg_profile_func_enter(self_pc, caller);
+        __cyg_profile_func_exit(self_pc, caller);
+        __fentry__();
+        _dl_mcount_wrapper(0);
+        _dl_mcount_wrapper_check(0);
+        _mcleanup();
+        _mcount();
+        mcount();
+        __monstartup(0, 4096);
+        monstartup(0, 4096);
+        moncontrol(0);
+        moncontrol(1);
+        tr_break();
+    }
+}
+
+#[test]
+fn profiling_frequency_and_profil_safe_defaults_are_stable() {
+    assert_eq!(unsafe { __profile_frequency() }, 100);
+    assert_eq!(unsafe { profil(ptr::null_mut(), 0, 0, 0) }, 0);
 }
 
 // ---------------------------------------------------------------------------
