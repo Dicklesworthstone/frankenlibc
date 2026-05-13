@@ -29,6 +29,10 @@ unsafe extern "C" {
     fn fmin(x: f64, y: f64) -> f64;
     fn fmax(x: f64, y: f64) -> f64;
     fn fdim(x: f64, y: f64) -> f64;
+    fn copysignf(x: f32, y: f32) -> f32;
+    fn fminf(x: f32, y: f32) -> f32;
+    fn fmaxf(x: f32, y: f32) -> f32;
+    fn fdimf(x: f32, y: f32) -> f32;
     fn sin(x: f64) -> f64;
     fn cos(x: f64) -> f64;
     fn tan(x: f64) -> f64;
@@ -180,6 +184,24 @@ fn compare_f64_bits(
             input,
             frankenlibc: format!("{fl_v:?} ({:#018x})", fl_v.to_bits()),
             glibc: format!("{lc_v:?} ({:#018x})", lc_v.to_bits()),
+            delta_ulps: None,
+        });
+    }
+}
+
+fn compare_f32_bits(
+    divs: &mut Vec<Divergence>,
+    func: &'static str,
+    input: String,
+    fl_v: f32,
+    lc_v: f32,
+) {
+    if fl_v.to_bits() != lc_v.to_bits() {
+        divs.push(Divergence {
+            function: func,
+            input,
+            frankenlibc: format!("{fl_v:?} ({:#010x})", fl_v.to_bits()),
+            glibc: format!("{lc_v:?} ({:#010x})", lc_v.to_bits()),
             delta_ulps: None,
         });
     }
@@ -539,6 +561,81 @@ fn diff_sign_min_max_dim_helpers_match_glibc_bits() {
     );
 }
 
+#[test]
+fn diff_float_sign_min_max_dim_helpers_match_glibc_bits() {
+    let mut divs = Vec::new();
+
+    let sign_cases: &[(f32, f32)] = &[
+        (1.0, -0.0),
+        (-1.0, 0.0),
+        (0.0, -1.0),
+        (-0.0, 1.0),
+        (f32::INFINITY, -1.0),
+        (f32::NEG_INFINITY, 1.0),
+    ];
+    for &(x, y) in sign_cases {
+        compare_f32_bits(
+            &mut divs,
+            "copysignf",
+            format!("({x:?}, {y:?})"),
+            unsafe { fl::copysignf(x, y) },
+            unsafe { copysignf(x, y) },
+        );
+    }
+
+    let min_max_cases: &[(f32, f32)] = &[
+        (2.0, 3.0),
+        (3.0, 2.0),
+        (-2.0, -3.0),
+        (0.0, -0.0),
+        (-0.0, 0.0),
+        (f32::INFINITY, 1.0),
+        (f32::NEG_INFINITY, 1.0),
+        (f32::NAN, 5.0),
+        (5.0, f32::NAN),
+    ];
+    for &(x, y) in min_max_cases {
+        compare_f32_bits(
+            &mut divs,
+            "fminf",
+            format!("({x:?}, {y:?})"),
+            unsafe { fl::fminf(x, y) },
+            unsafe { fminf(x, y) },
+        );
+        compare_f32_bits(
+            &mut divs,
+            "fmaxf",
+            format!("({x:?}, {y:?})"),
+            unsafe { fl::fmaxf(x, y) },
+            unsafe { fmaxf(x, y) },
+        );
+    }
+
+    let dim_cases: &[(f32, f32)] = &[
+        (5.0, 3.0),
+        (3.0, 5.0),
+        (0.0, -0.0),
+        (-0.0, 0.0),
+        (f32::INFINITY, 1.0),
+        (1.0, f32::INFINITY),
+    ];
+    for &(x, y) in dim_cases {
+        compare_f32_bits(
+            &mut divs,
+            "fdimf",
+            format!("({x:?}, {y:?})"),
+            unsafe { fl::fdimf(x, y) },
+            unsafe { fdimf(x, y) },
+        );
+    }
+
+    assert!(
+        divs.is_empty(),
+        "float sign/min/max/dim divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 // ===========================================================================
 // ULP-tolerant transcendentals
 // ===========================================================================
@@ -773,6 +870,6 @@ fn diff_hyperbolic_within_4_ulps() {
 #[test]
 fn math_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"math.h core\",\"reference\":\"glibc\",\"functions\":19,\"divergences\":0,\"ulp_tolerance\":4}}",
+        "{{\"family\":\"math.h core\",\"reference\":\"glibc\",\"functions\":23,\"divergences\":0,\"ulp_tolerance\":4}}",
     );
 }
