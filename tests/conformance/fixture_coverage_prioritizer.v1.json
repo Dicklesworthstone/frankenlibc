@@ -502,25 +502,25 @@
     },
     {
       "campaign_id": "fcq-glibc-internal-compat",
-      "current_coverage_pct": 2.81,
+      "current_coverage_pct": 4.91,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 4.91,
+      "expected_coverage_after_first_wave_pct": 7.02,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "_IO_enable_locks",
-        "__abort_msg",
-        "__adjtimex",
-        "__after_morecore_hook",
-        "__arch_prctl",
-        "__asprintf",
-        "__b64_ntop",
-        "__b64_pton",
-        "__backtrace",
-        "__backtrace_symbols",
-        "__backtrace_symbols_fd",
-        "__bsd_getpgrp"
+        "__call_tls_dtors",
+        "__check_rhosts_file",
+        "__clock_gettime",
+        "__clone",
+        "__close",
+        "__close_nocancel",
+        "__close_nocancel_nostatus",
+        "__cmsg_nxthdr",
+        "__connect",
+        "__copy_grp",
+        "__ctype32_b",
+        "__ctype32_tolower"
       ],
       "module": "glibc_internal_abi",
       "next_step": "Split compatibility internals into supported, deterministic-fallback, and claim-blocked fixture groups.",
@@ -544,9 +544,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "exported glibc internals, compatibility names, diagnostics, backtrace, argz, and resolver helpers",
-      "target_covered": 16,
+      "target_covered": 28,
       "target_total": 570,
-      "target_uncovered": 554,
+      "target_uncovered": 542,
       "title": "glibc internal compatibility triage fixture wave",
       "workload_domains": [
         "startup_linking",
@@ -978,7 +978,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3204,
+    "all_uncovered_target_symbols": 3192,
     "campaign_count": 11,
     "covered_modules": [
       "fortify_abi",
@@ -1010,7 +1010,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2850,
+    "selected_target_uncovered_symbols": 2838,
     "total_first_wave_fixture_count": 125
   }
 }
