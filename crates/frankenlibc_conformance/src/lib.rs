@@ -572,8 +572,20 @@ pub fn execute_fixture_case(
         | "__xpg_basename"
         | "__xstat"
         | "__xstat64"
+        | "addseverity"
+        | "adjtimex"
         | "add_key"
-        | "addmntent" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        | "addmntent"
+        | "aio_cancel"
+        | "aio_cancel64"
+        | "aio_error"
+        | "aio_error64"
+        | "aio_fsync"
+        | "aio_fsync64"
+        | "aio_init"
+        | "aio_read"
+        | "aio_read64"
+        | "aio_return" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
         | "_IO_peekc_locked" | "_IO_putc" => {
@@ -14534,8 +14546,16 @@ fn execute_unistd_process_filesystem_case(
         "__stack_chk_guard" => stack_chk_guard_fixture_actual()?,
         "__xpg_basename" => xpg_basename_fixture_actual(inputs)?,
         "__xstat" | "__xstat64" => xstat_fixture_actual(function, inputs)?,
+        "addseverity" => addseverity_fixture_actual(inputs)?,
+        "adjtimex" => adjtimex_fixture_actual()?,
         "add_key" => add_key_fixture_actual()?,
         "addmntent" => addmntent_fixture_actual()?,
+        "aio_cancel" | "aio_cancel64" => aio_cancel_fixture_actual(function)?,
+        "aio_error" | "aio_error64" => aio_error_fixture_actual(function)?,
+        "aio_fsync" | "aio_fsync64" => aio_fsync_fixture_actual(function)?,
+        "aio_init" => aio_init_fixture_actual()?,
+        "aio_read" | "aio_read64" => aio_read_fixture_actual(function)?,
+        "aio_return" => aio_return_fixture_actual()?,
         other => {
             return Err(format!(
                 "unsupported unistd process/filesystem fixture: {other}"
@@ -14557,6 +14577,96 @@ fn unistd_process_fixture_log(symbol: &str, mode: &str, expected: &str, actual: 
     format!(
         "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
     )
+}
+
+#[repr(C, align(16))]
+struct FixtureAiocb {
+    bytes: [u8; 256],
+}
+
+impl FixtureAiocb {
+    const FILDES: usize = 0;
+    const BUF: usize = 16;
+    const NBYTES: usize = 24;
+    const ERROR_CODE: usize = 112;
+    const RETURN_VALUE: usize = 120;
+    const OFFSET: usize = 128;
+
+    fn new() -> Self {
+        Self { bytes: [0; 256] }
+    }
+
+    fn as_mut_c_void(&mut self) -> *mut c_void {
+        self.bytes.as_mut_ptr().cast::<c_void>()
+    }
+
+    fn as_c_void(&self) -> *const c_void {
+        self.bytes.as_ptr().cast::<c_void>()
+    }
+
+    fn write_i32(&mut self, offset: usize, value: c_int) {
+        // SAFETY: FixtureAiocb is 16-byte aligned and all i32 offsets used here
+        // match glibc x86_64 aiocb field alignment.
+        unsafe {
+            self.bytes
+                .as_mut_ptr()
+                .add(offset)
+                .cast::<c_int>()
+                .write(value);
+        }
+    }
+
+    fn write_usize(&mut self, offset: usize, value: usize) {
+        // SAFETY: FixtureAiocb is 16-byte aligned and all usize offsets used here
+        // match glibc x86_64 aiocb field alignment.
+        unsafe {
+            self.bytes
+                .as_mut_ptr()
+                .add(offset)
+                .cast::<usize>()
+                .write(value);
+        }
+    }
+
+    fn write_i64(&mut self, offset: usize, value: i64) {
+        // SAFETY: FixtureAiocb is 16-byte aligned and all i64 offsets used here
+        // match glibc x86_64 aiocb field alignment.
+        unsafe {
+            self.bytes
+                .as_mut_ptr()
+                .add(offset)
+                .cast::<i64>()
+                .write(value);
+        }
+    }
+
+    fn store_error(&mut self, value: c_int) {
+        // SAFETY: ERROR_CODE is 4-byte aligned within the aligned fixture buffer
+        // and is accessed as AtomicI32 by the ABI implementation.
+        unsafe {
+            let ptr = self.bytes.as_mut_ptr().add(Self::ERROR_CODE) as *const AtomicI32;
+            (*ptr).store(value, Ordering::Release);
+        }
+    }
+
+    fn write_return(&mut self, value: isize) {
+        // SAFETY: RETURN_VALUE is pointer-width aligned within the aligned fixture
+        // buffer and is accessed as isize by the ABI implementation.
+        unsafe {
+            self.bytes
+                .as_mut_ptr()
+                .add(Self::RETURN_VALUE)
+                .cast::<isize>()
+                .write(value);
+        }
+    }
+}
+
+fn completed_aiocb(return_value: isize) -> FixtureAiocb {
+    let mut cb = FixtureAiocb::new();
+    cb.store_error(0);
+    cb.write_return(return_value);
+    cb
 }
 
 fn capital_exit_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
@@ -14920,6 +15030,22 @@ fn xstat_fixture_actual(function: &str, inputs: &serde_json::Value) -> Result<St
     stat_fixture_class(rc, stat_buf)
 }
 
+fn addseverity_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let severity = parse_i32(inputs, "severity").unwrap_or(7);
+    let label = CString::new("frankenlibc-wave03")
+        .map_err(|_| "addseverity label contains interior NUL".to_string())?;
+    // SAFETY: CString provides a valid NUL-terminated label pointer for the call.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::addseverity(severity, label.as_ptr()) };
+    Ok(format!("ADDSEVERITY_RC_{rc}"))
+}
+
+fn adjtimex_fixture_actual() -> Result<String, String> {
+    // SAFETY: This intentionally exercises the null-pointer error contract and
+    // records only the return-value class, not kernel clock state.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::adjtimex(std::ptr::null_mut()) };
+    Ok(format!("ADJTIMEX_NULL_RC_{rc}"))
+}
+
 fn add_key_fixture_actual() -> Result<String, String> {
     let rc = unsafe {
         frankenlibc_abi::unistd_abi::add_key(
@@ -14937,6 +15063,114 @@ fn addmntent_fixture_actual() -> Result<String, String> {
     let rc =
         unsafe { frankenlibc_abi::unistd_abi::addmntent(std::ptr::null_mut(), std::ptr::null()) };
     Ok(format!("ADDMNTENT_RC_{rc}"))
+}
+
+fn aio_cancel_fixture_actual(function: &str) -> Result<String, String> {
+    let mut cb = completed_aiocb(0);
+    // SAFETY: The fixture aiocb buffer uses the field offsets consumed by the ABI
+    // implementation and is kept live for the whole call.
+    let rc = unsafe {
+        match function {
+            "aio_cancel" => frankenlibc_abi::unistd_abi::aio_cancel(-1, cb.as_mut_c_void()),
+            "aio_cancel64" => frankenlibc_abi::unistd_abi::aio_cancel64(-1, cb.as_mut_c_void()),
+            _ => unreachable!("validated aio_cancel function"),
+        }
+    };
+    Ok(format!(
+        "{}_COMPLETED_RC_{rc}",
+        function.to_ascii_uppercase()
+    ))
+}
+
+fn aio_error_fixture_actual(function: &str) -> Result<String, String> {
+    let cb = completed_aiocb(0);
+    // SAFETY: The fixture aiocb buffer uses the field offsets consumed by the ABI
+    // implementation and is kept live for the whole call.
+    let status = unsafe {
+        match function {
+            "aio_error" => frankenlibc_abi::unistd_abi::aio_error(cb.as_c_void()),
+            "aio_error64" => frankenlibc_abi::unistd_abi::aio_error64(cb.as_c_void()),
+            _ => unreachable!("validated aio_error function"),
+        }
+    };
+    Ok(format!(
+        "{}_COMPLETED_STATUS_{status}",
+        function.to_ascii_uppercase()
+    ))
+}
+
+fn aio_fsync_fixture_actual(function: &str) -> Result<String, String> {
+    // SAFETY: This intentionally exercises the null-aiocb error contract and
+    // records only the return-value class, not a host fd or filesystem state.
+    let rc = unsafe {
+        match function {
+            "aio_fsync" => frankenlibc_abi::unistd_abi::aio_fsync(0, std::ptr::null_mut()),
+            "aio_fsync64" => frankenlibc_abi::unistd_abi::aio_fsync64(0, std::ptr::null_mut()),
+            _ => unreachable!("validated aio_fsync function"),
+        }
+    };
+    Ok(format!("{}_NULL_RC_{rc}", function.to_ascii_uppercase()))
+}
+
+fn aio_init_fixture_actual() -> Result<String, String> {
+    // SAFETY: aio_init accepts a nullable implementation-specific config pointer
+    // and the FrankenLibC implementation is a no-op.
+    unsafe { frankenlibc_abi::unistd_abi::aio_init(std::ptr::null()) };
+    Ok(String::from("AIO_INIT_NOOP"))
+}
+
+fn aio_read_fixture_actual(function: &str) -> Result<String, String> {
+    let fd = open_dev_null_fd(function)?;
+    let mut buffer = [0u8; 8];
+    let mut cb = FixtureAiocb::new();
+    cb.write_i32(FixtureAiocb::FILDES, fd);
+    cb.write_usize(FixtureAiocb::BUF, buffer.as_mut_ptr() as usize);
+    cb.write_usize(FixtureAiocb::NBYTES, 4);
+    cb.write_i64(FixtureAiocb::OFFSET, 0);
+
+    // SAFETY: The fixture aiocb and buffer remain live until aio_return has been
+    // read, matching the implementation's documented POSIX lifetime requirement.
+    let rc = unsafe {
+        match function {
+            "aio_read" => frankenlibc_abi::unistd_abi::aio_read(cb.as_mut_c_void()),
+            "aio_read64" => frankenlibc_abi::unistd_abi::aio_read64(cb.as_mut_c_void()),
+            _ => unreachable!("validated aio_read function"),
+        }
+    };
+    if rc != 0 {
+        close_raw_fd(fd);
+        return Ok(format!("{}_RC_{rc}", function.to_ascii_uppercase()));
+    }
+
+    let status = wait_for_aio_completion(&cb);
+    // SAFETY: The aiocb remains live and completion was observed or timed out
+    // before reading the return slot.
+    let returned = unsafe { frankenlibc_abi::unistd_abi::aio_return(cb.as_mut_c_void()) };
+    close_raw_fd(fd);
+    Ok(format!(
+        "{}_RC_{rc}_STATUS_{status}_RETURN_{returned}",
+        function.to_ascii_uppercase()
+    ))
+}
+
+fn aio_return_fixture_actual() -> Result<String, String> {
+    let mut cb = completed_aiocb(7);
+    // SAFETY: The fixture aiocb buffer uses the field offsets consumed by the ABI
+    // implementation and is kept live for the whole call.
+    let returned = unsafe { frankenlibc_abi::unistd_abi::aio_return(cb.as_mut_c_void()) };
+    Ok(format!("AIO_RETURN_COMPLETED_VALUE_{returned}"))
+}
+
+fn wait_for_aio_completion(cb: &FixtureAiocb) -> c_int {
+    for _ in 0..100 {
+        // SAFETY: The fixture aiocb remains live while polling the ABI status slot.
+        let status = unsafe { frankenlibc_abi::unistd_abi::aio_error(cb.as_c_void()) };
+        if status != libc::EINPROGRESS {
+            return status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    libc::EINPROGRESS
 }
 
 fn execute_stdio_libio_symbols_case(

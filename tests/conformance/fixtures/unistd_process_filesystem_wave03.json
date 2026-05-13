@@ -1,0 +1,400 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-13T00:00:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the refreshed fcq-unistd-process-filesystem wave-03 AIO/time symbols. Outputs classify XSI severity registration, adjtimex null-buffer denial, POSIX AIO completed-state queries, null-aiocb errors, and /dev/null read completion without recording file descriptors, kernel time offsets, process ids, addresses, temporary paths, thread ids, scheduling races, or filesystem timestamps.",
+  "spec_reference": "POSIX.1 AIO state/error/return/cancel/read/fsync contracts, XSI addseverity fmtmsg extension, Linux adjtimex raw syscall error semantics, and glibc LFS AIO aliases",
+  "campaign": {
+    "bead": "bd-ph6um.1",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-03-unistd-process-filesystem-aio-time",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata",
+    "first_wave_symbols": [
+      "addseverity",
+      "adjtimex",
+      "aio_cancel",
+      "aio_cancel64",
+      "aio_error",
+      "aio_error64",
+      "aio_fsync",
+      "aio_fsync64",
+      "aio_init",
+      "aio_read",
+      "aio_read64",
+      "aio_return"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "addseverity_registers_wave03_label_strict",
+      "function": "addseverity",
+      "spec_section": "XSI addseverity severity registration extension",
+      "inputs": {
+        "symbol": "addseverity",
+        "scenario": "register_stable_positive_severity_without_message_catalog_capture",
+        "severity": 7,
+        "expected": "ADDSEVERITY_RC_0",
+        "oracle_source": "FrankenLibC addseverity no-op success class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=addseverity;mode=strict;expected=ADDSEVERITY_RC_0;actual=ADDSEVERITY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "addseverity_registers_wave03_label_hardened",
+      "function": "addseverity",
+      "spec_section": "XSI addseverity severity registration extension",
+      "inputs": {
+        "symbol": "addseverity",
+        "scenario": "register_stable_positive_severity_without_message_catalog_capture",
+        "severity": 7,
+        "expected": "ADDSEVERITY_RC_0",
+        "oracle_source": "FrankenLibC addseverity no-op success class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=addseverity;mode=hardened;expected=ADDSEVERITY_RC_0;actual=ADDSEVERITY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "adjtimex_null_buffer_denied_strict",
+      "function": "adjtimex",
+      "spec_section": "Linux adjtimex null buffer error class",
+      "inputs": {
+        "symbol": "adjtimex",
+        "scenario": "null_timex_buffer_without_kernel_clock_capture",
+        "expected": "ADJTIMEX_NULL_RC_-1",
+        "oracle_source": "FrankenLibC adjtimex raw syscall return class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=adjtimex;mode=strict;expected=ADJTIMEX_NULL_RC_-1;actual=ADJTIMEX_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "adjtimex_null_buffer_denied_hardened",
+      "function": "adjtimex",
+      "spec_section": "Linux adjtimex null buffer error class",
+      "inputs": {
+        "symbol": "adjtimex",
+        "scenario": "null_timex_buffer_without_kernel_clock_capture",
+        "expected": "ADJTIMEX_NULL_RC_-1",
+        "oracle_source": "FrankenLibC adjtimex raw syscall return class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=adjtimex;mode=hardened;expected=ADJTIMEX_NULL_RC_-1;actual=ADJTIMEX_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_cancel_completed_aiocb_strict",
+      "function": "aio_cancel",
+      "spec_section": "POSIX aio_cancel completed operation status",
+      "inputs": {
+        "symbol": "aio_cancel",
+        "scenario": "synthetic_completed_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_CANCEL_COMPLETED_RC_2",
+        "oracle_source": "FrankenLibC aio_cancel completed state class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_cancel;mode=strict;expected=AIO_CANCEL_COMPLETED_RC_2;actual=AIO_CANCEL_COMPLETED_RC_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_cancel_completed_aiocb_hardened",
+      "function": "aio_cancel",
+      "spec_section": "POSIX aio_cancel completed operation status",
+      "inputs": {
+        "symbol": "aio_cancel",
+        "scenario": "synthetic_completed_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_CANCEL_COMPLETED_RC_2",
+        "oracle_source": "FrankenLibC aio_cancel completed state class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_cancel;mode=hardened;expected=AIO_CANCEL_COMPLETED_RC_2;actual=AIO_CANCEL_COMPLETED_RC_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_cancel64_completed_aiocb_strict",
+      "function": "aio_cancel64",
+      "spec_section": "glibc LFS aio_cancel64 completed operation alias",
+      "inputs": {
+        "symbol": "aio_cancel64",
+        "scenario": "synthetic_completed_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_CANCEL64_COMPLETED_RC_2",
+        "oracle_source": "FrankenLibC aio_cancel64 alias completed state class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_cancel64;mode=strict;expected=AIO_CANCEL64_COMPLETED_RC_2;actual=AIO_CANCEL64_COMPLETED_RC_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_cancel64_completed_aiocb_hardened",
+      "function": "aio_cancel64",
+      "spec_section": "glibc LFS aio_cancel64 completed operation alias",
+      "inputs": {
+        "symbol": "aio_cancel64",
+        "scenario": "synthetic_completed_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_CANCEL64_COMPLETED_RC_2",
+        "oracle_source": "FrankenLibC aio_cancel64 alias completed state class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_cancel64;mode=hardened;expected=AIO_CANCEL64_COMPLETED_RC_2;actual=AIO_CANCEL64_COMPLETED_RC_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_error_completed_aiocb_strict",
+      "function": "aio_error",
+      "spec_section": "POSIX aio_error completed operation status",
+      "inputs": {
+        "symbol": "aio_error",
+        "scenario": "synthetic_completed_aiocb_error_slot_without_scheduler_capture",
+        "expected": "AIO_ERROR_COMPLETED_STATUS_0",
+        "oracle_source": "FrankenLibC aio_error completed state class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_error;mode=strict;expected=AIO_ERROR_COMPLETED_STATUS_0;actual=AIO_ERROR_COMPLETED_STATUS_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_error_completed_aiocb_hardened",
+      "function": "aio_error",
+      "spec_section": "POSIX aio_error completed operation status",
+      "inputs": {
+        "symbol": "aio_error",
+        "scenario": "synthetic_completed_aiocb_error_slot_without_scheduler_capture",
+        "expected": "AIO_ERROR_COMPLETED_STATUS_0",
+        "oracle_source": "FrankenLibC aio_error completed state class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_error;mode=hardened;expected=AIO_ERROR_COMPLETED_STATUS_0;actual=AIO_ERROR_COMPLETED_STATUS_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_error64_completed_aiocb_strict",
+      "function": "aio_error64",
+      "spec_section": "glibc LFS aio_error64 completed operation alias",
+      "inputs": {
+        "symbol": "aio_error64",
+        "scenario": "synthetic_completed_aiocb_error_slot_without_scheduler_capture",
+        "expected": "AIO_ERROR64_COMPLETED_STATUS_0",
+        "oracle_source": "FrankenLibC aio_error64 alias completed state class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_error64;mode=strict;expected=AIO_ERROR64_COMPLETED_STATUS_0;actual=AIO_ERROR64_COMPLETED_STATUS_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_error64_completed_aiocb_hardened",
+      "function": "aio_error64",
+      "spec_section": "glibc LFS aio_error64 completed operation alias",
+      "inputs": {
+        "symbol": "aio_error64",
+        "scenario": "synthetic_completed_aiocb_error_slot_without_scheduler_capture",
+        "expected": "AIO_ERROR64_COMPLETED_STATUS_0",
+        "oracle_source": "FrankenLibC aio_error64 alias completed state class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_error64;mode=hardened;expected=AIO_ERROR64_COMPLETED_STATUS_0;actual=AIO_ERROR64_COMPLETED_STATUS_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_fsync_null_aiocb_strict",
+      "function": "aio_fsync",
+      "spec_section": "POSIX aio_fsync null aiocb error class",
+      "inputs": {
+        "symbol": "aio_fsync",
+        "scenario": "null_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_FSYNC_NULL_RC_-1",
+        "oracle_source": "FrankenLibC aio_fsync null aiocb return class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_fsync;mode=strict;expected=AIO_FSYNC_NULL_RC_-1;actual=AIO_FSYNC_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_fsync_null_aiocb_hardened",
+      "function": "aio_fsync",
+      "spec_section": "POSIX aio_fsync null aiocb error class",
+      "inputs": {
+        "symbol": "aio_fsync",
+        "scenario": "null_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_FSYNC_NULL_RC_-1",
+        "oracle_source": "FrankenLibC aio_fsync null aiocb return class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_fsync;mode=hardened;expected=AIO_FSYNC_NULL_RC_-1;actual=AIO_FSYNC_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_fsync64_null_aiocb_strict",
+      "function": "aio_fsync64",
+      "spec_section": "glibc LFS aio_fsync64 null aiocb alias",
+      "inputs": {
+        "symbol": "aio_fsync64",
+        "scenario": "null_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_FSYNC64_NULL_RC_-1",
+        "oracle_source": "FrankenLibC aio_fsync64 alias null aiocb return class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_fsync64;mode=strict;expected=AIO_FSYNC64_NULL_RC_-1;actual=AIO_FSYNC64_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_fsync64_null_aiocb_hardened",
+      "function": "aio_fsync64",
+      "spec_section": "glibc LFS aio_fsync64 null aiocb alias",
+      "inputs": {
+        "symbol": "aio_fsync64",
+        "scenario": "null_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_FSYNC64_NULL_RC_-1",
+        "oracle_source": "FrankenLibC aio_fsync64 alias null aiocb return class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_fsync64;mode=hardened;expected=AIO_FSYNC64_NULL_RC_-1;actual=AIO_FSYNC64_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_init_noop_strict",
+      "function": "aio_init",
+      "spec_section": "glibc aio_init no-op initialization extension",
+      "inputs": {
+        "symbol": "aio_init",
+        "scenario": "null_init_pointer_noop_without_runtime_state_capture",
+        "expected": "AIO_INIT_NOOP",
+        "oracle_source": "FrankenLibC aio_init no-op class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_init;mode=strict;expected=AIO_INIT_NOOP;actual=AIO_INIT_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_init_noop_hardened",
+      "function": "aio_init",
+      "spec_section": "glibc aio_init no-op initialization extension",
+      "inputs": {
+        "symbol": "aio_init",
+        "scenario": "null_init_pointer_noop_without_runtime_state_capture",
+        "expected": "AIO_INIT_NOOP",
+        "oracle_source": "FrankenLibC aio_init no-op class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_init;mode=hardened;expected=AIO_INIT_NOOP;actual=AIO_INIT_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_read_devnull_completion_strict",
+      "function": "aio_read",
+      "spec_section": "POSIX aio_read completed read state",
+      "inputs": {
+        "symbol": "aio_read",
+        "scenario": "devnull_read_completion_without_file_descriptor_or_timing_capture",
+        "expected": "AIO_READ_RC_0_STATUS_0_RETURN_0",
+        "oracle_source": "FrankenLibC aio_read worker completion class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_read;mode=strict;expected=AIO_READ_RC_0_STATUS_0_RETURN_0;actual=AIO_READ_RC_0_STATUS_0_RETURN_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_read_devnull_completion_hardened",
+      "function": "aio_read",
+      "spec_section": "POSIX aio_read completed read state",
+      "inputs": {
+        "symbol": "aio_read",
+        "scenario": "devnull_read_completion_without_file_descriptor_or_timing_capture",
+        "expected": "AIO_READ_RC_0_STATUS_0_RETURN_0",
+        "oracle_source": "FrankenLibC aio_read worker completion class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_read;mode=hardened;expected=AIO_READ_RC_0_STATUS_0_RETURN_0;actual=AIO_READ_RC_0_STATUS_0_RETURN_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_read64_devnull_completion_strict",
+      "function": "aio_read64",
+      "spec_section": "glibc LFS aio_read64 completed read alias",
+      "inputs": {
+        "symbol": "aio_read64",
+        "scenario": "devnull_read_completion_without_file_descriptor_or_timing_capture",
+        "expected": "AIO_READ64_RC_0_STATUS_0_RETURN_0",
+        "oracle_source": "FrankenLibC aio_read64 alias worker completion class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_read64;mode=strict;expected=AIO_READ64_RC_0_STATUS_0_RETURN_0;actual=AIO_READ64_RC_0_STATUS_0_RETURN_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_read64_devnull_completion_hardened",
+      "function": "aio_read64",
+      "spec_section": "glibc LFS aio_read64 completed read alias",
+      "inputs": {
+        "symbol": "aio_read64",
+        "scenario": "devnull_read_completion_without_file_descriptor_or_timing_capture",
+        "expected": "AIO_READ64_RC_0_STATUS_0_RETURN_0",
+        "oracle_source": "FrankenLibC aio_read64 alias worker completion class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_read64;mode=hardened;expected=AIO_READ64_RC_0_STATUS_0_RETURN_0;actual=AIO_READ64_RC_0_STATUS_0_RETURN_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_return_completed_aiocb_strict",
+      "function": "aio_return",
+      "spec_section": "POSIX aio_return completed operation return value",
+      "inputs": {
+        "symbol": "aio_return",
+        "scenario": "synthetic_completed_aiocb_return_slot_without_scheduler_capture",
+        "expected": "AIO_RETURN_COMPLETED_VALUE_7",
+        "oracle_source": "FrankenLibC aio_return completed state class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_return;mode=strict;expected=AIO_RETURN_COMPLETED_VALUE_7;actual=AIO_RETURN_COMPLETED_VALUE_7;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_return_completed_aiocb_hardened",
+      "function": "aio_return",
+      "spec_section": "POSIX aio_return completed operation return value",
+      "inputs": {
+        "symbol": "aio_return",
+        "scenario": "synthetic_completed_aiocb_return_slot_without_scheduler_capture",
+        "expected": "AIO_RETURN_COMPLETED_VALUE_7",
+        "oracle_source": "FrankenLibC aio_return completed state class",
+        "ambient_state_policy": "forbid_ambient_aio_time_fd_or_scheduler_metadata"
+      },
+      "expected_output": "symbol=aio_return;mode=hardened;expected=AIO_RETURN_COMPLETED_VALUE_7;actual=AIO_RETURN_COMPLETED_VALUE_7;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
