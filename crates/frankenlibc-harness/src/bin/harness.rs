@@ -769,6 +769,26 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Evaluate the allocator-fragmentation barrier certificate via
+    /// `frankenlibc_membrane::runtime_math::sos_barrier::evaluate_fragmentation_barrier`.
+    /// Positive headroom => certified safe; negative => violation.
+    EvaluateFragmentationBarrier {
+        /// Observed allocator alloc-like events.
+        #[arg(long)]
+        allocation_count: u32,
+        /// Observed allocator free-like events.
+        #[arg(long)]
+        free_count: u32,
+        /// Normalized size-class dispersion (0..1_000_000).
+        #[arg(long)]
+        size_class_dispersion_ppm: u32,
+        /// Normalized arena utilization (0..1_000_000).
+        #[arg(long)]
+        arena_utilization_ppm: u32,
+        /// Output JSONL path: one fragmentation_barrier record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Discretize a runtime control decision's continuous state onto
     /// a single u32 row index into the Policy Compaction Profile
     /// Table, via the pipeline
@@ -2687,6 +2707,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::EvaluateFragmentationBarrier {
+            allocation_count,
+            free_count,
+            size_class_dispersion_ppm,
+            arena_utilization_ppm,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_fragmentation_barrier;
+            let headroom = evaluate_fragmentation_barrier(
+                allocation_count,
+                free_count,
+                size_class_dispersion_ppm,
+                arena_utilization_ppm,
+            );
+            let safe = headroom >= 0;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "fragmentation_barrier",
+                "allocation_count": allocation_count,
+                "free_count": free_count,
+                "size_class_dispersion_ppm": size_class_dispersion_ppm,
+                "arena_utilization_ppm": arena_utilization_ppm,
+                "headroom": headroom,
+                "safe": safe,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "evaluate-fragmentation-barrier: alloc={allocation_count} free={free_count} size_class_ppm={size_class_dispersion_ppm} arena_ppm={arena_utilization_ppm} → headroom={headroom} safe={safe}"
+            );
         }
         Command::DerivePolicyKey {
             mode,
