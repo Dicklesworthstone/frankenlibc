@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T13:32:06Z",
-  "report_hash": "bcd04aa2f44fada1",
+  "generated_at": "2026-05-13T13:53:53Z",
+  "report_hash": "2cd7950aef004eca",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 775,
-    "symbols_without_fixtures": 3344,
-    "fixture_coverage_pct": 18.8,
-    "implemented_coverage_pct": 18.4,
+    "symbols_with_fixtures": 787,
+    "symbols_without_fixtures": 3332,
+    "fixture_coverage_pct": 19.1,
+    "implemented_coverage_pct": 18.7,
     "total_fixture_files": 92,
-    "total_cases": 2000,
+    "total_cases": 2018,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 486,
-    "symbols_with_errno_checks": 772,
-    "total_quality_issues": 3537,
-    "uncovered_action_count": 3344
+    "symbols_with_edge_cases": 491,
+    "symbols_with_errno_checks": 784,
+    "total_quality_issues": 3543,
+    "uncovered_action_count": 3332
   },
   "fixture_file_analyses": [
     {
@@ -182,8 +182,8 @@
       "file": "math_ops.json",
       "family": "math",
       "valid": true,
-      "total_cases": 33,
-      "unique_symbols": 19,
+      "total_cases": 51,
+      "unique_symbols": 31,
       "issues": []
     },
     {
@@ -4806,14 +4806,20 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -4821,14 +4827,19 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -4971,14 +4982,19 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -4986,14 +5002,19 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -6224,14 +6245,19 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -6239,14 +6265,19 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -6284,14 +6315,19 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -6299,14 +6335,20 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -11386,14 +11428,20 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -11401,14 +11449,21 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -15064,7 +15119,7 @@
       "module": "math_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
-      "case_count": 2,
+      "case_count": 3,
       "fixture_files": [
         "math_ops.json"
       ],
@@ -16441,7 +16496,7 @@
       "module": "math_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
-      "case_count": 2,
+      "case_count": 3,
       "fixture_files": [
         "math_ops.json"
       ],
@@ -28585,14 +28640,20 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -28600,14 +28661,19 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -30381,7 +30447,7 @@
       "module": "math_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
-      "case_count": 1,
+      "case_count": 2,
       "fixture_files": [
         "math_ops.json"
       ],
@@ -30392,9 +30458,7 @@
         "zero_length"
       ],
       "has_errno_check": true,
-      "quality_issues": [
-        "fewer than 2 test cases"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "fmodf",
@@ -39540,7 +39604,7 @@
       "module": "math_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
-      "case_count": 2,
+      "case_count": 3,
       "fixture_files": [
         "math_ops.json"
       ],
@@ -39548,6 +39612,7 @@
         "both"
       ],
       "edge_cases_covered": [
+        "negative",
         "zero_length"
       ],
       "has_errno_check": true,
@@ -39559,7 +39624,7 @@
       "module": "math_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
-      "case_count": 2,
+      "case_count": 3,
       "fixture_files": [
         "math_ops.json"
       ],
@@ -39567,6 +39632,7 @@
         "both"
       ],
       "edge_cases_covered": [
+        "negative",
         "zero_length"
       ],
       "has_errno_check": true,
@@ -45726,7 +45792,7 @@
       "module": "math_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
-      "case_count": 2,
+      "case_count": 3,
       "fixture_files": [
         "math_ops.json"
       ],
@@ -45734,6 +45800,7 @@
         "both"
       ],
       "edge_cases_covered": [
+        "negative",
         "zero_length"
       ],
       "has_errno_check": true,
@@ -67308,20 +67375,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__finite",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__finitef",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__finitef128",
       "status": "Implemented",
       "module": "math_abi",
@@ -67381,20 +67434,6 @@
       "symbol": "__fortify_fail",
       "status": "Implemented",
       "module": "fortify_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__fpclassify",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__fpclassifyf",
-      "status": "Implemented",
-      "module": "math_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -67896,20 +67935,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__isinf",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isinff",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__isinfl",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -67920,20 +67945,6 @@
       "symbol": "__islower_l",
       "status": "Implemented",
       "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isnan",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isnanf",
-      "status": "Implemented",
-      "module": "math_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -69691,20 +69702,6 @@
       "symbol": "__sigismember",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__signbit",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__signbitf",
-      "status": "Implemented",
-      "module": "math_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -75389,20 +75386,6 @@
       "symbol": "fgetxattr",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "finite",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "finitef",
-      "status": "Implemented",
-      "module": "math_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

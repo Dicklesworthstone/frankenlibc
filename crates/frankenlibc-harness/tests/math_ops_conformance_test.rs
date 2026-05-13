@@ -281,6 +281,37 @@ fn math_ops_covers_finite_domain_error_bucket() {
     }
 }
 
+#[test]
+fn math_ops_covers_classification_helper_pilot() {
+    let fixture = load_fixture("math_ops");
+    let required = [
+        ("fpclassify_nan", "__fpclassify", "0"),
+        ("fpclassifyf_infinite", "__fpclassifyf", "1"),
+        ("signbit_negative_zero", "__signbit", "1"),
+        ("signbitf_negative_normal", "__signbitf", "1"),
+        ("isinf_negative_infinity", "__isinf", "-1"),
+        ("isinff_positive_infinity", "__isinff", "1"),
+        ("isnan_nan", "__isnan", "1"),
+        ("isnanf_finite_normal", "__isnanf", "0"),
+        ("finite_internal_finite_normal", "__finite", "1"),
+        ("finitef_internal_infinite", "__finitef", "0"),
+        ("finite_public_finite_normal", "finite", "1"),
+        ("finitef_public_nan", "finitef", "0"),
+    ];
+
+    for (name, function, expected_output) in required {
+        let case = fixture
+            .cases
+            .iter()
+            .find(|case| case.name == name)
+            .unwrap_or_else(|| panic!("Missing math classification fixture case: {name}"));
+        assert_eq!(case.function, function);
+        assert_eq!(case.expected_output.as_deref(), Some(expected_output));
+        assert_eq!(case.expected_errno, 0);
+        assert_eq!(case.mode, "both");
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Coverage validation: rounding functions
 // ─────────────────────────────────────────────────────────────────────────────

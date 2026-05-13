@@ -30,6 +30,30 @@ unsafe extern "C" {
     fn erf(x: f64) -> f64;
     fn tgamma(x: f64) -> f64;
     fn lgamma(x: f64) -> f64;
+    #[link_name = "__fpclassify"]
+    fn host_fpclassify(x: f64) -> c_int;
+    #[link_name = "__fpclassifyf"]
+    fn host_fpclassifyf(x: f32) -> c_int;
+    #[link_name = "__signbit"]
+    fn host_signbit(x: f64) -> c_int;
+    #[link_name = "__signbitf"]
+    fn host_signbitf(x: f32) -> c_int;
+    #[link_name = "__isinf"]
+    fn host_isinf(x: f64) -> c_int;
+    #[link_name = "__isinff"]
+    fn host_isinff(x: f32) -> c_int;
+    #[link_name = "__isnan"]
+    fn host_isnan(x: f64) -> c_int;
+    #[link_name = "__isnanf"]
+    fn host_isnanf(x: f32) -> c_int;
+    #[link_name = "__finite"]
+    fn host_finite_internal(x: f64) -> c_int;
+    #[link_name = "__finitef"]
+    fn host_finitef_internal(x: f32) -> c_int;
+    #[link_name = "finite"]
+    fn host_finite(x: f64) -> c_int;
+    #[link_name = "finitef"]
+    fn host_finitef(x: f32) -> c_int;
     // wchar.h
     fn wcscpy(dest: *mut libc::wchar_t, src: *const libc::wchar_t) -> *mut libc::wchar_t;
     fn wcsncpy(dest: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize)
@@ -854,6 +878,12 @@ pub fn execute_fixture_case(
         "erf" => execute_math1_case("erf", inputs, mode),
         "tgamma" => execute_math1_case("tgamma", inputs, mode),
         "lgamma" => execute_math1_case("lgamma", inputs, mode),
+        "__fpclassify" | "__signbit" | "__isinf" | "__isnan" | "__finite" | "finite" => {
+            execute_math_classification_f64_case(function, inputs, mode)
+        }
+        "__fpclassifyf" | "__signbitf" | "__isinff" | "__isnanf" | "__finitef" | "finitef" => {
+            execute_math_classification_f32_case(function, inputs, mode)
+        }
         // inet
         "htons" => execute_inet_byteorder16_case("htons", inputs, mode),
         "ntohs" => execute_inet_byteorder16_case("ntohs", inputs, mode),
@@ -11982,10 +12012,31 @@ fn execute_ctype_convert_case(
 // ---------------------------------------------------------------------------
 
 fn parse_f64(inputs: &serde_json::Value, key: &str) -> Result<f64, String> {
-    inputs
+    let value = inputs
         .get(key)
-        .and_then(serde_json::Value::as_f64)
-        .ok_or_else(|| format!("missing float field '{key}'"))
+        .ok_or_else(|| format!("missing float field '{key}'"))?;
+
+    if let Some(number) = value.as_f64() {
+        return Ok(number);
+    }
+
+    let Some(text) = value.as_str() else {
+        return Err(format!("float field '{key}' must be a number or string"));
+    };
+
+    match text {
+        "NaN" | "nan" => Ok(f64::NAN),
+        "Infinity" | "+Infinity" | "inf" | "+inf" => Ok(f64::INFINITY),
+        "-Infinity" | "-inf" => Ok(f64::NEG_INFINITY),
+        "-0.0" | "-0" => Ok(-0.0),
+        other => other
+            .parse::<f64>()
+            .map_err(|err| format!("invalid float field '{key}' value '{other}': {err}")),
+    }
+}
+
+fn parse_f32(inputs: &serde_json::Value, key: &str) -> Result<f32, String> {
+    Ok(parse_f64(inputs, key)? as f32)
 }
 
 fn run_host_math1(func: &str, x: f64) -> f64 {
@@ -12123,6 +12174,110 @@ fn execute_math2_case(
         host_output,
         impl_output,
         host_parity,
+        note: None,
+    })
+}
+
+fn normalize_predicate(value: c_int) -> c_int {
+    if value == 0 { 0 } else { 1 }
+}
+
+fn run_host_math_classification_f64(func: &str, x: f64) -> Result<c_int, String> {
+    // SAFETY: glibc classification helpers accept any finite, infinite, or NaN f64.
+    let value = unsafe {
+        match func {
+            "__fpclassify" => host_fpclassify(x),
+            "__signbit" => normalize_predicate(host_signbit(x)),
+            "__isinf" => host_isinf(x),
+            "__isnan" => host_isnan(x),
+            "__finite" => host_finite_internal(x),
+            "finite" => host_finite(x),
+            _ => return Err(format!("unsupported f64 classification function: {func}")),
+        }
+    };
+    Ok(value)
+}
+
+fn run_impl_math_classification_f64(func: &str, x: f64) -> Result<c_int, String> {
+    // SAFETY: FrankenLibC classification helpers accept any finite, infinite, or NaN f64.
+    let value = unsafe {
+        match func {
+            "__fpclassify" => frankenlibc_abi::math_abi::__fpclassify(x),
+            "__signbit" => normalize_predicate(frankenlibc_abi::math_abi::__signbit(x)),
+            "__isinf" => frankenlibc_abi::math_abi::__isinf(x),
+            "__isnan" => frankenlibc_abi::math_abi::__isnan(x),
+            "__finite" => frankenlibc_abi::math_abi::__finite(x),
+            "finite" => frankenlibc_abi::math_abi::finite(x),
+            _ => return Err(format!("unsupported f64 classification function: {func}")),
+        }
+    };
+    Ok(value)
+}
+
+fn run_host_math_classification_f32(func: &str, x: f32) -> Result<c_int, String> {
+    // SAFETY: glibc classification helpers accept any finite, infinite, or NaN f32.
+    let value = unsafe {
+        match func {
+            "__fpclassifyf" => host_fpclassifyf(x),
+            "__signbitf" => normalize_predicate(host_signbitf(x)),
+            "__isinff" => host_isinff(x),
+            "__isnanf" => host_isnanf(x),
+            "__finitef" => host_finitef_internal(x),
+            "finitef" => host_finitef(x),
+            _ => return Err(format!("unsupported f32 classification function: {func}")),
+        }
+    };
+    Ok(value)
+}
+
+fn run_impl_math_classification_f32(func: &str, x: f32) -> Result<c_int, String> {
+    // SAFETY: FrankenLibC classification helpers accept any finite, infinite, or NaN f32.
+    let value = unsafe {
+        match func {
+            "__fpclassifyf" => frankenlibc_abi::math_abi::__fpclassifyf(x),
+            "__signbitf" => normalize_predicate(frankenlibc_abi::math_abi::__signbitf(x)),
+            "__isinff" => frankenlibc_abi::math_abi::__isinff(x),
+            "__isnanf" => frankenlibc_abi::math_abi::__isnanf(x),
+            "__finitef" => frankenlibc_abi::math_abi::__finitef(x),
+            "finitef" => frankenlibc_abi::math_abi::finitef(x),
+            _ => return Err(format!("unsupported f32 classification function: {func}")),
+        }
+    };
+    Ok(value)
+}
+
+fn execute_math_classification_f64_case(
+    func: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let x = parse_f64(inputs, "x")?;
+    let impl_value = run_impl_math_classification_f64(func, x)?;
+    let host_value = run_host_math_classification_f64(func, x)?;
+
+    Ok(DifferentialExecution {
+        host_output: host_value.to_string(),
+        impl_output: impl_value.to_string(),
+        host_parity: host_value == impl_value,
+        note: None,
+    })
+}
+
+fn execute_math_classification_f32_case(
+    func: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let x = parse_f32(inputs, "x")?;
+    let impl_value = run_impl_math_classification_f32(func, x)?;
+    let host_value = run_host_math_classification_f32(func, x)?;
+
+    Ok(DifferentialExecution {
+        host_output: host_value.to_string(),
+        impl_output: impl_value.to_string(),
+        host_parity: host_value == impl_value,
         note: None,
     })
 }

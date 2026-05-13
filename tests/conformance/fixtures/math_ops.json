@@ -326,6 +326,126 @@
       "note": "Domain-error bucket: finite zero divisor"
     },
     {
+      "name": "fpclassify_nan",
+      "function": "__fpclassify",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc __fpclassify)",
+      "inputs": { "x": "NaN" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: FP_NAN"
+    },
+    {
+      "name": "fpclassifyf_infinite",
+      "function": "__fpclassifyf",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc __fpclassifyf)",
+      "inputs": { "x": "Infinity" },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: FP_INFINITE"
+    },
+    {
+      "name": "signbit_negative_zero",
+      "function": "__signbit",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc __signbit)",
+      "inputs": { "x": "-0.0" },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: normalized sign predicate"
+    },
+    {
+      "name": "signbitf_negative_normal",
+      "function": "__signbitf",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc __signbitf)",
+      "inputs": { "x": -1.0 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: normalized sign predicate"
+    },
+    {
+      "name": "isinf_negative_infinity",
+      "function": "__isinf",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc __isinf)",
+      "inputs": { "x": "-Infinity" },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: signed infinity predicate"
+    },
+    {
+      "name": "isinff_positive_infinity",
+      "function": "__isinff",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc __isinff)",
+      "inputs": { "x": "Infinity" },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: signed infinity predicate"
+    },
+    {
+      "name": "isnan_nan",
+      "function": "__isnan",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc __isnan)",
+      "inputs": { "x": "NaN" },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: NaN predicate"
+    },
+    {
+      "name": "isnanf_finite_normal",
+      "function": "__isnanf",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc __isnanf)",
+      "inputs": { "x": 1.0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: finite non-NaN predicate"
+    },
+    {
+      "name": "finite_internal_finite_normal",
+      "function": "__finite",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc __finite)",
+      "inputs": { "x": 1.0 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: finite predicate"
+    },
+    {
+      "name": "finitef_internal_infinite",
+      "function": "__finitef",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc __finitef)",
+      "inputs": { "x": "Infinity" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: non-finite predicate"
+    },
+    {
+      "name": "finite_public_finite_normal",
+      "function": "finite",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc finite)",
+      "inputs": { "x": 1.0 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: public finite predicate"
+    },
+    {
+      "name": "finitef_public_nan",
+      "function": "finitef",
+      "spec_section": "C11 7.12.3 classification macro analogue (glibc finitef)",
+      "inputs": { "x": "NaN" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Classification pilot: public non-finite predicate"
+    },
+    {
       "name": "erf_zero",
       "function": "erf",
       "spec_section": "C11 7.12.8.1 erf",

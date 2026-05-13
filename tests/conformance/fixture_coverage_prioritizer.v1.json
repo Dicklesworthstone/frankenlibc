@@ -549,11 +549,11 @@
     },
     {
       "campaign_id": "fcq-math-special",
-      "current_coverage_pct": 1.5,
+      "current_coverage_pct": 2.45,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 2.45,
+      "expected_coverage_after_first_wave_pct": 3.4,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
         "_LIB_VERSION",
@@ -594,9 +594,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "finite aliases, special functions, fpclassify/signbit, libm edge cases, and exception-adjacent behavior",
-      "target_covered": 19,
+      "target_covered": 31,
       "target_total": 1265,
-      "target_uncovered": 1246,
+      "target_uncovered": 1234,
       "title": "math finite/special-function fixture wave",
       "workload_domains": [
         "language_runtimes",
@@ -1039,7 +1039,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3342,
+    "all_uncovered_target_symbols": 3330,
     "campaign_count": 14,
     "covered_modules": [
       "fortify_abi",
@@ -1074,7 +1074,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2988,
+    "selected_target_uncovered_symbols": 2976,
     "total_first_wave_fixture_count": 150
   }
 }
