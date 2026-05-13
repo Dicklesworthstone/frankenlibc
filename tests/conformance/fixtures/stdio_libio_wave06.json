@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "stdio/libio",
+  "captured_at": "2026-05-13T22:46:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-stdio-libio wave-06 memory-stream, process-pipe, public writer, null remove, rewind, and scanf EOF classes without recording stream addresses, file descriptors, filesystem paths, stdout bytes, stderr bytes, stdin payloads, process ids, wait counters, thread ids, timestamps, or host FILE internals.",
+  "spec_reference": "POSIX/GNU open_memstream, pclose, popen, putc, putc_unlocked, putchar, putchar_unlocked, puts, putw, remove, rewind, and scanf stream semantics",
+  "campaign": {
+    "bead": "bd-gmbqy.2",
+    "campaign_id": "fcq-stdio-libio",
+    "wave_id": "wave-06-stdio-libio-memstream-process-public-writers",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture",
+    "first_wave_symbols": [
+      "open_memstream",
+      "pclose",
+      "popen",
+      "putc",
+      "putc_unlocked",
+      "putchar",
+      "putchar_unlocked",
+      "puts",
+      "putw",
+      "remove",
+      "rewind",
+      "scanf"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "open_memstream_size_class_strict",
+      "function": "open_memstream",
+      "spec_section": "GNU open_memstream flush and close size class",
+      "inputs": {
+        "symbol": "open_memstream",
+        "scenario": "controlled_memory_stream_write_without_payload_or_address_capture",
+        "expected": "OPEN_MEMSTREAM_FLUSH_0_CLOSE_0_SIZE_3",
+        "oracle_source": "FrankenLibC open_memstream size-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=open_memstream;mode=strict;expected=OPEN_MEMSTREAM_FLUSH_0_CLOSE_0_SIZE_3;actual=OPEN_MEMSTREAM_FLUSH_0_CLOSE_0_SIZE_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "open_memstream_size_class_hardened",
+      "function": "open_memstream",
+      "spec_section": "GNU open_memstream flush and close size class",
+      "inputs": {
+        "symbol": "open_memstream",
+        "scenario": "controlled_memory_stream_write_without_payload_or_address_capture",
+        "expected": "OPEN_MEMSTREAM_FLUSH_0_CLOSE_0_SIZE_3",
+        "oracle_source": "FrankenLibC open_memstream size-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=open_memstream;mode=hardened;expected=OPEN_MEMSTREAM_FLUSH_0_CLOSE_0_SIZE_3;actual=OPEN_MEMSTREAM_FLUSH_0_CLOSE_0_SIZE_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pclose_process_pipe_status_strict",
+      "function": "pclose",
+      "spec_section": "POSIX pclose bounded process-pipe status class",
+      "inputs": {
+        "symbol": "pclose",
+        "scenario": "bounded_no_output_shell_true_process_pipe_close_without_pid_capture",
+        "expected": "PCLOSE_STATUS_0",
+        "oracle_source": "FrankenLibC pclose process-pipe status replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=pclose;mode=strict;expected=PCLOSE_STATUS_0;actual=PCLOSE_STATUS_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pclose_process_pipe_status_hardened",
+      "function": "pclose",
+      "spec_section": "POSIX pclose bounded process-pipe status class",
+      "inputs": {
+        "symbol": "pclose",
+        "scenario": "bounded_no_output_shell_true_process_pipe_close_without_pid_capture",
+        "expected": "PCLOSE_STATUS_0",
+        "oracle_source": "FrankenLibC pclose process-pipe status replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=pclose;mode=hardened;expected=PCLOSE_STATUS_0;actual=PCLOSE_STATUS_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "popen_process_pipe_create_strict",
+      "function": "popen",
+      "spec_section": "POSIX popen bounded no-output pipe creation class",
+      "inputs": {
+        "symbol": "popen",
+        "scenario": "bounded_no_output_shell_true_popen_without_output_or_pid_capture",
+        "expected": "POPEN_STREAM_PCLOSE_0",
+        "oracle_source": "FrankenLibC popen process-pipe replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=popen;mode=strict;expected=POPEN_STREAM_PCLOSE_0;actual=POPEN_STREAM_PCLOSE_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "popen_process_pipe_create_hardened",
+      "function": "popen",
+      "spec_section": "POSIX popen bounded no-output pipe creation class",
+      "inputs": {
+        "symbol": "popen",
+        "scenario": "bounded_no_output_shell_true_popen_without_output_or_pid_capture",
+        "expected": "POPEN_STREAM_PCLOSE_0",
+        "oracle_source": "FrankenLibC popen process-pipe replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=popen;mode=hardened;expected=POPEN_STREAM_PCLOSE_0;actual=POPEN_STREAM_PCLOSE_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "putc_controlled_write_strict",
+      "function": "putc",
+      "spec_section": "POSIX putc controlled byte write",
+      "inputs": {
+        "symbol": "putc",
+        "scenario": "controlled_tmpfile_putc_without_payload_capture",
+        "expected": "PUTC_CHAR_Q",
+        "oracle_source": "FrankenLibC putc return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=putc;mode=strict;expected=PUTC_CHAR_Q;actual=PUTC_CHAR_Q;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "putc_controlled_write_hardened",
+      "function": "putc",
+      "spec_section": "POSIX putc controlled byte write",
+      "inputs": {
+        "symbol": "putc",
+        "scenario": "controlled_tmpfile_putc_without_payload_capture",
+        "expected": "PUTC_CHAR_Q",
+        "oracle_source": "FrankenLibC putc return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=putc;mode=hardened;expected=PUTC_CHAR_Q;actual=PUTC_CHAR_Q;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "putc_unlocked_controlled_write_strict",
+      "function": "putc_unlocked",
+      "spec_section": "GNU putc_unlocked controlled byte write",
+      "inputs": {
+        "symbol": "putc_unlocked",
+        "scenario": "controlled_tmpfile_putc_unlocked_without_payload_capture",
+        "expected": "PUTC_UNLOCKED_CHAR_U",
+        "oracle_source": "FrankenLibC putc_unlocked return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=putc_unlocked;mode=strict;expected=PUTC_UNLOCKED_CHAR_U;actual=PUTC_UNLOCKED_CHAR_U;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "putc_unlocked_controlled_write_hardened",
+      "function": "putc_unlocked",
+      "spec_section": "GNU putc_unlocked controlled byte write",
+      "inputs": {
+        "symbol": "putc_unlocked",
+        "scenario": "controlled_tmpfile_putc_unlocked_without_payload_capture",
+        "expected": "PUTC_UNLOCKED_CHAR_U",
+        "oracle_source": "FrankenLibC putc_unlocked return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=putc_unlocked;mode=hardened;expected=PUTC_UNLOCKED_CHAR_U;actual=PUTC_UNLOCKED_CHAR_U;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "putchar_redirected_write_strict",
+      "function": "putchar",
+      "spec_section": "POSIX putchar stdout write return class",
+      "inputs": {
+        "symbol": "putchar",
+        "scenario": "stdout_redirected_putchar_without_stdout_payload_capture",
+        "expected": "PUTCHAR_CHAR_P",
+        "oracle_source": "FrankenLibC putchar redirected return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=putchar;mode=strict;expected=PUTCHAR_CHAR_P;actual=PUTCHAR_CHAR_P;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "putchar_redirected_write_hardened",
+      "function": "putchar",
+      "spec_section": "POSIX putchar stdout write return class",
+      "inputs": {
+        "symbol": "putchar",
+        "scenario": "stdout_redirected_putchar_without_stdout_payload_capture",
+        "expected": "PUTCHAR_CHAR_P",
+        "oracle_source": "FrankenLibC putchar redirected return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=putchar;mode=hardened;expected=PUTCHAR_CHAR_P;actual=PUTCHAR_CHAR_P;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "putchar_unlocked_redirected_write_strict",
+      "function": "putchar_unlocked",
+      "spec_section": "GNU putchar_unlocked stdout write return class",
+      "inputs": {
+        "symbol": "putchar_unlocked",
+        "scenario": "stdout_redirected_putchar_unlocked_without_stdout_payload_capture",
+        "expected": "PUTCHAR_UNLOCKED_CHAR_U",
+        "oracle_source": "FrankenLibC putchar_unlocked redirected return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=putchar_unlocked;mode=strict;expected=PUTCHAR_UNLOCKED_CHAR_U;actual=PUTCHAR_UNLOCKED_CHAR_U;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "putchar_unlocked_redirected_write_hardened",
+      "function": "putchar_unlocked",
+      "spec_section": "GNU putchar_unlocked stdout write return class",
+      "inputs": {
+        "symbol": "putchar_unlocked",
+        "scenario": "stdout_redirected_putchar_unlocked_without_stdout_payload_capture",
+        "expected": "PUTCHAR_UNLOCKED_CHAR_U",
+        "oracle_source": "FrankenLibC putchar_unlocked redirected return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=putchar_unlocked;mode=hardened;expected=PUTCHAR_UNLOCKED_CHAR_U;actual=PUTCHAR_UNLOCKED_CHAR_U;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "puts_redirected_write_strict",
+      "function": "puts",
+      "spec_section": "POSIX puts stdout write return class",
+      "inputs": {
+        "symbol": "puts",
+        "scenario": "stdout_redirected_puts_without_stdout_payload_capture",
+        "expected": "PUTS_NONNEGATIVE",
+        "oracle_source": "FrankenLibC puts redirected return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=puts;mode=strict;expected=PUTS_NONNEGATIVE;actual=PUTS_NONNEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "puts_redirected_write_hardened",
+      "function": "puts",
+      "spec_section": "POSIX puts stdout write return class",
+      "inputs": {
+        "symbol": "puts",
+        "scenario": "stdout_redirected_puts_without_stdout_payload_capture",
+        "expected": "PUTS_NONNEGATIVE",
+        "oracle_source": "FrankenLibC puts redirected return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=puts;mode=hardened;expected=PUTS_NONNEGATIVE;actual=PUTS_NONNEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "putw_controlled_write_strict",
+      "function": "putw",
+      "spec_section": "SVID putw controlled integer write",
+      "inputs": {
+        "symbol": "putw",
+        "scenario": "controlled_tmpfile_putw_without_payload_capture",
+        "expected": "PUTW_RC_0",
+        "oracle_source": "FrankenLibC putw return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=putw;mode=strict;expected=PUTW_RC_0;actual=PUTW_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "putw_controlled_write_hardened",
+      "function": "putw",
+      "spec_section": "SVID putw controlled integer write",
+      "inputs": {
+        "symbol": "putw",
+        "scenario": "controlled_tmpfile_putw_without_payload_capture",
+        "expected": "PUTW_RC_0",
+        "oracle_source": "FrankenLibC putw return-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=putw;mode=hardened;expected=PUTW_RC_0;actual=PUTW_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "remove_null_path_error_strict",
+      "function": "remove",
+      "spec_section": "POSIX remove null-path error class",
+      "inputs": {
+        "symbol": "remove",
+        "scenario": "null_path_error_without_file_deletion_or_path_capture",
+        "expected": "REMOVE_NULL_RC_-1_ERRNO_EFAULT",
+        "oracle_source": "FrankenLibC remove null-path errno replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=remove;mode=strict;expected=REMOVE_NULL_RC_-1_ERRNO_EFAULT;actual=REMOVE_NULL_RC_-1_ERRNO_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "strict"
+    },
+    {
+      "name": "remove_null_path_error_hardened",
+      "function": "remove",
+      "spec_section": "POSIX remove null-path error class",
+      "inputs": {
+        "symbol": "remove",
+        "scenario": "null_path_error_without_file_deletion_or_path_capture",
+        "expected": "REMOVE_NULL_RC_-1_ERRNO_EFAULT",
+        "oracle_source": "FrankenLibC remove null-path errno replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=remove;mode=hardened;expected=REMOVE_NULL_RC_-1_ERRNO_EFAULT;actual=REMOVE_NULL_RC_-1_ERRNO_EFAULT;failure_signature=none",
+      "expected_errno": 14,
+      "mode": "hardened"
+    },
+    {
+      "name": "rewind_controlled_position_strict",
+      "function": "rewind",
+      "spec_section": "POSIX rewind controlled stream position class",
+      "inputs": {
+        "symbol": "rewind",
+        "scenario": "controlled_tmpfile_rewind_without_position_or_path_capture",
+        "expected": "REWIND_FIRST_CHAR_R",
+        "oracle_source": "FrankenLibC rewind first-byte replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=rewind;mode=strict;expected=REWIND_FIRST_CHAR_R;actual=REWIND_FIRST_CHAR_R;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "rewind_controlled_position_hardened",
+      "function": "rewind",
+      "spec_section": "POSIX rewind controlled stream position class",
+      "inputs": {
+        "symbol": "rewind",
+        "scenario": "controlled_tmpfile_rewind_without_position_or_path_capture",
+        "expected": "REWIND_FIRST_CHAR_R",
+        "oracle_source": "FrankenLibC rewind first-byte replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=rewind;mode=hardened;expected=REWIND_FIRST_CHAR_R;actual=REWIND_FIRST_CHAR_R;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "scanf_empty_stdin_class_strict",
+      "function": "scanf",
+      "spec_section": "POSIX scanf noninteractive EOF class",
+      "inputs": {
+        "symbol": "scanf",
+        "scenario": "empty_stdin_scanf_without_stdin_payload_capture",
+        "expected": "SCANF_EMPTY_RC_-1",
+        "oracle_source": "FrankenLibC scanf empty-stdin replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=scanf;mode=strict;expected=SCANF_EMPTY_RC_-1;actual=SCANF_EMPTY_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "scanf_empty_stdin_class_hardened",
+      "function": "scanf",
+      "spec_section": "POSIX scanf noninteractive EOF class",
+      "inputs": {
+        "symbol": "scanf",
+        "scenario": "empty_stdin_scanf_without_stdin_payload_capture",
+        "expected": "SCANF_EMPTY_RC_-1",
+        "oracle_source": "FrankenLibC scanf empty-stdin replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=scanf;mode=hardened;expected=SCANF_EMPTY_RC_-1;actual=SCANF_EMPTY_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

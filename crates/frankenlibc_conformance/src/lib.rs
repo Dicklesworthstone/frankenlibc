@@ -855,7 +855,9 @@ pub fn execute_fixture_case(
         | "fputws_unlocked" | "fread_unlocked" | "freopen" | "freopen64" | "fscanf" | "fseeko"
         | "fseeko64" | "fsetpos" | "fsetpos64" | "ftello" | "ftello64" | "ftrylockfile"
         | "funlockfile" | "fwrite_unlocked" | "getc" | "getc_unlocked" | "getchar"
-        | "getchar_unlocked" | "getdelim" | "getline" | "getw" | "mktemp" => {
+        | "getchar_unlocked" | "getdelim" | "getline" | "getw" | "mktemp" | "open_memstream"
+        | "pclose" | "popen" | "putc" | "putc_unlocked" | "putchar" | "putchar_unlocked"
+        | "puts" | "putw" | "remove" | "rewind" | "scanf" => {
             execute_stdio_libio_symbols_case(function, inputs, mode)
         }
         "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
@@ -21205,7 +21207,139 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
                 Ok(String::from("MKTEMP_UNEXPECTED_CLASS"))
             }
         }
+        "open_memstream" => {
+            let mut out: *mut c_char = std::ptr::null_mut();
+            let mut size = usize::MAX;
+            let stream = unsafe { frankenlibc_abi::stdio_abi::open_memstream(&mut out, &mut size) };
+            if stream.is_null() {
+                return Ok(String::from("OPEN_MEMSTREAM_NULL"));
+            }
+            write_controlled_stream_bytes(stream, b"mem")?;
+            let flush_rc = unsafe { frankenlibc_abi::stdio_abi::fflush(stream) };
+            let close_rc = unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
+            let size_class = if size == 3 { "SIZE_3" } else { "SIZE_OTHER" };
+            if !out.is_null() {
+                unsafe { libc::free(out.cast::<c_void>()) };
+            }
+            Ok(format!(
+                "OPEN_MEMSTREAM_FLUSH_{flush_rc}_CLOSE_{close_rc}_{size_class}"
+            ))
+        }
+        "popen" => {
+            let command = CString::new(":").map_err(|_| "popen command has NUL".to_string())?;
+            let mode = CString::new("r").map_err(|_| "popen mode has NUL".to_string())?;
+            let stream =
+                unsafe { frankenlibc_abi::stdio_abi::popen(command.as_ptr(), mode.as_ptr()) };
+            if stream.is_null() {
+                Ok(String::from("POPEN_NULL"))
+            } else {
+                let status = unsafe { frankenlibc_abi::stdio_abi::pclose(stream) };
+                Ok(format!("POPEN_STREAM_PCLOSE_{status}"))
+            }
+        }
+        "pclose" => {
+            let command = CString::new(":").map_err(|_| "pclose command has NUL".to_string())?;
+            let mode = CString::new("r").map_err(|_| "pclose mode has NUL".to_string())?;
+            let stream =
+                unsafe { frankenlibc_abi::stdio_abi::popen(command.as_ptr(), mode.as_ptr()) };
+            if stream.is_null() {
+                Ok(String::from("PCLOSE_POPEN_NULL"))
+            } else {
+                let status = unsafe { frankenlibc_abi::stdio_abi::pclose(stream) };
+                Ok(format!("PCLOSE_STATUS_{status}"))
+            }
+        }
+        "putc" => stdio_libio_tmpfile(|stream| {
+            let rc = unsafe { frankenlibc_abi::stdio_abi::putc(i32::from(b'Q'), stream) };
+            if rc == i32::from(b'Q') {
+                Ok(String::from("PUTC_CHAR_Q"))
+            } else {
+                Ok(format!("PUTC_RC_{rc}"))
+            }
+        }),
+        "putc_unlocked" => stdio_libio_tmpfile(|stream| {
+            let rc = unsafe { frankenlibc_abi::stdio_abi::putc_unlocked(i32::from(b'U'), stream) };
+            if rc == i32::from(b'U') {
+                Ok(String::from("PUTC_UNLOCKED_CHAR_U"))
+            } else {
+                Ok(format!("PUTC_UNLOCKED_RC_{rc}"))
+            }
+        }),
+        "putchar" => {
+            let rc = run_with_stdout_redirected_to_devnull(|| unsafe {
+                frankenlibc_abi::stdio_abi::putchar(i32::from(b'P'))
+            })?;
+            if rc == i32::from(b'P') {
+                Ok(String::from("PUTCHAR_CHAR_P"))
+            } else {
+                Ok(format!("PUTCHAR_RC_{rc}"))
+            }
+        }
+        "putchar_unlocked" => {
+            let rc = run_with_stdout_redirected_to_devnull(|| unsafe {
+                frankenlibc_abi::stdio_abi::putchar_unlocked(i32::from(b'U'))
+            })?;
+            if rc == i32::from(b'U') {
+                Ok(String::from("PUTCHAR_UNLOCKED_CHAR_U"))
+            } else {
+                Ok(format!("PUTCHAR_UNLOCKED_RC_{rc}"))
+            }
+        }
+        "puts" => {
+            let text = CString::new("puts").map_err(|_| "puts text has NUL".to_string())?;
+            let rc = run_with_stdout_redirected_to_devnull(|| unsafe {
+                frankenlibc_abi::stdio_abi::puts(text.as_ptr())
+            })?;
+            if rc >= 0 {
+                Ok(String::from("PUTS_NONNEGATIVE"))
+            } else {
+                Ok(format!("PUTS_RC_{rc}"))
+            }
+        }
+        "putw" => stdio_libio_tmpfile(|stream| {
+            let rc = unsafe { frankenlibc_abi::stdio_abi::putw(0x1234_5678, stream) };
+            Ok(format!("PUTW_RC_{rc}"))
+        }),
+        "remove" => {
+            stdio_libio_reset_errno();
+            let rc = unsafe { frankenlibc_abi::stdio_abi::remove(std::ptr::null()) };
+            let errno = stdio_libio_errno_class(stdio_libio_errno());
+            Ok(format!("REMOVE_NULL_RC_{rc}_ERRNO_{errno}"))
+        }
+        "rewind" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"rw")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let got = unsafe { frankenlibc_abi::stdio_abi::fgetc(stream) };
+            if got == i32::from(b'r') {
+                Ok(String::from("REWIND_FIRST_CHAR_R"))
+            } else {
+                Ok(format!("REWIND_FIRST_RC_{got}"))
+            }
+        }),
+        "scanf" => {
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let rc = unsafe { frankenlibc_abi::stdio_abi::scanf(fmt.as_ptr()) };
+            Ok(format!("SCANF_EMPTY_RC_{rc}"))
+        }
         other => Err(format!("unsupported stdio/libio fixture: {other}")),
+    }
+}
+
+fn stdio_libio_reset_errno() {
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
+}
+
+fn stdio_libio_errno() -> i32 {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+fn stdio_libio_errno_class(errno: i32) -> &'static str {
+    match errno {
+        0 => "NONE",
+        libc::EFAULT => "EFAULT",
+        libc::EINVAL => "EINVAL",
+        libc::ENOENT => "ENOENT",
+        _ => "OTHER",
     }
 }
 
@@ -27872,6 +28006,47 @@ mod tests {
         let raw = include_str!("../../../tests/conformance/fixtures/stdio_libio_wave04.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("stdio/libio wave04 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn stdio_libio_wave06_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/stdio_libio_wave06.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("stdio/libio wave06 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
