@@ -468,9 +468,10 @@ pub fn execute_fixture_case(
         "__strcspn_c1" => execute_strcspn_c1_case(inputs, mode),
         "__strcspn_c2" | "__strcspn_c3" | "__strdup" | "__strerror_r" | "__strfmon_l"
         | "__strftime_l" | "__strncasecmp_l" | "__strndup" | "__strpbrk_c2" | "__strpbrk_c3"
-        | "__strsep_1c" | "__strsep_2c" => {
-            execute_string_memory_hotpaths_case(function, inputs, mode)
-        }
+        | "__strsep_1c" | "__strsep_2c" | "__strsep_3c" | "__strsep_g" | "__strspn_c1"
+        | "__strspn_c2" | "__strspn_c3" | "__strtod_internal" | "__strtod_l"
+        | "__strtof_internal" | "__strtof_l" | "__strtok_r" | "__strtok_r_1c"
+        | "__strtol_internal" => execute_string_memory_hotpaths_case(function, inputs, mode),
         "strcmp" => execute_strcmp_case(inputs, mode),
         "strcpy" => execute_strcpy_case(inputs, mode),
         "strncpy" => execute_strncpy_case(inputs, mode),
@@ -7823,9 +7824,17 @@ fn string_memory_hotpath_actual(
                 None => Ok(String::from("PBRK_NONE")),
             }
         }
-        "__strsep_1c" | "__strsep_2c" => {
+        "__strspn_c1" | "__strspn_c2" | "__strspn_c3" => {
+            let haystack = nul_terminated_bytes(&parse_string(inputs, "haystack")?);
+            let accept = accept_set_bytes(inputs, function)?;
+            Ok(format!(
+                "SPAN_{}",
+                frankenlibc_core::string::str::strspn(&haystack, &accept)
+            ))
+        }
+        "__strsep_1c" | "__strsep_2c" | "__strsep_3c" | "__strsep_g" => {
             let input = parse_string(inputs, "input")?;
-            let delimiters = parse_string(inputs, "delimiters")?;
+            let delimiters = string_memory_delimiters(inputs, function)?;
             let split = input
                 .char_indices()
                 .find(|(_, ch)| delimiters.contains(*ch));
@@ -7840,6 +7849,40 @@ fn string_memory_hotpath_actual(
                 }
                 None => Ok(format!("TOKEN_{input}_REST_NULL")),
             }
+        }
+        "__strtok_r" | "__strtok_r_1c" => {
+            let mut input = nul_terminated_bytes(&parse_string(inputs, "input")?);
+            let delimiters = string_memory_delimiters(inputs, function)?;
+            let delimiters = nul_terminated_bytes(&delimiters);
+            match frankenlibc_core::string::strtok::strtok_r(&mut input, &delimiters, 0) {
+                Some((start, len, save)) => Ok(format!(
+                    "TOKEN_{}_SAVE_{save}",
+                    c_fixture_text(&input[start..start + len])
+                )),
+                None => Ok(String::from("TOKEN_NONE_SAVE_0")),
+            }
+        }
+        "__strtol_internal" => {
+            let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
+            let base = parse_i32(inputs, "base")?;
+            let (value, consumed) = frankenlibc_core::stdlib::strtol(&input, base);
+            Ok(format!("INT_{value}_END_{consumed}"))
+        }
+        "__strtod_internal" | "__strtod_l" => {
+            let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
+            let (value, consumed) = frankenlibc_core::stdlib::strtod(&input);
+            Ok(format!(
+                "FLOAT_{}_END_{consumed}",
+                fixture_float_token(value)
+            ))
+        }
+        "__strtof_internal" | "__strtof_l" => {
+            let input = nul_terminated_bytes(&parse_string(inputs, "input")?);
+            let (value, consumed) = frankenlibc_core::stdlib::strtof(&input);
+            Ok(format!(
+                "FLOAT_{}_END_{consumed}",
+                fixture_float_token(f64::from(value))
+            ))
         }
         other => Err(format!(
             "unsupported string/memory hotpath fixture: {other}"
@@ -7861,8 +7904,31 @@ fn reject_set_bytes(inputs: &serde_json::Value, function: &str) -> Result<Vec<u8
 
 fn accept_set_bytes(inputs: &serde_json::Value, function: &str) -> Result<Vec<u8>, String> {
     let accept = parse_string(inputs, "accept")?;
-    let required = if function == "__strpbrk_c2" { 2 } else { 3 };
+    let required = match function {
+        "__strspn_c1" => 1,
+        "__strpbrk_c2" | "__strspn_c2" => 2,
+        _ => 3,
+    };
     fixed_small_byte_set(&accept, required, "accept")
+}
+
+fn string_memory_delimiters(inputs: &serde_json::Value, function: &str) -> Result<String, String> {
+    let delimiters = parse_string(inputs, "delimiters")?;
+    match function {
+        "__strsep_1c" | "__strtok_r_1c" if delimiters.len() != 1 => Err(format!(
+            "delimiters for {function} must contain exactly 1 ASCII byte"
+        )),
+        "__strsep_2c" if delimiters.len() != 2 => Err(String::from(
+            "delimiters for __strsep_2c must contain exactly 2 ASCII bytes",
+        )),
+        "__strsep_3c" if delimiters.len() != 3 => Err(String::from(
+            "delimiters for __strsep_3c must contain exactly 3 ASCII bytes",
+        )),
+        _ if !delimiters.is_ascii() => Err(format!(
+            "delimiters for {function} must be ASCII for byte-level fixture replay"
+        )),
+        _ => Ok(delimiters),
+    }
 }
 
 fn fixed_small_byte_set(text: &str, required: usize, field: &str) -> Result<Vec<u8>, String> {
@@ -7885,6 +7951,36 @@ fn c_fixture_text(bytes_with_nul: &[u8]) -> String {
         .position(|&byte| byte == 0)
         .unwrap_or(bytes_with_nul.len());
     String::from_utf8_lossy(&bytes_with_nul[..len]).into_owned()
+}
+
+fn fixture_float_token(value: f64) -> String {
+    if value.is_nan() {
+        return if value.is_sign_negative() {
+            String::from("-nan")
+        } else {
+            String::from("nan")
+        };
+    }
+    if value.is_infinite() {
+        return if value.is_sign_negative() {
+            String::from("-inf")
+        } else {
+            String::from("inf")
+        };
+    }
+
+    let mut text = format!("{value:.6}");
+    while text.contains('.') && text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    if text == "-0" {
+        String::from("0")
+    } else {
+        text
+    }
 }
 
 fn run_host_strcmp(s1: &[u8], s2: &[u8]) -> i32 {

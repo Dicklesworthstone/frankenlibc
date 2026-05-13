@@ -1,0 +1,438 @@
+{
+  "version": "v1",
+  "family": "string_memory_hotpaths_wave05",
+  "captured_at": "2026-05-13T01:40:00Z",
+  "description": "Strict/hardened deterministic fixture wave for current fcq-string-memory-hotpaths uncovered GNU constant-set, tokenizer, and conversion helpers without recording pointers, locale handles, errno buffers, or process-global state.",
+  "spec_reference": "GNU libc internal string helper aliases, POSIX strspn/strsep/strtok_r, and C numeric conversion semantics",
+  "campaign": {
+    "bead": "pending-string-memory-wave05",
+    "campaign_id": "fcq-string-memory-hotpaths",
+    "wave_id": "wave-05-string-memory-hotpaths",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture",
+    "first_wave_symbols": [
+      "__strsep_3c",
+      "__strsep_g",
+      "__strspn_c1",
+      "__strspn_c2",
+      "__strspn_c3",
+      "__strtod_internal",
+      "__strtod_l",
+      "__strtof_internal",
+      "__strtof_l",
+      "__strtok_r",
+      "__strtok_r_1c",
+      "__strtol_internal"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "strsep_3c_equal_comma_colon_strict",
+      "function": "__strsep_3c",
+      "spec_section": "GNU libc __strsep_3c",
+      "inputs": {
+        "symbol": "__strsep_3c",
+        "scenario": "three_delimiter_first_split",
+        "input": "key=value,next",
+        "delimiters": "=,:",
+        "expected": "TOKEN_key_REST_value,next",
+        "oracle_source": "frankenlibc_core::string split model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strsep_3c;mode=strict;expected=TOKEN_key_REST_value,next;actual=TOKEN_key_REST_value,next;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strsep_3c_equal_comma_colon_hardened",
+      "function": "__strsep_3c",
+      "spec_section": "GNU libc __strsep_3c",
+      "inputs": {
+        "symbol": "__strsep_3c",
+        "scenario": "three_delimiter_first_split",
+        "input": "key=value,next",
+        "delimiters": "=,:",
+        "expected": "TOKEN_key_REST_value,next",
+        "oracle_source": "frankenlibc_core::string split model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strsep_3c;mode=hardened;expected=TOKEN_key_REST_value,next;actual=TOKEN_key_REST_value,next;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strsep_g_colon_first_split_strict",
+      "function": "__strsep_g",
+      "spec_section": "GNU libc __strsep_g",
+      "inputs": {
+        "symbol": "__strsep_g",
+        "scenario": "generic_colon_split",
+        "input": "alpha::beta",
+        "delimiters": ":",
+        "expected": "TOKEN_alpha_REST_:beta",
+        "oracle_source": "frankenlibc_core::string split model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strsep_g;mode=strict;expected=TOKEN_alpha_REST_:beta;actual=TOKEN_alpha_REST_:beta;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strsep_g_colon_first_split_hardened",
+      "function": "__strsep_g",
+      "spec_section": "GNU libc __strsep_g",
+      "inputs": {
+        "symbol": "__strsep_g",
+        "scenario": "generic_colon_split",
+        "input": "alpha::beta",
+        "delimiters": ":",
+        "expected": "TOKEN_alpha_REST_:beta",
+        "oracle_source": "frankenlibc_core::string split model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strsep_g;mode=hardened;expected=TOKEN_alpha_REST_:beta;actual=TOKEN_alpha_REST_:beta;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strspn_c1_single_accept_strict",
+      "function": "__strspn_c1",
+      "spec_section": "GNU libc __strspn_c1",
+      "inputs": {
+        "symbol": "__strspn_c1",
+        "scenario": "single_accept_prefix",
+        "haystack": "aaaaZ",
+        "accept": "a",
+        "expected": "SPAN_4",
+        "oracle_source": "frankenlibc_core::string::str::strspn",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strspn_c1;mode=strict;expected=SPAN_4;actual=SPAN_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strspn_c1_single_accept_hardened",
+      "function": "__strspn_c1",
+      "spec_section": "GNU libc __strspn_c1",
+      "inputs": {
+        "symbol": "__strspn_c1",
+        "scenario": "single_accept_prefix",
+        "haystack": "aaaaZ",
+        "accept": "a",
+        "expected": "SPAN_4",
+        "oracle_source": "frankenlibc_core::string::str::strspn",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strspn_c1;mode=hardened;expected=SPAN_4;actual=SPAN_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strspn_c2_two_accept_strict",
+      "function": "__strspn_c2",
+      "spec_section": "GNU libc __strspn_c2",
+      "inputs": {
+        "symbol": "__strspn_c2",
+        "scenario": "two_accept_prefix",
+        "haystack": "ababZ",
+        "accept": "ab",
+        "expected": "SPAN_4",
+        "oracle_source": "frankenlibc_core::string::str::strspn",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strspn_c2;mode=strict;expected=SPAN_4;actual=SPAN_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strspn_c2_two_accept_hardened",
+      "function": "__strspn_c2",
+      "spec_section": "GNU libc __strspn_c2",
+      "inputs": {
+        "symbol": "__strspn_c2",
+        "scenario": "two_accept_prefix",
+        "haystack": "ababZ",
+        "accept": "ab",
+        "expected": "SPAN_4",
+        "oracle_source": "frankenlibc_core::string::str::strspn",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strspn_c2;mode=hardened;expected=SPAN_4;actual=SPAN_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strspn_c3_three_accept_strict",
+      "function": "__strspn_c3",
+      "spec_section": "GNU libc __strspn_c3",
+      "inputs": {
+        "symbol": "__strspn_c3",
+        "scenario": "three_accept_prefix",
+        "haystack": "abcabcZ",
+        "accept": "abc",
+        "expected": "SPAN_6",
+        "oracle_source": "frankenlibc_core::string::str::strspn",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strspn_c3;mode=strict;expected=SPAN_6;actual=SPAN_6;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strspn_c3_three_accept_hardened",
+      "function": "__strspn_c3",
+      "spec_section": "GNU libc __strspn_c3",
+      "inputs": {
+        "symbol": "__strspn_c3",
+        "scenario": "three_accept_prefix",
+        "haystack": "abcabcZ",
+        "accept": "abc",
+        "expected": "SPAN_6",
+        "oracle_source": "frankenlibc_core::string::str::strspn",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strspn_c3;mode=hardened;expected=SPAN_6;actual=SPAN_6;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strtod_internal_decimal_tail_strict",
+      "function": "__strtod_internal",
+      "spec_section": "GNU libc __strtod_internal",
+      "inputs": {
+        "symbol": "__strtod_internal",
+        "scenario": "decimal_with_tail",
+        "input": " 3.25tail",
+        "expected": "FLOAT_3.25_END_5",
+        "oracle_source": "frankenlibc_core::stdlib::strtod",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtod_internal;mode=strict;expected=FLOAT_3.25_END_5;actual=FLOAT_3.25_END_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtod_internal_decimal_tail_hardened",
+      "function": "__strtod_internal",
+      "spec_section": "GNU libc __strtod_internal",
+      "inputs": {
+        "symbol": "__strtod_internal",
+        "scenario": "decimal_with_tail",
+        "input": " 3.25tail",
+        "expected": "FLOAT_3.25_END_5",
+        "oracle_source": "frankenlibc_core::stdlib::strtod",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtod_internal;mode=hardened;expected=FLOAT_3.25_END_5;actual=FLOAT_3.25_END_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strtod_l_negative_decimal_strict",
+      "function": "__strtod_l",
+      "spec_section": "GNU libc __strtod_l",
+      "inputs": {
+        "symbol": "__strtod_l",
+        "scenario": "locale_ignored_negative_decimal",
+        "input": "-0.5x",
+        "expected": "FLOAT_-0.5_END_4",
+        "oracle_source": "frankenlibc_core::stdlib::strtod",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtod_l;mode=strict;expected=FLOAT_-0.5_END_4;actual=FLOAT_-0.5_END_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtod_l_negative_decimal_hardened",
+      "function": "__strtod_l",
+      "spec_section": "GNU libc __strtod_l",
+      "inputs": {
+        "symbol": "__strtod_l",
+        "scenario": "locale_ignored_negative_decimal",
+        "input": "-0.5x",
+        "expected": "FLOAT_-0.5_END_4",
+        "oracle_source": "frankenlibc_core::stdlib::strtod",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtod_l;mode=hardened;expected=FLOAT_-0.5_END_4;actual=FLOAT_-0.5_END_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strtof_internal_decimal_tail_strict",
+      "function": "__strtof_internal",
+      "spec_section": "GNU libc __strtof_internal",
+      "inputs": {
+        "symbol": "__strtof_internal",
+        "scenario": "float_decimal_with_tail",
+        "input": "6.5f",
+        "expected": "FLOAT_6.5_END_3",
+        "oracle_source": "frankenlibc_core::stdlib::strtof",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtof_internal;mode=strict;expected=FLOAT_6.5_END_3;actual=FLOAT_6.5_END_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtof_internal_decimal_tail_hardened",
+      "function": "__strtof_internal",
+      "spec_section": "GNU libc __strtof_internal",
+      "inputs": {
+        "symbol": "__strtof_internal",
+        "scenario": "float_decimal_with_tail",
+        "input": "6.5f",
+        "expected": "FLOAT_6.5_END_3",
+        "oracle_source": "frankenlibc_core::stdlib::strtof",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtof_internal;mode=hardened;expected=FLOAT_6.5_END_3;actual=FLOAT_6.5_END_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strtof_l_exponent_strict",
+      "function": "__strtof_l",
+      "spec_section": "GNU libc __strtof_l",
+      "inputs": {
+        "symbol": "__strtof_l",
+        "scenario": "locale_ignored_exponent_float",
+        "input": "12e2!",
+        "expected": "FLOAT_1200_END_4",
+        "oracle_source": "frankenlibc_core::stdlib::strtof",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtof_l;mode=strict;expected=FLOAT_1200_END_4;actual=FLOAT_1200_END_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtof_l_exponent_hardened",
+      "function": "__strtof_l",
+      "spec_section": "GNU libc __strtof_l",
+      "inputs": {
+        "symbol": "__strtof_l",
+        "scenario": "locale_ignored_exponent_float",
+        "input": "12e2!",
+        "expected": "FLOAT_1200_END_4",
+        "oracle_source": "frankenlibc_core::stdlib::strtof",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtof_l;mode=hardened;expected=FLOAT_1200_END_4;actual=FLOAT_1200_END_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strtok_r_comma_first_token_strict",
+      "function": "__strtok_r",
+      "spec_section": "GNU libc __strtok_r",
+      "inputs": {
+        "symbol": "__strtok_r",
+        "scenario": "comma_first_token",
+        "input": "red,green,blue",
+        "delimiters": ",",
+        "expected": "TOKEN_red_SAVE_4",
+        "oracle_source": "frankenlibc_core::string::strtok::strtok_r",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtok_r;mode=strict;expected=TOKEN_red_SAVE_4;actual=TOKEN_red_SAVE_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtok_r_comma_first_token_hardened",
+      "function": "__strtok_r",
+      "spec_section": "GNU libc __strtok_r",
+      "inputs": {
+        "symbol": "__strtok_r",
+        "scenario": "comma_first_token",
+        "input": "red,green,blue",
+        "delimiters": ",",
+        "expected": "TOKEN_red_SAVE_4",
+        "oracle_source": "frankenlibc_core::string::strtok::strtok_r",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtok_r;mode=hardened;expected=TOKEN_red_SAVE_4;actual=TOKEN_red_SAVE_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strtok_r_1c_pipe_first_token_strict",
+      "function": "__strtok_r_1c",
+      "spec_section": "GNU libc __strtok_r_1c",
+      "inputs": {
+        "symbol": "__strtok_r_1c",
+        "scenario": "pipe_first_token",
+        "input": "left|right",
+        "delimiters": "|",
+        "expected": "TOKEN_left_SAVE_5",
+        "oracle_source": "frankenlibc_core::string::strtok::strtok_r",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtok_r_1c;mode=strict;expected=TOKEN_left_SAVE_5;actual=TOKEN_left_SAVE_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtok_r_1c_pipe_first_token_hardened",
+      "function": "__strtok_r_1c",
+      "spec_section": "GNU libc __strtok_r_1c",
+      "inputs": {
+        "symbol": "__strtok_r_1c",
+        "scenario": "pipe_first_token",
+        "input": "left|right",
+        "delimiters": "|",
+        "expected": "TOKEN_left_SAVE_5",
+        "oracle_source": "frankenlibc_core::string::strtok::strtok_r",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtok_r_1c;mode=hardened;expected=TOKEN_left_SAVE_5;actual=TOKEN_left_SAVE_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strtol_internal_hex_auto_base_strict",
+      "function": "__strtol_internal",
+      "spec_section": "GNU libc __strtol_internal",
+      "inputs": {
+        "symbol": "__strtol_internal",
+        "scenario": "hex_auto_base",
+        "input": "0x2a!",
+        "base": 0,
+        "expected": "INT_42_END_4",
+        "oracle_source": "frankenlibc_core::stdlib::strtol",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtol_internal;mode=strict;expected=INT_42_END_4;actual=INT_42_END_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtol_internal_hex_auto_base_hardened",
+      "function": "__strtol_internal",
+      "spec_section": "GNU libc __strtol_internal",
+      "inputs": {
+        "symbol": "__strtol_internal",
+        "scenario": "hex_auto_base",
+        "input": "0x2a!",
+        "base": 0,
+        "expected": "INT_42_END_4",
+        "oracle_source": "frankenlibc_core::stdlib::strtol",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=__strtol_internal;mode=hardened;expected=INT_42_END_4;actual=INT_42_END_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
