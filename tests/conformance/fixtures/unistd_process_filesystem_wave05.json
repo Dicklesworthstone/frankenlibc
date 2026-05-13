@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-13T04:00:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-05 argp parse/help, gettext codeset, brk, signal, char8, canonicalization, capability, chdir, and chmod symbols. Outputs classify no-op parser helpers, static UTF-8 codeset routing, query/error classes, and null-path/null-capability failure classes without recording argv addresses, textdomain registry internals, heap break addresses, signal handler addresses, filesystem paths, cwd, capability bits, process ids, thread ids, timestamps, or file modes from ambient state.",
+  "spec_reference": "GNU argp empty parser and no-op help helpers, gettext bind_textdomain_codeset UTF-8 routing contract, Linux brk/capget/capset null-query/error classes, BSD bsd_signal invalid signal contract, C23 c8rtomb single-byte UTF-8 contract, GNU canonicalize_file_name null-path contract, and POSIX chdir/chmod null-path error contracts",
+  "campaign": {
+    "bead": "tracker-blocked-empty-queue-discovery",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-05-unistd-process-filesystem-argp-codeset-process-fd",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata",
+    "first_wave_symbols": [
+      "argp_parse",
+      "argp_state_help",
+      "argp_usage",
+      "bind_textdomain_codeset",
+      "brk",
+      "bsd_signal",
+      "c8rtomb",
+      "canonicalize_file_name",
+      "capget",
+      "capset",
+      "chdir",
+      "chmod"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "argp_parse_empty_parser_strict",
+      "function": "argp_parse",
+      "spec_section": "GNU argp_parse empty parser no-op contract",
+      "inputs": {
+        "symbol": "argp_parse",
+        "scenario": "empty_argp_header_single_argv_without_address_capture",
+        "expected": "ARGP_PARSE_EMPTY_RC_0_INDEX_1",
+        "oracle_source": "FrankenLibC argp_parse empty parser class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=argp_parse;mode=strict;expected=ARGP_PARSE_EMPTY_RC_0_INDEX_1;actual=ARGP_PARSE_EMPTY_RC_0_INDEX_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argp_parse_empty_parser_hardened",
+      "function": "argp_parse",
+      "spec_section": "GNU argp_parse empty parser no-op contract",
+      "inputs": {
+        "symbol": "argp_parse",
+        "scenario": "empty_argp_header_single_argv_without_address_capture",
+        "expected": "ARGP_PARSE_EMPTY_RC_0_INDEX_1",
+        "oracle_source": "FrankenLibC argp_parse empty parser class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=argp_parse;mode=hardened;expected=ARGP_PARSE_EMPTY_RC_0_INDEX_1;actual=ARGP_PARSE_EMPTY_RC_0_INDEX_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argp_state_help_noop_strict",
+      "function": "argp_state_help",
+      "spec_section": "GNU argp_state_help no-op helper surface",
+      "inputs": {
+        "symbol": "argp_state_help",
+        "scenario": "null_state_null_stream_noop_without_output_capture",
+        "expected": "ARGP_STATE_HELP_NOOP",
+        "oracle_source": "FrankenLibC argp_state_help no-op class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=argp_state_help;mode=strict;expected=ARGP_STATE_HELP_NOOP;actual=ARGP_STATE_HELP_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argp_state_help_noop_hardened",
+      "function": "argp_state_help",
+      "spec_section": "GNU argp_state_help no-op helper surface",
+      "inputs": {
+        "symbol": "argp_state_help",
+        "scenario": "null_state_null_stream_noop_without_output_capture",
+        "expected": "ARGP_STATE_HELP_NOOP",
+        "oracle_source": "FrankenLibC argp_state_help no-op class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=argp_state_help;mode=hardened;expected=ARGP_STATE_HELP_NOOP;actual=ARGP_STATE_HELP_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argp_usage_noop_strict",
+      "function": "argp_usage",
+      "spec_section": "GNU argp_usage no-op helper surface",
+      "inputs": {
+        "symbol": "argp_usage",
+        "scenario": "null_state_noop_without_exit_or_output_capture",
+        "expected": "ARGP_USAGE_NOOP",
+        "oracle_source": "FrankenLibC argp_usage no-op class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=argp_usage;mode=strict;expected=ARGP_USAGE_NOOP;actual=ARGP_USAGE_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argp_usage_noop_hardened",
+      "function": "argp_usage",
+      "spec_section": "GNU argp_usage no-op helper surface",
+      "inputs": {
+        "symbol": "argp_usage",
+        "scenario": "null_state_noop_without_exit_or_output_capture",
+        "expected": "ARGP_USAGE_NOOP",
+        "oracle_source": "FrankenLibC argp_usage no-op class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=argp_usage;mode=hardened;expected=ARGP_USAGE_NOOP;actual=ARGP_USAGE_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "bind_textdomain_codeset_static_utf8_strict",
+      "function": "bind_textdomain_codeset",
+      "spec_section": "GNU gettext bind_textdomain_codeset static UTF-8 routing",
+      "inputs": {
+        "symbol": "bind_textdomain_codeset",
+        "scenario": "set_non_utf8_request_observes_static_utf8_without_registry_capture",
+        "expected": "BIND_TEXTDOMAIN_CODESET_UTF_8",
+        "oracle_source": "FrankenLibC gettext UTF-8-only codeset contract",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=bind_textdomain_codeset;mode=strict;expected=BIND_TEXTDOMAIN_CODESET_UTF_8;actual=BIND_TEXTDOMAIN_CODESET_UTF_8;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "bind_textdomain_codeset_static_utf8_hardened",
+      "function": "bind_textdomain_codeset",
+      "spec_section": "GNU gettext bind_textdomain_codeset static UTF-8 routing",
+      "inputs": {
+        "symbol": "bind_textdomain_codeset",
+        "scenario": "set_non_utf8_request_observes_static_utf8_without_registry_capture",
+        "expected": "BIND_TEXTDOMAIN_CODESET_UTF_8",
+        "oracle_source": "FrankenLibC gettext UTF-8-only codeset contract",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=bind_textdomain_codeset;mode=hardened;expected=BIND_TEXTDOMAIN_CODESET_UTF_8;actual=BIND_TEXTDOMAIN_CODESET_UTF_8;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "brk_null_query_strict",
+      "function": "brk",
+      "spec_section": "Linux brk null query return class",
+      "inputs": {
+        "symbol": "brk",
+        "scenario": "null_break_query_without_heap_address_capture",
+        "expected": "BRK_QUERY_RC_0",
+        "oracle_source": "FrankenLibC brk null-query class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=brk;mode=strict;expected=BRK_QUERY_RC_0;actual=BRK_QUERY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "brk_null_query_hardened",
+      "function": "brk",
+      "spec_section": "Linux brk null query return class",
+      "inputs": {
+        "symbol": "brk",
+        "scenario": "null_break_query_without_heap_address_capture",
+        "expected": "BRK_QUERY_RC_0",
+        "oracle_source": "FrankenLibC brk null-query class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=brk;mode=hardened;expected=BRK_QUERY_RC_0;actual=BRK_QUERY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "bsd_signal_invalid_signal_strict",
+      "function": "bsd_signal",
+      "spec_section": "BSD bsd_signal invalid signal error class",
+      "inputs": {
+        "symbol": "bsd_signal",
+        "scenario": "invalid_signal_zero_without_handler_address_capture",
+        "expected": "BSD_SIGNAL_INVALID_SIGERR",
+        "oracle_source": "FrankenLibC bsd_signal invalid signal class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=bsd_signal;mode=strict;expected=BSD_SIGNAL_INVALID_SIGERR;actual=BSD_SIGNAL_INVALID_SIGERR;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "bsd_signal_invalid_signal_hardened",
+      "function": "bsd_signal",
+      "spec_section": "BSD bsd_signal invalid signal error class",
+      "inputs": {
+        "symbol": "bsd_signal",
+        "scenario": "invalid_signal_zero_without_handler_address_capture",
+        "expected": "BSD_SIGNAL_INVALID_SIGERR",
+        "oracle_source": "FrankenLibC bsd_signal invalid signal class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=bsd_signal;mode=hardened;expected=BSD_SIGNAL_INVALID_SIGERR;actual=BSD_SIGNAL_INVALID_SIGERR;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "c8rtomb_single_ascii_strict",
+      "function": "c8rtomb",
+      "spec_section": "C23 c8rtomb single-byte UTF-8 conversion",
+      "inputs": {
+        "symbol": "c8rtomb",
+        "scenario": "ascii_char8_to_single_output_byte_without_shift_state_capture",
+        "expected": "C8RTOMB_LEN_1_HEX_5A",
+        "oracle_source": "FrankenLibC c8rtomb UTF-8 single-byte class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=c8rtomb;mode=strict;expected=C8RTOMB_LEN_1_HEX_5A;actual=C8RTOMB_LEN_1_HEX_5A;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "c8rtomb_single_ascii_hardened",
+      "function": "c8rtomb",
+      "spec_section": "C23 c8rtomb single-byte UTF-8 conversion",
+      "inputs": {
+        "symbol": "c8rtomb",
+        "scenario": "ascii_char8_to_single_output_byte_without_shift_state_capture",
+        "expected": "C8RTOMB_LEN_1_HEX_5A",
+        "oracle_source": "FrankenLibC c8rtomb UTF-8 single-byte class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=c8rtomb;mode=hardened;expected=C8RTOMB_LEN_1_HEX_5A;actual=C8RTOMB_LEN_1_HEX_5A;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "canonicalize_file_name_null_path_strict",
+      "function": "canonicalize_file_name",
+      "spec_section": "GNU canonicalize_file_name null-path error class",
+      "inputs": {
+        "symbol": "canonicalize_file_name",
+        "scenario": "null_path_without_absolute_path_capture",
+        "expected": "CANONICALIZE_NULL_PTR_NULL",
+        "oracle_source": "FrankenLibC canonicalize_file_name null-path class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=canonicalize_file_name;mode=strict;expected=CANONICALIZE_NULL_PTR_NULL;actual=CANONICALIZE_NULL_PTR_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "canonicalize_file_name_null_path_hardened",
+      "function": "canonicalize_file_name",
+      "spec_section": "GNU canonicalize_file_name null-path error class",
+      "inputs": {
+        "symbol": "canonicalize_file_name",
+        "scenario": "null_path_without_absolute_path_capture",
+        "expected": "CANONICALIZE_NULL_PTR_NULL",
+        "oracle_source": "FrankenLibC canonicalize_file_name null-path class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=canonicalize_file_name;mode=hardened;expected=CANONICALIZE_NULL_PTR_NULL;actual=CANONICALIZE_NULL_PTR_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "capget_null_pointers_strict",
+      "function": "capget",
+      "spec_section": "Linux capget null-pointer error class",
+      "inputs": {
+        "symbol": "capget",
+        "scenario": "null_header_and_data_without_capability_capture",
+        "expected": "CAPGET_NULL_RC_-1",
+        "oracle_source": "FrankenLibC capget null-pointer class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=capget;mode=strict;expected=CAPGET_NULL_RC_-1;actual=CAPGET_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "capget_null_pointers_hardened",
+      "function": "capget",
+      "spec_section": "Linux capget null-pointer error class",
+      "inputs": {
+        "symbol": "capget",
+        "scenario": "null_header_and_data_without_capability_capture",
+        "expected": "CAPGET_NULL_RC_-1",
+        "oracle_source": "FrankenLibC capget null-pointer class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=capget;mode=hardened;expected=CAPGET_NULL_RC_-1;actual=CAPGET_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "capset_null_pointers_strict",
+      "function": "capset",
+      "spec_section": "Linux capset null-pointer error class",
+      "inputs": {
+        "symbol": "capset",
+        "scenario": "null_header_and_data_without_capability_mutation",
+        "expected": "CAPSET_NULL_RC_-1",
+        "oracle_source": "FrankenLibC capset null-pointer class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=capset;mode=strict;expected=CAPSET_NULL_RC_-1;actual=CAPSET_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "capset_null_pointers_hardened",
+      "function": "capset",
+      "spec_section": "Linux capset null-pointer error class",
+      "inputs": {
+        "symbol": "capset",
+        "scenario": "null_header_and_data_without_capability_mutation",
+        "expected": "CAPSET_NULL_RC_-1",
+        "oracle_source": "FrankenLibC capset null-pointer class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=capset;mode=hardened;expected=CAPSET_NULL_RC_-1;actual=CAPSET_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "chdir_null_path_strict",
+      "function": "chdir",
+      "spec_section": "POSIX chdir null-path error class",
+      "inputs": {
+        "symbol": "chdir",
+        "scenario": "null_path_without_cwd_mutation",
+        "expected": "CHDIR_NULL_RC_-1",
+        "oracle_source": "FrankenLibC chdir null-path class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=chdir;mode=strict;expected=CHDIR_NULL_RC_-1;actual=CHDIR_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "chdir_null_path_hardened",
+      "function": "chdir",
+      "spec_section": "POSIX chdir null-path error class",
+      "inputs": {
+        "symbol": "chdir",
+        "scenario": "null_path_without_cwd_mutation",
+        "expected": "CHDIR_NULL_RC_-1",
+        "oracle_source": "FrankenLibC chdir null-path class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=chdir;mode=hardened;expected=CHDIR_NULL_RC_-1;actual=CHDIR_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "chmod_null_path_strict",
+      "function": "chmod",
+      "spec_section": "POSIX chmod null-path error class",
+      "inputs": {
+        "symbol": "chmod",
+        "scenario": "null_path_without_filesystem_mode_mutation",
+        "expected": "CHMOD_NULL_RC_-1",
+        "oracle_source": "FrankenLibC chmod null-path class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=chmod;mode=strict;expected=CHMOD_NULL_RC_-1;actual=CHMOD_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "chmod_null_path_hardened",
+      "function": "chmod",
+      "spec_section": "POSIX chmod null-path error class",
+      "inputs": {
+        "symbol": "chmod",
+        "scenario": "null_path_without_filesystem_mode_mutation",
+        "expected": "CHMOD_NULL_RC_-1",
+        "oracle_source": "FrankenLibC chmod null-path class",
+        "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
+      },
+      "expected_output": "symbol=chmod;mode=hardened;expected=CHMOD_NULL_RC_-1;actual=CHMOD_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

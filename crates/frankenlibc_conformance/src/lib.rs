@@ -672,7 +672,19 @@ pub fn execute_fixture_case(
         | "arc4random_uniform"
         | "argp_error"
         | "argp_failure"
-        | "argp_help" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        | "argp_help"
+        | "argp_parse"
+        | "argp_state_help"
+        | "argp_usage"
+        | "bind_textdomain_codeset"
+        | "brk"
+        | "bsd_signal"
+        | "c8rtomb"
+        | "canonicalize_file_name"
+        | "capget"
+        | "capset"
+        | "chdir"
+        | "chmod" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
         | "_IO_peekc_locked" | "_IO_putc" => {
@@ -15330,6 +15342,18 @@ fn execute_unistd_process_filesystem_case(
         "argp_error" => argp_error_fixture_actual()?,
         "argp_failure" => argp_failure_fixture_actual()?,
         "argp_help" => argp_help_fixture_actual()?,
+        "argp_parse" => argp_parse_fixture_actual()?,
+        "argp_state_help" => argp_state_help_fixture_actual()?,
+        "argp_usage" => argp_usage_fixture_actual()?,
+        "bind_textdomain_codeset" => bind_textdomain_codeset_fixture_actual()?,
+        "brk" => brk_fixture_actual()?,
+        "bsd_signal" => bsd_signal_fixture_actual()?,
+        "c8rtomb" => c8rtomb_fixture_actual()?,
+        "canonicalize_file_name" => canonicalize_file_name_fixture_actual()?,
+        "capget" => capget_fixture_actual()?,
+        "capset" => capset_fixture_actual()?,
+        "chdir" => chdir_fixture_actual()?,
+        "chmod" => chmod_fixture_actual()?,
         other => {
             return Err(format!(
                 "unsupported unistd process/filesystem fixture: {other}"
@@ -16040,6 +16064,146 @@ fn argp_failure_fixture_actual() -> Result<String, String> {
         frankenlibc_abi::unistd_abi::argp_failure(std::ptr::null_mut(), 0, 0, fmt.as_ptr());
     }
     Ok(String::from("ARGP_FAILURE_NOOP"))
+}
+
+#[repr(C)]
+struct FixtureArgpHeader {
+    options: *const c_void,
+    parser: *const c_void,
+    args_doc: *const c_char,
+    doc: *const c_char,
+    children: *const c_void,
+    help_filter: *const c_void,
+    argp_domain: *const c_char,
+}
+
+fn argp_parse_fixture_actual() -> Result<String, String> {
+    let header = FixtureArgpHeader {
+        options: std::ptr::null(),
+        parser: std::ptr::null(),
+        args_doc: std::ptr::null(),
+        doc: std::ptr::null(),
+        children: std::ptr::null(),
+        help_filter: std::ptr::null(),
+        argp_domain: std::ptr::null(),
+    };
+    let prog = CString::new("wave05").map_err(|_| "argp argv contains interior NUL".to_string())?;
+    let mut argv = [prog.as_ptr() as *mut c_char, std::ptr::null_mut()];
+    let mut arg_index = -1;
+    // SAFETY: The local header mirrors the prefix read by the ABI function,
+    // argv contains one live C string plus a terminator, and arg_index is valid.
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::argp_parse(
+            (&header as *const FixtureArgpHeader).cast::<c_void>(),
+            1,
+            argv.as_mut_ptr(),
+            0,
+            &mut arg_index,
+            std::ptr::null_mut(),
+        )
+    };
+    Ok(format!("ARGP_PARSE_EMPTY_RC_{rc}_INDEX_{arg_index}"))
+}
+
+fn argp_state_help_fixture_actual() -> Result<String, String> {
+    // SAFETY: The phase-1 implementation is a no-op for null state/stream.
+    unsafe {
+        frankenlibc_abi::unistd_abi::argp_state_help(std::ptr::null_mut(), std::ptr::null_mut(), 0);
+    }
+    Ok(String::from("ARGP_STATE_HELP_NOOP"))
+}
+
+fn argp_usage_fixture_actual() -> Result<String, String> {
+    // SAFETY: The phase-1 implementation is a no-op for null state.
+    unsafe { frankenlibc_abi::unistd_abi::argp_usage(std::ptr::null_mut()) };
+    Ok(String::from("ARGP_USAGE_NOOP"))
+}
+
+fn bind_textdomain_codeset_fixture_actual() -> Result<String, String> {
+    let domain = CString::new("frankenlibc-wave05")
+        .map_err(|_| "textdomain contains interior NUL".to_string())?;
+    let requested =
+        CString::new("ISO-8859-1").map_err(|_| "codeset contains interior NUL".to_string())?;
+    // SAFETY: Both pointers are valid NUL-terminated strings for the duration
+    // of the call; the ABI returns a static UTF-8 string.
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::bind_textdomain_codeset(domain.as_ptr(), requested.as_ptr())
+    };
+    if ptr.is_null() {
+        return Ok(String::from("BIND_TEXTDOMAIN_CODESET_NULL"));
+    }
+    let text = unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .replace('-', "_");
+    Ok(format!("BIND_TEXTDOMAIN_CODESET_{text}"))
+}
+
+fn brk_fixture_actual() -> Result<String, String> {
+    // SAFETY: A null brk request is used here only as the query-class syscall
+    // path and records no returned heap address.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::brk(std::ptr::null_mut()) };
+    Ok(format!("BRK_QUERY_RC_{rc}"))
+}
+
+fn bsd_signal_fixture_actual() -> Result<String, String> {
+    // SAFETY: Signal number 0 is not catchable; the call exercises the stable
+    // invalid-signal class without installing or exposing a handler address.
+    let prev = unsafe { frankenlibc_abi::unistd_abi::bsd_signal(0, libc::SIG_DFL) };
+    if prev == libc::SIG_ERR {
+        Ok(String::from("BSD_SIGNAL_INVALID_SIGERR"))
+    } else {
+        Ok(String::from("BSD_SIGNAL_UNEXPECTED_HANDLER"))
+    }
+}
+
+fn c8rtomb_fixture_actual() -> Result<String, String> {
+    let mut out = [0 as c_char; 1];
+    // SAFETY: out points to one writable byte and the UTF-8 char8_t input is a
+    // single-byte ASCII scalar.
+    let len = unsafe {
+        frankenlibc_abi::unistd_abi::c8rtomb(out.as_mut_ptr(), b'Z', std::ptr::null_mut())
+    };
+    Ok(format!("C8RTOMB_LEN_{len}_HEX_{:02X}", out[0] as u8))
+}
+
+fn canonicalize_file_name_fixture_actual() -> Result<String, String> {
+    // SAFETY: This intentionally exercises the null-path error class and never
+    // records an ambient absolute path.
+    let ptr = unsafe { frankenlibc_abi::unistd_abi::canonicalize_file_name(std::ptr::null()) };
+    if ptr.is_null() {
+        Ok(String::from("CANONICALIZE_NULL_PTR_NULL"))
+    } else {
+        unsafe { frankenlibc_abi::malloc_abi::free(ptr.cast::<c_void>()) };
+        Ok(String::from("CANONICALIZE_UNEXPECTED_NON_NULL"))
+    }
+}
+
+fn capget_fixture_actual() -> Result<String, String> {
+    // SAFETY: Null pointers exercise the stable EFAULT return class without
+    // recording process capability bits.
+    let rc =
+        unsafe { frankenlibc_abi::unistd_abi::capget(std::ptr::null_mut(), std::ptr::null_mut()) };
+    Ok(format!("CAPGET_NULL_RC_{rc}"))
+}
+
+fn capset_fixture_actual() -> Result<String, String> {
+    // SAFETY: Null pointers exercise the stable failure class without mutating
+    // or recording process capability bits.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::capset(std::ptr::null_mut(), std::ptr::null()) };
+    Ok(format!("CAPSET_NULL_RC_{rc}"))
+}
+
+fn chdir_fixture_actual() -> Result<String, String> {
+    // SAFETY: Null path is a deterministic error class and cannot change cwd.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::chdir(std::ptr::null()) };
+    Ok(format!("CHDIR_NULL_RC_{rc}"))
+}
+
+fn chmod_fixture_actual() -> Result<String, String> {
+    // SAFETY: Null path is a deterministic error class and cannot mutate the
+    // filesystem.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::chmod(std::ptr::null(), 0o644) };
+    Ok(format!("CHMOD_NULL_RC_{rc}"))
 }
 
 fn wait_for_aio_completion(cb: &FixtureAiocb) -> c_int {
