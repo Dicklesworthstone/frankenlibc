@@ -1,0 +1,425 @@
+{
+  "version": "v1",
+  "family": "rpc/legacy-network",
+  "captured_at": "2026-05-13T19:35:00Z",
+  "description": "Deterministic second-wave fixtures for legacy Sun RPC compatibility symbols. The cases bind FrankenLibC's safe-default auth/client creation, DES-unavailable, invalid-fd reserved-port, local diagnostic, and unsupported broadcast behavior without network access, privileged port binding, host resolver state, or raw stderr text in structured logs.",
+  "spec_reference": "glibc Sun RPC compatibility surface; FrankenLibC rpc_abi deterministic safe-default contract for authunix, reserved-port, callrpc, cbc_crypt, and clnt diagnostic helpers",
+  "campaign": {
+    "bead": "bd-r5k32.14",
+    "campaign_id": "fcq-rpc-legacy-network",
+    "wave_id": "wave-02-rpc-legacy-network-client-auth-diagnostics",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "first_wave_symbols": [
+      "authunix_create",
+      "authunix_create_default",
+      "bindresvport",
+      "callrpc",
+      "cbc_crypt",
+      "clnt_broadcast",
+      "clnt_create",
+      "clnt_pcreateerror",
+      "clnt_perrno",
+      "clnt_perror",
+      "clnt_spcreateerror",
+      "clnt_sperrno"
+    ],
+    "network_access": "forbidden",
+    "privileged_port_binding": "forbidden",
+    "host_resolver_state": "not_consulted",
+    "diagnostic_output": "local_pipe_classification_only",
+    "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected_class",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "authunix_create_safe_default_strict",
+      "function": "authunix_create",
+      "spec_section": "glibc Sun RPC UNIX auth creation compatibility",
+      "inputs": {
+        "symbol": "authunix_create",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL because legacy RPC auth creation is unsupported",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "legacy UNIX auth creation is intentionally unsupported and fails closed without host RPC state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authunix_create;mode=strict;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "authunix_create_safe_default_hardened",
+      "function": "authunix_create",
+      "spec_section": "glibc Sun RPC UNIX auth creation compatibility",
+      "inputs": {
+        "symbol": "authunix_create",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL because legacy RPC auth creation is unsupported",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "legacy UNIX auth creation is intentionally unsupported and fails closed without host RPC state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authunix_create;mode=hardened;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "authunix_create_default_safe_default_strict",
+      "function": "authunix_create_default",
+      "spec_section": "glibc Sun RPC default UNIX auth creation compatibility",
+      "inputs": {
+        "symbol": "authunix_create_default",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL because host identity and RPC auth runtime are not consulted",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "default UNIX auth would otherwise depend on ambient host identity and RPC state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authunix_create_default;mode=strict;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "authunix_create_default_safe_default_hardened",
+      "function": "authunix_create_default",
+      "spec_section": "glibc Sun RPC default UNIX auth creation compatibility",
+      "inputs": {
+        "symbol": "authunix_create_default",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL because host identity and RPC auth runtime are not consulted",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "default UNIX auth would otherwise depend on ambient host identity and RPC state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=authunix_create_default;mode=hardened;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "bindresvport_invalid_fd_strict",
+      "function": "bindresvport",
+      "spec_section": "glibc Sun RPC reserved-port binding compatibility",
+      "inputs": {
+        "symbol": "bindresvport",
+        "expected_class": "invalid-fd-error-class",
+        "strict_behavior": "uses fd -1 so no privileged port binding is attempted",
+        "hardened_behavior": "same deterministic EBADF error class; no repair path",
+        "safe_default_rationale": "invalid fd exercises the reserved-port entrypoint without binding a real port",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=bindresvport;mode=strict;expected_class=invalid-fd-error-class;actual=BINDRESVPORT_INVALID_FD_RC_-1_ERRNO_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "bindresvport_invalid_fd_hardened",
+      "function": "bindresvport",
+      "spec_section": "glibc Sun RPC reserved-port binding compatibility",
+      "inputs": {
+        "symbol": "bindresvport",
+        "expected_class": "invalid-fd-error-class",
+        "strict_behavior": "uses fd -1 so no privileged port binding is attempted",
+        "hardened_behavior": "same deterministic EBADF error class; no repair path",
+        "safe_default_rationale": "invalid fd exercises the reserved-port entrypoint without binding a real port",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=bindresvport;mode=hardened;expected_class=invalid-fd-error-class;actual=BINDRESVPORT_INVALID_FD_RC_-1_ERRNO_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "callrpc_safe_default_strict",
+      "function": "callrpc",
+      "spec_section": "glibc Sun RPC one-shot client call compatibility",
+      "inputs": {
+        "symbol": "callrpc",
+        "expected_class": "safe-default-failure",
+        "strict_behavior": "returns 0 without contacting portmapper or host RPC services",
+        "hardened_behavior": "same deterministic failure result; no repair path",
+        "safe_default_rationale": "one-shot RPC calls are intentionally unsupported and fail closed without network access",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=callrpc;mode=strict;expected_class=safe-default-failure;actual=RETURN=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "callrpc_safe_default_hardened",
+      "function": "callrpc",
+      "spec_section": "glibc Sun RPC one-shot client call compatibility",
+      "inputs": {
+        "symbol": "callrpc",
+        "expected_class": "safe-default-failure",
+        "strict_behavior": "returns 0 without contacting portmapper or host RPC services",
+        "hardened_behavior": "same deterministic failure result; no repair path",
+        "safe_default_rationale": "one-shot RPC calls are intentionally unsupported and fail closed without network access",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=callrpc;mode=hardened;expected_class=safe-default-failure;actual=RETURN=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "cbc_crypt_des_unavailable_strict",
+      "function": "cbc_crypt",
+      "spec_section": "glibc Sun RPC DES CBC crypt compatibility",
+      "inputs": {
+        "symbol": "cbc_crypt",
+        "expected_class": "des-unavailable",
+        "strict_behavior": "returns DESERR_NOHWDEVICE because DES RPC crypto is unsupported",
+        "hardened_behavior": "same deterministic unavailable result; no repair path",
+        "safe_default_rationale": "DES is deprecated and no hardware/device state is consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=cbc_crypt;mode=strict;expected_class=des-unavailable;actual=RETURN=4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "cbc_crypt_des_unavailable_hardened",
+      "function": "cbc_crypt",
+      "spec_section": "glibc Sun RPC DES CBC crypt compatibility",
+      "inputs": {
+        "symbol": "cbc_crypt",
+        "expected_class": "des-unavailable",
+        "strict_behavior": "returns DESERR_NOHWDEVICE because DES RPC crypto is unsupported",
+        "hardened_behavior": "same deterministic unavailable result; no repair path",
+        "safe_default_rationale": "DES is deprecated and no hardware/device state is consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=cbc_crypt;mode=hardened;expected_class=des-unavailable;actual=RETURN=4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clnt_broadcast_unknown_proto_strict",
+      "function": "clnt_broadcast",
+      "spec_section": "glibc Sun RPC broadcast client compatibility",
+      "inputs": {
+        "symbol": "clnt_broadcast",
+        "expected_class": "unsupported-broadcast",
+        "strict_behavior": "returns RPC_UNKNOWNPROTO without broadcasting on any interface",
+        "hardened_behavior": "same deterministic unsupported result; no repair path",
+        "safe_default_rationale": "broadcast RPC requires ambient network and portmapper state, so it fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_broadcast;mode=strict;expected_class=unsupported-broadcast;actual=RETURN=17;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clnt_broadcast_unknown_proto_hardened",
+      "function": "clnt_broadcast",
+      "spec_section": "glibc Sun RPC broadcast client compatibility",
+      "inputs": {
+        "symbol": "clnt_broadcast",
+        "expected_class": "unsupported-broadcast",
+        "strict_behavior": "returns RPC_UNKNOWNPROTO without broadcasting on any interface",
+        "hardened_behavior": "same deterministic unsupported result; no repair path",
+        "safe_default_rationale": "broadcast RPC requires ambient network and portmapper state, so it fails closed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_broadcast;mode=hardened;expected_class=unsupported-broadcast;actual=RETURN=17;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clnt_create_safe_default_strict",
+      "function": "clnt_create",
+      "spec_section": "glibc Sun RPC generic client creation compatibility",
+      "inputs": {
+        "symbol": "clnt_create",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL without resolving hosts or contacting portmapper",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "generic RPC client creation is intentionally unsupported and fails closed without resolver state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_create;mode=strict;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clnt_create_safe_default_hardened",
+      "function": "clnt_create",
+      "spec_section": "glibc Sun RPC generic client creation compatibility",
+      "inputs": {
+        "symbol": "clnt_create",
+        "expected_class": "safe-default-null-handle",
+        "strict_behavior": "returns NULL without resolving hosts or contacting portmapper",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "generic RPC client creation is intentionally unsupported and fails closed without resolver state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_create;mode=hardened;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clnt_pcreateerror_local_diagnostic_strict",
+      "function": "clnt_pcreateerror",
+      "spec_section": "glibc Sun RPC client creation diagnostic emitter compatibility",
+      "inputs": {
+        "symbol": "clnt_pcreateerror",
+        "expected_class": "local-diagnostic-stderr",
+        "strict_behavior": "writes a deterministic prefix-success diagnostic to a local pipe only",
+        "hardened_behavior": "same deterministic diagnostic class; no repair path",
+        "safe_default_rationale": "diagnostic bytes are classified locally without exposing raw stderr text in fixture logs",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_pcreateerror;mode=strict;expected_class=local-diagnostic-stderr;actual=STDERR_CLASS=PREFIX_SUCCESS_LINE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clnt_pcreateerror_local_diagnostic_hardened",
+      "function": "clnt_pcreateerror",
+      "spec_section": "glibc Sun RPC client creation diagnostic emitter compatibility",
+      "inputs": {
+        "symbol": "clnt_pcreateerror",
+        "expected_class": "local-diagnostic-stderr",
+        "strict_behavior": "writes a deterministic prefix-success diagnostic to a local pipe only",
+        "hardened_behavior": "same deterministic diagnostic class; no repair path",
+        "safe_default_rationale": "diagnostic bytes are classified locally without exposing raw stderr text in fixture logs",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_pcreateerror;mode=hardened;expected_class=local-diagnostic-stderr;actual=STDERR_CLASS=PREFIX_SUCCESS_LINE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clnt_perrno_local_diagnostic_strict",
+      "function": "clnt_perrno",
+      "spec_section": "glibc Sun RPC status diagnostic emitter compatibility",
+      "inputs": {
+        "symbol": "clnt_perrno",
+        "expected_class": "local-diagnostic-stderr",
+        "strict_behavior": "writes a deterministic RPC success diagnostic to a local pipe only",
+        "hardened_behavior": "same deterministic diagnostic class; no repair path",
+        "safe_default_rationale": "diagnostic bytes are classified locally without exposing raw stderr text in fixture logs",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_perrno;mode=strict;expected_class=local-diagnostic-stderr;actual=STDERR_CLASS=RPC_SUCCESS_LINE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clnt_perrno_local_diagnostic_hardened",
+      "function": "clnt_perrno",
+      "spec_section": "glibc Sun RPC status diagnostic emitter compatibility",
+      "inputs": {
+        "symbol": "clnt_perrno",
+        "expected_class": "local-diagnostic-stderr",
+        "strict_behavior": "writes a deterministic RPC success diagnostic to a local pipe only",
+        "hardened_behavior": "same deterministic diagnostic class; no repair path",
+        "safe_default_rationale": "diagnostic bytes are classified locally without exposing raw stderr text in fixture logs",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_perrno;mode=hardened;expected_class=local-diagnostic-stderr;actual=STDERR_CLASS=RPC_SUCCESS_LINE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clnt_perror_noop_diagnostic_strict",
+      "function": "clnt_perror",
+      "spec_section": "glibc Sun RPC client diagnostic emitter safe-default compatibility",
+      "inputs": {
+        "symbol": "clnt_perror",
+        "expected_class": "safe-default-diagnostic-noop",
+        "strict_behavior": "emits no diagnostic for a null client handle",
+        "hardened_behavior": "same deterministic no-op result; no repair path",
+        "safe_default_rationale": "client-handle diagnostics fail closed without dereferencing or consulting RPC state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_perror;mode=strict;expected_class=safe-default-diagnostic-noop;actual=STDERR_CLASS=EMPTY;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clnt_perror_noop_diagnostic_hardened",
+      "function": "clnt_perror",
+      "spec_section": "glibc Sun RPC client diagnostic emitter safe-default compatibility",
+      "inputs": {
+        "symbol": "clnt_perror",
+        "expected_class": "safe-default-diagnostic-noop",
+        "strict_behavior": "emits no diagnostic for a null client handle",
+        "hardened_behavior": "same deterministic no-op result; no repair path",
+        "safe_default_rationale": "client-handle diagnostics fail closed without dereferencing or consulting RPC state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_perror;mode=hardened;expected_class=safe-default-diagnostic-noop;actual=STDERR_CLASS=EMPTY;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clnt_spcreateerror_string_strict",
+      "function": "clnt_spcreateerror",
+      "spec_section": "glibc Sun RPC client creation diagnostic string compatibility",
+      "inputs": {
+        "symbol": "clnt_spcreateerror",
+        "expected_class": "local-diagnostic-cstr",
+        "strict_behavior": "returns a deterministic prefix-success diagnostic string",
+        "hardened_behavior": "same deterministic string class; no repair path",
+        "safe_default_rationale": "string is produced from local thread state only, without resolver or network state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_spcreateerror;mode=strict;expected_class=local-diagnostic-cstr;actual=RETURN_CSTR_CLASS=PREFIX_SUCCESS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clnt_spcreateerror_string_hardened",
+      "function": "clnt_spcreateerror",
+      "spec_section": "glibc Sun RPC client creation diagnostic string compatibility",
+      "inputs": {
+        "symbol": "clnt_spcreateerror",
+        "expected_class": "local-diagnostic-cstr",
+        "strict_behavior": "returns a deterministic prefix-success diagnostic string",
+        "hardened_behavior": "same deterministic string class; no repair path",
+        "safe_default_rationale": "string is produced from local thread state only, without resolver or network state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_spcreateerror;mode=hardened;expected_class=local-diagnostic-cstr;actual=RETURN_CSTR_CLASS=PREFIX_SUCCESS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clnt_sperrno_string_strict",
+      "function": "clnt_sperrno",
+      "spec_section": "glibc Sun RPC status diagnostic string compatibility",
+      "inputs": {
+        "symbol": "clnt_sperrno",
+        "expected_class": "local-diagnostic-cstr",
+        "strict_behavior": "returns the deterministic RPC success status string",
+        "hardened_behavior": "same deterministic string class; no repair path",
+        "safe_default_rationale": "status string is produced from a fixed local table without resolver or network state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_sperrno;mode=strict;expected_class=local-diagnostic-cstr;actual=RETURN_CSTR_CLASS=SUCCESS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clnt_sperrno_string_hardened",
+      "function": "clnt_sperrno",
+      "spec_section": "glibc Sun RPC status diagnostic string compatibility",
+      "inputs": {
+        "symbol": "clnt_sperrno",
+        "expected_class": "local-diagnostic-cstr",
+        "strict_behavior": "returns the deterministic RPC success status string",
+        "hardened_behavior": "same deterministic string class; no repair path",
+        "safe_default_rationale": "status string is produced from a fixed local table without resolver or network state",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_sperrno;mode=hardened;expected_class=local-diagnostic-cstr;actual=RETURN_CSTR_CLASS=SUCCESS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

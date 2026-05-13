@@ -696,7 +696,19 @@ pub fn execute_fixture_case(
         | "authdes_create"
         | "authdes_getucred"
         | "authdes_pk_create"
-        | "authnone_create" => execute_rpc_legacy_network_case(function, inputs, mode),
+        | "authnone_create"
+        | "authunix_create"
+        | "authunix_create_default"
+        | "bindresvport"
+        | "callrpc"
+        | "cbc_crypt"
+        | "clnt_broadcast"
+        | "clnt_create"
+        | "clnt_pcreateerror"
+        | "clnt_perrno"
+        | "clnt_perror"
+        | "clnt_spcreateerror"
+        | "clnt_sperrno" => execute_rpc_legacy_network_case(function, inputs, mode),
         "_Exit"
         | "_Fork"
         | "__cxa_atexit"
@@ -1833,7 +1845,232 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
                 if ptr.is_null() { "NULL" } else { "NONNULL" }
             ))
         }
+        "authunix_create" => {
+            let machname = CString::new("franken").map_err(|err| err.to_string())?;
+            let mut groups = [0 as c_int; 1];
+            // SAFETY: the safe-default ABI path ignores all inputs and returns NULL.
+            let ptr = unsafe {
+                frankenlibc_abi::rpc_abi::authunix_create(
+                    machname.as_ptr().cast_mut(),
+                    0,
+                    0,
+                    groups.len() as c_int,
+                    groups.as_mut_ptr(),
+                )
+            };
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "authunix_create_default" => {
+            // SAFETY: this safe-default ABI path takes no arguments and returns NULL.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::authunix_create_default() };
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "bindresvport" => {
+            rpc_legacy_network_reset_errno();
+            // SAFETY: invalid fd -1 avoids any real privileged port binding attempt.
+            let rc = unsafe { frankenlibc_abi::rpc_abi::bindresvport(-1, core::ptr::null_mut()) };
+            let errno = rpc_legacy_network_errno_class(rpc_legacy_network_errno());
+            Ok(format!("BINDRESVPORT_INVALID_FD_RC_{rc}_ERRNO_{errno}"))
+        }
+        "callrpc" => {
+            let host = CString::new("localhost").map_err(|err| err.to_string())?;
+            // SAFETY: the safe-default ABI path ignores procedure pointers and buffers.
+            let rc = unsafe {
+                frankenlibc_abi::rpc_abi::callrpc(
+                    host.as_ptr(),
+                    0,
+                    0,
+                    0,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            Ok(format!("RETURN={rc}"))
+        }
+        "cbc_crypt" => {
+            let mut key = [0 as c_char; 8];
+            let mut buf = [0 as c_char; 8];
+            let mut ivec = [0 as c_char; 8];
+            // SAFETY: local fixed-size buffers are valid; ABI returns DES unavailable.
+            let rc = unsafe {
+                frankenlibc_abi::rpc_abi::cbc_crypt(
+                    key.as_mut_ptr(),
+                    buf.as_mut_ptr(),
+                    buf.len() as c_uint,
+                    0,
+                    ivec.as_mut_ptr(),
+                )
+            };
+            Ok(format!("RETURN={rc}"))
+        }
+        "clnt_broadcast" => {
+            // SAFETY: this deterministic ABI path ignores all RPC callback pointers.
+            let rc = unsafe {
+                frankenlibc_abi::rpc_abi::clnt_broadcast(
+                    0,
+                    0,
+                    0,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            Ok(format!("RETURN={rc}"))
+        }
+        "clnt_create" => {
+            let host = CString::new("localhost").map_err(|err| err.to_string())?;
+            let proto = CString::new("udp").map_err(|err| err.to_string())?;
+            // SAFETY: the safe-default ABI path ignores host/proto and returns NULL.
+            let ptr = unsafe {
+                frankenlibc_abi::rpc_abi::clnt_create(host.as_ptr(), 0, 0, proto.as_ptr())
+            };
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "clnt_pcreateerror" => {
+            let prefix = CString::new("franken").map_err(|err| err.to_string())?;
+            let captured = rpc_legacy_network_capture_stderr(|| {
+                // SAFETY: prefix is a valid C string; stderr is captured through local fds.
+                unsafe { frankenlibc_abi::rpc_abi::clnt_pcreateerror(prefix.as_ptr()) }
+            })?;
+            Ok(format!(
+                "STDERR_CLASS={}",
+                rpc_legacy_network_stderr_class(&captured)
+            ))
+        }
+        "clnt_perrno" => {
+            let captured = rpc_legacy_network_capture_stderr(|| {
+                // SAFETY: enum value 0 exercises the deterministic RPC_SUCCESS path.
+                unsafe { frankenlibc_abi::rpc_abi::clnt_perrno(0) }
+            })?;
+            Ok(format!(
+                "STDERR_CLASS={}",
+                rpc_legacy_network_stderr_class(&captured)
+            ))
+        }
+        "clnt_perror" => {
+            let prefix = CString::new("franken").map_err(|err| err.to_string())?;
+            let captured = rpc_legacy_network_capture_stderr(|| {
+                // SAFETY: null client pointer and valid prefix select the no-output safe path.
+                unsafe {
+                    frankenlibc_abi::rpc_abi::clnt_perror(core::ptr::null_mut(), prefix.as_ptr())
+                }
+            })?;
+            Ok(format!(
+                "STDERR_CLASS={}",
+                rpc_legacy_network_stderr_class(&captured)
+            ))
+        }
+        "clnt_spcreateerror" => {
+            let prefix = CString::new("franken").map_err(|err| err.to_string())?;
+            // SAFETY: prefix is a valid C string; returned pointer is TLS-backed.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::clnt_spcreateerror(prefix.as_ptr()) };
+            Ok(format!(
+                "RETURN_CSTR_CLASS={}",
+                rpc_legacy_network_cstr_class(ptr)
+            ))
+        }
+        "clnt_sperrno" => {
+            // SAFETY: returned pointer is TLS-backed.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::clnt_sperrno(0) };
+            Ok(format!(
+                "RETURN_CSTR_CLASS={}",
+                rpc_legacy_network_cstr_class(ptr)
+            ))
+        }
         other => Err(format!("unsupported RPC legacy fixture symbol: {other}")),
+    }
+}
+
+fn rpc_legacy_network_reset_errno() {
+    // SAFETY: test executor controls the process-local ABI errno slot before one call.
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
+}
+
+fn rpc_legacy_network_errno() -> i32 {
+    // SAFETY: __errno_location returns FrankenLibC's process-local ABI errno pointer.
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+fn rpc_legacy_network_errno_class(errno: i32) -> &'static str {
+    match errno {
+        0 => "NONE",
+        libc::EACCES => "EACCES",
+        libc::EADDRINUSE => "EADDRINUSE",
+        libc::EBADF => "EBADF",
+        libc::EINVAL => "EINVAL",
+        _ => "OTHER",
+    }
+}
+
+fn rpc_legacy_network_capture_stderr(emit: impl FnOnce()) -> Result<String, String> {
+    // SAFETY: the helper creates a private pipe, temporarily redirects STDERR_FILENO,
+    // restores it before reading, and closes every owned fd on each local error path.
+    unsafe {
+        let mut pipefd = [0 as c_int; 2];
+        if libc::pipe(pipefd.as_mut_ptr()) != 0 {
+            return Err(String::from("failed to create stderr capture pipe"));
+        }
+        let saved_stderr = libc::dup(libc::STDERR_FILENO);
+        if saved_stderr < 0 {
+            libc::close(pipefd[0]);
+            libc::close(pipefd[1]);
+            return Err(String::from("failed to dup stderr"));
+        }
+        if libc::dup2(pipefd[1], libc::STDERR_FILENO) < 0 {
+            libc::close(saved_stderr);
+            libc::close(pipefd[0]);
+            libc::close(pipefd[1]);
+            return Err(String::from("failed to redirect stderr"));
+        }
+
+        emit();
+
+        let _ = libc::dup2(saved_stderr, libc::STDERR_FILENO);
+        let _ = libc::close(saved_stderr);
+        let _ = libc::close(pipefd[1]);
+
+        let mut buf = [0u8; 256];
+        let nread = libc::read(pipefd[0], buf.as_mut_ptr().cast(), buf.len());
+        let _ = libc::close(pipefd[0]);
+        if nread < 0 {
+            return Err(String::from("failed to read stderr capture pipe"));
+        }
+        Ok(String::from_utf8_lossy(&buf[..nread as usize]).into_owned())
+    }
+}
+
+fn rpc_legacy_network_stderr_class(captured: &str) -> &'static str {
+    match captured {
+        "" => "EMPTY",
+        "RPC: Success\n" => "RPC_SUCCESS_LINE",
+        "franken: Success\n" => "PREFIX_SUCCESS_LINE",
+        _ => "OTHER",
+    }
+}
+
+fn rpc_legacy_network_cstr_class(ptr: *mut c_char) -> &'static str {
+    if ptr.is_null() {
+        return "NULL";
+    }
+    // SAFETY: RPC diagnostic ABI functions return stable NUL-terminated TLS strings.
+    let value = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
+    match value.as_ref() {
+        "Success" => "SUCCESS",
+        "franken: Success" => "PREFIX_SUCCESS",
+        _ => "OTHER",
     }
 }
 
@@ -26345,6 +26582,48 @@ mod tests {
             include_str!("../../../tests/conformance/fixtures/glibc_internal_compat_wave02.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("glibc/internal compat wave02 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn rpc_legacy_network_wave02_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/rpc_legacy_network_wave02.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("rpc/legacy network wave02 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
