@@ -841,7 +841,9 @@ pub fn execute_fixture_case(
         | "fgetws_unlocked" | "fileno_unlocked" | "flockfile" | "fmemopen" | "fopen64"
         | "fopencookie" | "fputc_unlocked" | "fputs_unlocked" | "fputwc_unlocked"
         | "fputws_unlocked" | "fread_unlocked" | "freopen" | "freopen64" | "fscanf" | "fseeko"
-        | "fseeko64" | "fsetpos" | "fsetpos64" | "ftello" => {
+        | "fseeko64" | "fsetpos" | "fsetpos64" | "ftello" | "ftello64" | "ftrylockfile"
+        | "funlockfile" | "fwrite_unlocked" | "getc" | "getc_unlocked" | "getchar"
+        | "getchar_unlocked" | "getdelim" | "getline" | "getw" | "mktemp" => {
             execute_stdio_libio_symbols_case(function, inputs, mode)
         }
         "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
@@ -20503,6 +20505,153 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             let pos = unsafe { frankenlibc_abi::stdio_abi::ftello(stream) };
             Ok(format!("FTELLO_SEEK_{seek_rc}_POS_{pos}"))
         }),
+        "ftello64" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"tell64")?;
+            let seek_rc =
+                unsafe { frankenlibc_abi::stdio_abi::fseeko64(stream, 2, libc::SEEK_SET) };
+            let pos = unsafe { frankenlibc_abi::stdio_abi::ftello64(stream) };
+            Ok(format!("FTELLO64_SEEK_{seek_rc}_POS_{pos}"))
+        }),
+        "ftrylockfile" => stdio_libio_tmpfile(|stream| {
+            let rc = unsafe { frankenlibc_abi::stdio_abi::ftrylockfile(stream) };
+            if rc == 0 {
+                unsafe { frankenlibc_abi::stdio_abi::funlockfile(stream) };
+                Ok(String::from("FTRYLOCKFILE_OK"))
+            } else {
+                Ok(format!("FTRYLOCKFILE_RC_{rc}"))
+            }
+        }),
+        "funlockfile" => stdio_libio_tmpfile(|stream| {
+            unsafe { frankenlibc_abi::stdio_abi::flockfile(stream) };
+            unsafe { frankenlibc_abi::stdio_abi::funlockfile(stream) };
+            Ok(String::from("FUNLOCKFILE_OK"))
+        }),
+        "fwrite_unlocked" => stdio_libio_tmpfile(|stream| {
+            let bytes = b"write";
+            let n = unsafe {
+                frankenlibc_abi::stdio_abi::fwrite_unlocked(
+                    bytes.as_ptr().cast::<c_void>(),
+                    1,
+                    bytes.len(),
+                    stream,
+                )
+            };
+            Ok(format!("FWRITE_UNLOCKED_N_{n}"))
+        }),
+        "getc" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"C")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let got = unsafe { frankenlibc_abi::stdio_abi::getc(stream) };
+            if got == i32::from(b'C') {
+                Ok(String::from("GETC_CHAR_C"))
+            } else {
+                Ok(format!("GETC_RC_{got}"))
+            }
+        }),
+        "getc_unlocked" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"U")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let got = unsafe { frankenlibc_abi::stdio_abi::getc_unlocked(stream) };
+            if got == i32::from(b'U') {
+                Ok(String::from("GETC_UNLOCKED_CHAR_U"))
+            } else {
+                Ok(format!("GETC_UNLOCKED_RC_{got}"))
+            }
+        }),
+        "getchar" => {
+            let got = unsafe { frankenlibc_abi::stdio_abi::getchar() };
+            if got == libc::EOF {
+                Ok(String::from("GETCHAR_EOF"))
+            } else {
+                Ok(format!("GETCHAR_RC_{got}"))
+            }
+        }
+        "getchar_unlocked" => {
+            let got = unsafe { frankenlibc_abi::stdio_abi::getchar_unlocked() };
+            if got == libc::EOF {
+                Ok(String::from("GETCHAR_UNLOCKED_EOF"))
+            } else {
+                Ok(format!("GETCHAR_UNLOCKED_RC_{got}"))
+            }
+        }
+        "getdelim" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"alpha,beta")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let mut line: *mut c_char = std::ptr::null_mut();
+            let mut capacity = 0usize;
+            let n = unsafe {
+                frankenlibc_abi::stdio_abi::getdelim(
+                    &mut line,
+                    &mut capacity,
+                    b',' as c_int,
+                    stream,
+                )
+            };
+            let delim_seen = if n > 0 && !line.is_null() {
+                let last = unsafe { *line.add((n as usize).saturating_sub(1)) };
+                usize::from(last == b',' as c_char)
+            } else {
+                0
+            };
+            if !line.is_null() {
+                unsafe { libc::free(line.cast::<c_void>()) };
+            }
+            Ok(format!("GETDELIM_N_{n}_DELIM_{delim_seen}"))
+        }),
+        "getline" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"row\nnext")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let mut line: *mut c_char = std::ptr::null_mut();
+            let mut capacity = 0usize;
+            let n =
+                unsafe { frankenlibc_abi::stdio_abi::getline(&mut line, &mut capacity, stream) };
+            let newline_seen = if n > 0 && !line.is_null() {
+                let last = unsafe { *line.add((n as usize).saturating_sub(1)) };
+                usize::from(last == b'\n' as c_char)
+            } else {
+                0
+            };
+            if !line.is_null() {
+                unsafe { libc::free(line.cast::<c_void>()) };
+            }
+            Ok(format!("GETLINE_N_{n}_NEWLINE_{newline_seen}"))
+        }),
+        "getw" => stdio_libio_tmpfile(|stream| {
+            let value: c_int = 0x1234_5678;
+            let written = unsafe {
+                frankenlibc_abi::stdio_abi::fwrite(
+                    (&value as *const c_int).cast::<c_void>(),
+                    std::mem::size_of::<c_int>(),
+                    1,
+                    stream,
+                )
+            };
+            if written != 1 {
+                return Ok(format!("GETW_WRITE_N_{written}"));
+            }
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let got = unsafe { frankenlibc_abi::stdio_abi::getw(stream) };
+            Ok(format!("GETW_VALUE_{got}"))
+        }),
+        "mktemp" => {
+            let mut template = *b"frlcXXXXXX\0";
+            let template_ptr = template.as_mut_ptr().cast();
+            let ptr = unsafe { frankenlibc_abi::stdio_abi::mktemp(template_ptr) };
+            let text = CStr::from_bytes_until_nul(&template)
+                .map_err(|err| format!("mktemp output missing NUL: {err}"))?
+                .to_string_lossy();
+            if ptr == template_ptr
+                && text.len() == "frlcXXXXXX".len()
+                && !text.ends_with("XXXXXX")
+                && text.starts_with("frlc")
+            {
+                Ok(String::from("MKTEMP_SUFFIX_REPLACED"))
+            } else if text.is_empty() {
+                Ok(String::from("MKTEMP_EMPTY"))
+            } else {
+                Ok(String::from("MKTEMP_UNEXPECTED_CLASS"))
+            }
+        }
         other => Err(format!("unsupported stdio/libio fixture: {other}")),
     }
 }

@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "stdio/libio",
+  "captured_at": "2026-05-13T20:32:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-stdio-libio wave-05 large-file tell, public stream locking, unlocked writes and reads, delimiter/line readers, legacy word I/O, and mktemp classes without recording stream addresses, file descriptors, filesystem paths, stdout bytes, stderr bytes, stdin payloads, generated suffixes, thread ids, timestamps, or host FILE internals.",
+  "spec_reference": "POSIX/GNU ftello64, ftrylockfile, funlockfile, fwrite_unlocked, getc, getc_unlocked, getchar, getchar_unlocked, getdelim, getline, getw, and mktemp stream semantics",
+  "campaign": {
+    "bead": "bd-vm6j0.2",
+    "campaign_id": "fcq-stdio-libio",
+    "wave_id": "wave-05-stdio-libio-stream-state-unlocked-readers",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture",
+    "first_wave_symbols": [
+      "ftello64",
+      "ftrylockfile",
+      "funlockfile",
+      "fwrite_unlocked",
+      "getc",
+      "getc_unlocked",
+      "getchar",
+      "getchar_unlocked",
+      "getdelim",
+      "getline",
+      "getw",
+      "mktemp"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "ftello64_position_class_strict",
+      "function": "ftello64",
+      "spec_section": "GNU ftello64 controlled position query",
+      "inputs": {
+        "symbol": "ftello64",
+        "scenario": "controlled_tmpfile_seek64_without_offset_payload_capture",
+        "expected": "FTELLO64_SEEK_0_POS_2",
+        "oracle_source": "FrankenLibC ftello64 position-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=ftello64;mode=strict;expected=FTELLO64_SEEK_0_POS_2;actual=FTELLO64_SEEK_0_POS_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ftello64_position_class_hardened",
+      "function": "ftello64",
+      "spec_section": "GNU ftello64 controlled position query",
+      "inputs": {
+        "symbol": "ftello64",
+        "scenario": "controlled_tmpfile_seek64_without_offset_payload_capture",
+        "expected": "FTELLO64_SEEK_0_POS_2",
+        "oracle_source": "FrankenLibC ftello64 position-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=ftello64;mode=hardened;expected=FTELLO64_SEEK_0_POS_2;actual=FTELLO64_SEEK_0_POS_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ftrylockfile_public_lock_class_strict",
+      "function": "ftrylockfile",
+      "spec_section": "POSIX ftrylockfile public stream lock acquisition",
+      "inputs": {
+        "symbol": "ftrylockfile",
+        "scenario": "controlled_tmpfile_trylock_unlock_without_lock_owner_capture",
+        "expected": "FTRYLOCKFILE_OK",
+        "oracle_source": "FrankenLibC ftrylockfile lock-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=ftrylockfile;mode=strict;expected=FTRYLOCKFILE_OK;actual=FTRYLOCKFILE_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ftrylockfile_public_lock_class_hardened",
+      "function": "ftrylockfile",
+      "spec_section": "POSIX ftrylockfile public stream lock acquisition",
+      "inputs": {
+        "symbol": "ftrylockfile",
+        "scenario": "controlled_tmpfile_trylock_unlock_without_lock_owner_capture",
+        "expected": "FTRYLOCKFILE_OK",
+        "oracle_source": "FrankenLibC ftrylockfile lock-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=ftrylockfile;mode=hardened;expected=FTRYLOCKFILE_OK;actual=FTRYLOCKFILE_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "funlockfile_public_unlock_class_strict",
+      "function": "funlockfile",
+      "spec_section": "POSIX funlockfile public stream unlock after lock",
+      "inputs": {
+        "symbol": "funlockfile",
+        "scenario": "controlled_tmpfile_lock_unlock_without_lock_owner_capture",
+        "expected": "FUNLOCKFILE_OK",
+        "oracle_source": "FrankenLibC funlockfile lock-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=funlockfile;mode=strict;expected=FUNLOCKFILE_OK;actual=FUNLOCKFILE_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "funlockfile_public_unlock_class_hardened",
+      "function": "funlockfile",
+      "spec_section": "POSIX funlockfile public stream unlock after lock",
+      "inputs": {
+        "symbol": "funlockfile",
+        "scenario": "controlled_tmpfile_lock_unlock_without_lock_owner_capture",
+        "expected": "FUNLOCKFILE_OK",
+        "oracle_source": "FrankenLibC funlockfile lock-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=funlockfile;mode=hardened;expected=FUNLOCKFILE_OK;actual=FUNLOCKFILE_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fwrite_unlocked_count_class_strict",
+      "function": "fwrite_unlocked",
+      "spec_section": "GNU fwrite_unlocked controlled byte write",
+      "inputs": {
+        "symbol": "fwrite_unlocked",
+        "scenario": "controlled_tmpfile_unlocked_write_without_payload_capture",
+        "expected": "FWRITE_UNLOCKED_N_5",
+        "oracle_source": "FrankenLibC fwrite_unlocked count-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fwrite_unlocked;mode=strict;expected=FWRITE_UNLOCKED_N_5;actual=FWRITE_UNLOCKED_N_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fwrite_unlocked_count_class_hardened",
+      "function": "fwrite_unlocked",
+      "spec_section": "GNU fwrite_unlocked controlled byte write",
+      "inputs": {
+        "symbol": "fwrite_unlocked",
+        "scenario": "controlled_tmpfile_unlocked_write_without_payload_capture",
+        "expected": "FWRITE_UNLOCKED_N_5",
+        "oracle_source": "FrankenLibC fwrite_unlocked count-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fwrite_unlocked;mode=hardened;expected=FWRITE_UNLOCKED_N_5;actual=FWRITE_UNLOCKED_N_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getc_controlled_char_strict",
+      "function": "getc",
+      "spec_section": "POSIX getc controlled byte read",
+      "inputs": {
+        "symbol": "getc",
+        "scenario": "controlled_tmpfile_getc_without_payload_capture",
+        "expected": "GETC_CHAR_C",
+        "oracle_source": "FrankenLibC getc char-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getc;mode=strict;expected=GETC_CHAR_C;actual=GETC_CHAR_C;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getc_controlled_char_hardened",
+      "function": "getc",
+      "spec_section": "POSIX getc controlled byte read",
+      "inputs": {
+        "symbol": "getc",
+        "scenario": "controlled_tmpfile_getc_without_payload_capture",
+        "expected": "GETC_CHAR_C",
+        "oracle_source": "FrankenLibC getc char-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getc;mode=hardened;expected=GETC_CHAR_C;actual=GETC_CHAR_C;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getc_unlocked_controlled_char_strict",
+      "function": "getc_unlocked",
+      "spec_section": "GNU getc_unlocked controlled byte read",
+      "inputs": {
+        "symbol": "getc_unlocked",
+        "scenario": "controlled_tmpfile_getc_unlocked_without_payload_capture",
+        "expected": "GETC_UNLOCKED_CHAR_U",
+        "oracle_source": "FrankenLibC getc_unlocked char-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getc_unlocked;mode=strict;expected=GETC_UNLOCKED_CHAR_U;actual=GETC_UNLOCKED_CHAR_U;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getc_unlocked_controlled_char_hardened",
+      "function": "getc_unlocked",
+      "spec_section": "GNU getc_unlocked controlled byte read",
+      "inputs": {
+        "symbol": "getc_unlocked",
+        "scenario": "controlled_tmpfile_getc_unlocked_without_payload_capture",
+        "expected": "GETC_UNLOCKED_CHAR_U",
+        "oracle_source": "FrankenLibC getc_unlocked char-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getc_unlocked;mode=hardened;expected=GETC_UNLOCKED_CHAR_U;actual=GETC_UNLOCKED_CHAR_U;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getchar_empty_stdin_class_strict",
+      "function": "getchar",
+      "spec_section": "POSIX getchar noninteractive EOF class",
+      "inputs": {
+        "symbol": "getchar",
+        "scenario": "noninteractive_stdin_eof_without_stdin_payload_capture",
+        "expected": "GETCHAR_EOF",
+        "oracle_source": "FrankenLibC getchar EOF-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getchar;mode=strict;expected=GETCHAR_EOF;actual=GETCHAR_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getchar_empty_stdin_class_hardened",
+      "function": "getchar",
+      "spec_section": "POSIX getchar noninteractive EOF class",
+      "inputs": {
+        "symbol": "getchar",
+        "scenario": "noninteractive_stdin_eof_without_stdin_payload_capture",
+        "expected": "GETCHAR_EOF",
+        "oracle_source": "FrankenLibC getchar EOF-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getchar;mode=hardened;expected=GETCHAR_EOF;actual=GETCHAR_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getchar_unlocked_empty_stdin_class_strict",
+      "function": "getchar_unlocked",
+      "spec_section": "GNU getchar_unlocked noninteractive EOF class",
+      "inputs": {
+        "symbol": "getchar_unlocked",
+        "scenario": "noninteractive_stdin_eof_without_stdin_payload_capture",
+        "expected": "GETCHAR_UNLOCKED_EOF",
+        "oracle_source": "FrankenLibC getchar_unlocked EOF-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getchar_unlocked;mode=strict;expected=GETCHAR_UNLOCKED_EOF;actual=GETCHAR_UNLOCKED_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getchar_unlocked_empty_stdin_class_hardened",
+      "function": "getchar_unlocked",
+      "spec_section": "GNU getchar_unlocked noninteractive EOF class",
+      "inputs": {
+        "symbol": "getchar_unlocked",
+        "scenario": "noninteractive_stdin_eof_without_stdin_payload_capture",
+        "expected": "GETCHAR_UNLOCKED_EOF",
+        "oracle_source": "FrankenLibC getchar_unlocked EOF-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getchar_unlocked;mode=hardened;expected=GETCHAR_UNLOCKED_EOF;actual=GETCHAR_UNLOCKED_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getdelim_delimiter_class_strict",
+      "function": "getdelim",
+      "spec_section": "POSIX getdelim controlled delimiter read",
+      "inputs": {
+        "symbol": "getdelim",
+        "scenario": "controlled_tmpfile_delimiter_read_without_payload_capture",
+        "expected": "GETDELIM_N_6_DELIM_1",
+        "oracle_source": "FrankenLibC getdelim delimiter-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getdelim;mode=strict;expected=GETDELIM_N_6_DELIM_1;actual=GETDELIM_N_6_DELIM_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getdelim_delimiter_class_hardened",
+      "function": "getdelim",
+      "spec_section": "POSIX getdelim controlled delimiter read",
+      "inputs": {
+        "symbol": "getdelim",
+        "scenario": "controlled_tmpfile_delimiter_read_without_payload_capture",
+        "expected": "GETDELIM_N_6_DELIM_1",
+        "oracle_source": "FrankenLibC getdelim delimiter-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getdelim;mode=hardened;expected=GETDELIM_N_6_DELIM_1;actual=GETDELIM_N_6_DELIM_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getline_newline_class_strict",
+      "function": "getline",
+      "spec_section": "POSIX getline controlled newline read",
+      "inputs": {
+        "symbol": "getline",
+        "scenario": "controlled_tmpfile_line_read_without_payload_capture",
+        "expected": "GETLINE_N_4_NEWLINE_1",
+        "oracle_source": "FrankenLibC getline newline-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getline;mode=strict;expected=GETLINE_N_4_NEWLINE_1;actual=GETLINE_N_4_NEWLINE_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getline_newline_class_hardened",
+      "function": "getline",
+      "spec_section": "POSIX getline controlled newline read",
+      "inputs": {
+        "symbol": "getline",
+        "scenario": "controlled_tmpfile_line_read_without_payload_capture",
+        "expected": "GETLINE_N_4_NEWLINE_1",
+        "oracle_source": "FrankenLibC getline newline-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getline;mode=hardened;expected=GETLINE_N_4_NEWLINE_1;actual=GETLINE_N_4_NEWLINE_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getw_word_class_strict",
+      "function": "getw",
+      "spec_section": "SVID getw controlled word read",
+      "inputs": {
+        "symbol": "getw",
+        "scenario": "controlled_tmpfile_word_read_without_payload_capture",
+        "expected": "GETW_VALUE_305419896",
+        "oracle_source": "FrankenLibC getw value-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getw;mode=strict;expected=GETW_VALUE_305419896;actual=GETW_VALUE_305419896;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getw_word_class_hardened",
+      "function": "getw",
+      "spec_section": "SVID getw controlled word read",
+      "inputs": {
+        "symbol": "getw",
+        "scenario": "controlled_tmpfile_word_read_without_payload_capture",
+        "expected": "GETW_VALUE_305419896",
+        "oracle_source": "FrankenLibC getw value-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=getw;mode=hardened;expected=GETW_VALUE_305419896;actual=GETW_VALUE_305419896;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "mktemp_suffix_class_strict",
+      "function": "mktemp",
+      "spec_section": "BSD/GNU mktemp suffix replacement class",
+      "inputs": {
+        "symbol": "mktemp",
+        "scenario": "template_suffix_replacement_without_generated_suffix_capture",
+        "expected": "MKTEMP_SUFFIX_REPLACED",
+        "oracle_source": "FrankenLibC mktemp suffix-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=mktemp;mode=strict;expected=MKTEMP_SUFFIX_REPLACED;actual=MKTEMP_SUFFIX_REPLACED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "mktemp_suffix_class_hardened",
+      "function": "mktemp",
+      "spec_section": "BSD/GNU mktemp suffix replacement class",
+      "inputs": {
+        "symbol": "mktemp",
+        "scenario": "template_suffix_replacement_without_generated_suffix_capture",
+        "expected": "MKTEMP_SUFFIX_REPLACED",
+        "oracle_source": "FrankenLibC mktemp suffix-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=mktemp;mode=hardened;expected=MKTEMP_SUFFIX_REPLACED;actual=MKTEMP_SUFFIX_REPLACED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

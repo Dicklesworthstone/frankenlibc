@@ -3277,69 +3277,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 89,
-      "milestone_beads": [],
-      "module": "stdio_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 3702,
-      "status_breakdown": {
-        "Implemented": 126
-      },
-      "target_coverage_pct": 70.63,
-      "target_covered": 89,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 126,
-      "target_uncovered": 37,
-      "target_uncovered_symbols": [
-        "ftello64",
-        "ftrylockfile",
-        "funlockfile",
-        "fwrite_unlocked",
-        "getc",
-        "getc_unlocked",
-        "getchar",
-        "getchar_unlocked",
-        "getdelim",
-        "getline",
-        "getw",
-        "mktemp",
-        "open_memstream",
-        "pclose",
-        "popen",
-        "putc",
-        "putc_unlocked",
-        "putchar",
-        "putchar_unlocked",
-        "puts",
-        "putw",
-        "remove",
-        "rewind",
-        "scanf",
-        "setbuffer",
-        "setlinebuf",
-        "stderr",
-        "stdin",
-        "stdout",
-        "tmpfile",
-        "tmpfile64",
-        "tmpnam",
-        "vfprintf",
-        "vfscanf",
-        "vprintf",
-        "vscanf",
-        "vsscanf"
-      ],
-      "total_symbols": 126,
-      "track": "stdio",
-      "uncovered_symbols": 37,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 1,
       "milestone_beads": [],
       "module": "io_abi",
@@ -3390,6 +3327,57 @@
       "total_symbols": 28,
       "track": "io",
       "uncovered_symbols": 27,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 101,
+      "milestone_beads": [],
+      "module": "stdio_abi",
+      "recommended_bead": null,
+      "severity": "medium",
+      "severity_score": 2501,
+      "status_breakdown": {
+        "Implemented": 126
+      },
+      "target_coverage_pct": 80.16,
+      "target_covered": 101,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 126,
+      "target_uncovered": 25,
+      "target_uncovered_symbols": [
+        "open_memstream",
+        "pclose",
+        "popen",
+        "putc",
+        "putc_unlocked",
+        "putchar",
+        "putchar_unlocked",
+        "puts",
+        "putw",
+        "remove",
+        "rewind",
+        "scanf",
+        "setbuffer",
+        "setlinebuf",
+        "stderr",
+        "stdin",
+        "stdout",
+        "tmpfile",
+        "tmpfile64",
+        "tmpnam",
+        "vfprintf",
+        "vfscanf",
+        "vprintf",
+        "vscanf",
+        "vsscanf"
+      ],
+      "total_symbols": 126,
+      "track": "stdio",
+      "uncovered_symbols": 25,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -4218,9 +4206,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 2344,
-    "fixture_json_files": 107,
-    "fixture_json_unique_functions": 966,
+    "fixture_json_cases": 2368,
+    "fixture_json_files": 108,
+    "fixture_json_unique_functions": 978,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4241,7 +4229,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 968
+    "unique_fixture_functions_total": 980
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -7385,55 +7373,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "stdio_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 37,
-      "target_uncovered_symbols": [
-        "ftello64",
-        "ftrylockfile",
-        "funlockfile",
-        "fwrite_unlocked",
-        "getc",
-        "getc_unlocked",
-        "getchar",
-        "getchar_unlocked",
-        "getdelim",
-        "getline",
-        "getw",
-        "mktemp",
-        "open_memstream",
-        "pclose",
-        "popen",
-        "putc",
-        "putc_unlocked",
-        "putchar",
-        "putchar_unlocked",
-        "puts",
-        "putw",
-        "remove",
-        "rewind",
-        "scanf",
-        "setbuffer",
-        "setlinebuf",
-        "stderr",
-        "stdin",
-        "stdout",
-        "tmpfile",
-        "tmpfile64",
-        "tmpnam",
-        "vfprintf",
-        "vfscanf",
-        "vprintf",
-        "vscanf",
-        "vsscanf"
-      ],
-      "track": "stdio",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "io_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -7468,6 +7407,43 @@
         "writev"
       ],
       "track": "io",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
+      "module": "stdio_abi",
+      "recommended_bead": null,
+      "severity": "medium",
+      "target_uncovered_count": 25,
+      "target_uncovered_symbols": [
+        "open_memstream",
+        "pclose",
+        "popen",
+        "putc",
+        "putc_unlocked",
+        "putchar",
+        "putchar_unlocked",
+        "puts",
+        "putw",
+        "remove",
+        "rewind",
+        "scanf",
+        "setbuffer",
+        "setlinebuf",
+        "stderr",
+        "stdin",
+        "stdout",
+        "tmpfile",
+        "tmpfile64",
+        "tmpnam",
+        "vfprintf",
+        "vfscanf",
+        "vprintf",
+        "vscanf",
+        "vsscanf"
+      ],
+      "track": "stdio",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -7738,10 +7714,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 22.32,
-      "covered": 827,
+      "coverage_pct": 22.65,
+      "covered": 839,
       "total": 3705,
-      "uncovered": 2878
+      "uncovered": 2866
     },
     "RawSyscall": {
       "coverage_pct": 29.95,
@@ -7751,21 +7727,21 @@
     }
   },
   "summary": {
-    "coverage_pct": 23.09,
-    "covered_exported_symbols": 951,
-    "target_coverage_pct": 23.09,
-    "target_covered_symbols": 951,
+    "coverage_pct": 23.38,
+    "covered_exported_symbols": 963,
+    "target_coverage_pct": 23.38,
+    "target_covered_symbols": 963,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3168,
+    "target_uncovered_symbols": 3156,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3168,
+    "uncovered_exported_symbols": 3156,
     "uncovered_target_families": 1,
     "weak_family_threshold_pct": 80.0,
-    "weak_target_families": 24
+    "weak_target_families": 23
   },
   "symbols": [
     {
@@ -52738,13 +52714,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -52752,13 +52737,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "fast",
       "status": "Implemented",
@@ -52766,13 +52760,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "fast",
       "status": "Implemented",
@@ -52806,13 +52809,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -52820,13 +52832,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -52834,13 +52855,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "fast",
       "status": "Implemented",
@@ -52848,13 +52878,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -52862,13 +52901,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -52876,13 +52924,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "strict_slow",
       "status": "Implemented",
@@ -52890,13 +52947,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "strict_slow",
       "status": "Implemented",
@@ -52904,13 +52970,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -52918,13 +52993,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave05.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -76572,55 +76656,6 @@
         "__cxa_thread_atexit_impl"
       ],
       "track": "startup",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "module": "stdio_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_coverage_pct": 70.63,
-      "target_uncovered_count": 37,
-      "target_uncovered_symbols": [
-        "ftello64",
-        "ftrylockfile",
-        "funlockfile",
-        "fwrite_unlocked",
-        "getc",
-        "getc_unlocked",
-        "getchar",
-        "getchar_unlocked",
-        "getdelim",
-        "getline",
-        "getw",
-        "mktemp",
-        "open_memstream",
-        "pclose",
-        "popen",
-        "putc",
-        "putc_unlocked",
-        "putchar",
-        "putchar_unlocked",
-        "puts",
-        "putw",
-        "remove",
-        "rewind",
-        "scanf",
-        "setbuffer",
-        "setlinebuf",
-        "stderr",
-        "stdin",
-        "stdout",
-        "tmpfile",
-        "tmpfile64",
-        "tmpnam",
-        "vfprintf",
-        "vfscanf",
-        "vprintf",
-        "vscanf",
-        "vsscanf"
-      ],
-      "track": "stdio",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
