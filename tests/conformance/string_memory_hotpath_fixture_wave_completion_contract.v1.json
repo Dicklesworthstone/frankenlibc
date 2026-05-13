@@ -1,0 +1,170 @@
+{
+  "schema_version": "string_memory_hotpath_fixture_wave_completion_contract.v1",
+  "bead_id": "bd-yy970.3",
+  "epic_id": "bd-yy970",
+  "trace_id": "bd-yy970.3::string-memory-hotpath-fixture-wave::completion::v1",
+  "description": "Completion contract binding the string/memory hot-path first-wave fixtures, coverage-truth guard, structured telemetry, and rch validation commands.",
+  "source_artifacts": [
+    {
+      "id": "beads_ledger",
+      "kind": "tracker",
+      "path": ".beads/issues.jsonl",
+      "evidence": "Tracker rows for bd-yy970.1, bd-yy970.2, and bd-yy970.3."
+    },
+    {
+      "id": "fixture_coverage_prioritizer",
+      "kind": "campaign_source",
+      "path": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+      "evidence": "Campaign fcq-string-memory-hotpaths coverage counts and next first-wave symbols after the completed fixture slice."
+    },
+    {
+      "id": "symbol_fixture_coverage",
+      "kind": "coverage_accounting",
+      "path": "tests/conformance/symbol_fixture_coverage.v1.json",
+      "evidence": "Per-symbol fixture coverage rows linking the completed string/memory symbols to string_memory_hotpaths.json."
+    },
+    {
+      "id": "string_memory_fixture",
+      "kind": "fixture",
+      "path": "tests/conformance/fixtures/string_memory_hotpaths.json",
+      "evidence": "Strict and hardened deterministic string/memory fixtures for the 12 completed first-wave symbols."
+    },
+    {
+      "id": "fixture_executor",
+      "kind": "implementation",
+      "path": "crates/frankenlibc_conformance/src/lib.rs",
+      "evidence": "execute_fixture_case dispatch and deterministic string/memory fixture executor."
+    },
+    {
+      "id": "string_memory_fixture_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/string_memory_hotpaths_conformance_test.rs",
+      "evidence": "Harness tests for fixture shape, both-mode first-wave coverage, structured output fields, ambient-state rejection, isolated execution, and stale coverage accounting."
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/string_memory_hotpath_fixture_wave_completion_contract.v1.json",
+      "evidence": "Machine-readable binding for bd-yy970.3 completion obligations."
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_string_memory_hotpath_fixture_wave_completion_contract.sh",
+      "evidence": "Fail-closed validator for source artifacts, dependency proof, fixture evidence, coverage accounting, telemetry, and rch validation commands."
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/string_memory_hotpath_fixture_wave_completion_contract_test.rs",
+      "evidence": "Rust harness tests for the string/memory fixture wave completion contract and negative drift signatures."
+    }
+  ],
+  "completion_contract": {
+    "required_dependency_proofs": [
+      {
+        "bead_id": "bd-yy970.1",
+        "proof_state": "tracker_closed",
+        "commit": "09cce08b",
+        "evidence": "First-wave string/memory fixture proof commit covered all 12 symbols across strict and hardened modes.",
+        "evidence_paths": [
+          "tests/conformance/fixtures/string_memory_hotpaths.json",
+          "crates/frankenlibc_conformance/src/lib.rs",
+          "crates/frankenlibc-harness/tests/string_memory_hotpaths_conformance_test.rs"
+        ]
+      },
+      {
+        "bead_id": "bd-yy970.2",
+        "proof_state": "tracker_closed",
+        "commit": "f07bce6b",
+        "evidence": "Coverage/prioritizer truth proof commit refreshed canonical coverage artifacts and added stale first-wave guard assertions.",
+        "evidence_paths": [
+          "tests/conformance/fixture_coverage_prioritizer.v1.json",
+          "tests/conformance/symbol_fixture_coverage.v1.json",
+          "crates/frankenlibc-harness/tests/string_memory_hotpaths_conformance_test.rs"
+        ]
+      }
+    ],
+    "missing_item_ids": [
+      "tests.unit.primary",
+      "tests.e2e.primary",
+      "tests.conformance.primary",
+      "telemetry.primary"
+    ],
+    "campaign_id": "fcq-string-memory-hotpaths",
+    "wave_id": "wave-04-string-memory-hotpaths",
+    "fixture_file": "tests/conformance/fixtures/string_memory_hotpaths.json",
+    "harness_test": "crates/frankenlibc-harness/tests/string_memory_hotpaths_conformance_test.rs",
+    "required_first_wave_symbols": [
+      "__strcspn_c2",
+      "__strcspn_c3",
+      "__strdup",
+      "__strerror_r",
+      "__strfmon_l",
+      "__strftime_l",
+      "__strncasecmp_l",
+      "__strndup",
+      "__strpbrk_c2",
+      "__strpbrk_c3",
+      "__strsep_1c",
+      "__strsep_2c"
+    ],
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "required_structured_log_fields": [
+      "symbol",
+      "mode",
+      "expected",
+      "actual",
+      "failure_signature"
+    ],
+    "forbidden_ambient_output_tokens": [
+      "0x",
+      "ptr=",
+      "address",
+      "locale_t",
+      "errno_buf",
+      "/tmp"
+    ],
+    "coverage_accounting": {
+      "campaign_target_covered_min": 49,
+      "campaign_target_uncovered_max": 97,
+      "campaign_current_coverage_pct_min": 33.56,
+      "symbol_fixture_covered_min": 467,
+      "completed_symbols_must_not_be_next_wave": true
+    },
+    "required_telemetry_events": [
+      "source_artifacts_validated",
+      "dependency_proofs_validated",
+      "string_memory_fixture_validated",
+      "coverage_accounting_validated",
+      "validation_commands_validated",
+      "test_surfaces_validated",
+      "telemetry_contract_validated",
+      "string_memory_hotpath_fixture_wave_completion_contract_validated"
+    ],
+    "runtime_validation": [
+      "jq empty tests/conformance/string_memory_hotpath_fixture_wave_completion_contract.v1.json",
+      "bash -n scripts/check_string_memory_hotpath_fixture_wave_completion_contract.sh",
+      "bash scripts/check_string_memory_hotpath_fixture_wave_completion_contract.sh",
+      "bash scripts/check_symbol_fixture_coverage.sh",
+      "bash scripts/check_fixture_coverage_prioritizer.sh",
+      "br dep cycles --no-db --json",
+      "RCH_FORCE_REMOTE=true RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_lilacsnow_string_memory_completion_test cargo test -p frankenlibc-harness --test string_memory_hotpath_fixture_wave_completion_contract_test -- --nocapture",
+      "RCH_FORCE_REMOTE=true RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_lilacsnow_string_memory_completion_clippy cargo clippy -p frankenlibc-harness --test string_memory_hotpath_fixture_wave_completion_contract_test -- -D warnings"
+    ],
+    "required_positive_tests": [
+      "contract_binds_string_memory_hotpath_fixture_wave_sources",
+      "checker_accepts_string_memory_hotpath_fixture_wave_completion_contract",
+      "checker_emits_structured_string_memory_completion_telemetry"
+    ],
+    "required_negative_tests": [
+      "checker_rejects_missing_string_memory_fixture_symbol",
+      "checker_rejects_stale_string_memory_coverage_accounting",
+      "checker_rejects_non_rch_cargo_validation_command",
+      "checker_rejects_missing_required_telemetry_event"
+    ]
+  }
+}
