@@ -2618,7 +2618,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             use frankenlibc_harness::explain_dossier::{
                 build_dossier, load_dossier_inputs_from_disk, render_markdown,
             };
-            if expected_commit.len() != 40 || !expected_commit.chars().all(|c| c.is_ascii_hexdigit())
+            if expected_commit.len() != 40
+                || !expected_commit.chars().all(|c| c.is_ascii_hexdigit())
             {
                 return Err(format!(
                     "--expected-commit must be a 40-char ascii-hex SHA; got {expected_commit:?}"

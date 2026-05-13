@@ -1,0 +1,65 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "explain-dossier-cli-contract",
+  "bead": "bd-hk1t2",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "f9ef7abaa4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes explain_dossier::{load_dossier_inputs_from_disk, build_dossier, render_markdown} as a standalone CLI. The pipeline loads the five canonical evidence rows (workload_replay, runtime_decision_log, standalone_blocker_snapshot, l1_dashboard_row, semantic_overlay) from canonical on-disk paths, enforces per-row source_commit + artifact_refs guards, applies the support-taxonomy parity guard, builds a deterministic Dossier, and renders markdown. Previously reachable only from Rust callers.",
+  "subcommand_name": "explain-dossier",
+  "binary_target": "harness",
+  "required_flags": [
+    "--expected-commit",
+    "--output-markdown",
+    "--output-jsonl"
+  ],
+  "optional_flags": [
+    "--workspace-root"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::explain_dossier::load_dossier_inputs_from_disk",
+    "frankenlibc_harness::explain_dossier::build_dossier",
+    "frankenlibc_harness::explain_dossier::render_markdown"
+  ],
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "dossier",
+    "required_fields": [
+      "kind",
+      "schema_version",
+      "source_commit",
+      "practical_recommendation",
+      "replacement_level",
+      "first_failing_blocker",
+      "top_decision_terms",
+      "strict_hardened_divergence_signature",
+      "next_diagnostic_command",
+      "support_taxonomy_claim",
+      "evidence_rows",
+      "all_artifact_refs"
+    ]
+  },
+  "markdown_output_contract": {
+    "must_start_with_header": "# FrankenLibC explain dossier"
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record_on_jsonl_path": true,
+    "must_write_markdown_starting_with_dossier_header": true,
+    "fail_closed_when_expected_commit_not_40_char_sha": true,
+    "fail_closed_on_load_error": true,
+    "fail_closed_on_dossier_error": true,
+    "all_five_evidence_rows_present_when_success": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "invalid_expected_commit_accepted",
+    "missing_evidence_file_accepted",
+    "markdown_without_dossier_header"
+  ],
+  "summary": {
+    "bead": "bd-hk1t2",
+    "subcommand": "explain-dossier",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
