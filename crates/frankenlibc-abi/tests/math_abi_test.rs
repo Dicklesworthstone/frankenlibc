@@ -1140,6 +1140,74 @@ fn sincosl_consistency() {
 }
 
 // ---------------------------------------------------------------------------
+// glibc classification helpers
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_classification_f64_matches_glibc_codes() {
+    use frankenlibc_abi::math_abi::{__finite, __fpclassify, __isinf, __isnan, __signbit, finite};
+
+    assert_eq!(unsafe { __fpclassify(f64::NAN) }, 0);
+    assert_eq!(unsafe { __fpclassify(f64::INFINITY) }, 1);
+    assert_eq!(unsafe { __fpclassify(0.0) }, 2);
+    assert_eq!(unsafe { __fpclassify(f64::from_bits(1)) }, 3);
+    assert_eq!(unsafe { __fpclassify(1.0) }, 4);
+
+    assert_eq!(unsafe { __signbit(1.0) }, 0);
+    assert_eq!(unsafe { __signbit(-1.0) }, 1);
+    assert_eq!(unsafe { __signbit(0.0) }, 0);
+    assert_eq!(unsafe { __signbit(-0.0) }, 1);
+
+    assert_eq!(unsafe { __isinf(f64::INFINITY) }, 1);
+    assert_eq!(unsafe { __isinf(f64::NEG_INFINITY) }, -1);
+    assert_eq!(unsafe { __isinf(1.0) }, 0);
+    assert_eq!(unsafe { __isinf(f64::NAN) }, 0);
+
+    assert_eq!(unsafe { __isnan(f64::NAN) }, 1);
+    assert_eq!(unsafe { __isnan(1.0) }, 0);
+
+    assert_eq!(unsafe { __finite(1.0) }, 1);
+    assert_eq!(unsafe { __finite(f64::INFINITY) }, 0);
+    assert_eq!(unsafe { __finite(f64::NAN) }, 0);
+    assert_eq!(unsafe { finite(1.0) }, 1);
+    assert_eq!(unsafe { finite(f64::NEG_INFINITY) }, 0);
+    assert_eq!(unsafe { finite(f64::NAN) }, 0);
+}
+
+#[test]
+fn math_classification_f32_matches_glibc_codes() {
+    use frankenlibc_abi::math_abi::{
+        __finitef, __fpclassifyf, __isinff, __isnanf, __signbitf, finitef,
+    };
+
+    assert_eq!(unsafe { __fpclassifyf(f32::NAN) }, 0);
+    assert_eq!(unsafe { __fpclassifyf(f32::INFINITY) }, 1);
+    assert_eq!(unsafe { __fpclassifyf(0.0) }, 2);
+    assert_eq!(unsafe { __fpclassifyf(f32::from_bits(1)) }, 3);
+    assert_eq!(unsafe { __fpclassifyf(1.0) }, 4);
+
+    assert_eq!(unsafe { __signbitf(1.0) }, 0);
+    assert_eq!(unsafe { __signbitf(-1.0) }, 1);
+    assert_eq!(unsafe { __signbitf(0.0) }, 0);
+    assert_eq!(unsafe { __signbitf(-0.0) }, 1);
+
+    assert_eq!(unsafe { __isinff(f32::INFINITY) }, 1);
+    assert_eq!(unsafe { __isinff(f32::NEG_INFINITY) }, -1);
+    assert_eq!(unsafe { __isinff(1.0) }, 0);
+    assert_eq!(unsafe { __isinff(f32::NAN) }, 0);
+
+    assert_eq!(unsafe { __isnanf(f32::NAN) }, 1);
+    assert_eq!(unsafe { __isnanf(1.0) }, 0);
+
+    assert_eq!(unsafe { __finitef(1.0) }, 1);
+    assert_eq!(unsafe { __finitef(f32::INFINITY) }, 0);
+    assert_eq!(unsafe { __finitef(f32::NAN) }, 0);
+    assert_eq!(unsafe { finitef(1.0) }, 1);
+    assert_eq!(unsafe { finitef(f32::NEG_INFINITY) }, 0);
+    assert_eq!(unsafe { finitef(f32::NAN) }, 0);
+}
+
+// ---------------------------------------------------------------------------
 // __finite aliases (spot checks)
 // ---------------------------------------------------------------------------
 
