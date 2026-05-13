@@ -737,6 +737,24 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Validate a live-measurement p99_delta JSONL row against a
+    /// budget via `tail_stats::validate_p99_delta_against_budget`.
+    /// Emits one p99_delta_validation JSONL record and exits non-zero
+    /// when the row is malformed or the delta fails the budget gate.
+    ValidateP99Delta {
+        /// Input JSONL path: exactly one p99_delta record.
+        #[arg(long)]
+        jsonl: PathBuf,
+        /// Maximum allowed p99 delta in nanoseconds.
+        #[arg(long)]
+        allowed_budget_ns: u64,
+        /// Maximum allowed p99 amplification ratio.
+        #[arg(long)]
+        amplification_threshold: f64,
+        /// Output JSONL path: one p99_delta_validation record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Compute repair-symbol sizing + maximum tolerated loss fraction
     /// via `frankenlibc_membrane::runtime_math::evidence::
     /// {derive_repair_symbol_count_v1, loss_fraction_max_ppm_v1}`
@@ -930,6 +948,103 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+}
+
+type P99DeltaCliError = (String, String);
+
+fn p99_delta_cli_error(kind: &str, message: impl Into<String>) -> P99DeltaCliError {
+    (kind.to_string(), message.into())
+}
+
+fn required_p99_delta_number(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<f64, P99DeltaCliError> {
+    let n = obj
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .ok_or_else(|| {
+            p99_delta_cli_error(
+                "invalid_number",
+                format!("{field} must be a finite JSON number"),
+            )
+        })?;
+    if n.is_finite() {
+        Ok(n)
+    } else {
+        Err(p99_delta_cli_error(
+            "invalid_number",
+            format!("{field} must be finite"),
+        ))
+    }
+}
+
+fn required_p99_delta_bool(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<bool, P99DeltaCliError> {
+    obj.get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| p99_delta_cli_error("invalid_bool", format!("{field} must be a bool")))
+}
+
+fn parse_p99_delta_value(
+    value: &serde_json::Value,
+) -> Result<frankenlibc_harness::tail_stats::P99Delta, P99DeltaCliError> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| p99_delta_cli_error("root", "expected p99_delta JSON object".to_string()))?;
+    if obj.get("kind").and_then(serde_json::Value::as_str) != Some("p99_delta") {
+        return Err(p99_delta_cli_error(
+            "wrong_kind",
+            "record kind must be p99_delta",
+        ));
+    }
+    Ok(frankenlibc_harness::tail_stats::P99Delta {
+        p99_delta_ns: required_p99_delta_number(obj, "p99_delta_ns")?,
+        ci_disjoint: required_p99_delta_bool(obj, "ci_disjoint")?,
+        amplification_ratio: required_p99_delta_number(obj, "amplification_ratio")?,
+        sufficient_samples: required_p99_delta_bool(obj, "sufficient_samples")?,
+    })
+}
+
+fn read_p99_delta_jsonl(path: &Path) -> Result<serde_json::Value, P99DeltaCliError> {
+    let body =
+        std::fs::read_to_string(path).map_err(|e| p99_delta_cli_error("io", e.to_string()))?;
+    let lines = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.len() != 1 {
+        return Err(p99_delta_cli_error(
+            "record_count",
+            format!(
+                "expected exactly one non-empty JSONL record; got {}",
+                lines.len()
+            ),
+        ));
+    }
+    let value = serde_json::from_str::<serde_json::Value>(lines[0])
+        .map_err(|e| p99_delta_cli_error("json", e.to_string()))?;
+    Ok(value)
+}
+
+fn p99_delta_validator_error_kind(
+    err: &frankenlibc_harness::tail_stats::P99DeltaError,
+) -> &'static str {
+    match err {
+        frankenlibc_harness::tail_stats::P99DeltaError::OverBudget => "over_budget",
+        frankenlibc_harness::tail_stats::P99DeltaError::AmplificationAboveThreshold => {
+            "amplification_above_threshold"
+        }
+        frankenlibc_harness::tail_stats::P99DeltaError::InsufficientSamples => {
+            "insufficient_samples"
+        }
+        frankenlibc_harness::tail_stats::P99DeltaError::CiIndistinguishableButOverBudget => {
+            "ci_indistinguishable_but_over_budget"
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -2235,6 +2350,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
                 output.display()
             );
+        }
+        Command::ValidateP99Delta {
+            jsonl,
+            allowed_budget_ns,
+            amplification_threshold,
+            output,
+        } => {
+            use frankenlibc_harness::tail_stats::validate_p99_delta_against_budget;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            let (delta_value, error) =
+                if !amplification_threshold.is_finite() || amplification_threshold <= 0.0 {
+                    (
+                        serde_json::Value::Null,
+                        Some(p99_delta_cli_error(
+                            "invalid_amplification_threshold",
+                            "--amplification-threshold must be finite and > 0",
+                        )),
+                    )
+                } else {
+                    match read_p99_delta_jsonl(&jsonl) {
+                        Err(e) => (serde_json::Value::Null, Some(e)),
+                        Ok(value) => {
+                            let error = match parse_p99_delta_value(&value) {
+                                Err(e) => Some(e),
+                                Ok(delta) => validate_p99_delta_against_budget(
+                                    &delta,
+                                    allowed_budget_ns,
+                                    amplification_threshold,
+                                )
+                                .err()
+                                .map(|err| {
+                                    (
+                                        p99_delta_validator_error_kind(&err).to_string(),
+                                        err.to_string(),
+                                    )
+                                }),
+                            };
+                            (value, error)
+                        }
+                    }
+                };
+
+            let ok = error.is_none();
+            let (error_kind, message) = error
+                .map(|(kind, message)| {
+                    (
+                        serde_json::Value::String(kind),
+                        serde_json::Value::String(message),
+                    )
+                })
+                .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
+            let line = serde_json::json!({
+                "kind": "p99_delta_validation",
+                "input": jsonl.display().to_string(),
+                "allowed_budget_ns": allowed_budget_ns,
+                "amplification_threshold": amplification_threshold,
+                "ok": ok,
+                "error_kind": error_kind,
+                "message": message,
+                "delta": delta_value,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "validate-p99-delta: ok={ok} wrote 1 JSONL record to {}",
+                output.display()
+            );
+            if !ok {
+                return Err(format!(
+                    "validate-p99-delta: rejected {} - see {}",
+                    jsonl.display(),
+                    output.display()
+                )
+                .into());
+            }
         }
         Command::DeriveRepairMath {
             k_source,

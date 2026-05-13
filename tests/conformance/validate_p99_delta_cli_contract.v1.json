@@ -1,0 +1,75 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "validate-p99-delta-cli-contract",
+  "bead": "bd-gfhc9",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "f9ef7aba11c99b2d227ac7bbf22b18a15689f405",
+  "purpose": "Pin the harness binary subcommand that validates a live-measurement p99_delta JSONL row against tail_stats::validate_p99_delta_against_budget. live-measurement already emits a P99Delta row, but CI shell gates previously needed Rust glue to apply the canonical budget validator. This CLI bridge makes the budget check invokable from scripts and rch cargo runs.",
+  "subcommand_name": "validate-p99-delta",
+  "binary_target": "harness",
+  "required_flags": [
+    "--jsonl",
+    "--allowed-budget-ns",
+    "--amplification-threshold",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_harness::tail_stats::validate_p99_delta_against_budget",
+  "input_contract": {
+    "record_count": 1,
+    "record_kind_marker": "p99_delta",
+    "required_fields": [
+      "kind",
+      "p99_delta_ns",
+      "ci_disjoint",
+      "amplification_ratio",
+      "sufficient_samples"
+    ]
+  },
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "p99_delta_validation",
+    "required_fields": [
+      "kind",
+      "input",
+      "allowed_budget_ns",
+      "amplification_threshold",
+      "ok",
+      "error_kind",
+      "message",
+      "delta"
+    ],
+    "error_kind_enum": [
+      "io",
+      "json",
+      "root",
+      "record_count",
+      "wrong_kind",
+      "invalid_number",
+      "invalid_bool",
+      "invalid_amplification_threshold",
+      "over_budget",
+      "amplification_above_threshold",
+      "insufficient_samples",
+      "ci_indistinguishable_but_over_budget"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "ok_true_iff_error_kind_is_null": true,
+    "exit_non_zero_when_ok_false": true,
+    "missing_file_must_fail_closed": true,
+    "wrong_kind_must_fail_closed": true,
+    "invalid_bool_must_fail_closed": true,
+    "invalid_amplification_threshold_must_fail_closed": true,
+    "insufficient_samples_must_fail_closed": true,
+    "over_budget_must_fail_closed": true,
+    "ci_indistinguishable_over_budget_must_fail_closed": true,
+    "amplification_above_threshold_must_fail_closed": true
+  },
+  "summary": {
+    "bead": "bd-gfhc9",
+    "subcommand": "validate-p99-delta",
+    "report_only": true,
+    "claim_status": "in_progress"
+  }
+}
