@@ -737,6 +737,31 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Verify a runtime_evidence.decision.v1 JSONL log against the
+    /// canonical membrane schema + replay-specific invariants
+    /// (freshness, monotone timestamps, valid decision transitions,
+    /// repair evidence, gate expectations) via
+    /// `runtime_evidence_verifier::verify_runtime_evidence_jsonl`.
+    VerifyRuntimeEvidence {
+        /// Path to the runtime evidence JSONL log to verify.
+        #[arg(long)]
+        jsonl: PathBuf,
+        /// 40-char hex SHA every row must match.
+        #[arg(long)]
+        expected_source_commit: String,
+        /// Optional path to a JSON file containing an array of
+        /// expectation objects: [{"symbol":"x","runtime_mode":"y",
+        /// "decision_action":"Allow","denied":false}, ...].
+        #[arg(long)]
+        expectations: Option<PathBuf>,
+        /// When set, an unexpected Deny decision is flagged as a
+        /// failure (default: unexpected denials are tolerated).
+        #[arg(long, default_value_t = false)]
+        deny_unexpected_denials: bool,
+        /// Output JSONL path: one verifier_report record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Drive `concurrency_model_check::check_seqlock` against a given
     /// write_count to exhaustively enumerate all interleavings of the
     /// writer's publication steps and one reader's read attempt,
@@ -2134,6 +2159,91 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
                 output.display()
             );
+        }
+        Command::VerifyRuntimeEvidence {
+            jsonl,
+            expected_source_commit,
+            expectations,
+            deny_unexpected_denials,
+            output,
+        } => {
+            use frankenlibc_harness::runtime_evidence_verifier::{
+                RuntimeEvidenceExpectation, RuntimeEvidenceVerifierConfig,
+                verify_runtime_evidence_jsonl,
+            };
+            if expected_source_commit.is_empty() {
+                return Err("--expected-source-commit must not be empty".into());
+            }
+            let mut config = RuntimeEvidenceVerifierConfig::new(&expected_source_commit);
+            if deny_unexpected_denials {
+                config = config.deny_unexpected_denials();
+            }
+            if let Some(path) = expectations {
+                let body = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("read --expectations {}: {e}", path.display()))?;
+                let v: serde_json::Value = serde_json::from_str(&body)
+                    .map_err(|e| format!("--expectations not JSON: {e}"))?;
+                let arr = v
+                    .as_array()
+                    .ok_or_else(|| "--expectations must be a JSON array".to_string())?;
+                for (i, row) in arr.iter().enumerate() {
+                    let symbol = row
+                        .get("symbol")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            format!("--expectations[{i}] missing string field `symbol`")
+                        })?;
+                    let runtime_mode = row
+                        .get("runtime_mode")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            format!("--expectations[{i}] missing string field `runtime_mode`")
+                        })?;
+                    let decision_action = row
+                        .get("decision_action")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            format!("--expectations[{i}] missing string field `decision_action`")
+                        })?;
+                    let denied = row
+                        .get("denied")
+                        .and_then(serde_json::Value::as_bool)
+                        .ok_or_else(|| {
+                            format!("--expectations[{i}] missing bool field `denied`")
+                        })?;
+                    config = config.with_expectation(RuntimeEvidenceExpectation::new(
+                        symbol,
+                        runtime_mode,
+                        decision_action,
+                        denied,
+                    ));
+                }
+            }
+            let jsonl_body = std::fs::read_to_string(&jsonl)
+                .map_err(|e| format!("read --jsonl {}: {e}", jsonl.display()))?;
+            let report = verify_runtime_evidence_jsonl(&jsonl_body, &config);
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let serialized = serde_json::to_string(&report)
+                .map_err(|e| format!("serialize verifier report: {e}"))?;
+            let mut body = serialized;
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "verify-runtime-evidence: status={} total_rows={} failure_count={}",
+                report.status, report.total_rows, report.failure_count
+            );
+            if !report.passed() {
+                return Err(format!(
+                    "verify-runtime-evidence: {} failure(s) — see {}",
+                    report.failure_count,
+                    output.display()
+                )
+                .into());
+            }
         }
         Command::SeqlockModelCheck {
             write_count,

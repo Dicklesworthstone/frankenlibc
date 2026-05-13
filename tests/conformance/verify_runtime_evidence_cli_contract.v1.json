@@ -1,0 +1,57 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "verify-runtime-evidence-cli-contract",
+  "bead": "bd-5mczh",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "c2cc3523a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes runtime_evidence_verifier::verify_runtime_evidence_jsonl as a standalone CLI. The lib API is the canonical replay-gate verifier: it consumes runtime_evidence.decision.v1 JSONL rows emitted by the membrane evidence log, applies the membrane-owned schema, then enforces replay-specific invariants (freshness, monotone timestamps, valid decision transitions, repair evidence, gate expectations). Previously reachable only from Rust callers; the CLI bridge lets CI run replay-gate verification without linking to the crate.",
+  "subcommand_name": "verify-runtime-evidence",
+  "binary_target": "harness",
+  "required_flags": [
+    "--jsonl",
+    "--expected-source-commit",
+    "--output"
+  ],
+  "optional_flags": [
+    "--expectations",
+    "--deny-unexpected-denials"
+  ],
+  "underlying_lib_function": "frankenlibc_harness::runtime_evidence_verifier::verify_runtime_evidence_jsonl",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_schema_marker": "runtime_evidence_verifier.v1",
+    "required_fields": [
+      "schema",
+      "status",
+      "expected_source_commit",
+      "total_rows",
+      "failure_count",
+      "observed_expectations",
+      "failures"
+    ],
+    "status_enum": [
+      "pass",
+      "fail"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "status_pass_iff_failure_count_zero": true,
+    "exit_non_zero_when_status_fail": true,
+    "fail_closed_when_expected_source_commit_blank": true,
+    "output_schema_must_be_runtime_evidence_verifier_v1": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_output_schema",
+    "status_pass_with_nonzero_failures",
+    "status_fail_with_zero_failures",
+    "empty_expected_source_commit_accepted"
+  ],
+  "summary": {
+    "bead": "bd-5mczh",
+    "subcommand": "verify-runtime-evidence",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
