@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "fortify/checked-wrapper",
+  "captured_at": "2026-05-13T16:55:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-fortify-bounds wave-01 checked-wrapper, object-size, diagnostic abort, and bounded stdio symbols using classified positive and negative behavior without recording raw buffer addresses, FILE pointers, filesystem paths, stdout bytes, stderr bytes, fd numbers, allocated pointer values, locale text, process ids, or wall-clock timing.",
+  "spec_reference": "GNU _FORTIFY_SOURCE checked-wrapper object-size semantics for __asprintf_chk, __chk_fail, __confstr_chk, __dprintf_chk, __explicit_bzero_chk, __fdelt_chk, __fgets_chk, __fgets_unlocked_chk, __fgetws_chk, __fgetws_unlocked_chk, __fortify_fail, and __fprintf_chk",
+  "campaign": {
+    "bead": "bd-r5k32.8",
+    "campaign_id": "fcq-fortify-bounds",
+    "wave_id": "wave-01-fortify-checked-wrapper-bounds",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture",
+    "first_wave_symbols": [
+      "__asprintf_chk",
+      "__chk_fail",
+      "__confstr_chk",
+      "__dprintf_chk",
+      "__explicit_bzero_chk",
+      "__fdelt_chk",
+      "__fgets_chk",
+      "__fgets_unlocked_chk",
+      "__fgetws_chk",
+      "__fgetws_unlocked_chk",
+      "__fortify_fail",
+      "__fprintf_chk"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "__asprintf_chk_literal_allocates_strict",
+      "function": "__asprintf_chk",
+      "spec_section": "GNU asprintf checked wrapper delegates to vasprintf for safe literal format",
+      "inputs": {
+        "symbol": "__asprintf_chk",
+        "scenario": "literal_format_allocates_without_pointer_capture",
+        "expected": "ASPRINTF_LITERAL_ALLOCATED_TEXT_OK",
+        "oracle_source": "FrankenLibC fortify_abi::__asprintf_chk classified allocation replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__asprintf_chk;mode=strict;expected=ASPRINTF_LITERAL_ALLOCATED_TEXT_OK;actual=ASPRINTF_LITERAL_ALLOCATED_TEXT_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__asprintf_chk_literal_allocates_hardened",
+      "function": "__asprintf_chk",
+      "spec_section": "GNU asprintf checked wrapper delegates to vasprintf for safe literal format",
+      "inputs": {
+        "symbol": "__asprintf_chk",
+        "scenario": "literal_format_allocates_without_pointer_capture",
+        "expected": "ASPRINTF_LITERAL_ALLOCATED_TEXT_OK",
+        "oracle_source": "FrankenLibC fortify_abi::__asprintf_chk classified allocation replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__asprintf_chk;mode=hardened;expected=ASPRINTF_LITERAL_ALLOCATED_TEXT_OK;actual=ASPRINTF_LITERAL_ALLOCATED_TEXT_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__chk_fail_aborts_strict",
+      "function": "__chk_fail",
+      "spec_section": "GNU fortify check failure terminates by abort signal",
+      "inputs": {
+        "symbol": "__chk_fail",
+        "scenario": "fork_isolated_chk_fail_abort_without_stderr_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__chk_fail fork/wait classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__chk_fail;mode=strict;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__chk_fail_aborts_hardened",
+      "function": "__chk_fail",
+      "spec_section": "GNU fortify check failure terminates by abort signal",
+      "inputs": {
+        "symbol": "__chk_fail",
+        "scenario": "fork_isolated_chk_fail_abort_without_stderr_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__chk_fail fork/wait classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__chk_fail;mode=hardened;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__confstr_chk_len_query_strict",
+      "function": "__confstr_chk",
+      "spec_section": "POSIX confstr checked wrapper permits zero-length query",
+      "inputs": {
+        "symbol": "__confstr_chk",
+        "scenario": "path_length_query_without_path_capture",
+        "expected": "CONFSTR_PATH_LEN_POSITIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__confstr_chk length-class replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__confstr_chk;mode=strict;expected=CONFSTR_PATH_LEN_POSITIVE;actual=CONFSTR_PATH_LEN_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__confstr_chk_len_query_hardened",
+      "function": "__confstr_chk",
+      "spec_section": "POSIX confstr checked wrapper permits zero-length query",
+      "inputs": {
+        "symbol": "__confstr_chk",
+        "scenario": "path_length_query_without_path_capture",
+        "expected": "CONFSTR_PATH_LEN_POSITIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__confstr_chk length-class replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__confstr_chk;mode=hardened;expected=CONFSTR_PATH_LEN_POSITIVE;actual=CONFSTR_PATH_LEN_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__dprintf_chk_bad_fd_strict",
+      "function": "__dprintf_chk",
+      "spec_section": "GNU dprintf checked wrapper propagates bad-fd failure without output capture",
+      "inputs": {
+        "symbol": "__dprintf_chk",
+        "scenario": "bad_fd_literal_format_without_fd_or_output_capture",
+        "expected": "DPRINTF_BAD_FD_RC_-1",
+        "oracle_source": "FrankenLibC fortify_abi::__dprintf_chk bad-fd classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__dprintf_chk;mode=strict;expected=DPRINTF_BAD_FD_RC_-1;actual=DPRINTF_BAD_FD_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__dprintf_chk_bad_fd_hardened",
+      "function": "__dprintf_chk",
+      "spec_section": "GNU dprintf checked wrapper propagates bad-fd failure without output capture",
+      "inputs": {
+        "symbol": "__dprintf_chk",
+        "scenario": "bad_fd_literal_format_without_fd_or_output_capture",
+        "expected": "DPRINTF_BAD_FD_RC_-1",
+        "oracle_source": "FrankenLibC fortify_abi::__dprintf_chk bad-fd classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__dprintf_chk;mode=hardened;expected=DPRINTF_BAD_FD_RC_-1;actual=DPRINTF_BAD_FD_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__explicit_bzero_chk_zeroes_buffer_strict",
+      "function": "__explicit_bzero_chk",
+      "spec_section": "GNU explicit_bzero checked wrapper clears in-bounds buffer",
+      "inputs": {
+        "symbol": "__explicit_bzero_chk",
+        "scenario": "in_bounds_zeroing_without_buffer_address_capture",
+        "expected": "EXPLICIT_BZERO_ZEROED_4",
+        "oracle_source": "FrankenLibC fortify_abi::__explicit_bzero_chk in-bounds replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__explicit_bzero_chk;mode=strict;expected=EXPLICIT_BZERO_ZEROED_4;actual=EXPLICIT_BZERO_ZEROED_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__explicit_bzero_chk_zeroes_buffer_hardened",
+      "function": "__explicit_bzero_chk",
+      "spec_section": "GNU explicit_bzero checked wrapper clears in-bounds buffer",
+      "inputs": {
+        "symbol": "__explicit_bzero_chk",
+        "scenario": "in_bounds_zeroing_without_buffer_address_capture",
+        "expected": "EXPLICIT_BZERO_ZEROED_4",
+        "oracle_source": "FrankenLibC fortify_abi::__explicit_bzero_chk in-bounds replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__explicit_bzero_chk;mode=hardened;expected=EXPLICIT_BZERO_ZEROED_4;actual=EXPLICIT_BZERO_ZEROED_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__fdelt_chk_zero_index_strict",
+      "function": "__fdelt_chk",
+      "spec_section": "GNU fd-set checked wrapper accepts descriptor zero index",
+      "inputs": {
+        "symbol": "__fdelt_chk",
+        "scenario": "descriptor_zero_word_index_without_fd_set_capture",
+        "expected": "FDELT_ZERO_INDEX_0",
+        "oracle_source": "FrankenLibC fortify_abi::__fdelt_chk in-range classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fdelt_chk;mode=strict;expected=FDELT_ZERO_INDEX_0;actual=FDELT_ZERO_INDEX_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__fdelt_chk_zero_index_hardened",
+      "function": "__fdelt_chk",
+      "spec_section": "GNU fd-set checked wrapper accepts descriptor zero index",
+      "inputs": {
+        "symbol": "__fdelt_chk",
+        "scenario": "descriptor_zero_word_index_without_fd_set_capture",
+        "expected": "FDELT_ZERO_INDEX_0",
+        "oracle_source": "FrankenLibC fortify_abi::__fdelt_chk in-range classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fdelt_chk;mode=hardened;expected=FDELT_ZERO_INDEX_0;actual=FDELT_ZERO_INDEX_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__fgets_chk_reads_bounded_strict",
+      "function": "__fgets_chk",
+      "spec_section": "GNU fgets checked wrapper allows bounded in-memory stream read",
+      "inputs": {
+        "symbol": "__fgets_chk",
+        "scenario": "bounded_memory_stream_read_without_file_or_stdout_capture",
+        "expected": "FGETS_READ_ABC",
+        "oracle_source": "FrankenLibC fortify_abi::__fgets_chk bounded fmemopen replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fgets_chk;mode=strict;expected=FGETS_READ_ABC;actual=FGETS_READ_ABC;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__fgets_chk_reads_bounded_hardened",
+      "function": "__fgets_chk",
+      "spec_section": "GNU fgets checked wrapper allows bounded in-memory stream read",
+      "inputs": {
+        "symbol": "__fgets_chk",
+        "scenario": "bounded_memory_stream_read_without_file_or_stdout_capture",
+        "expected": "FGETS_READ_ABC",
+        "oracle_source": "FrankenLibC fortify_abi::__fgets_chk bounded fmemopen replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fgets_chk;mode=hardened;expected=FGETS_READ_ABC;actual=FGETS_READ_ABC;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__fgets_unlocked_chk_reads_bounded_strict",
+      "function": "__fgets_unlocked_chk",
+      "spec_section": "GNU fgets_unlocked checked wrapper allows bounded in-memory stream read",
+      "inputs": {
+        "symbol": "__fgets_unlocked_chk",
+        "scenario": "bounded_memory_stream_read_without_file_or_stdout_capture",
+        "expected": "FGETS_READ_ABC",
+        "oracle_source": "FrankenLibC fortify_abi::__fgets_unlocked_chk bounded fmemopen replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fgets_unlocked_chk;mode=strict;expected=FGETS_READ_ABC;actual=FGETS_READ_ABC;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__fgets_unlocked_chk_reads_bounded_hardened",
+      "function": "__fgets_unlocked_chk",
+      "spec_section": "GNU fgets_unlocked checked wrapper allows bounded in-memory stream read",
+      "inputs": {
+        "symbol": "__fgets_unlocked_chk",
+        "scenario": "bounded_memory_stream_read_without_file_or_stdout_capture",
+        "expected": "FGETS_READ_ABC",
+        "oracle_source": "FrankenLibC fortify_abi::__fgets_unlocked_chk bounded fmemopen replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fgets_unlocked_chk;mode=hardened;expected=FGETS_READ_ABC;actual=FGETS_READ_ABC;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__fgetws_chk_overflow_aborts_strict",
+      "function": "__fgetws_chk",
+      "spec_section": "GNU fgetws checked wrapper aborts when requested wide bytes exceed object size",
+      "inputs": {
+        "symbol": "__fgetws_chk",
+        "scenario": "wide_request_exceeds_destlen_abort_without_stream_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__fgetws_chk object-size abort classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fgetws_chk;mode=strict;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__fgetws_chk_overflow_aborts_hardened",
+      "function": "__fgetws_chk",
+      "spec_section": "GNU fgetws checked wrapper aborts when requested wide bytes exceed object size",
+      "inputs": {
+        "symbol": "__fgetws_chk",
+        "scenario": "wide_request_exceeds_destlen_abort_without_stream_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__fgetws_chk object-size abort classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fgetws_chk;mode=hardened;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__fgetws_unlocked_chk_overflow_aborts_strict",
+      "function": "__fgetws_unlocked_chk",
+      "spec_section": "GNU fgetws_unlocked checked wrapper aborts when requested wide bytes exceed object size",
+      "inputs": {
+        "symbol": "__fgetws_unlocked_chk",
+        "scenario": "wide_request_exceeds_destlen_abort_without_stream_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__fgetws_unlocked_chk object-size abort classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fgetws_unlocked_chk;mode=strict;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__fgetws_unlocked_chk_overflow_aborts_hardened",
+      "function": "__fgetws_unlocked_chk",
+      "spec_section": "GNU fgetws_unlocked checked wrapper aborts when requested wide bytes exceed object size",
+      "inputs": {
+        "symbol": "__fgetws_unlocked_chk",
+        "scenario": "wide_request_exceeds_destlen_abort_without_stream_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__fgetws_unlocked_chk object-size abort classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fgetws_unlocked_chk;mode=hardened;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__fortify_fail_aborts_strict",
+      "function": "__fortify_fail",
+      "spec_section": "GNU fortify diagnostic failure terminates by abort signal",
+      "inputs": {
+        "symbol": "__fortify_fail",
+        "scenario": "fork_isolated_fortify_fail_abort_without_stderr_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__fortify_fail fork/wait classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fortify_fail;mode=strict;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__fortify_fail_aborts_hardened",
+      "function": "__fortify_fail",
+      "spec_section": "GNU fortify diagnostic failure terminates by abort signal",
+      "inputs": {
+        "symbol": "__fortify_fail",
+        "scenario": "fork_isolated_fortify_fail_abort_without_stderr_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__fortify_fail fork/wait classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fortify_fail;mode=hardened;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__fprintf_chk_tmpfile_write_strict",
+      "function": "__fprintf_chk",
+      "spec_section": "GNU fprintf checked wrapper writes safe literal format to controlled stream",
+      "inputs": {
+        "symbol": "__fprintf_chk",
+        "scenario": "tmpfile_literal_format_without_path_or_output_capture",
+        "expected": "FPRINTF_TMPFILE_WRITE_RC_POSITIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__fprintf_chk tmpfile write classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fprintf_chk;mode=strict;expected=FPRINTF_TMPFILE_WRITE_RC_POSITIVE;actual=FPRINTF_TMPFILE_WRITE_RC_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__fprintf_chk_tmpfile_write_hardened",
+      "function": "__fprintf_chk",
+      "spec_section": "GNU fprintf checked wrapper writes safe literal format to controlled stream",
+      "inputs": {
+        "symbol": "__fprintf_chk",
+        "scenario": "tmpfile_literal_format_without_path_or_output_capture",
+        "expected": "FPRINTF_TMPFILE_WRITE_RC_POSITIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__fprintf_chk tmpfile write classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fprintf_chk;mode=hardened;expected=FPRINTF_TMPFILE_WRITE_RC_POSITIVE;actual=FPRINTF_TMPFILE_WRITE_RC_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

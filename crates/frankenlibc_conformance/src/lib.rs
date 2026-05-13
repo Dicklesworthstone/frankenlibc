@@ -1086,6 +1086,19 @@ pub fn execute_fixture_case(
         }
         "poll" => execute_poll_case(inputs, mode),
         "select" => execute_select_case(inputs, mode),
+        // fortify checked wrappers
+        "__asprintf_chk"
+        | "__chk_fail"
+        | "__confstr_chk"
+        | "__dprintf_chk"
+        | "__explicit_bzero_chk"
+        | "__fdelt_chk"
+        | "__fgets_chk"
+        | "__fgets_unlocked_chk"
+        | "__fgetws_chk"
+        | "__fgetws_unlocked_chk"
+        | "__fortify_fail"
+        | "__fprintf_chk" => execute_fortify_checked_wrapper_wave01_case(function, inputs, mode),
         // signal ops
         "raise" => execute_raise_case(inputs, mode),
         "signal" => execute_signal_case(inputs, mode),
@@ -22244,6 +22257,247 @@ fn execute_posix_spawn_case(
     Ok(non_host_execution(result.to_string()))
 }
 
+fn execute_fortify_checked_wrapper_wave01_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "fortify checked-wrapper wave01 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = fortify_checked_wrapper_wave01_actual(function, inputs)?;
+    Ok(non_host_execution(fortify_checked_wrapper_wave01_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn fortify_checked_wrapper_wave01_log(
+    symbol: &str,
+    mode: &str,
+    expected: &str,
+    actual: &str,
+) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn fortify_checked_wrapper_wave01_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    let scenario = parse_string(inputs, "scenario")?;
+    match (function, scenario.as_str()) {
+        ("__asprintf_chk", "literal_format_allocates_without_pointer_capture") => {
+            fortify_asprintf_literal_actual()
+        }
+        ("__chk_fail", "fork_isolated_chk_fail_abort_without_stderr_capture") => {
+            Ok(fortify_classify_abort_signal(|| unsafe {
+                frankenlibc_abi::fortify_abi::__chk_fail();
+            }))
+        }
+        ("__confstr_chk", "path_length_query_without_path_capture") => fortify_confstr_len_actual(),
+        ("__dprintf_chk", "bad_fd_literal_format_without_fd_or_output_capture") => {
+            fortify_dprintf_bad_fd_actual()
+        }
+        ("__explicit_bzero_chk", "in_bounds_zeroing_without_buffer_address_capture") => {
+            Ok(fortify_explicit_bzero_actual())
+        }
+        ("__fdelt_chk", "descriptor_zero_word_index_without_fd_set_capture") => {
+            Ok(fortify_fdelt_zero_actual())
+        }
+        (
+            "__fgets_chk" | "__fgets_unlocked_chk",
+            "bounded_memory_stream_read_without_file_or_stdout_capture",
+        ) => fortify_fgets_actual(function),
+        ("__fgetws_chk", "wide_request_exceeds_destlen_abort_without_stream_capture") => {
+            Ok(fortify_classify_abort_signal(|| unsafe {
+                frankenlibc_abi::fortify_abi::__fgetws_chk(
+                    std::ptr::null_mut::<c_int>(),
+                    4,
+                    2,
+                    std::ptr::null_mut(),
+                );
+            }))
+        }
+        ("__fgetws_unlocked_chk", "wide_request_exceeds_destlen_abort_without_stream_capture") => {
+            Ok(fortify_classify_abort_signal(|| unsafe {
+                frankenlibc_abi::fortify_abi::__fgetws_unlocked_chk(
+                    std::ptr::null_mut::<c_int>(),
+                    4,
+                    2,
+                    std::ptr::null_mut(),
+                );
+            }))
+        }
+        ("__fortify_fail", "fork_isolated_fortify_fail_abort_without_stderr_capture") => {
+            let message = CString::new("fortify fixture")
+                .map_err(|_| "fortify failure message contains NUL".to_string())?;
+            Ok(fortify_classify_abort_signal(move || unsafe {
+                frankenlibc_abi::fortify_abi::__fortify_fail(message.as_ptr());
+            }))
+        }
+        ("__fprintf_chk", "tmpfile_literal_format_without_path_or_output_capture") => {
+            fortify_fprintf_tmpfile_actual()
+        }
+        _ => Err(format!(
+            "unsupported fortify checked-wrapper wave01 fixture: function={function}, scenario={scenario}"
+        )),
+    }
+}
+
+fn fortify_classify_abort_signal<F>(action: F) -> String
+where
+    F: FnOnce(),
+{
+    let child = unsafe { libc::fork() };
+    if child == 0 {
+        action();
+        unsafe { libc::_exit(0) };
+    }
+    if child < 0 {
+        return String::from("ABORT_FORK_FAILED");
+    }
+
+    let mut wait_status = 0;
+    let waited = unsafe { libc::waitpid(child, &mut wait_status, 0) };
+    if waited != child {
+        return format!("ABORT_WAITPID_RC_{waited}");
+    }
+    if libc::WIFSIGNALED(wait_status) && libc::WTERMSIG(wait_status) == libc::SIGABRT {
+        return String::from("ABORT_SIGNAL_SIGABRT");
+    }
+    if libc::WIFSIGNALED(wait_status) {
+        return String::from("ABORT_SIGNAL_OTHER");
+    }
+    if libc::WIFEXITED(wait_status) {
+        return format!("ABORT_EXIT_{}", libc::WEXITSTATUS(wait_status));
+    }
+    String::from("ABORT_UNKNOWN_STATUS")
+}
+
+fn fortify_asprintf_literal_actual() -> Result<String, String> {
+    let fmt = CString::new("fortify-wave")
+        .map_err(|_| "__asprintf_chk literal contains NUL".to_string())?;
+    let mut out: *mut c_char = std::ptr::null_mut();
+    let rc = unsafe { frankenlibc_abi::fortify_abi::__asprintf_chk(&mut out, 0, fmt.as_ptr()) };
+    if rc < 0 || out.is_null() {
+        return Ok(format!("ASPRINTF_RC_{rc}"));
+    }
+    let rendered = unsafe { CStr::from_ptr(out) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { libc::free(out.cast()) };
+    if rendered == "fortify-wave" {
+        Ok(String::from("ASPRINTF_LITERAL_ALLOCATED_TEXT_OK"))
+    } else {
+        Ok(String::from("ASPRINTF_LITERAL_ALLOCATED_TEXT_OTHER"))
+    }
+}
+
+fn fortify_confstr_len_actual() -> Result<String, String> {
+    let len = unsafe { frankenlibc_abi::fortify_abi::__confstr_chk(0, std::ptr::null_mut(), 0, 0) };
+    if len > 0 {
+        Ok(String::from("CONFSTR_PATH_LEN_POSITIVE"))
+    } else {
+        Ok(String::from("CONFSTR_PATH_LEN_ZERO"))
+    }
+}
+
+fn fortify_dprintf_bad_fd_actual() -> Result<String, String> {
+    let fmt =
+        CString::new("fortify-wave").map_err(|_| "__dprintf_chk fmt contains NUL".to_string())?;
+    let rc = unsafe { frankenlibc_abi::fortify_abi::__dprintf_chk(-1, 0, fmt.as_ptr()) };
+    Ok(format!("DPRINTF_BAD_FD_RC_{rc}"))
+}
+
+fn fortify_explicit_bzero_actual() -> String {
+    let mut bytes = [1u8, 2, 3, 4];
+    unsafe {
+        frankenlibc_abi::fortify_abi::__explicit_bzero_chk(
+            bytes.as_mut_ptr().cast(),
+            bytes.len(),
+            bytes.len(),
+        );
+    }
+    if bytes == [0, 0, 0, 0] {
+        String::from("EXPLICIT_BZERO_ZEROED_4")
+    } else {
+        String::from("EXPLICIT_BZERO_NOT_ZEROED")
+    }
+}
+
+fn fortify_fdelt_zero_actual() -> String {
+    let idx = unsafe { frankenlibc_abi::fortify_abi::__fdelt_chk(0) };
+    format!("FDELT_ZERO_INDEX_{idx}")
+}
+
+fn fortify_fgets_actual(function: &str) -> Result<String, String> {
+    let mut input = *b"abc\n";
+    let mode = CString::new("r").map_err(|_| "fmemopen mode contains NUL".to_string())?;
+    let stream =
+        unsafe { libc::fmemopen(input.as_mut_ptr().cast(), input.len(), mode.as_ptr().cast()) };
+    if stream.is_null() {
+        return Ok(String::from("FGETS_STREAM_UNAVAILABLE"));
+    }
+
+    let mut buf = [0 as c_char; 8];
+    let ptr = match function {
+        "__fgets_chk" => unsafe {
+            frankenlibc_abi::fortify_abi::__fgets_chk(buf.as_mut_ptr(), buf.len(), 4, stream.cast())
+        },
+        "__fgets_unlocked_chk" => unsafe {
+            frankenlibc_abi::fortify_abi::__fgets_unlocked_chk(
+                buf.as_mut_ptr(),
+                buf.len(),
+                4,
+                stream.cast(),
+            )
+        },
+        _ => unreachable!("validated fgets fortify function"),
+    };
+    unsafe {
+        libc::fclose(stream);
+    }
+    if ptr.is_null() {
+        return Ok(String::from("FGETS_NULL"));
+    }
+    let rendered = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy();
+    if rendered == "abc" {
+        Ok(String::from("FGETS_READ_ABC"))
+    } else {
+        Ok(String::from("FGETS_READ_OTHER"))
+    }
+}
+
+fn fortify_fprintf_tmpfile_actual() -> Result<String, String> {
+    let fmt =
+        CString::new("fortify-wave").map_err(|_| "__fprintf_chk fmt contains NUL".to_string())?;
+    let stream = unsafe { libc::tmpfile() };
+    if stream.is_null() {
+        return Ok(String::from("FPRINTF_TMPFILE_UNAVAILABLE"));
+    }
+    let rc = unsafe { frankenlibc_abi::fortify_abi::__fprintf_chk(stream.cast(), 0, fmt.as_ptr()) };
+    unsafe {
+        libc::fclose(stream);
+    }
+    if rc > 0 {
+        Ok(String::from("FPRINTF_TMPFILE_WRITE_RC_POSITIVE"))
+    } else {
+        Ok(format!("FPRINTF_TMPFILE_WRITE_RC_{rc}"))
+    }
+}
+
 fn execute_process_spawn_wave01_case(
     function: &str,
     inputs: &serde_json::Value,
@@ -24630,6 +24884,48 @@ mod tests {
         let raw = include_str!("../../../tests/conformance/fixtures/process_spawn_wave01.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("process/spawn wave01 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn fortify_checked_wrapper_wave01_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/fortify_checked_wrapper_wave01.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("fortify checked-wrapper wave01 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

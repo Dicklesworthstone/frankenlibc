@@ -284,26 +284,26 @@
     },
     {
       "campaign_id": "fcq-fortify-bounds",
-      "current_coverage_pct": 0.0,
+      "current_coverage_pct": 15.38,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 15.38,
+      "expected_coverage_after_first_wave_pct": 30.77,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "__asprintf_chk",
-        "__chk_fail",
-        "__confstr_chk",
-        "__dprintf_chk",
-        "__explicit_bzero_chk",
-        "__fdelt_chk",
-        "__fgets_chk",
-        "__fgets_unlocked_chk",
-        "__fgetws_chk",
-        "__fgetws_unlocked_chk",
-        "__fortify_fail",
-        "__fprintf_chk"
+        "__fread_chk",
+        "__fread_unlocked_chk",
+        "__fwprintf_chk",
+        "__getcwd_chk",
+        "__getdomainname_chk",
+        "__getgroups_chk",
+        "__gethostname_chk",
+        "__getlogin_r_chk",
+        "__gets_chk",
+        "__getwd_chk",
+        "__longjmp_chk",
+        "__mbsnrtowcs_chk"
       ],
       "module": "fortify_abi",
       "next_step": "Add positive and negative checked-wrapper fixtures before fortify safety claims expand.",
@@ -316,20 +316,20 @@
         "hardened_repair"
       ],
       "scores": {
-        "coverage_gap_score": 78,
+        "coverage_gap_score": 66,
         "feature_gap_risk_score": 0,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 4,
         "parity_risk_score": 5,
-        "priority_score": 2078,
+        "priority_score": 2066,
         "semantic_risk_score": 0,
         "workload_risk_score": 4
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "__*_chk fortified wrappers, object-size behavior, and deny/repair diagnostics",
-      "target_covered": 0,
+      "target_covered": 12,
       "target_total": 78,
-      "target_uncovered": 78,
+      "target_uncovered": 66,
       "title": "fortify and checked-variant fixture wave",
       "workload_domains": [
         "performance_sensitive",
@@ -1026,7 +1026,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3260,
+    "all_uncovered_target_symbols": 3248,
     "campaign_count": 12,
     "covered_modules": [
       "fortify_abi",
@@ -1059,7 +1059,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2906,
+    "selected_target_uncovered_symbols": 2894,
     "total_first_wave_fixture_count": 140
   }
 }
