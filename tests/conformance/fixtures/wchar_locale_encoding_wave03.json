@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "wchar/locale-encoding",
+  "captured_at": "2026-05-13T23:44:07Z",
+  "description": "Deterministic strict/hardened C/POSIX locale classification and case-mapping fixture evidence for the fcq-wchar-locale-encoding wave-03 wide classification, ASCII case conversion, invalid-codepoint, high-bit toascii, and invalid descriptor surfaces using classified outputs without recording raw locale handles, wide-buffer addresses, FILE pointers, filesystem paths, stdout bytes, stderr bytes, fd numbers, process ids, argv/envp values, or wall-clock timing.",
+  "spec_reference": "GNU and POSIX wide-character locale-sensitive C/POSIX classification and case-mapping semantics for __iswlower_l, __iswprint_l, __iswpunct_l, __iswspace_l, __iswupper_l, __iswxdigit_l, __toascii_l, __tolower_l, __toupper_l, __towctrans_l, __towlower_l, and __towupper_l",
+  "campaign": {
+    "bead": "bd-gmbqy.5",
+    "campaign_id": "fcq-wchar-locale-encoding",
+    "wave_id": "wave-03-wchar-locale-classification",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture",
+    "first_wave_symbols": [
+      "__iswlower_l",
+      "__iswprint_l",
+      "__iswpunct_l",
+      "__iswspace_l",
+      "__iswupper_l",
+      "__iswxdigit_l",
+      "__toascii_l",
+      "__tolower_l",
+      "__toupper_l",
+      "__towctrans_l",
+      "__towlower_l",
+      "__towupper_l"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "__iswlower_l_ascii_lower_strict",
+      "function": "__iswlower_l",
+      "spec_section": "POSIX C locale wide lower classification accepts ASCII lowercase without locale capture",
+      "inputs": {
+        "symbol": "__iswlower_l",
+        "scenario": "c_locale_lower_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswlower_l classified C-locale replay",
+        "expected": "ISWLOWER_L_z_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswlower_l;mode=strict;expected=ISWLOWER_L_z_TRUE;actual=ISWLOWER_L_z_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswlower_l_ascii_lower_hardened",
+      "function": "__iswlower_l",
+      "spec_section": "POSIX C locale wide lower classification accepts ASCII lowercase without locale capture",
+      "inputs": {
+        "symbol": "__iswlower_l",
+        "scenario": "c_locale_lower_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswlower_l classified C-locale replay",
+        "expected": "ISWLOWER_L_z_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswlower_l;mode=hardened;expected=ISWLOWER_L_z_TRUE;actual=ISWLOWER_L_z_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswprint_l_invalid_codepoint_strict",
+      "function": "__iswprint_l",
+      "spec_section": "POSIX C locale wide print classification rejects invalid scalar values without locale capture",
+      "inputs": {
+        "symbol": "__iswprint_l",
+        "scenario": "c_locale_print_invalid_codepoint_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswprint_l invalid-codepoint classified replay",
+        "expected": "ISWPRINT_L_INVALID_CODEPOINT_FALSE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswprint_l;mode=strict;expected=ISWPRINT_L_INVALID_CODEPOINT_FALSE;actual=ISWPRINT_L_INVALID_CODEPOINT_FALSE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswprint_l_invalid_codepoint_hardened",
+      "function": "__iswprint_l",
+      "spec_section": "POSIX C locale wide print classification rejects invalid scalar values without locale capture",
+      "inputs": {
+        "symbol": "__iswprint_l",
+        "scenario": "c_locale_print_invalid_codepoint_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswprint_l invalid-codepoint classified replay",
+        "expected": "ISWPRINT_L_INVALID_CODEPOINT_FALSE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswprint_l;mode=hardened;expected=ISWPRINT_L_INVALID_CODEPOINT_FALSE;actual=ISWPRINT_L_INVALID_CODEPOINT_FALSE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswpunct_l_bang_punct_strict",
+      "function": "__iswpunct_l",
+      "spec_section": "POSIX C locale wide punct classification accepts ASCII punctuation without locale capture",
+      "inputs": {
+        "symbol": "__iswpunct_l",
+        "scenario": "c_locale_punct_bang_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswpunct_l classified C-locale replay",
+        "expected": "ISWPUNCT_L_BANG_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswpunct_l;mode=strict;expected=ISWPUNCT_L_BANG_TRUE;actual=ISWPUNCT_L_BANG_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswpunct_l_bang_punct_hardened",
+      "function": "__iswpunct_l",
+      "spec_section": "POSIX C locale wide punct classification accepts ASCII punctuation without locale capture",
+      "inputs": {
+        "symbol": "__iswpunct_l",
+        "scenario": "c_locale_punct_bang_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswpunct_l classified C-locale replay",
+        "expected": "ISWPUNCT_L_BANG_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswpunct_l;mode=hardened;expected=ISWPUNCT_L_BANG_TRUE;actual=ISWPUNCT_L_BANG_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswspace_l_newline_space_strict",
+      "function": "__iswspace_l",
+      "spec_section": "POSIX C locale wide space classification accepts newline without locale capture",
+      "inputs": {
+        "symbol": "__iswspace_l",
+        "scenario": "c_locale_space_newline_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswspace_l classified C-locale replay",
+        "expected": "ISWSPACE_L_NEWLINE_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswspace_l;mode=strict;expected=ISWSPACE_L_NEWLINE_TRUE;actual=ISWSPACE_L_NEWLINE_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswspace_l_newline_space_hardened",
+      "function": "__iswspace_l",
+      "spec_section": "POSIX C locale wide space classification accepts newline without locale capture",
+      "inputs": {
+        "symbol": "__iswspace_l",
+        "scenario": "c_locale_space_newline_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswspace_l classified C-locale replay",
+        "expected": "ISWSPACE_L_NEWLINE_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswspace_l;mode=hardened;expected=ISWSPACE_L_NEWLINE_TRUE;actual=ISWSPACE_L_NEWLINE_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswupper_l_ascii_upper_strict",
+      "function": "__iswupper_l",
+      "spec_section": "POSIX C locale wide upper classification accepts ASCII uppercase without locale capture",
+      "inputs": {
+        "symbol": "__iswupper_l",
+        "scenario": "c_locale_upper_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswupper_l classified C-locale replay",
+        "expected": "ISWUPPER_L_Z_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswupper_l;mode=strict;expected=ISWUPPER_L_Z_TRUE;actual=ISWUPPER_L_Z_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswupper_l_ascii_upper_hardened",
+      "function": "__iswupper_l",
+      "spec_section": "POSIX C locale wide upper classification accepts ASCII uppercase without locale capture",
+      "inputs": {
+        "symbol": "__iswupper_l",
+        "scenario": "c_locale_upper_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswupper_l classified C-locale replay",
+        "expected": "ISWUPPER_L_Z_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswupper_l;mode=hardened;expected=ISWUPPER_L_Z_TRUE;actual=ISWUPPER_L_Z_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswxdigit_l_upper_hex_strict",
+      "function": "__iswxdigit_l",
+      "spec_section": "POSIX C locale wide hexadecimal classification accepts ASCII uppercase hex without locale capture",
+      "inputs": {
+        "symbol": "__iswxdigit_l",
+        "scenario": "c_locale_xdigit_upper_hex_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswxdigit_l classified C-locale replay",
+        "expected": "ISWXDIGIT_L_F_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswxdigit_l;mode=strict;expected=ISWXDIGIT_L_F_TRUE;actual=ISWXDIGIT_L_F_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswxdigit_l_upper_hex_hardened",
+      "function": "__iswxdigit_l",
+      "spec_section": "POSIX C locale wide hexadecimal classification accepts ASCII uppercase hex without locale capture",
+      "inputs": {
+        "symbol": "__iswxdigit_l",
+        "scenario": "c_locale_xdigit_upper_hex_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswxdigit_l classified C-locale replay",
+        "expected": "ISWXDIGIT_L_F_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswxdigit_l;mode=hardened;expected=ISWXDIGIT_L_F_TRUE;actual=ISWXDIGIT_L_F_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__toascii_l_high_bits_strict",
+      "function": "__toascii_l",
+      "spec_section": "GNU C locale toascii masks high bits without locale capture",
+      "inputs": {
+        "symbol": "__toascii_l",
+        "scenario": "c_locale_toascii_masks_high_bits_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC ctype_abi::__toascii_l high-bit classified replay",
+        "expected": "TOASCII_L_0X123_TO_0X23",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__toascii_l;mode=strict;expected=TOASCII_L_0X123_TO_0X23;actual=TOASCII_L_0X123_TO_0X23;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__toascii_l_high_bits_hardened",
+      "function": "__toascii_l",
+      "spec_section": "GNU C locale toascii masks high bits without locale capture",
+      "inputs": {
+        "symbol": "__toascii_l",
+        "scenario": "c_locale_toascii_masks_high_bits_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC ctype_abi::__toascii_l high-bit classified replay",
+        "expected": "TOASCII_L_0X123_TO_0X23",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__toascii_l;mode=hardened;expected=TOASCII_L_0X123_TO_0X23;actual=TOASCII_L_0X123_TO_0X23;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__tolower_l_ascii_upper_strict",
+      "function": "__tolower_l",
+      "spec_section": "POSIX C locale tolower maps ASCII uppercase to lowercase without locale capture",
+      "inputs": {
+        "symbol": "__tolower_l",
+        "scenario": "c_locale_tolower_ascii_upper_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC ctype_abi::__tolower_l classified C-locale replay",
+        "expected": "TOLOWER_L_A_TO_a",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__tolower_l;mode=strict;expected=TOLOWER_L_A_TO_a;actual=TOLOWER_L_A_TO_a;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__tolower_l_ascii_upper_hardened",
+      "function": "__tolower_l",
+      "spec_section": "POSIX C locale tolower maps ASCII uppercase to lowercase without locale capture",
+      "inputs": {
+        "symbol": "__tolower_l",
+        "scenario": "c_locale_tolower_ascii_upper_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC ctype_abi::__tolower_l classified C-locale replay",
+        "expected": "TOLOWER_L_A_TO_a",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__tolower_l;mode=hardened;expected=TOLOWER_L_A_TO_a;actual=TOLOWER_L_A_TO_a;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__toupper_l_ascii_lower_strict",
+      "function": "__toupper_l",
+      "spec_section": "POSIX C locale toupper maps ASCII lowercase to uppercase without locale capture",
+      "inputs": {
+        "symbol": "__toupper_l",
+        "scenario": "c_locale_toupper_ascii_lower_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC ctype_abi::__toupper_l classified C-locale replay",
+        "expected": "TOUPPER_L_z_TO_Z",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__toupper_l;mode=strict;expected=TOUPPER_L_z_TO_Z;actual=TOUPPER_L_z_TO_Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__toupper_l_ascii_lower_hardened",
+      "function": "__toupper_l",
+      "spec_section": "POSIX C locale toupper maps ASCII lowercase to uppercase without locale capture",
+      "inputs": {
+        "symbol": "__toupper_l",
+        "scenario": "c_locale_toupper_ascii_lower_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC ctype_abi::__toupper_l classified C-locale replay",
+        "expected": "TOUPPER_L_z_TO_Z",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__toupper_l;mode=hardened;expected=TOUPPER_L_z_TO_Z;actual=TOUPPER_L_z_TO_Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__towctrans_l_invalid_descriptor_strict",
+      "function": "__towctrans_l",
+      "spec_section": "POSIX C locale towctrans leaves the input unchanged for invalid descriptors without locale capture",
+      "inputs": {
+        "symbol": "__towctrans_l",
+        "scenario": "c_locale_towctrans_invalid_descriptor_noop",
+        "oracle_source": "FrankenLibC wchar_abi::__towctrans_l invalid-descriptor classified replay",
+        "expected": "TOWCTRANS_L_INVALID_DESC_A_UNCHANGED",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__towctrans_l;mode=strict;expected=TOWCTRANS_L_INVALID_DESC_A_UNCHANGED;actual=TOWCTRANS_L_INVALID_DESC_A_UNCHANGED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__towctrans_l_invalid_descriptor_hardened",
+      "function": "__towctrans_l",
+      "spec_section": "POSIX C locale towctrans leaves the input unchanged for invalid descriptors without locale capture",
+      "inputs": {
+        "symbol": "__towctrans_l",
+        "scenario": "c_locale_towctrans_invalid_descriptor_noop",
+        "oracle_source": "FrankenLibC wchar_abi::__towctrans_l invalid-descriptor classified replay",
+        "expected": "TOWCTRANS_L_INVALID_DESC_A_UNCHANGED",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__towctrans_l;mode=hardened;expected=TOWCTRANS_L_INVALID_DESC_A_UNCHANGED;actual=TOWCTRANS_L_INVALID_DESC_A_UNCHANGED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__towlower_l_ascii_upper_strict",
+      "function": "__towlower_l",
+      "spec_section": "POSIX C locale towlower maps ASCII uppercase wide character to lowercase without locale capture",
+      "inputs": {
+        "symbol": "__towlower_l",
+        "scenario": "c_locale_towlower_ascii_upper_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__towlower_l classified C-locale replay",
+        "expected": "TOWLOWER_L_A_TO_a",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__towlower_l;mode=strict;expected=TOWLOWER_L_A_TO_a;actual=TOWLOWER_L_A_TO_a;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__towlower_l_ascii_upper_hardened",
+      "function": "__towlower_l",
+      "spec_section": "POSIX C locale towlower maps ASCII uppercase wide character to lowercase without locale capture",
+      "inputs": {
+        "symbol": "__towlower_l",
+        "scenario": "c_locale_towlower_ascii_upper_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__towlower_l classified C-locale replay",
+        "expected": "TOWLOWER_L_A_TO_a",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__towlower_l;mode=hardened;expected=TOWLOWER_L_A_TO_a;actual=TOWLOWER_L_A_TO_a;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__towupper_l_ascii_lower_strict",
+      "function": "__towupper_l",
+      "spec_section": "POSIX C locale towupper maps ASCII lowercase wide character to uppercase without locale capture",
+      "inputs": {
+        "symbol": "__towupper_l",
+        "scenario": "c_locale_towupper_ascii_lower_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__towupper_l classified C-locale replay",
+        "expected": "TOWUPPER_L_z_TO_Z",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__towupper_l;mode=strict;expected=TOWUPPER_L_z_TO_Z;actual=TOWUPPER_L_z_TO_Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__towupper_l_ascii_lower_hardened",
+      "function": "__towupper_l",
+      "spec_section": "POSIX C locale towupper maps ASCII lowercase wide character to uppercase without locale capture",
+      "inputs": {
+        "symbol": "__towupper_l",
+        "scenario": "c_locale_towupper_ascii_lower_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__towupper_l classified C-locale replay",
+        "expected": "TOWUPPER_L_z_TO_Z",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__towupper_l;mode=hardened;expected=TOWUPPER_L_z_TO_Z;actual=TOWUPPER_L_z_TO_Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

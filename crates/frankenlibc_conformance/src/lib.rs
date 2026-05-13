@@ -1224,6 +1224,12 @@ pub fn execute_fixture_case(
         | "__iswctype_l"
         | "__iswdigit_l"
         | "__iswgraph_l" => execute_wchar_locale_encoding_wave02_case(function, inputs, mode),
+        // wchar / locale encoding wave-03
+        "__iswlower_l" | "__iswprint_l" | "__iswpunct_l" | "__iswspace_l" | "__iswupper_l"
+        | "__iswxdigit_l" | "__toascii_l" | "__tolower_l" | "__toupper_l" | "__towctrans_l"
+        | "__towlower_l" | "__towupper_l" => {
+            execute_wchar_locale_encoding_wave03_case(function, inputs, mode)
+        }
         // locale catalog wave-01
         "bindtextdomain" | "catclose" | "catgets" | "catopen" | "dgettext" | "gettext"
         | "ngettext" | "textdomain" => execute_locale_catalog_wave01_case(function, inputs, mode),
@@ -25615,6 +25621,196 @@ fn wchar_locale_iswgraph_l_actual() -> String {
     }
 }
 
+fn execute_wchar_locale_encoding_wave03_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "wchar/locale encoding wave03 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = wchar_locale_encoding_wave03_actual(function, inputs)?;
+    Ok(non_host_execution(wchar_locale_encoding_wave01_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn wchar_locale_encoding_wave03_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    let scenario = parse_string(inputs, "scenario")?;
+    match (function, scenario.as_str()) {
+        ("__iswlower_l", "c_locale_lower_ascii_without_locale_pointer_capture") => {
+            Ok(wchar_locale_iswlower_l_actual())
+        }
+        ("__iswprint_l", "c_locale_print_invalid_codepoint_without_locale_pointer_capture") => {
+            Ok(wchar_locale_iswprint_l_invalid_actual())
+        }
+        ("__iswpunct_l", "c_locale_punct_bang_without_locale_pointer_capture") => {
+            Ok(wchar_locale_iswpunct_l_actual())
+        }
+        ("__iswspace_l", "c_locale_space_newline_without_locale_pointer_capture") => {
+            Ok(wchar_locale_iswspace_l_actual())
+        }
+        ("__iswupper_l", "c_locale_upper_ascii_without_locale_pointer_capture") => {
+            Ok(wchar_locale_iswupper_l_actual())
+        }
+        ("__iswxdigit_l", "c_locale_xdigit_upper_hex_without_locale_pointer_capture") => {
+            Ok(wchar_locale_iswxdigit_l_actual())
+        }
+        ("__toascii_l", "c_locale_toascii_masks_high_bits_without_locale_pointer_capture") => {
+            Ok(wchar_locale_toascii_l_actual())
+        }
+        ("__tolower_l", "c_locale_tolower_ascii_upper_without_locale_pointer_capture") => {
+            Ok(wchar_locale_tolower_l_actual())
+        }
+        ("__toupper_l", "c_locale_toupper_ascii_lower_without_locale_pointer_capture") => {
+            Ok(wchar_locale_toupper_l_actual())
+        }
+        ("__towctrans_l", "c_locale_towctrans_invalid_descriptor_noop") => {
+            Ok(wchar_locale_towctrans_l_invalid_desc_actual())
+        }
+        ("__towlower_l", "c_locale_towlower_ascii_upper_without_locale_pointer_capture") => {
+            Ok(wchar_locale_towlower_l_actual())
+        }
+        ("__towupper_l", "c_locale_towupper_ascii_lower_without_locale_pointer_capture") => {
+            Ok(wchar_locale_towupper_l_actual())
+        }
+        _ => Err(format!(
+            "unsupported wchar/locale encoding wave03 fixture: function={function}, scenario={scenario}"
+        )),
+    }
+}
+
+fn wchar_locale_iswlower_l_actual() -> String {
+    // SAFETY: the null locale handle is intentionally ignored by this shim.
+    let rc = unsafe { frankenlibc_abi::wchar_abi::__iswlower_l('z' as u32, std::ptr::null_mut()) };
+    if rc != 0 {
+        String::from("ISWLOWER_L_z_TRUE")
+    } else {
+        String::from("ISWLOWER_L_z_FALSE")
+    }
+}
+
+fn wchar_locale_iswprint_l_invalid_actual() -> String {
+    // SAFETY: the null locale handle is intentionally ignored by this shim; the
+    // invalid scalar is the explicit edge-codepoint class under test.
+    let rc = unsafe { frankenlibc_abi::wchar_abi::__iswprint_l(0x11_0000, std::ptr::null_mut()) };
+    if rc == 0 {
+        String::from("ISWPRINT_L_INVALID_CODEPOINT_FALSE")
+    } else {
+        String::from("ISWPRINT_L_INVALID_CODEPOINT_TRUE")
+    }
+}
+
+fn wchar_locale_iswpunct_l_actual() -> String {
+    // SAFETY: the null locale handle is intentionally ignored by this shim.
+    let rc = unsafe { frankenlibc_abi::wchar_abi::__iswpunct_l('!' as u32, std::ptr::null_mut()) };
+    if rc != 0 {
+        String::from("ISWPUNCT_L_BANG_TRUE")
+    } else {
+        String::from("ISWPUNCT_L_BANG_FALSE")
+    }
+}
+
+fn wchar_locale_iswspace_l_actual() -> String {
+    // SAFETY: the null locale handle is intentionally ignored by this shim.
+    let rc = unsafe { frankenlibc_abi::wchar_abi::__iswspace_l('\n' as u32, std::ptr::null_mut()) };
+    if rc != 0 {
+        String::from("ISWSPACE_L_NEWLINE_TRUE")
+    } else {
+        String::from("ISWSPACE_L_NEWLINE_FALSE")
+    }
+}
+
+fn wchar_locale_iswupper_l_actual() -> String {
+    // SAFETY: the null locale handle is intentionally ignored by this shim.
+    let rc = unsafe { frankenlibc_abi::wchar_abi::__iswupper_l('Z' as u32, std::ptr::null_mut()) };
+    if rc != 0 {
+        String::from("ISWUPPER_L_Z_TRUE")
+    } else {
+        String::from("ISWUPPER_L_Z_FALSE")
+    }
+}
+
+fn wchar_locale_iswxdigit_l_actual() -> String {
+    // SAFETY: the null locale handle is intentionally ignored by this shim.
+    let rc = unsafe { frankenlibc_abi::wchar_abi::__iswxdigit_l('F' as u32, std::ptr::null_mut()) };
+    if rc != 0 {
+        String::from("ISWXDIGIT_L_F_TRUE")
+    } else {
+        String::from("ISWXDIGIT_L_F_FALSE")
+    }
+}
+
+fn wchar_locale_toascii_l_actual() -> String {
+    // SAFETY: the null locale handle is intentionally ignored by this shim.
+    let value = unsafe { frankenlibc_abi::ctype_abi::__toascii_l(0x123, std::ptr::null_mut()) };
+    format!("TOASCII_L_0X123_TO_0X{value:X}")
+}
+
+fn wchar_locale_tolower_l_actual() -> String {
+    // SAFETY: the null locale handle is intentionally ignored by this shim.
+    let value =
+        unsafe { frankenlibc_abi::ctype_abi::__tolower_l(b'A' as i32, std::ptr::null_mut()) };
+    if value == b'a' as i32 {
+        String::from("TOLOWER_L_A_TO_a")
+    } else {
+        format!("TOLOWER_L_A_TO_{value}")
+    }
+}
+
+fn wchar_locale_toupper_l_actual() -> String {
+    // SAFETY: the null locale handle is intentionally ignored by this shim.
+    let value =
+        unsafe { frankenlibc_abi::ctype_abi::__toupper_l(b'z' as i32, std::ptr::null_mut()) };
+    if value == b'Z' as i32 {
+        String::from("TOUPPER_L_z_TO_Z")
+    } else {
+        format!("TOUPPER_L_z_TO_{value}")
+    }
+}
+
+fn wchar_locale_towctrans_l_invalid_desc_actual() -> String {
+    // SAFETY: descriptor 0 is the explicit invalid descriptor class; null
+    // locale is intentionally ignored by this shim.
+    let value =
+        unsafe { frankenlibc_abi::wchar_abi::__towctrans_l('A' as u32, 0, std::ptr::null_mut()) };
+    if value == 'A' as u32 {
+        String::from("TOWCTRANS_L_INVALID_DESC_A_UNCHANGED")
+    } else {
+        format!("TOWCTRANS_L_INVALID_DESC_A_TO_U{value}")
+    }
+}
+
+fn wchar_locale_towlower_l_actual() -> String {
+    // SAFETY: the null locale handle is intentionally ignored by this shim.
+    let value =
+        unsafe { frankenlibc_abi::wchar_abi::__towlower_l('A' as u32, std::ptr::null_mut()) };
+    if value == 'a' as u32 {
+        String::from("TOWLOWER_L_A_TO_a")
+    } else {
+        format!("TOWLOWER_L_A_TO_U{value}")
+    }
+}
+
+fn wchar_locale_towupper_l_actual() -> String {
+    // SAFETY: the null locale handle is intentionally ignored by this shim.
+    let value =
+        unsafe { frankenlibc_abi::wchar_abi::__towupper_l('z' as u32, std::ptr::null_mut()) };
+    if value == 'Z' as u32 {
+        String::from("TOWUPPER_L_z_TO_Z")
+    } else {
+        format!("TOWUPPER_L_z_TO_U{value}")
+    }
+}
+
 fn execute_locale_catalog_wave01_case(
     function: &str,
     inputs: &serde_json::Value,
@@ -28987,6 +29183,48 @@ mod tests {
             include_str!("../../../tests/conformance/fixtures/wchar_locale_encoding_wave02.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("wchar/locale wave02 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn wchar_locale_encoding_wave03_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/wchar_locale_encoding_wave03.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("wchar/locale wave03 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

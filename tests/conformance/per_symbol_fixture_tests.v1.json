@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T23:28:05Z",
-  "report_hash": "39e98ca09cd23a00",
+  "generated_at": "2026-05-13T23:48:55Z",
+  "report_hash": "d36b34f2df689916",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 1047,
-    "symbols_without_fixtures": 3072,
-    "fixture_coverage_pct": 25.4,
-    "implemented_coverage_pct": 24.6,
-    "total_fixture_files": 116,
-    "total_cases": 2548,
+    "symbols_with_fixtures": 1059,
+    "symbols_without_fixtures": 3060,
+    "fixture_coverage_pct": 25.7,
+    "implemented_coverage_pct": 24.9,
+    "total_fixture_files": 117,
+    "total_cases": 2572,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 628,
-    "symbols_with_errno_checks": 1044,
-    "total_quality_issues": 3447,
-    "uncovered_action_count": 3072
+    "symbols_with_edge_cases": 629,
+    "symbols_with_errno_checks": 1056,
+    "total_quality_issues": 3446,
+    "uncovered_action_count": 3060
   },
   "fixture_file_analyses": [
     {
@@ -916,6 +916,14 @@
     },
     {
       "file": "wchar_locale_encoding_wave02.json",
+      "family": "wchar/locale-encoding",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "wchar_locale_encoding_wave03.json",
       "family": "wchar/locale-encoding",
       "valid": true,
       "total_cases": 24,
@@ -7941,14 +7949,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -7956,14 +7969,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -7971,14 +7989,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -7986,14 +8009,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -8001,14 +8029,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -8016,14 +8049,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -13559,29 +13597,39 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__tolower_l",
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -13589,14 +13637,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -13619,14 +13672,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -13634,14 +13692,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -13649,14 +13712,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -69368,48 +69436,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__iswlower_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__iswprint_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__iswpunct_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__iswspace_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__iswupper_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__iswxdigit_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__isxdigit_l",
       "status": "Implemented",
       "module": "ctype_abi",
@@ -71062,51 +71088,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "__toascii_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__tolower_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__toupper_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__towctrans",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__towctrans_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__towlower_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__towupper_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
