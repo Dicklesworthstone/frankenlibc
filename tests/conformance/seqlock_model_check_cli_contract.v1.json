@@ -1,0 +1,53 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "seqlock-model-check-cli-contract",
+  "bead": "bd-gdotb",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "a5f6734ba4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes concurrency_model_check::check_seqlock as a standalone CLI. The function exhaustively enumerates every interleaving of write_count writer publications and one reader read-attempt, then asserts the seqlock invariants (no stable read at odd version; no stale read accepted; retry-count monotonicity; no missed publication). Previously this proof was reachable only via Rust unit tests; the CLI bridge lets CI run it without linking.",
+  "subcommand_name": "seqlock-model-check",
+  "binary_target": "harness",
+  "required_flags": [
+    "--output"
+  ],
+  "optional_flags": [
+    "--write-count"
+  ],
+  "write_count_cap": 4,
+  "underlying_lib_function": "frankenlibc_harness::concurrency_model_check::check_seqlock",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "seqlock_model_report",
+    "required_fields": [
+      "kind",
+      "write_count",
+      "schedules_explored",
+      "stable_outcomes",
+      "retry_outcomes",
+      "invariant_violation_count",
+      "invariant_violations"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "invariant_violation_count_must_be_zero_for_all_well_formed_inputs": true,
+    "stable_outcomes_plus_retry_outcomes_must_equal_schedules_explored": true,
+    "schedules_explored_must_be_positive": true,
+    "fail_closed_on_write_count_zero": true,
+    "fail_closed_on_write_count_above_cap": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_output_flag",
+    "wrong_record_kind",
+    "invariant_violation_count_non_zero",
+    "outcome_partition_mismatch",
+    "write_count_zero_accepted",
+    "write_count_above_cap_accepted"
+  ],
+  "summary": {
+    "bead": "bd-gdotb",
+    "subcommand": "seqlock-model-check",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}

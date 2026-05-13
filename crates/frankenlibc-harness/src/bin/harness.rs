@@ -737,6 +737,20 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Drive `concurrency_model_check::check_seqlock` against a given
+    /// write_count to exhaustively enumerate all interleavings of the
+    /// writer's publication steps and one reader's read attempt,
+    /// asserting seqlock invariants. Cap write_count at a small bound
+    /// (state-space is 2^(3W+4)).
+    SeqlockModelCheck {
+        /// Number of writer publications to enumerate. Must be in
+        /// [1, 4] — beyond 4, the schedule space (2^16) blows up.
+        #[arg(long, default_value_t = 2_u32)]
+        write_count: u32,
+        /// Output JSONL path: one seqlock_model_report record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Drive `read_mostly_fast_path_prototype::isomorphism_witness`
     /// against an explicit write history and emit a JSONL report
     /// asserting that the conservative and seqlock lanes observed
@@ -2119,6 +2133,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!(
                 "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
                 output.display()
+            );
+        }
+        Command::SeqlockModelCheck {
+            write_count,
+            output,
+        } => {
+            use frankenlibc_harness::concurrency_model_check::{InvariantViolation, check_seqlock};
+            const WRITE_COUNT_CAP: u32 = 4;
+            if write_count == 0 {
+                return Err("--write-count must be > 0".into());
+            }
+            if write_count > WRITE_COUNT_CAP {
+                return Err(format!(
+                    "--write-count must be <= {WRITE_COUNT_CAP}; got {write_count}"
+                )
+                .into());
+            }
+            let report = check_seqlock(write_count);
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let violations_json: Vec<serde_json::Value> = report
+                .invariant_violations
+                .iter()
+                .map(|v| match v {
+                    InvariantViolation::StaleReadAccepted {
+                        read_val,
+                        published,
+                        schedule,
+                    } => serde_json::json!({
+                        "kind": "stale_read_accepted",
+                        "read_val": read_val,
+                        "published": published,
+                        "schedule": schedule,
+                    }),
+                    InvariantViolation::StableReadAtOddVersion { ver, schedule } => {
+                        serde_json::json!({
+                            "kind": "stable_read_at_odd_version",
+                            "ver": ver,
+                            "schedule": schedule,
+                        })
+                    }
+                    InvariantViolation::RetryCountNonMonotone {
+                        observed,
+                        prior,
+                        schedule,
+                    } => serde_json::json!({
+                        "kind": "retry_count_non_monotone",
+                        "observed": observed,
+                        "prior": prior,
+                        "schedule": schedule,
+                    }),
+                    InvariantViolation::MissedWriterPublication {
+                        published,
+                        schedule,
+                    } => serde_json::json!({
+                        "kind": "missed_writer_publication",
+                        "published": published,
+                        "schedule": schedule,
+                    }),
+                })
+                .collect();
+            let line = serde_json::json!({
+                "kind": "seqlock_model_report",
+                "write_count": write_count,
+                "schedules_explored": report.schedules_explored,
+                "stable_outcomes": report.stable_outcomes,
+                "retry_outcomes": report.retry_outcomes,
+                "invariant_violation_count": report.invariant_violations.len(),
+                "invariant_violations": violations_json,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "seqlock-model-check: wrote 1 seqlock_model_report JSONL record to {} (schedules_explored={} violations={})",
+                output.display(),
+                report.schedules_explored,
+                report.invariant_violations.len()
             );
         }
         Command::LaneIsomorphism {
