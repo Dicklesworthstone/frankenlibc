@@ -3905,43 +3905,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 0,
-      "milestone_beads": [],
-      "module": "fenv_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "severity_score": 1103,
-      "status_breakdown": {
-        "Implemented": 11
-      },
-      "target_coverage_pct": 0.0,
-      "target_covered": 0,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 11,
-      "target_uncovered": 11,
-      "target_uncovered_symbols": [
-        "feclearexcept",
-        "fegetenv",
-        "fegetexceptflag",
-        "fegetround",
-        "feholdexcept",
-        "feraiseexcept",
-        "fesetenv",
-        "fesetexceptflag",
-        "fesetround",
-        "fetestexcept",
-        "feupdateenv"
-      ],
-      "total_symbols": 11,
-      "track": "fenv",
-      "uncovered_symbols": 11,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 7,
       "milestone_beads": [],
       "module": "inet_abi",
@@ -4460,6 +4423,31 @@
       "workload_ids": []
     },
     {
+      "covered_symbols": 11,
+      "milestone_beads": [],
+      "module": "fenv_abi",
+      "recommended_bead": null,
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "Implemented": 11
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 11,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 11,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 11,
+      "track": "fenv",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "covered_symbols": 3,
       "milestone_beads": [],
       "module": "iconv_abi",
@@ -4564,9 +4552,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1686,
-    "fixture_json_files": 77,
-    "fixture_json_unique_functions": 627,
+    "fixture_json_cases": 1697,
+    "fixture_json_files": 78,
+    "fixture_json_unique_functions": 638,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4587,7 +4575,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 629
+    "unique_fixture_functions_total": 640
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -8242,29 +8230,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "fenv_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 11,
-      "target_uncovered_symbols": [
-        "feclearexcept",
-        "fegetenv",
-        "fegetexceptflag",
-        "fegetround",
-        "feholdexcept",
-        "feraiseexcept",
-        "fesetenv",
-        "fesetexceptflag",
-        "fesetround",
-        "fetestexcept",
-        "feupdateenv"
-      ],
-      "track": "fenv",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "inet_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -8511,10 +8476,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 14.66,
-      "covered": 543,
+      "coverage_pct": 14.95,
+      "covered": 554,
       "total": 3705,
-      "uncovered": 3162
+      "uncovered": 3151
     },
     "RawSyscall": {
       "coverage_pct": 16.67,
@@ -8524,19 +8489,19 @@
     }
   },
   "summary": {
-    "coverage_pct": 14.86,
-    "covered_exported_symbols": 612,
-    "target_coverage_pct": 14.86,
-    "target_covered_symbols": 612,
+    "coverage_pct": 15.13,
+    "covered_exported_symbols": 623,
+    "target_coverage_pct": 15.13,
+    "target_covered_symbols": 623,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3507,
+    "target_uncovered_symbols": 3496,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3507,
-    "uncovered_target_families": 4,
+    "uncovered_exported_symbols": 3496,
+    "uncovered_target_families": 3,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 28
   },
@@ -10604,13 +10569,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "fenv_ops"
+      ],
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fenv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -10618,13 +10591,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "fenv_ops"
+      ],
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fenv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -10632,13 +10613,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "fenv_ops"
+      ],
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fenv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -10646,13 +10635,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "fenv_ops"
+      ],
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fenv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -10660,13 +10657,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "fenv_ops"
+      ],
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fenv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -10674,13 +10679,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "fenv_ops"
+      ],
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fenv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -10688,13 +10701,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "fenv_ops"
+      ],
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fenv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -10702,13 +10723,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "fenv_ops"
+      ],
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fenv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -10716,13 +10745,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "fenv_ops"
+      ],
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fenv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -10730,13 +10767,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "fenv_ops"
+      ],
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fenv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -10744,13 +10789,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "fenv_ops"
+      ],
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fenv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -71823,28 +71876,6 @@
   ],
   "trace_id": "bd-15n.1-symbol-fixture-coverage-v1",
   "uncovered_target_families": [
-    {
-      "module": "fenv_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 11,
-      "target_uncovered_symbols": [
-        "feclearexcept",
-        "fegetenv",
-        "fegetexceptflag",
-        "fegetround",
-        "feholdexcept",
-        "feraiseexcept",
-        "fesetenv",
-        "fesetexceptflag",
-        "fesetround",
-        "fetestexcept",
-        "feupdateenv"
-      ],
-      "track": "fenv",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
     {
       "module": "fortify_abi",
       "recommended_bead": null,

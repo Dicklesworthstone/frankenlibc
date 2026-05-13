@@ -959,19 +959,6 @@
       "target_uncovered": 23
     },
     {
-      "coverage_state": "uncovered",
-      "current_coverage_pct": 0.0,
-      "deferral_reason": "Floating-point environment behavior is high precision work but should be paired with the math exceptional-path fixture pack instead of this broad first queue.",
-      "module": "fenv_abi",
-      "next_step": "Add fenv fixtures with soft-fp and math exception cases in the dedicated math/fenv wave.",
-      "status_breakdown": {
-        "Implemented": 11
-      },
-      "target_covered": 0,
-      "target_total": 11,
-      "target_uncovered": 11
-    },
-    {
       "coverage_state": "weak",
       "current_coverage_pct": 41.18,
       "deferral_reason": "inet address helpers are partially covered and have lower workload risk than resolver, socket, and NSS behavior.",
@@ -1188,7 +1175,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3507,
+    "all_uncovered_target_symbols": 3496,
     "campaign_count": 16,
     "covered_modules": [
       "fortify_abi",
@@ -1208,8 +1195,8 @@
       "unistd_abi",
       "wchar_abi"
     ],
-    "deferred_module_count": 17,
-    "deferred_target_uncovered_symbols": 370,
+    "deferred_module_count": 16,
+    "deferred_target_uncovered_symbols": 359,
     "highest_priority_campaign": "fcq-unistd-process-filesystem",
     "lowest_priority_campaign": "fcq-rpc-legacy-network",
     "required_workload_domains_covered": [

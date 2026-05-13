@@ -1,0 +1,206 @@
+{
+  "version": "v1",
+  "family": "fenv_ops",
+  "captured_at": "2026-05-13T06:30:00Z",
+  "description": "Compact POSIX/GNU <fenv.h> floating-point environment fixture coverage for rounding modes, exception flags, and environment save/restore APIs.",
+  "spec_reference": "POSIX <fenv.h>, ISO C floating-point environment, glibc x86_64 IEEE-754 fenv behavior",
+  "cases": [
+    {
+      "name": "feclearexcept_clears_raised_divbyzero",
+      "function": "feclearexcept",
+      "spec_section": "POSIX feclearexcept",
+      "inputs": {
+        "pre_raise_flags": ["FE_DIVBYZERO"],
+        "clear_mask": ["FE_DIVBYZERO"],
+        "test_mask": ["FE_DIVBYZERO"]
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": 0,
+        "fenv_flags_after": [],
+        "rounding_mode_after": "unchanged"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by fenv_abi_test::exception_flags_raise_and_clear and conformance_diff_fenv::diff_exception_flags_roundtrip."
+    },
+    {
+      "name": "feraiseexcept_sets_divbyzero",
+      "function": "feraiseexcept",
+      "spec_section": "POSIX feraiseexcept",
+      "inputs": {
+        "raise_mask": ["FE_DIVBYZERO"],
+        "test_mask": ["FE_DIVBYZERO"]
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": 0,
+        "fenv_flags_after": ["FE_DIVBYZERO"],
+        "rounding_mode_after": "unchanged"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by fenv_abi_test::exception_flags_raise_and_clear and conformance_diff_fenv::diff_exception_flags_roundtrip."
+    },
+    {
+      "name": "fetestexcept_reports_only_requested_flags",
+      "function": "fetestexcept",
+      "spec_section": "POSIX fetestexcept",
+      "inputs": {
+        "pre_raise_flags": ["FE_INVALID", "FE_DIVBYZERO"],
+        "test_mask": ["FE_INVALID"]
+      },
+      "expected_output": {
+        "status": "pass",
+        "reported_flags": ["FE_INVALID"],
+        "excluded_flags": ["FE_DIVBYZERO"],
+        "rounding_mode_after": "unchanged"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by fenv_abi_test::fetestexcept_returns_only_requested_flags."
+    },
+    {
+      "name": "fegetexceptflag_saves_invalid_flag",
+      "function": "fegetexceptflag",
+      "spec_section": "POSIX fegetexceptflag",
+      "inputs": {
+        "pre_raise_flags": ["FE_INVALID"],
+        "get_mask": ["FE_INVALID"],
+        "fexcept_t_bytes": 2
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": 0,
+        "saved_flags": ["FE_INVALID"],
+        "rounding_mode_after": "unchanged"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by fenv_abi_test::exceptflag_round_trip_restores_flag_bits and short-buffer guard coverage."
+    },
+    {
+      "name": "fesetexceptflag_restores_invalid_flag",
+      "function": "fesetexceptflag",
+      "spec_section": "POSIX fesetexceptflag",
+      "inputs": {
+        "saved_flags": ["FE_INVALID"],
+        "set_mask": ["FE_INVALID"],
+        "fexcept_t_bytes": 2
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": 0,
+        "fenv_flags_after": ["FE_INVALID"],
+        "rounding_mode_after": "unchanged"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by fenv_abi_test::exceptflag_round_trip_restores_flag_bits and fenv_abi_test::fegetexceptflag_fesetexceptflag_round_trip_multiple."
+    },
+    {
+      "name": "fegetround_reads_downward_mode",
+      "function": "fegetround",
+      "spec_section": "POSIX fegetround",
+      "inputs": {
+        "pre_rounding_mode": "FE_DOWNWARD"
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": "FE_DOWNWARD",
+        "fenv_flags_after": "unchanged"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by fenv_abi_test::fesetround_all_modes_round_trip and conformance_diff_fenv::diff_round_modes_roundtrip."
+    },
+    {
+      "name": "fesetround_sets_upward_mode",
+      "function": "fesetround",
+      "spec_section": "POSIX fesetround",
+      "inputs": {
+        "rounding_mode": "FE_UPWARD"
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": 0,
+        "rounding_mode_after": "FE_UPWARD",
+        "fenv_flags_after": "unchanged"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by fenv_abi_test::fesetround_all_modes_round_trip and conformance_diff_fenv::diff_round_modes_roundtrip."
+    },
+    {
+      "name": "fegetenv_saves_rounding_environment",
+      "function": "fegetenv",
+      "spec_section": "POSIX fegetenv",
+      "inputs": {
+        "pre_rounding_mode": "FE_DOWNWARD",
+        "fenv_t_bytes": 32
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": 0,
+        "saved_rounding_mode": "FE_DOWNWARD"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by fenv_abi_test::fegetenv_and_fesetenv_restore_rounding_state and conformance_diff_fenv::diff_fegetenv_fesetenv_roundtrip."
+    },
+    {
+      "name": "fesetenv_restores_saved_rounding_environment",
+      "function": "fesetenv",
+      "spec_section": "POSIX fesetenv",
+      "inputs": {
+        "saved_rounding_mode": "FE_DOWNWARD",
+        "mutated_rounding_mode": "FE_UPWARD",
+        "fenv_t_bytes": 32
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": 0,
+        "rounding_mode_after": "FE_DOWNWARD"
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by fenv_abi_test::fegetenv_and_fesetenv_restore_rounding_state and conformance_diff_fenv::diff_fegetenv_fesetenv_roundtrip."
+    },
+    {
+      "name": "feholdexcept_saves_and_clears_exceptions",
+      "function": "feholdexcept",
+      "spec_section": "POSIX feholdexcept",
+      "inputs": {
+        "pre_raise_flags": ["FE_INVALID", "FE_DIVBYZERO"],
+        "fenv_t_bytes": 32
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": 0,
+        "saved_flags": ["FE_INVALID", "FE_DIVBYZERO"],
+        "fenv_flags_after": []
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by fenv_abi_test::feholdexcept_clears_all_exceptions and fenv_abi_test::feholdexcept_and_feupdateenv_round_trip_saved_exceptions."
+    },
+    {
+      "name": "feupdateenv_restores_and_reraises_pending_flags",
+      "function": "feupdateenv",
+      "spec_section": "POSIX feupdateenv",
+      "inputs": {
+        "saved_flags": ["FE_DIVBYZERO"],
+        "pending_flags": ["FE_INVALID"],
+        "fenv_t_bytes": 32
+      },
+      "expected_output": {
+        "status": "pass",
+        "return_value": 0,
+        "fenv_flags_after": ["FE_INVALID", "FE_DIVBYZERO"]
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by fenv_abi_test::feholdexcept_and_feupdateenv_round_trip_saved_exceptions and fenv_abi_test::feupdateenv_null_is_rejected for pointer rejection."
+    }
+  ]
+}
