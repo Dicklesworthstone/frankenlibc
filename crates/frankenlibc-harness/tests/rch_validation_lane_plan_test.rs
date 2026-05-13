@@ -271,11 +271,59 @@ fn checker_rejects_workspace_gate_inside_surface_lane() -> TestResult {
             manifest,
             "membrane-runtime-math",
             "minimal_test_cmd",
-            "rch cargo test --workspace",
+            "RCH_FORCE_REMOTE=true rch cargo test --workspace",
         )
     })?;
     let run = run_checker(&root, Some(&manifest), "workspace-gate")?;
     expect_failure(&run, "workspace_gate_forbidden")
+}
+
+#[test]
+fn checker_rejects_remote_only_lane_without_force_env() -> TestResult {
+    let root = workspace_root()?;
+    let manifest = mutated_manifest(&root, "missing-remote-force", |manifest| {
+        set_surface_string(
+            manifest,
+            "abi-pthread",
+            "minimal_test_cmd",
+            "rch cargo test -p frankenlibc-abi --lib pthread_abi",
+        )
+    })?;
+    let run = run_checker(&root, Some(&manifest), "missing-remote-force")?;
+    expect_failure(&run, "missing_remote_force")
+}
+
+#[test]
+fn checker_rejects_bash_wrapped_cargo_lane() -> TestResult {
+    let root = workspace_root()?;
+    let manifest = mutated_manifest(&root, "bash-wrapped-cargo", |manifest| {
+        set_surface_string(
+            manifest,
+            "core-resolv",
+            "minimal_test_cmd",
+            "RCH_FORCE_REMOTE=true bash -c 'cargo test -p frankenlibc-core --lib resolv'",
+        )
+    })?;
+    let run = run_checker(&root, Some(&manifest), "bash-wrapped-cargo")?;
+    expect_failure(&run, "bash_wrapped_cargo_lane")
+}
+
+#[test]
+fn checker_rejects_missing_local_fallback_policy() -> TestResult {
+    let root = workspace_root()?;
+    let manifest = mutated_manifest(&root, "local-fallback-policy", |manifest| {
+        let rules = manifest
+            .get_mut("rules")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| test_error("manifest.rules must be an object"))?;
+        rules.insert(
+            "local_fallback_is_invalid_proof".to_string(),
+            Value::String("local fallback can be used when remote execution fails".to_string()),
+        );
+        Ok(())
+    })?;
+    let run = run_checker(&root, Some(&manifest), "local-fallback-policy")?;
+    expect_failure(&run, "local_fallback_policy_missing")
 }
 
 #[test]

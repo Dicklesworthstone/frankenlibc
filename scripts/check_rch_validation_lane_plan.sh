@@ -67,7 +67,10 @@ def now_utc() -> str:
 def git_head() -> str:
     try:
         return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            stderr=subprocess.DEVNULL,
+            text=True,
         ).strip()
     except Exception:
         return "unknown"
@@ -155,14 +158,51 @@ def shell_words(command: str) -> list[str]:
         return command.split()
 
 
+def split_env_assignments(words: list[str]) -> tuple[dict[str, str], list[str]]:
+    env: dict[str, str] = {}
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if "=" not in word or word.startswith("-"):
+            break
+        key, value = word.split("=", 1)
+        if not key or not key.replace("_", "").isalnum() or key[0].isdigit():
+            break
+        env[key] = value
+        index += 1
+    return env, words[index:]
+
+
 def command_mentions_cargo(command: str) -> bool:
-    return "cargo" in shell_words(command)
+    return any(word == "cargo" or word.startswith("cargo ") for word in shell_words(command))
+
+
+def require_no_bash_wrapped_cargo(surface_id: str, field: str, command: str, words: list[str]) -> None:
+    shell_words_seen = {"bash", "sh", "zsh"}
+    if words and pathlib.Path(words[0]).name in shell_words_seen and "cargo" in words:
+        fail(
+            "bash_wrapped_cargo_lane",
+            f"{surface_id}.{field} wraps cargo in a shell; use a directly classified rch cargo lane",
+            surface_id=surface_id,
+            field=field,
+            command=command,
+        )
+    if any(word in {"bash", "sh", "zsh"} for word in words[:3]) and "-c" in words and "cargo" in command:
+        fail(
+            "bash_wrapped_cargo_lane",
+            f"{surface_id}.{field} wraps cargo in a shell; use a directly classified rch cargo lane",
+            surface_id=surface_id,
+            field=field,
+            command=command,
+        )
 
 
 def validate_cargo_command(surface_id: str, field: str, command: str, target_dir_pattern: str) -> bool:
     words = shell_words(command)
-    if not words or "cargo" not in words:
+    if not words or not command_mentions_cargo(command):
         return False
+    env, words = split_env_assignments(words)
+    require_no_bash_wrapped_cargo(surface_id, field, command, words)
 
     if words[0] == "scripts/" or command.startswith("scripts/"):
         return False
@@ -171,6 +211,14 @@ def validate_cargo_command(surface_id: str, field: str, command: str, target_dir
         len(words) >= 2 and words[0] == "rch" and words[1] == "cargo",
         "bare_cargo_command",
         f"{surface_id}.{field} must start with `rch cargo`, not local cargo",
+        surface_id=surface_id,
+        field=field,
+        command=command,
+    )
+    require(
+        env.get("RCH_FORCE_REMOTE") == "true",
+        "missing_remote_force",
+        f"{surface_id}.{field} must set RCH_FORCE_REMOTE=true for remote-only validation evidence",
         surface_id=surface_id,
         field=field,
         command=command,
@@ -226,6 +274,17 @@ def validate() -> None:
     rules = manifest.get("rules")
     require(isinstance(rules, dict), "missing_rules", "rules must be an object")
     require(rules.get("all_cargo_through_rch") is True, "rch_rule_disabled", "all_cargo_through_rch must be true")
+    require(
+        rules.get("remote_only_force_required") is True,
+        "remote_force_rule_disabled",
+        "remote_only_force_required must be true",
+    )
+    fallback_policy = as_string(rules, "local_fallback_is_invalid_proof", "rules")
+    require(
+        "[RCH] local" in fallback_policy and "invalid" in fallback_policy.lower(),
+        "local_fallback_policy_missing",
+        "local_fallback_is_invalid_proof must reject [RCH] local fallback as validation evidence",
+    )
     target_pattern = as_string(rules, "target_dir_isolation_pattern", "rules")
     require(
         "<agent" in target_pattern and "<bead" in target_pattern,
@@ -302,7 +361,13 @@ def validate() -> None:
         require(isinstance(row, dict), "allowlist_row_not_object", f"broad_gate_allowlist[{index}] must be an object")
         command = as_string(row, "command", f"broad_gate_allowlist[{index}]")
         rationale = as_string(row, "rationale", f"broad_gate_allowlist[{index}]")
-        words = shell_words(command)
+        env, words = split_env_assignments(shell_words(command))
+        require(
+            env.get("RCH_FORCE_REMOTE") == "true",
+            "missing_remote_force",
+            "broad allowlist commands must force remote execution",
+            command=command,
+        )
         require(
             len(words) >= 3 and words[0] == "rch" and words[1] == "cargo" and "--workspace" in words,
             "bad_broad_allowlist_command",

@@ -9,7 +9,9 @@
   "purpose": "Machine-readable validation-lane plan for FrankenLibC. Maps each common surface (harness tests, runtime_math, ABI subsystems, fuzz build smokes, bench build smokes, standalone forge gates, workload replays) to the minimal `rch` command and CARGO_TARGET_DIR isolation rule that an agent in a 64+ core swarm must use. Reduces overlap (two agents on the same target dir thrash incremental compilation) and prevents agents from running unscoped workspace gates when a focused crate gate would suffice.",
   "rules": {
     "all_cargo_through_rch": true,
+    "remote_only_force_required": true,
     "rationale_no_local_cargo": "AGENTS.md requires `rch cargo ...` for any CPU-intensive cargo invocation. Local cargo on this 64-core node would burn the swarm's shared cache and block peer agents.",
+    "local_fallback_is_invalid_proof": "`[RCH] local (remote execution failed)` is invalid validation evidence for this repo. Stop that wrapper and rerun with remote-only force instead of treating local fallback as a pass.",
     "target_dir_isolation_pattern": "/data/projects/.cargo-target-<project>-<agent-name>-<bead-short>",
     "target_dir_isolation_rationale": "Per-bead, per-agent CARGO_TARGET_DIR avoids incremental-compilation contention when two agents touch the same crate at the same time. The bead-short suffix is the last segment of the bead id (e.g. juvqm11 for bd-juvqm.11).",
     "broad_workspace_gate_policy": "FORBIDDEN unless the bead explicitly touches workspace-wide infrastructure (Cargo.toml at the workspace root, profile changes, or a cross-crate trait). Default to focused `-p <crate>` gates.",
@@ -37,6 +39,9 @@
       "workspace-wide cargo gates inside focused surface lanes",
       "cargo lanes without a package selector",
       "cargo lanes without target directory isolation guidance",
+      "remote-only cargo lanes without RCH_FORCE_REMOTE=true",
+      "bash-wrapped cargo lanes that rch cannot classify",
+      "[RCH] local fallback treated as valid evidence",
       "broad gate allowlist rows without a narrow rationale"
     ],
     "structured_log_fields": [
@@ -53,16 +58,16 @@
     {
       "surface_id": "harness-tail-stats",
       "scope": "frankenlibc_harness::tail_stats",
-      "minimal_test_cmd": "rch cargo test -p frankenlibc-harness --lib tail_stats",
-      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-harness --lib --no-default-features -- -D warnings",
+      "minimal_test_cmd": "RCH_FORCE_REMOTE=true rch cargo test -p frankenlibc-harness --lib tail_stats",
+      "minimal_clippy_cmd": "RCH_FORCE_REMOTE=true rch cargo clippy -p frankenlibc-harness --lib --no-default-features -- -D warnings",
       "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
       "owning_bead": "bd-juvqm.11"
     },
     {
       "surface_id": "harness-conformance-gates",
       "scope": "crates/frankenlibc-harness/tests/*_test.rs (one file at a time)",
-      "minimal_test_cmd": "rch cargo test -p frankenlibc-harness --test <gate_name>",
-      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-harness --tests --no-default-features -- -D warnings",
+      "minimal_test_cmd": "RCH_FORCE_REMOTE=true rch cargo test -p frankenlibc-harness --test <gate_name>",
+      "minimal_clippy_cmd": "RCH_FORCE_REMOTE=true rch cargo clippy -p frankenlibc-harness --tests --no-default-features -- -D warnings",
       "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
       "owning_bead": "bd-juvqm",
       "broad_gate_forbidden_reason": "Each conformance test is independent; running --tests under --all-targets recompiles 100+ test binaries per invocation."
@@ -70,56 +75,56 @@
     {
       "surface_id": "membrane-runtime-math",
       "scope": "frankenlibc_membrane::runtime_math",
-      "minimal_test_cmd": "rch cargo test -p frankenlibc-membrane --lib runtime_math",
-      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-membrane --lib --no-default-features -- -D warnings",
+      "minimal_test_cmd": "RCH_FORCE_REMOTE=true rch cargo test -p frankenlibc-membrane --lib runtime_math",
+      "minimal_clippy_cmd": "RCH_FORCE_REMOTE=true rch cargo clippy -p frankenlibc-membrane --lib --no-default-features -- -D warnings",
       "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
       "owning_bead": "bd-juvqm"
     },
     {
       "surface_id": "abi-pthread",
       "scope": "frankenlibc_abi::pthread_abi",
-      "minimal_test_cmd": "rch cargo test -p frankenlibc-abi --lib pthread_abi",
-      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-abi --lib --no-default-features -- -D warnings",
+      "minimal_test_cmd": "RCH_FORCE_REMOTE=true rch cargo test -p frankenlibc-abi --lib pthread_abi",
+      "minimal_clippy_cmd": "RCH_FORCE_REMOTE=true rch cargo clippy -p frankenlibc-abi --lib --no-default-features -- -D warnings",
       "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
       "owning_bead": "bd-juvqm"
     },
     {
       "surface_id": "abi-stdio",
       "scope": "frankenlibc_abi::stdio_abi",
-      "minimal_test_cmd": "rch cargo test -p frankenlibc-abi --lib stdio_abi",
-      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-abi --lib --no-default-features -- -D warnings",
+      "minimal_test_cmd": "RCH_FORCE_REMOTE=true rch cargo test -p frankenlibc-abi --lib stdio_abi",
+      "minimal_clippy_cmd": "RCH_FORCE_REMOTE=true rch cargo clippy -p frankenlibc-abi --lib --no-default-features -- -D warnings",
       "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
       "owning_bead": "bd-juvqm"
     },
     {
       "surface_id": "abi-string",
       "scope": "frankenlibc_abi::string_abi",
-      "minimal_test_cmd": "rch cargo test -p frankenlibc-abi --lib string_abi",
-      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-abi --lib --no-default-features -- -D warnings",
+      "minimal_test_cmd": "RCH_FORCE_REMOTE=true rch cargo test -p frankenlibc-abi --lib string_abi",
+      "minimal_clippy_cmd": "RCH_FORCE_REMOTE=true rch cargo clippy -p frankenlibc-abi --lib --no-default-features -- -D warnings",
       "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
       "owning_bead": "bd-juvqm"
     },
     {
       "surface_id": "core-stdlib",
       "scope": "frankenlibc_core::stdlib (and submodules)",
-      "minimal_test_cmd": "rch cargo test -p frankenlibc-core --lib stdlib",
-      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-core --lib --no-default-features -- -D warnings",
+      "minimal_test_cmd": "RCH_FORCE_REMOTE=true rch cargo test -p frankenlibc-core --lib stdlib",
+      "minimal_clippy_cmd": "RCH_FORCE_REMOTE=true rch cargo clippy -p frankenlibc-core --lib --no-default-features -- -D warnings",
       "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
       "owning_bead": "bd-juvqm"
     },
     {
       "surface_id": "core-resolv",
       "scope": "frankenlibc_core::resolv / aliases / netgroup parsers",
-      "minimal_test_cmd": "rch cargo test -p frankenlibc-core --lib resolv",
-      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-core --lib --no-default-features -- -D warnings",
+      "minimal_test_cmd": "RCH_FORCE_REMOTE=true rch cargo test -p frankenlibc-core --lib resolv",
+      "minimal_clippy_cmd": "RCH_FORCE_REMOTE=true rch cargo clippy -p frankenlibc-core --lib --no-default-features -- -D warnings",
       "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
       "owning_bead": "bd-juvqm"
     },
     {
       "surface_id": "fuzz-build-smoke",
       "scope": "frankenlibc-fuzz fuzz targets (one bin at a time)",
-      "minimal_test_cmd": "rch cargo check -p frankenlibc-fuzz --bin <target_name>",
-      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-fuzz --bin <target_name> -- -D warnings",
+      "minimal_test_cmd": "RCH_FORCE_REMOTE=true rch cargo check -p frankenlibc-fuzz --bin <target_name>",
+      "minimal_clippy_cmd": "RCH_FORCE_REMOTE=true rch cargo clippy -p frankenlibc-fuzz --bin <target_name> -- -D warnings",
       "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
       "owning_bead": "bd-juvqm",
       "broad_gate_forbidden_reason": "frankenlibc-fuzz has 60+ bin targets; checking all of them per fuzz-target edit wastes 10+ minutes per agent."
@@ -127,16 +132,16 @@
     {
       "surface_id": "bench-build-smoke",
       "scope": "frankenlibc-bench harness=false bins (one bench at a time)",
-      "minimal_test_cmd": "rch cargo build -p frankenlibc-bench --bench <bench_name> --release",
-      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-bench --benches --no-default-features -- -D warnings",
+      "minimal_test_cmd": "RCH_FORCE_REMOTE=true rch cargo build -p frankenlibc-bench --bench <bench_name> --release",
+      "minimal_clippy_cmd": "RCH_FORCE_REMOTE=true rch cargo clippy -p frankenlibc-bench --benches --no-default-features -- -D warnings",
       "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
       "owning_bead": "bd-juvqm"
     },
     {
       "surface_id": "workload-replay",
       "scope": "crates/frankenlibc-harness/tests/user_workload_replay_*_test.rs",
-      "minimal_test_cmd": "rch cargo test -p frankenlibc-harness --test user_workload_replay_<variant>",
-      "minimal_clippy_cmd": "rch cargo clippy -p frankenlibc-harness --tests --no-default-features -- -D warnings",
+      "minimal_test_cmd": "RCH_FORCE_REMOTE=true rch cargo test -p frankenlibc-harness --test user_workload_replay_<variant>",
+      "minimal_clippy_cmd": "RCH_FORCE_REMOTE=true rch cargo clippy -p frankenlibc-harness --tests --no-default-features -- -D warnings",
       "target_dir_pattern": "/data/projects/.cargo-target-frankenlibc-<agent>-<bead>",
       "owning_bead": "bd-juvqm"
     },
@@ -151,11 +156,11 @@
   ],
   "broad_gate_allowlist": [
     {
-      "command": "rch cargo check --workspace",
+      "command": "RCH_FORCE_REMOTE=true rch cargo check --workspace",
       "rationale": "Permitted only when a Cargo.toml at the workspace root or a profile section changes. Bead must cite the workspace-touching file."
     },
     {
-      "command": "rch cargo test --workspace --no-run",
+      "command": "RCH_FORCE_REMOTE=true rch cargo test --workspace --no-run",
       "rationale": "Permitted only for release-readiness sanity checks; the bead must cite the release tag or pre-merge audit it satisfies."
     }
   ],
