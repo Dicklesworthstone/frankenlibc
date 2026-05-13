@@ -961,19 +961,6 @@
     {
       "coverage_state": "uncovered",
       "current_coverage_pct": 0.0,
-      "deferral_reason": "Err/warn helpers are user-visible diagnostics but low breadth compared with selected high-risk runtime and syscall campaigns.",
-      "module": "err_abi",
-      "next_step": "Create a compact stderr and errno formatting fixture pack once stdio buffering evidence is stable.",
-      "status_breakdown": {
-        "Implemented": 12
-      },
-      "target_covered": 0,
-      "target_total": 12,
-      "target_uncovered": 12
-    },
-    {
-      "coverage_state": "uncovered",
-      "current_coverage_pct": 0.0,
       "deferral_reason": "Floating-point environment behavior is high precision work but should be paired with the math exceptional-path fixture pack instead of this broad first queue.",
       "module": "fenv_abi",
       "next_step": "Add fenv fixtures with soft-fp and math exception cases in the dedicated math/fenv wave.",
@@ -1201,7 +1188,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3519,
+    "all_uncovered_target_symbols": 3507,
     "campaign_count": 16,
     "covered_modules": [
       "fortify_abi",
@@ -1221,8 +1208,8 @@
       "unistd_abi",
       "wchar_abi"
     ],
-    "deferred_module_count": 18,
-    "deferred_target_uncovered_symbols": 382,
+    "deferred_module_count": 17,
+    "deferred_target_uncovered_symbols": 370,
     "highest_priority_campaign": "fcq-unistd-process-filesystem",
     "lowest_priority_campaign": "fcq-rpc-legacy-network",
     "required_workload_domains_covered": [

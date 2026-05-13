@@ -1,0 +1,237 @@
+{
+  "version": "v1",
+  "family": "err_ops",
+  "captured_at": "2026-05-13T06:22:00Z",
+  "description": "Compact BSD/GNU <err.h> stderr formatting and exit fixture coverage for warn, err, warnc, errc, and va_list variants.",
+  "spec_reference": "BSD err(3), glibc <err.h>, GNU libc error reporting conventions",
+  "cases": [
+    {
+      "name": "warn_includes_errno_suffix",
+      "function": "warn",
+      "spec_section": "BSD err(3) warn",
+      "inputs": {
+        "format": "lookup",
+        "errno": 2
+      },
+      "expected_output": {
+        "stderr_body": "lookup: No such file or directory\n",
+        "with_errno": true,
+        "exits": false
+      },
+      "expected_errno": 2,
+      "mode": "both",
+      "note": "Validated by conformance_diff_err_h::diff_warn_errno_suffix against glibc stderr body."
+    },
+    {
+      "name": "warnx_message_only",
+      "function": "warnx",
+      "spec_section": "BSD err(3) warnx",
+      "inputs": {
+        "format": "plain warning"
+      },
+      "expected_output": {
+        "stderr_body": "plain warning\n",
+        "with_errno": false,
+        "exits": false
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by conformance_diff_err_h::diff_warnx_message_body against glibc stderr body."
+    },
+    {
+      "name": "warnc_uses_explicit_error_code",
+      "function": "warnc",
+      "spec_section": "BSD err(3) warnc",
+      "inputs": {
+        "format": "explicit",
+        "code": 22
+      },
+      "expected_output": {
+        "stderr_body": "explicit: Invalid argument\n",
+        "with_errno": true,
+        "explicit_code": true,
+        "exits": false
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by err_abi_test::test_warnc_uses_explicit_code_not_global_errno."
+    },
+    {
+      "name": "vwarn_va_list_errno_suffix",
+      "function": "vwarn",
+      "spec_section": "BSD err(3) vwarn",
+      "inputs": {
+        "format": "va warn",
+        "errno": 13,
+        "va_list": true
+      },
+      "expected_output": {
+        "stderr_body": "va warn: Permission denied\n",
+        "with_errno": true,
+        "va_list": true,
+        "exits": false
+      },
+      "expected_errno": 13,
+      "mode": "both",
+      "note": "Validated by err_abi_test::test_vwarn_with_message and shared vformat path."
+    },
+    {
+      "name": "vwarnx_va_list_message_only",
+      "function": "vwarnx",
+      "spec_section": "BSD err(3) vwarnx",
+      "inputs": {
+        "format": "va warnx",
+        "va_list": true
+      },
+      "expected_output": {
+        "stderr_body": "va warnx\n",
+        "with_errno": false,
+        "va_list": true,
+        "exits": false
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by err_abi_test::test_vwarnx_with_message and shared vformat path."
+    },
+    {
+      "name": "vwarnc_va_list_explicit_error_code",
+      "function": "vwarnc",
+      "spec_section": "BSD err(3) vwarnc",
+      "inputs": {
+        "format": "va explicit",
+        "code": 12,
+        "va_list": true
+      },
+      "expected_output": {
+        "stderr_body": "va explicit: Cannot allocate memory\n",
+        "with_errno": true,
+        "explicit_code": true,
+        "va_list": true,
+        "exits": false
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by err_abi_test::test_vwarnc_preserves_global_errno and shared vformat path."
+    },
+    {
+      "name": "err_exits_after_errno_message",
+      "function": "err",
+      "spec_section": "BSD err(3) err",
+      "inputs": {
+        "format": "fatal",
+        "errno": 2,
+        "eval": 7
+      },
+      "expected_output": {
+        "stderr_body": "fatal: No such file or directory\n",
+        "with_errno": true,
+        "exits": true,
+        "exit_status": 7
+      },
+      "expected_errno": 2,
+      "mode": "both",
+      "note": "Exit-path fixture mirrors errx child-process isolation and errno-suffix warn coverage."
+    },
+    {
+      "name": "errx_exits_after_message",
+      "function": "errx",
+      "spec_section": "BSD err(3) errx",
+      "inputs": {
+        "format": "fatal message",
+        "eval": 7
+      },
+      "expected_output": {
+        "stderr_body": "fatal message\n",
+        "with_errno": false,
+        "exits": true,
+        "exit_status": 7
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Validated by conformance_diff_err_h::diff_errx_exit_and_body against glibc."
+    },
+    {
+      "name": "errc_exits_after_explicit_code_message",
+      "function": "errc",
+      "spec_section": "BSD err(3) errc",
+      "inputs": {
+        "format": "fatal explicit",
+        "code": 22,
+        "eval": 9
+      },
+      "expected_output": {
+        "stderr_body": "fatal explicit: Invalid argument\n",
+        "with_errno": true,
+        "explicit_code": true,
+        "exits": true,
+        "exit_status": 9
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Exit-path fixture binds the explicit-code errc variant implemented in err_abi.rs."
+    },
+    {
+      "name": "verr_va_list_exits_after_errno_message",
+      "function": "verr",
+      "spec_section": "BSD err(3) verr",
+      "inputs": {
+        "format": "va fatal",
+        "errno": 13,
+        "eval": 11,
+        "va_list": true
+      },
+      "expected_output": {
+        "stderr_body": "va fatal: Permission denied\n",
+        "with_errno": true,
+        "va_list": true,
+        "exits": true,
+        "exit_status": 11
+      },
+      "expected_errno": 13,
+      "mode": "both",
+      "note": "Va-list exit variant shares vformat_and_write with vwarn and err exit dispatch."
+    },
+    {
+      "name": "verrx_va_list_exits_after_message",
+      "function": "verrx",
+      "spec_section": "BSD err(3) verrx",
+      "inputs": {
+        "format": "va fatal message",
+        "eval": 12,
+        "va_list": true
+      },
+      "expected_output": {
+        "stderr_body": "va fatal message\n",
+        "with_errno": false,
+        "va_list": true,
+        "exits": true,
+        "exit_status": 12
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Va-list message-only exit variant shares vwarnx formatting and errx exit dispatch."
+    },
+    {
+      "name": "verrc_va_list_exits_after_explicit_code_message",
+      "function": "verrc",
+      "spec_section": "BSD err(3) verrc",
+      "inputs": {
+        "format": "va fatal explicit",
+        "code": 12,
+        "eval": 13,
+        "va_list": true
+      },
+      "expected_output": {
+        "stderr_body": "va fatal explicit: Cannot allocate memory\n",
+        "with_errno": true,
+        "explicit_code": true,
+        "va_list": true,
+        "exits": true,
+        "exit_status": 13
+      },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Va-list explicit-code exit variant shares vformat_and_write_with_code and errc exit dispatch."
+    }
+  ]
+}
