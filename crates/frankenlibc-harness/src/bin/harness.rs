@@ -784,6 +784,18 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Validate a structured log JSONL artifact against the canonical
+    /// LogEntry schema via `structured_log::validate_log_file`.
+    /// Emits one JSONL record describing the outcome; exits non-zero
+    /// when any row fails validation or the input cannot be read.
+    ValidateStructuredLog {
+        /// Path to the structured log JSONL artifact.
+        #[arg(long)]
+        jsonl: PathBuf,
+        /// Output JSONL path: one structured_log_validation record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Parse a setjmp_semantics_contract.v1.json document and run
     /// its intrinsic-consistency checks via
     /// `setjmp_contract::{parse_contract_str, validate_intrinsic}`.
@@ -2337,6 +2349,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !ok {
                 return Err(format!(
                     "validate-stdio-evidence: {} error(s) — see {}",
+                    errors.len(),
+                    output.display()
+                )
+                .into());
+            }
+        }
+        Command::ValidateStructuredLog { jsonl, output } => {
+            use frankenlibc_harness::structured_log::validate_log_file;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            let (total_lines, errors) = match validate_log_file(&jsonl) {
+                Ok((total_lines, validation_errors)) => {
+                    let errors = validation_errors
+                        .into_iter()
+                        .map(|err| {
+                            serde_json::json!({
+                                "line_number": err.line_number,
+                                "field": err.field,
+                                "message": err.message,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    (total_lines, errors)
+                }
+                Err(e) => (
+                    0,
+                    vec![serde_json::json!({
+                        "line_number": 0,
+                        "field": "<io>",
+                        "message": e.to_string(),
+                    })],
+                ),
+            };
+
+            let ok = errors.is_empty();
+            let line = serde_json::json!({
+                "kind": "structured_log_validation",
+                "input": jsonl.display().to_string(),
+                "total_lines": total_lines,
+                "ok": ok,
+                "errors": errors,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "validate-structured-log: total_lines={total_lines} ok={ok} wrote 1 JSONL record to {}",
+                output.display()
+            );
+            if !ok {
+                return Err(format!(
+                    "validate-structured-log: rejected {} with {} error(s) - see {}",
+                    jsonl.display(),
                     errors.len(),
                     output.display()
                 )

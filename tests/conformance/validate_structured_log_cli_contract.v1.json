@@ -1,0 +1,64 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "validate-structured-log-cli-contract",
+  "bead": "bd-0ojzh",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "85112127492fdc57b2b4123efb1dedeac73c0dff",
+  "purpose": "Pin the harness binary subcommand that exposes structured_log::validate_log_file as a standalone CLI. The library API is the canonical validator for structured log JSONL artifacts emitted by the conformance pipeline: it checks the LogEntry schema, required fields, enum values, trace shape, and runtime decision invariants. The CLI bridge lets CI validate structured logs without writing Rust callers.",
+  "subcommand_name": "validate-structured-log",
+  "binary_target": "harness",
+  "required_flags": [
+    "--jsonl",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_harness::structured_log::validate_log_file",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "structured_log_validation",
+    "required_fields": [
+      "kind",
+      "input",
+      "total_lines",
+      "ok",
+      "errors"
+    ],
+    "error_fields": [
+      "line_number",
+      "field",
+      "message"
+    ],
+    "error_field_markers": [
+      "<io>",
+      "<json>",
+      "<root>"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "ok_true_iff_errors_array_empty": true,
+    "exit_non_zero_when_ok_false": true,
+    "empty_jsonl_must_pass": true,
+    "io_error_must_fail_closed": true
+  },
+  "required_gate_cases": [
+    "empty_jsonl_pass",
+    "valid_row_pass",
+    "invalid_json_row_fail_with_json_field",
+    "missing_required_field_fail_names_field",
+    "missing_file_fail_closed"
+  ],
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "ok_true_with_nonempty_errors",
+    "ok_false_with_zero_exit",
+    "empty_jsonl_rejected",
+    "io_error_without_jsonl_record"
+  ],
+  "summary": {
+    "bead": "bd-0ojzh",
+    "subcommand": "validate-structured-log",
+    "report_only": true,
+    "claim_status": "code_first_tracker_deferred"
+  }
+}
