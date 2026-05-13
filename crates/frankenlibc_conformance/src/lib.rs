@@ -533,7 +533,19 @@ pub fn execute_fixture_case(
         | "globfree"
         | "index"
         | "memccpy"
-        | "memmem" => execute_string_memory_hotpaths_case(function, inputs, mode),
+        | "memmem"
+        | "memset_explicit"
+        | "rindex"
+        | "strchrnul"
+        | "strerrordesc_np"
+        | "strerrorname_np"
+        | "strfromd"
+        | "strfromf"
+        | "strfroml"
+        | "strmode"
+        | "swab"
+        | "timingsafe_bcmp"
+        | "timingsafe_memcmp" => execute_string_memory_hotpaths_case(function, inputs, mode),
         "strcmp" => execute_strcmp_case(inputs, mode),
         "strcpy" => execute_strcpy_case(inputs, mode),
         "strncpy" => execute_strncpy_case(inputs, mode),
@@ -8242,6 +8254,82 @@ fn string_memory_hotpath_actual(
                 .collect();
             Ok(envz_summary(&entries))
         }
+        "memset_explicit" => {
+            let mut bytes = parse_string(inputs, "buffer")?.into_bytes();
+            let value = parse_ascii_byte(inputs, "value")?;
+            let requested = parse_usize(inputs, "n")?;
+            let set = frankenlibc_core::string::memset(&mut bytes, value, requested);
+            Ok(format!(
+                "MEMSET_EXPLICIT_LEN_{}_SET_{}_HEX_{}",
+                bytes.len(),
+                set,
+                string_hotpath_hex(&bytes)
+            ))
+        }
+        "rindex" => {
+            let s = nul_terminated_bytes(&parse_string(inputs, "s")?);
+            let needle = parse_ascii_byte(inputs, "c")?;
+            Ok(match frankenlibc_core::string::str::strrchr(&s, needle) {
+                Some(offset) => format!("RINDEX_OFFSET_{offset}"),
+                None => String::from("RINDEX_NULL"),
+            })
+        }
+        "strchrnul" => {
+            let s = nul_terminated_bytes(&parse_string(inputs, "s")?);
+            let needle = parse_ascii_byte(inputs, "c")?;
+            let offset = frankenlibc_core::string::str::strchrnul(&s, needle);
+            Ok(format!("STRCHRNUL_OFFSET_{offset}"))
+        }
+        "strerrordesc_np" => {
+            let errnum = parse_i32(inputs, "errnum")?;
+            Ok(format!("STRERRORDESC_{}", errno_message(errnum)))
+        }
+        "strerrorname_np" => {
+            let errnum = parse_i32(inputs, "errnum")?;
+            Ok(format!(
+                "STRERRORNAME_{}",
+                errno_name(errnum).unwrap_or("NULL")
+            ))
+        }
+        "strfromd" => string_hotpath_strfrom(inputs, "STRFROMD"),
+        "strfromf" => string_hotpath_strfrom(inputs, "STRFROMF"),
+        "strfroml" => string_hotpath_strfrom(inputs, "STRFROML"),
+        "strmode" => {
+            let mode = parse_usize(inputs, "mode")? as u32;
+            let text = String::from_utf8_lossy(&frankenlibc_core::stat::strmode_bytes(mode))
+                .replace(' ', "_");
+            Ok(format!("STRMODE_TEXT_{text}"))
+        }
+        "swab" => {
+            let src = parse_string(inputs, "src")?.into_bytes();
+            let mut dst = vec![0_u8; parse_usize(inputs, "dst_len")?];
+            let n = parse_usize(inputs, "n")?;
+            let swapped = frankenlibc_core::string::swab(&src, &mut dst, n);
+            Ok(format!(
+                "SWAB_LEN_{}_SWAPPED_{}_HEX_{}",
+                dst.len(),
+                swapped,
+                string_hotpath_hex(&dst)
+            ))
+        }
+        "timingsafe_bcmp" => {
+            let lhs = parse_string(inputs, "lhs")?.into_bytes();
+            let rhs = parse_string(inputs, "rhs")?.into_bytes();
+            let n = parse_usize(inputs, "n")?;
+            Ok(format!(
+                "TIMINGSAFE_BCMP_{}",
+                frankenlibc_core::string::timingsafe::bcmp(&lhs, &rhs, n)
+            ))
+        }
+        "timingsafe_memcmp" => {
+            let lhs = parse_string(inputs, "lhs")?.into_bytes();
+            let rhs = parse_string(inputs, "rhs")?.into_bytes();
+            let n = parse_usize(inputs, "n")?;
+            Ok(format!(
+                "TIMINGSAFE_MEMCMP_{}",
+                frankenlibc_core::string::timingsafe::memcmp(&lhs, &rhs, n).signum()
+            ))
+        }
         other => Err(format!(
             "unsupported string/memory hotpath fixture: {other}"
         )),
@@ -8327,6 +8415,34 @@ fn envz_summary(entries: &[String]) -> String {
         argz_len(entries),
         entries.join("|")
     )
+}
+
+fn string_hotpath_strfrom(inputs: &serde_json::Value, label: &str) -> Result<String, String> {
+    let value = parse_f64(inputs, "value")?;
+    let precision = parse_usize(inputs, "precision")?;
+    let rendered = format!("{value:.precision$}");
+    Ok(format!("{label}_LEN_{}_TEXT_{rendered}", rendered.len()))
+}
+
+fn errno_name(errnum: i32) -> Option<&'static str> {
+    match errnum {
+        x if x == libc::EPERM => Some("EPERM"),
+        x if x == libc::ENOENT => Some("ENOENT"),
+        x if x == libc::ESRCH => Some("ESRCH"),
+        x if x == libc::EINTR => Some("EINTR"),
+        x if x == libc::EIO => Some("EIO"),
+        x if x == libc::ENOMEM => Some("ENOMEM"),
+        x if x == libc::EACCES => Some("EACCES"),
+        x if x == libc::EFAULT => Some("EFAULT"),
+        x if x == libc::EBUSY => Some("EBUSY"),
+        x if x == libc::EEXIST => Some("EEXIST"),
+        x if x == libc::EINVAL => Some("EINVAL"),
+        x if x == libc::ENOSPC => Some("ENOSPC"),
+        x if x == libc::EPIPE => Some("EPIPE"),
+        x if x == libc::ERANGE => Some("ERANGE"),
+        x if x == libc::EOVERFLOW => Some("EOVERFLOW"),
+        _ => None,
+    }
 }
 
 fn string_hotpath_hex(bytes: &[u8]) -> String {

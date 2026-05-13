@@ -1,0 +1,454 @@
+{
+  "version": "v1",
+  "family": "string_memory_hotpaths_wave11",
+  "captured_at": "2026-05-13T03:36:00Z",
+  "description": "Strict/hardened deterministic fixture wave for string ABI edge helpers without recording pointers, allocation addresses, errno buffers, file descriptors, or process-global state.",
+  "spec_reference": "POSIX/GNU/BSD memset_explicit, rindex, strchrnul, strerrordesc_np, strerrorname_np, strfromd, strfromf, strfroml, strmode, swab, timingsafe_bcmp, and timingsafe_memcmp semantics",
+  "campaign": {
+    "bead": "pending-string-memory-wave11",
+    "campaign_id": "fcq-string-memory-hotpaths",
+    "wave_id": "wave-11-string-memory-hotpaths",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture",
+    "first_wave_symbols": [
+      "memset_explicit",
+      "rindex",
+      "strchrnul",
+      "strerrordesc_np",
+      "strerrorname_np",
+      "strfromd",
+      "strfromf",
+      "strfroml",
+      "strmode",
+      "swab",
+      "timingsafe_bcmp",
+      "timingsafe_memcmp"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "memset_explicit_sets_secret_prefix_strict",
+      "function": "memset_explicit",
+      "spec_section": "C23 memset_explicit",
+      "inputs": {
+        "symbol": "memset_explicit",
+        "scenario": "set_secret_prefix",
+        "buffer": "secret!",
+        "value": "X",
+        "n": 4,
+        "expected": "MEMSET_EXPLICIT_LEN_7_SET_4_HEX_58585858657421",
+        "oracle_source": "C23 explicit byte-store pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=memset_explicit;mode=strict;expected=MEMSET_EXPLICIT_LEN_7_SET_4_HEX_58585858657421;actual=MEMSET_EXPLICIT_LEN_7_SET_4_HEX_58585858657421;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "memset_explicit_sets_secret_prefix_hardened",
+      "function": "memset_explicit",
+      "spec_section": "C23 memset_explicit",
+      "inputs": {
+        "symbol": "memset_explicit",
+        "scenario": "set_secret_prefix",
+        "buffer": "secret!",
+        "value": "X",
+        "n": 4,
+        "expected": "MEMSET_EXPLICIT_LEN_7_SET_4_HEX_58585858657421",
+        "oracle_source": "C23 explicit byte-store pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=memset_explicit;mode=hardened;expected=MEMSET_EXPLICIT_LEN_7_SET_4_HEX_58585858657421;actual=MEMSET_EXPLICIT_LEN_7_SET_4_HEX_58585858657421;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "rindex_finds_last_byte_strict",
+      "function": "rindex",
+      "spec_section": "BSD rindex",
+      "inputs": {
+        "symbol": "rindex",
+        "scenario": "last_character_offset",
+        "s": "abracadabra",
+        "c": "a",
+        "expected": "RINDEX_OFFSET_10",
+        "oracle_source": "BSD rindex strrchr-equivalent pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=rindex;mode=strict;expected=RINDEX_OFFSET_10;actual=RINDEX_OFFSET_10;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "rindex_finds_last_byte_hardened",
+      "function": "rindex",
+      "spec_section": "BSD rindex",
+      "inputs": {
+        "symbol": "rindex",
+        "scenario": "last_character_offset",
+        "s": "abracadabra",
+        "c": "a",
+        "expected": "RINDEX_OFFSET_10",
+        "oracle_source": "BSD rindex strrchr-equivalent pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=rindex;mode=hardened;expected=RINDEX_OFFSET_10;actual=RINDEX_OFFSET_10;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strchrnul_returns_terminator_offset_strict",
+      "function": "strchrnul",
+      "spec_section": "GNU strchrnul",
+      "inputs": {
+        "symbol": "strchrnul",
+        "scenario": "missing_byte_returns_nul",
+        "s": "alpha",
+        "c": "z",
+        "expected": "STRCHRNUL_OFFSET_5",
+        "oracle_source": "GNU strchrnul pointer-free offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strchrnul;mode=strict;expected=STRCHRNUL_OFFSET_5;actual=STRCHRNUL_OFFSET_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strchrnul_returns_terminator_offset_hardened",
+      "function": "strchrnul",
+      "spec_section": "GNU strchrnul",
+      "inputs": {
+        "symbol": "strchrnul",
+        "scenario": "missing_byte_returns_nul",
+        "s": "alpha",
+        "c": "z",
+        "expected": "STRCHRNUL_OFFSET_5",
+        "oracle_source": "GNU strchrnul pointer-free offset model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strchrnul;mode=hardened;expected=STRCHRNUL_OFFSET_5;actual=STRCHRNUL_OFFSET_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strerrordesc_np_names_enoent_description_strict",
+      "function": "strerrordesc_np",
+      "spec_section": "GNU strerrordesc_np",
+      "inputs": {
+        "symbol": "strerrordesc_np",
+        "scenario": "errno_description",
+        "errnum": 2,
+        "expected": "STRERRORDESC_No such file or directory",
+        "oracle_source": "GNU errno description table pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strerrordesc_np;mode=strict;expected=STRERRORDESC_No such file or directory;actual=STRERRORDESC_No such file or directory;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strerrordesc_np_names_enoent_description_hardened",
+      "function": "strerrordesc_np",
+      "spec_section": "GNU strerrordesc_np",
+      "inputs": {
+        "symbol": "strerrordesc_np",
+        "scenario": "errno_description",
+        "errnum": 2,
+        "expected": "STRERRORDESC_No such file or directory",
+        "oracle_source": "GNU errno description table pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strerrordesc_np;mode=hardened;expected=STRERRORDESC_No such file or directory;actual=STRERRORDESC_No such file or directory;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strerrorname_np_names_enoent_symbol_strict",
+      "function": "strerrorname_np",
+      "spec_section": "GNU strerrorname_np",
+      "inputs": {
+        "symbol": "strerrorname_np",
+        "scenario": "errno_symbolic_name",
+        "errnum": 2,
+        "expected": "STRERRORNAME_ENOENT",
+        "oracle_source": "GNU errno symbolic-name table pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strerrorname_np;mode=strict;expected=STRERRORNAME_ENOENT;actual=STRERRORNAME_ENOENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strerrorname_np_names_enoent_symbol_hardened",
+      "function": "strerrorname_np",
+      "spec_section": "GNU strerrorname_np",
+      "inputs": {
+        "symbol": "strerrorname_np",
+        "scenario": "errno_symbolic_name",
+        "errnum": 2,
+        "expected": "STRERRORNAME_ENOENT",
+        "oracle_source": "GNU errno symbolic-name table pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strerrorname_np;mode=hardened;expected=STRERRORNAME_ENOENT;actual=STRERRORNAME_ENOENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strfromd_formats_fixed_precision_strict",
+      "function": "strfromd",
+      "spec_section": "C23 strfromd",
+      "inputs": {
+        "symbol": "strfromd",
+        "scenario": "fixed_precision_double",
+        "format": "%.2f",
+        "precision": 2,
+        "value": 3.5,
+        "expected": "STRFROMD_LEN_4_TEXT_3.50",
+        "oracle_source": "C23 strfromd fixed-format pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strfromd;mode=strict;expected=STRFROMD_LEN_4_TEXT_3.50;actual=STRFROMD_LEN_4_TEXT_3.50;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strfromd_formats_fixed_precision_hardened",
+      "function": "strfromd",
+      "spec_section": "C23 strfromd",
+      "inputs": {
+        "symbol": "strfromd",
+        "scenario": "fixed_precision_double",
+        "format": "%.2f",
+        "precision": 2,
+        "value": 3.5,
+        "expected": "STRFROMD_LEN_4_TEXT_3.50",
+        "oracle_source": "C23 strfromd fixed-format pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strfromd;mode=hardened;expected=STRFROMD_LEN_4_TEXT_3.50;actual=STRFROMD_LEN_4_TEXT_3.50;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strfromf_formats_fixed_precision_strict",
+      "function": "strfromf",
+      "spec_section": "C23 strfromf",
+      "inputs": {
+        "symbol": "strfromf",
+        "scenario": "fixed_precision_float",
+        "format": "%.3f",
+        "precision": 3,
+        "value": 1.25,
+        "expected": "STRFROMF_LEN_5_TEXT_1.250",
+        "oracle_source": "C23 strfromf fixed-format pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strfromf;mode=strict;expected=STRFROMF_LEN_5_TEXT_1.250;actual=STRFROMF_LEN_5_TEXT_1.250;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strfromf_formats_fixed_precision_hardened",
+      "function": "strfromf",
+      "spec_section": "C23 strfromf",
+      "inputs": {
+        "symbol": "strfromf",
+        "scenario": "fixed_precision_float",
+        "format": "%.3f",
+        "precision": 3,
+        "value": 1.25,
+        "expected": "STRFROMF_LEN_5_TEXT_1.250",
+        "oracle_source": "C23 strfromf fixed-format pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strfromf;mode=hardened;expected=STRFROMF_LEN_5_TEXT_1.250;actual=STRFROMF_LEN_5_TEXT_1.250;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strfroml_formats_fixed_precision_strict",
+      "function": "strfroml",
+      "spec_section": "C23 strfroml",
+      "inputs": {
+        "symbol": "strfroml",
+        "scenario": "fixed_precision_long_double",
+        "format": "%.1f",
+        "precision": 1,
+        "value": -2.0,
+        "expected": "STRFROML_LEN_4_TEXT_-2.0",
+        "oracle_source": "C23 strfroml fixed-format pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strfroml;mode=strict;expected=STRFROML_LEN_4_TEXT_-2.0;actual=STRFROML_LEN_4_TEXT_-2.0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strfroml_formats_fixed_precision_hardened",
+      "function": "strfroml",
+      "spec_section": "C23 strfroml",
+      "inputs": {
+        "symbol": "strfroml",
+        "scenario": "fixed_precision_long_double",
+        "format": "%.1f",
+        "precision": 1,
+        "value": -2.0,
+        "expected": "STRFROML_LEN_4_TEXT_-2.0",
+        "oracle_source": "C23 strfroml fixed-format pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strfroml;mode=hardened;expected=STRFROML_LEN_4_TEXT_-2.0;actual=STRFROML_LEN_4_TEXT_-2.0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strmode_formats_regular_executable_mode_strict",
+      "function": "strmode",
+      "spec_section": "BSD strmode",
+      "inputs": {
+        "symbol": "strmode",
+        "scenario": "regular_executable_mode",
+        "mode": 33261,
+        "expected": "STRMODE_TEXT_-rwxr-xr-x_",
+        "oracle_source": "BSD mode-bit string rendering pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strmode;mode=strict;expected=STRMODE_TEXT_-rwxr-xr-x_;actual=STRMODE_TEXT_-rwxr-xr-x_;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strmode_formats_regular_executable_mode_hardened",
+      "function": "strmode",
+      "spec_section": "BSD strmode",
+      "inputs": {
+        "symbol": "strmode",
+        "scenario": "regular_executable_mode",
+        "mode": 33261,
+        "expected": "STRMODE_TEXT_-rwxr-xr-x_",
+        "oracle_source": "BSD mode-bit string rendering pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=strmode;mode=hardened;expected=STRMODE_TEXT_-rwxr-xr-x_;actual=STRMODE_TEXT_-rwxr-xr-x_;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "swab_swaps_adjacent_pairs_strict",
+      "function": "swab",
+      "spec_section": "POSIX swab",
+      "inputs": {
+        "symbol": "swab",
+        "scenario": "swap_even_byte_pairs",
+        "src": "abcdef",
+        "dst_len": 6,
+        "n": 6,
+        "expected": "SWAB_LEN_6_SWAPPED_6_HEX_626164636665",
+        "oracle_source": "POSIX swab pointer-free byte-pair model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=swab;mode=strict;expected=SWAB_LEN_6_SWAPPED_6_HEX_626164636665;actual=SWAB_LEN_6_SWAPPED_6_HEX_626164636665;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "swab_swaps_adjacent_pairs_hardened",
+      "function": "swab",
+      "spec_section": "POSIX swab",
+      "inputs": {
+        "symbol": "swab",
+        "scenario": "swap_even_byte_pairs",
+        "src": "abcdef",
+        "dst_len": 6,
+        "n": 6,
+        "expected": "SWAB_LEN_6_SWAPPED_6_HEX_626164636665",
+        "oracle_source": "POSIX swab pointer-free byte-pair model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=swab;mode=hardened;expected=SWAB_LEN_6_SWAPPED_6_HEX_626164636665;actual=SWAB_LEN_6_SWAPPED_6_HEX_626164636665;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "timingsafe_bcmp_detects_difference_strict",
+      "function": "timingsafe_bcmp",
+      "spec_section": "OpenBSD timingsafe_bcmp",
+      "inputs": {
+        "symbol": "timingsafe_bcmp",
+        "scenario": "constant_time_difference",
+        "lhs": "token-a",
+        "rhs": "token-b",
+        "n": 7,
+        "expected": "TIMINGSAFE_BCMP_1",
+        "oracle_source": "OpenBSD timingsafe_bcmp normalized pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=timingsafe_bcmp;mode=strict;expected=TIMINGSAFE_BCMP_1;actual=TIMINGSAFE_BCMP_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "timingsafe_bcmp_detects_difference_hardened",
+      "function": "timingsafe_bcmp",
+      "spec_section": "OpenBSD timingsafe_bcmp",
+      "inputs": {
+        "symbol": "timingsafe_bcmp",
+        "scenario": "constant_time_difference",
+        "lhs": "token-a",
+        "rhs": "token-b",
+        "n": 7,
+        "expected": "TIMINGSAFE_BCMP_1",
+        "oracle_source": "OpenBSD timingsafe_bcmp normalized pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=timingsafe_bcmp;mode=hardened;expected=TIMINGSAFE_BCMP_1;actual=TIMINGSAFE_BCMP_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "timingsafe_memcmp_preserves_first_difference_sign_strict",
+      "function": "timingsafe_memcmp",
+      "spec_section": "OpenBSD timingsafe_memcmp",
+      "inputs": {
+        "symbol": "timingsafe_memcmp",
+        "scenario": "constant_time_ordering_sign",
+        "lhs": "token-z",
+        "rhs": "token-a",
+        "n": 7,
+        "expected": "TIMINGSAFE_MEMCMP_1",
+        "oracle_source": "OpenBSD timingsafe_memcmp sign-preserving pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=timingsafe_memcmp;mode=strict;expected=TIMINGSAFE_MEMCMP_1;actual=TIMINGSAFE_MEMCMP_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "timingsafe_memcmp_preserves_first_difference_sign_hardened",
+      "function": "timingsafe_memcmp",
+      "spec_section": "OpenBSD timingsafe_memcmp",
+      "inputs": {
+        "symbol": "timingsafe_memcmp",
+        "scenario": "constant_time_ordering_sign",
+        "lhs": "token-z",
+        "rhs": "token-a",
+        "n": 7,
+        "expected": "TIMINGSAFE_MEMCMP_1",
+        "oracle_source": "OpenBSD timingsafe_memcmp sign-preserving pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=timingsafe_memcmp;mode=hardened;expected=TIMINGSAFE_MEMCMP_1;actual=TIMINGSAFE_MEMCMP_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
