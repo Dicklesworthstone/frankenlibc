@@ -384,7 +384,10 @@ pub fn validate_real_ring_report(report: &RealRingReport) -> Vec<String> {
     if report.snapshot_size > report.ring_capacity {
         rej.push("snapshot_exceeds_capacity".to_string());
     }
-    if !report.monotone_seqno {
+    if !report.monotone_seqno
+        || (report.snapshot_size > 0 && report.snapshot_first_seqno > report.snapshot_last_seqno)
+        || report.snapshot_last_seqno > report.total_pushed
+    {
         rej.push("non_monotone_seqno".to_string());
     }
     let expected_loss = report

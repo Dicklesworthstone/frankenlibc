@@ -479,6 +479,32 @@ fn validate_real_ring_report_rejects_non_monotone_seqno() -> TestResult {
 }
 
 #[test]
+fn validate_real_ring_report_rejects_inverted_snapshot_bounds() -> TestResult {
+    let commit = "1".repeat(40);
+    let mut r = run_real_ring_stress::<32>(0x8889_u64, 4, &commit);
+    r.monotone_seqno = true;
+    r.snapshot_first_seqno = r.snapshot_last_seqno + 1;
+    let rej = validate_real_ring_report(&r);
+    require(
+        rej.contains(&"non_monotone_seqno".to_string()),
+        format!("must reject inverted snapshot seqno bounds; got {rej:?}"),
+    )
+}
+
+#[test]
+fn validate_real_ring_report_rejects_snapshot_last_beyond_total() -> TestResult {
+    let commit = "1".repeat(40);
+    let mut r = run_real_ring_stress::<32>(0x8890_u64, 4, &commit);
+    r.monotone_seqno = true;
+    r.snapshot_last_seqno = r.total_pushed + 1;
+    let rej = validate_real_ring_report(&r);
+    require(
+        rej.contains(&"non_monotone_seqno".to_string()),
+        format!("must reject snapshot_last_seqno beyond total_pushed; got {rej:?}"),
+    )
+}
+
+#[test]
 fn validate_real_ring_report_rejects_invalid_source_commit() -> TestResult {
     let mut r = run_real_ring_stress::<32>(0x9999_u64, 4, "stale-commit");
     r.source_commit = "not-a-sha".to_string();
