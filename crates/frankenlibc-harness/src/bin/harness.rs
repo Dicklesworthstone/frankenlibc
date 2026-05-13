@@ -653,6 +653,35 @@ enum Command {
         #[arg(long)]
         mode: String,
     },
+    /// Drive a paired-lane live measurement (bd-juvqm.3 / bd-8b70o /
+    /// bd-vmp2v) and emit JSONL with one LiveMeasurementRow per lane
+    /// plus a single P99Delta record. Uses
+    /// `system_fingerprint::environment_fingerprint` (bd-6epxt) by
+    /// default; `FRANKENLIBC_ENV_FINGERPRINT` honored end-to-end.
+    LiveMeasurement {
+        /// Logical profile id stamped on every LiveMeasurementRow.
+        #[arg(long, default_value = "default-fp")]
+        profile_id: String,
+        /// Number of timed reads per lane (must be >= 1000 for p999).
+        #[arg(long, default_value_t = 5_000)]
+        n: u64,
+        /// PCG32 seed used for the lane driver and tail_stats bootstrap.
+        #[arg(long, default_value_t = 0xc0ffee_u64)]
+        seed: u64,
+        /// 40-char hex SHA stamped on every LiveMeasurementRow.
+        #[arg(long)]
+        source_commit: String,
+        /// Optional environment fingerprint override; when omitted,
+        /// the detector picks up `FRANKENLIBC_ENV_FINGERPRINT` or
+        /// reads `/proc/cpuinfo` + `/proc/sys/kernel/osrelease`.
+        #[arg(long)]
+        environment_fingerprint: Option<String>,
+        /// Output JSONL path. Three records emitted in order:
+        /// conservative LiveMeasurementRow, seqlock LiveMeasurementRow,
+        /// then P99Delta with kind="p99_delta".
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1729,6 +1758,81 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     format!("failed to exec /bin/true after case output: {exec_err}").into(),
                 );
             }
+        }
+        Command::LiveMeasurement {
+            profile_id,
+            n,
+            seed,
+            source_commit,
+            environment_fingerprint,
+            output,
+        } => {
+            use frankenlibc_harness::read_mostly_fast_path_prototype::{
+                run_live_measurement_pair_with_p99_delta,
+                run_live_measurement_pair_with_p99_delta_and_detected_fingerprint,
+            };
+            // SHA validation mirrors validate_live_measurement so a
+            // bad commit is rejected before doing 5_000+ timed reads.
+            let sha_ok =
+                source_commit.len() == 40 && source_commit.chars().all(|c| c.is_ascii_hexdigit());
+            if !sha_ok {
+                return Err(format!(
+                    "--source-commit must be a 40-char ascii-hex SHA; got {source_commit:?}"
+                )
+                .into());
+            }
+            let (pair, delta) = if let Some(fp) = environment_fingerprint {
+                run_live_measurement_pair_with_p99_delta(&profile_id, n, seed, &fp, &source_commit)
+            } else {
+                run_live_measurement_pair_with_p99_delta_and_detected_fingerprint(
+                    &profile_id,
+                    n,
+                    seed,
+                    &source_commit,
+                )
+            }
+            .map_err(|err| format!("live measurement failed: {err:?}"))?;
+
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut out = String::new();
+            for (kind, row) in [
+                ("live_measurement_row", &pair.conservative),
+                ("live_measurement_row", &pair.seqlock),
+            ] {
+                let line = serde_json::json!({
+                    "kind": kind,
+                    "lane_id": row.lane_id,
+                    "profile_id": row.profile_id,
+                    "source_commit": row.source_commit,
+                    "environment_fingerprint": row.environment_fingerprint,
+                    "p99_ns": row.p99_ns,
+                    "p999_ns": row.p999_ns,
+                    "throughput_ops_per_sec": row.throughput_ops_per_sec,
+                    "n": row.n,
+                    "seed": row.seed,
+                });
+                out.push_str(&line.to_string());
+                out.push('\n');
+            }
+            let delta_line = serde_json::json!({
+                "kind": "p99_delta",
+                "profile_id": profile_id,
+                "p99_delta_ns": delta.p99_delta_ns,
+                "ci_disjoint": delta.ci_disjoint,
+                "amplification_ratio": delta.amplification_ratio,
+                "sufficient_samples": delta.sufficient_samples,
+            });
+            out.push_str(&delta_line.to_string());
+            out.push('\n');
+            std::fs::write(&output, out)?;
+            eprintln!(
+                "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
+                output.display()
+            );
         }
     }
 

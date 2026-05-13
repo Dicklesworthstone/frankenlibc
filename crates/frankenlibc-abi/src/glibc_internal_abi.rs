@@ -9446,19 +9446,28 @@ pub unsafe extern "C" fn __libc_csu_fini() {
 /// bounds and a fixed limit before the process aborts.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_fatal(message: *const c_char) -> ! {
-    let bytes: std::borrow::Cow<'static, [u8]> = if message.is_null() {
-        std::borrow::Cow::Borrowed(b"fatal: unknown error\n")
-    } else if let Some(bytes) = unsafe { bounded_c_string_bytes(message, FATAL_MESSAGE_SCAN_LIMIT) }
-    {
-        std::borrow::Cow::Owned(bytes)
-    } else {
-        std::borrow::Cow::Borrowed(b"fatal: invalid diagnostic\n")
-    };
+    if message.is_null() {
+        let fallback = b"fatal: unknown error\n";
+        unsafe {
+            let _ = raw_syscall::sys_write(2, fallback.as_ptr(), fallback.len());
+            crate::stdlib_abi::abort();
+        }
+    }
+
+    let mut len = 0;
+    let mut has_newline = false;
+    while len < FATAL_MESSAGE_SCAN_LIMIT {
+        let c = unsafe { *message.add(len) };
+        if c == 0 {
+            break;
+        }
+        has_newline = c == b'\n' as i8;
+        len += 1;
+    }
+
     unsafe {
-        let _ = raw_syscall::sys_write(2, bytes.as_ptr(), bytes.len());
-        // Ensure a trailing newline so the diagnostic isn't merged
-        // with whatever the parent shell prints next.
-        if bytes.last().copied() != Some(b'\n') {
+        let _ = raw_syscall::sys_write(2, message.cast::<u8>(), len);
+        if !has_newline {
             let _ = raw_syscall::sys_write(2, b"\n".as_ptr(), 1);
         }
         crate::stdlib_abi::abort();

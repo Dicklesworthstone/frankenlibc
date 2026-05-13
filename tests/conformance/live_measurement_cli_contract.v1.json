@@ -1,0 +1,73 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "live-measurement-cli-contract",
+  "bead": "bd-uof80",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "d110ca81b171e59f9676e6596cdd68e9100243da",
+  "purpose": "Pin the harness binary subcommand that drives a paired-lane live measurement and emits JSONL. Previously bd-gxgr5 + bd-vmp2v + bd-6epxt shipped lib-level helpers but had no production binary entry point; only conformance tests called them. The CLI subcommand makes the bridge invokable from rch cargo run and from CI runners without writing Rust.",
+  "subcommand_name": "live-measurement",
+  "binary_target": "harness",
+  "required_flags": [
+    "--profile-id",
+    "--n",
+    "--seed",
+    "--source-commit",
+    "--output"
+  ],
+  "optional_flags": [
+    "--environment-fingerprint"
+  ],
+  "underlying_bridge_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair_with_p99_delta",
+  "underlying_default_fingerprint_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair_with_p99_delta_and_detected_fingerprint",
+  "jsonl_output_contract": {
+    "record_count": 3,
+    "record_order": [
+      "conservative LiveMeasurementRow",
+      "seqlock LiveMeasurementRow",
+      "P99Delta"
+    ],
+    "row_kind_marker": "live_measurement_row",
+    "delta_kind_marker": "p99_delta",
+    "row_required_fields": [
+      "kind",
+      "lane_id",
+      "profile_id",
+      "source_commit",
+      "environment_fingerprint",
+      "p99_ns",
+      "p999_ns",
+      "throughput_ops_per_sec",
+      "n",
+      "seed"
+    ],
+    "delta_required_fields": [
+      "kind",
+      "profile_id",
+      "p99_delta_ns",
+      "ci_disjoint",
+      "amplification_ratio",
+      "sufficient_samples"
+    ]
+  },
+  "env_override": {
+    "var_name": "FRANKENLIBC_ENV_FINGERPRINT",
+    "behavior": "When --environment-fingerprint is omitted, the detected-fingerprint bridge funnels through system_fingerprint::environment_fingerprint, which honors FRANKENLIBC_ENV_FINGERPRINT."
+  },
+  "policy": {
+    "fail_closed_when_source_commit_is_not_40_char_sha": true,
+    "fail_closed_when_underlying_bridge_errors": true,
+    "must_emit_three_jsonl_records_in_fixed_order": true,
+    "default_path_must_route_through_environment_fingerprint": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_source_commit_validation",
+    "missing_three_record_emission",
+    "default_path_does_not_route_through_environment_fingerprint"
+  ],
+  "summary": {
+    "bead": "bd-uof80",
+    "subcommand": "live-measurement",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
