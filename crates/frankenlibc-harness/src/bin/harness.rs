@@ -769,6 +769,19 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Convert a Unix-days timestamp (days since 1970-01-01) into a civil
+    /// (year, month, day) tuple via
+    /// `frankenlibc_membrane::util::civil_date_from_unix_days`
+    /// (Howard Hinnant's loopless algorithm).
+    CivilDateFromUnixDays {
+        /// Days since 1970-01-01 (may be negative). Use `--unix-days=-N`
+        /// for negative inputs.
+        #[arg(long)]
+        unix_days: i64,
+        /// Output JSONL path: one civil_date record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Map a Gröbner canonical root-cause class id (0..=7) to a deterministic
     /// healing action via
     /// `frankenlibc_membrane::heal::recommended_healing_for_canonical_class`.
@@ -2901,6 +2914,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::CivilDateFromUnixDays { unix_days, output } => {
+            use frankenlibc_membrane::util::civil_date_from_unix_days;
+            let (year, month, day) = civil_date_from_unix_days(unix_days);
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "civil_date",
+                "unix_days": unix_days,
+                "year": year,
+                "month": month,
+                "day": day,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "civil-date-from-unix-days: unix_days={unix_days} -> {year:04}-{month:02}-{day:02}"
+            );
         }
         Command::RecommendHealingForCanonicalClass { class_id, output } => {
             use frankenlibc_membrane::grobner::{

@@ -1,0 +1,67 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "civil-date-from-unix-days-cli-contract",
+  "bead": "bd-9ws64",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "296f7b3e",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::util::civil_date_from_unix_days(days_since_unix_epoch: i64) -> (i64, u32, u32) as a standalone CLI. The lib API uses Howard Hinnant's loopless O(1) civil-date algorithm to convert Unix-days (positive or negative) into a (year, month, day) tuple. Used internally by util::now_utc_iso_like for stamping evidence timestamps. Previously reachable only from Rust callers; the CLI bridge lets CI verify Gregorian-calendar correctness without compiling.",
+  "subcommand_name": "civil-date-from-unix-days",
+  "binary_target": "harness",
+  "required_flags": [
+    "--unix-days",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::util::civil_date_from_unix_days",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "civil_date",
+    "required_fields": [
+      "kind",
+      "unix_days",
+      "year",
+      "month",
+      "day"
+    ]
+  },
+  "expected_anchor_table": [
+    {"unix_days": 0, "year": 1970, "month": 1, "day": 1, "note": "epoch"},
+    {"unix_days": 1, "year": 1970, "month": 1, "day": 2, "note": "epoch+1"},
+    {"unix_days": 59, "year": 1970, "month": 3, "day": 1, "note": "1970 non-leap Feb->Mar"},
+    {"unix_days": 365, "year": 1971, "month": 1, "day": 1, "note": "year+1 (1970 non-leap)"},
+    {"unix_days": -1, "year": 1969, "month": 12, "day": 31, "note": "epoch-1"},
+    {"unix_days": -365, "year": 1969, "month": 1, "day": 1, "note": "1969-01-01"},
+    {"unix_days": 789, "year": 1972, "month": 2, "day": 29, "note": "first post-epoch leap day"},
+    {"unix_days": 11016, "year": 2000, "month": 2, "day": 29, "note": "Y2K leap day"},
+    {"unix_days": 11017, "year": 2000, "month": 3, "day": 1, "note": "Y2K leap+1"},
+    {"unix_days": 24855, "year": 2038, "month": 1, "day": 19, "note": "Y2038 signed-32-bit timestamp boundary date"},
+    {"unix_days": 20586, "year": 2026, "month": 5, "day": 13, "note": "today (2026-05-13)"}
+  ],
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "echoes_unix_days_into_output_record": true,
+    "deterministic_given_inputs": true,
+    "day_zero_is_1970_01_01_unix_epoch": true,
+    "day_minus_one_is_1969_12_31": true,
+    "first_post_epoch_leap_day_unix_789_is_1972_02_29": true,
+    "y2k_leap_day_unix_11016_is_2000_02_29": true,
+    "y2038_boundary_unix_24855_is_2038_01_19": true,
+    "year_month_day_match_expected_anchor_table": true,
+    "month_is_in_1_through_12": true,
+    "day_is_in_1_through_31": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "anchor_table_drift",
+    "month_out_of_range",
+    "day_out_of_range",
+    "epoch_zero_yields_non_1970"
+  ],
+  "summary": {
+    "bead": "bd-9ws64",
+    "subcommand": "civil-date-from-unix-days",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
