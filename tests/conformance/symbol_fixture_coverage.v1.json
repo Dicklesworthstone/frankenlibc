@@ -3866,49 +3866,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 4,
-      "milestone_beads": [],
-      "module": "malloc_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 1702,
-      "status_breakdown": {
-        "Implemented": 21
-      },
-      "target_coverage_pct": 19.05,
-      "target_covered": 4,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 21,
-      "target_uncovered": 17,
-      "target_uncovered_symbols": [
-        "__libc_allocate_rtsig",
-        "__libc_freeres",
-        "__libc_init_first",
-        "__libc_sa_len",
-        "aligned_alloc",
-        "cfree",
-        "mallinfo",
-        "mallinfo2",
-        "malloc_info",
-        "malloc_stats",
-        "malloc_trim",
-        "malloc_usable_size",
-        "mallopt",
-        "memalign",
-        "posix_memalign",
-        "pvalloc",
-        "valloc"
-      ],
-      "total_symbols": 21,
-      "track": "allocator",
-      "uncovered_symbols": 17,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 2,
       "milestone_beads": [],
       "module": "poll_abi",
@@ -4264,6 +4221,37 @@
       "workload_ids": []
     },
     {
+      "covered_symbols": 16,
+      "milestone_beads": [],
+      "module": "malloc_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "severity_score": 502,
+      "status_breakdown": {
+        "Implemented": 21
+      },
+      "target_coverage_pct": 76.19,
+      "target_covered": 16,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 21,
+      "target_uncovered": 5,
+      "target_uncovered_symbols": [
+        "mallopt",
+        "memalign",
+        "posix_memalign",
+        "pvalloc",
+        "valloc"
+      ],
+      "total_symbols": 21,
+      "track": "allocator",
+      "uncovered_symbols": 5,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "covered_symbols": 5,
       "milestone_beads": [],
       "module": "termios_abi",
@@ -4595,9 +4583,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1640,
-    "fixture_json_files": 74,
-    "fixture_json_unique_functions": 598,
+    "fixture_json_cases": 1664,
+    "fixture_json_files": 75,
+    "fixture_json_unique_functions": 610,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4618,7 +4606,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 600
+    "unique_fixture_functions_total": 612
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -8248,35 +8236,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "malloc_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 17,
-      "target_uncovered_symbols": [
-        "__libc_allocate_rtsig",
-        "__libc_freeres",
-        "__libc_init_first",
-        "__libc_sa_len",
-        "aligned_alloc",
-        "cfree",
-        "mallinfo",
-        "mallinfo2",
-        "malloc_info",
-        "malloc_stats",
-        "malloc_trim",
-        "malloc_usable_size",
-        "mallopt",
-        "memalign",
-        "posix_memalign",
-        "pvalloc",
-        "valloc"
-      ],
-      "track": "allocator",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "poll_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -8491,6 +8450,23 @@
     },
     {
       "milestone_beads": [],
+      "module": "malloc_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "target_uncovered_count": 5,
+      "target_uncovered_symbols": [
+        "mallopt",
+        "memalign",
+        "posix_memalign",
+        "pvalloc",
+        "valloc"
+      ],
+      "track": "allocator",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
       "module": "termios_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -8595,10 +8571,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 13.87,
-      "covered": 514,
+      "coverage_pct": 14.2,
+      "covered": 526,
       "total": 3705,
-      "uncovered": 3191
+      "uncovered": 3179
     },
     "RawSyscall": {
       "coverage_pct": 16.67,
@@ -8608,18 +8584,18 @@
     }
   },
   "summary": {
-    "coverage_pct": 14.15,
-    "covered_exported_symbols": 583,
-    "target_coverage_pct": 14.15,
-    "target_covered_symbols": 583,
+    "coverage_pct": 14.45,
+    "covered_exported_symbols": 595,
+    "target_coverage_pct": 14.45,
+    "target_covered_symbols": 595,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3536,
+    "target_uncovered_symbols": 3524,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3536,
+    "uncovered_exported_symbols": 3524,
     "uncovered_target_families": 5,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 29
@@ -22974,13 +22950,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -22988,13 +22973,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -23002,13 +22996,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -23016,13 +23019,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -23030,13 +23042,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -23071,13 +23092,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -23112,13 +23142,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -23126,13 +23165,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -23167,13 +23215,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -23181,13 +23238,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -23195,13 +23261,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -23209,13 +23284,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "malloc/membrane"
+      ],
+      "fixture_files": [
+        "malloc_membrane_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -72668,21 +72752,9 @@
       "module": "malloc_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 19.05,
-      "target_uncovered_count": 17,
+      "target_coverage_pct": 76.19,
+      "target_uncovered_count": 5,
       "target_uncovered_symbols": [
-        "__libc_allocate_rtsig",
-        "__libc_freeres",
-        "__libc_init_first",
-        "__libc_sa_len",
-        "aligned_alloc",
-        "cfree",
-        "mallinfo",
-        "mallinfo2",
-        "malloc_info",
-        "malloc_stats",
-        "malloc_trim",
-        "malloc_usable_size",
         "mallopt",
         "memalign",
         "posix_memalign",

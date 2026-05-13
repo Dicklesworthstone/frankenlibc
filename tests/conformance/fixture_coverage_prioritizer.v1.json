@@ -229,26 +229,19 @@
     },
     {
       "campaign_id": "fcq-malloc-membrane",
-      "current_coverage_pct": 19.05,
+      "current_coverage_pct": 76.19,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 76.19,
-      "first_wave_fixture_count": 12,
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "first_wave_fixture_count": 5,
       "first_wave_symbols": [
-        "__libc_allocate_rtsig",
-        "__libc_freeres",
-        "__libc_init_first",
-        "__libc_sa_len",
-        "aligned_alloc",
-        "cfree",
-        "mallinfo",
-        "mallinfo2",
-        "malloc_info",
-        "malloc_stats",
-        "malloc_trim",
-        "malloc_usable_size"
+        "mallopt",
+        "memalign",
+        "posix_memalign",
+        "pvalloc",
+        "valloc"
       ],
       "module": "malloc_abi",
       "next_step": "Add allocator parity and hardened invalid-pointer fixtures before optimizing allocator or membrane hot paths.",
@@ -261,20 +254,20 @@
         "performance_regression"
       ],
       "scores": {
-        "coverage_gap_score": 17,
+        "coverage_gap_score": 5,
         "feature_gap_risk_score": 0,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 3,
         "parity_risk_score": 5,
-        "priority_score": 2367,
+        "priority_score": 2355,
         "semantic_risk_score": 0,
         "workload_risk_score": 5
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "malloc, alignment, usable-size, stats, trimming, and hardened ownership behavior",
-      "target_covered": 4,
+      "target_covered": 16,
       "target_total": 21,
-      "target_uncovered": 17,
+      "target_uncovered": 5,
       "title": "allocator ownership and membrane fixture wave",
       "workload_domains": [
         "allocator",
@@ -1257,7 +1250,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3536,
+    "all_uncovered_target_symbols": 3524,
     "campaign_count": 17,
     "covered_modules": [
       "fortify_abi",
@@ -1295,7 +1288,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3154,
-    "total_first_wave_fixture_count": 194
+    "selected_target_uncovered_symbols": 3142,
+    "total_first_wave_fixture_count": 187
   }
 }
