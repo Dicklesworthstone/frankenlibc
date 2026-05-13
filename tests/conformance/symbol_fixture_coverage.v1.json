@@ -3479,52 +3479,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 9,
-      "milestone_beads": [],
-      "module": "signal_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 1902,
-      "status_breakdown": {
-        "Implemented": 12,
-        "RawSyscall": 16
-      },
-      "target_coverage_pct": 32.14,
-      "target_covered": 9,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 28,
-      "target_uncovered": 19,
-      "target_uncovered_symbols": [
-        "__libc_current_sigrtmax",
-        "__libc_current_sigrtmin",
-        "killpg",
-        "pause",
-        "psiginfo",
-        "pthread_sigmask",
-        "sigabbrev_np",
-        "sigaltstack",
-        "sigandset",
-        "sighold",
-        "sigignore",
-        "siginterrupt",
-        "sigisemptyset",
-        "sigorset",
-        "sigpending",
-        "sigprocmask",
-        "sigrelse",
-        "sigsuspend",
-        "sigwait"
-      ],
-      "total_symbols": 28,
-      "track": "signal",
-      "uncovered_symbols": 19,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 16,
       "milestone_beads": [],
       "module": "process_abi",
@@ -3668,6 +3622,40 @@
       ],
       "total_symbols": 14,
       "track": "dirent",
+      "uncovered_symbols": 7,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 21,
+      "milestone_beads": [],
+      "module": "signal_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "severity_score": 702,
+      "status_breakdown": {
+        "Implemented": 12,
+        "RawSyscall": 16
+      },
+      "target_coverage_pct": 75.0,
+      "target_covered": 21,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 28,
+      "target_uncovered": 7,
+      "target_uncovered_symbols": [
+        "sigisemptyset",
+        "sigorset",
+        "sigpending",
+        "sigprocmask",
+        "sigrelse",
+        "sigsuspend",
+        "sigwait"
+      ],
+      "total_symbols": 28,
+      "track": "signal",
       "uncovered_symbols": 7,
       "workload_blocked_count": 0,
       "workload_ids": []
@@ -4266,9 +4254,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 2248,
-    "fixture_json_files": 103,
-    "fixture_json_unique_functions": 918,
+    "fixture_json_cases": 2272,
+    "fixture_json_files": 104,
+    "fixture_json_unique_functions": 930,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4289,7 +4277,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 920
+    "unique_fixture_functions_total": 932
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -7592,37 +7580,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "signal_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 19,
-      "target_uncovered_symbols": [
-        "__libc_current_sigrtmax",
-        "__libc_current_sigrtmin",
-        "killpg",
-        "pause",
-        "psiginfo",
-        "pthread_sigmask",
-        "sigabbrev_np",
-        "sigaltstack",
-        "sigandset",
-        "sighold",
-        "sigignore",
-        "siginterrupt",
-        "sigisemptyset",
-        "sigorset",
-        "sigpending",
-        "sigprocmask",
-        "sigrelse",
-        "sigsuspend",
-        "sigwait"
-      ],
-      "track": "signal",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "process_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -7707,6 +7664,25 @@
         "versionsort"
       ],
       "track": "dirent",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
+      "module": "signal_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "target_uncovered_count": 7,
+      "target_uncovered_symbols": [
+        "sigisemptyset",
+        "sigorset",
+        "sigpending",
+        "sigprocmask",
+        "sigrelse",
+        "sigsuspend",
+        "sigwait"
+      ],
+      "track": "signal",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -7834,31 +7810,31 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 21.35,
-      "covered": 791,
+      "coverage_pct": 21.48,
+      "covered": 796,
       "total": 3705,
-      "uncovered": 2914
+      "uncovered": 2909
     },
     "RawSyscall": {
-      "coverage_pct": 27.05,
-      "covered": 112,
+      "coverage_pct": 28.74,
+      "covered": 119,
       "total": 414,
-      "uncovered": 302
+      "uncovered": 295
     }
   },
   "summary": {
-    "coverage_pct": 21.92,
-    "covered_exported_symbols": 903,
-    "target_coverage_pct": 21.92,
-    "target_covered_symbols": 903,
+    "coverage_pct": 22.21,
+    "covered_exported_symbols": 915,
+    "target_coverage_pct": 22.21,
+    "target_covered_symbols": 915,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3216,
+    "target_uncovered_symbols": 3204,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3216,
+    "uncovered_exported_symbols": 3204,
     "uncovered_target_families": 1,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 24
@@ -48192,13 +48168,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -48206,13 +48191,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -48243,13 +48237,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48257,13 +48260,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48271,13 +48283,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -48285,13 +48306,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48322,13 +48352,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -48381,13 +48420,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48395,13 +48443,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -48477,13 +48534,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48491,13 +48557,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -48505,13 +48580,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "signal/async"
+      ],
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "signal_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -76235,21 +76319,9 @@
       "module": "signal_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 32.14,
-      "target_uncovered_count": 19,
+      "target_coverage_pct": 75.0,
+      "target_uncovered_count": 7,
       "target_uncovered_symbols": [
-        "__libc_current_sigrtmax",
-        "__libc_current_sigrtmin",
-        "killpg",
-        "pause",
-        "psiginfo",
-        "pthread_sigmask",
-        "sigabbrev_np",
-        "sigaltstack",
-        "sigandset",
-        "sighold",
-        "sigignore",
-        "siginterrupt",
         "sigisemptyset",
         "sigorset",
         "sigpending",

@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T18:13:20Z",
-  "report_hash": "c6b7861093c5a744",
+  "generated_at": "2026-05-13T19:02:11Z",
+  "report_hash": "e9f1b8080f4df6a2",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 901,
-    "symbols_without_fixtures": 3218,
-    "fixture_coverage_pct": 21.9,
-    "implemented_coverage_pct": 21.3,
-    "total_fixture_files": 103,
-    "total_cases": 2248,
+    "symbols_with_fixtures": 913,
+    "symbols_without_fixtures": 3206,
+    "fixture_coverage_pct": 22.2,
+    "implemented_coverage_pct": 21.5,
+    "total_fixture_files": 104,
+    "total_cases": 2272,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 550,
-    "symbols_with_errno_checks": 898,
-    "total_quality_issues": 3499,
-    "uncovered_action_count": 3218
+    "symbols_with_edge_cases": 559,
+    "symbols_with_errno_checks": 910,
+    "total_quality_issues": 3497,
+    "uncovered_action_count": 3206
   },
   "fixture_file_analyses": [
     {
@@ -448,6 +448,14 @@
       "valid": true,
       "total_cases": 7,
       "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "signal_async_wave01.json",
+      "family": "signal/async",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
       "issues": []
     },
     {
@@ -8105,14 +8113,19 @@
       "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -8120,14 +8133,19 @@
       "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -38949,12 +38967,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -45440,12 +45465,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -47113,15 +47145,20 @@
       "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "psignal",
@@ -49117,12 +49154,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -54471,14 +54515,19 @@
       "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -54528,12 +54577,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -54541,15 +54597,20 @@
       "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "sigblock",
@@ -54661,12 +54722,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -54674,12 +54742,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -54687,12 +54762,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -68910,20 +68992,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__libc_current_sigrtmax",
-      "status": "Implemented",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__libc_current_sigrtmin",
-      "status": "Implemented",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__libc_dn_expand",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -79347,13 +79415,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "killpg",
-      "status": "RawSyscall",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "klogctl",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -81944,13 +82005,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "pause",
-      "status": "RawSyscall",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "pclose",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -82616,13 +82670,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "psiginfo",
-      "status": "Implemented",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "pthread_attr_getstacksize",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -83207,13 +83254,6 @@
       "symbol": "pthread_setschedprio",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_sigmask",
-      "status": "RawSyscall",
-      "module": "signal_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -85304,27 +85344,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "sigabbrev_np",
-      "status": "Implemented",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "sigaltstack",
-      "status": "RawSyscall",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "sigandset",
-      "status": "Implemented",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "sigblock",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -85342,27 +85361,6 @@
       "symbol": "siggetmask",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "sighold",
-      "status": "RawSyscall",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "sigignore",
-      "status": "RawSyscall",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "siginterrupt",
-      "status": "RawSyscall",
-      "module": "signal_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
