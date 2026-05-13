@@ -1362,7 +1362,10 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
                 unsafe { sync_host_errno(errno::EBADF) };
             }
         }
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let Ok(mut reg) = registry().try_lock() else {
+            // Lock held by dead thread (fork) or reentrant. Fail safe.
+            return libc::EOF;
+        };
         let mut any_fail = false;
         let ids: Vec<usize> = reg.streams.keys().copied().collect();
         for id in ids {
@@ -3243,7 +3246,7 @@ pub unsafe extern "C" fn snprintf(
     }
     let _trace_scope = runtime_policy::entrypoint_scope("snprintf");
 
-    let (_, decision) = runtime_policy::decide(
+    let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         str_buf as usize,
         size,
@@ -3265,8 +3268,37 @@ pub unsafe extern "C" fn snprintf(
     let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
     let total_len = rendered.len();
 
-    if !str_buf.is_null() && size > 0 {
-        let copy_len = total_len.min(size - 1);
+    let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
+    let mut adverse = false;
+    let mut has_room = size > 0 && !str_buf.is_null();
+
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(str_buf as usize)
+    {
+        let safe_size = size.min(bound);
+        if safe_size == 0 {
+            has_room = false;
+            if size > 0 {
+                adverse = true;
+                global_healing_policy().record(&HealingAction::ClampSize {
+                    requested: size,
+                    clamped: 0,
+                });
+            }
+        } else {
+            let max_payload = safe_size.saturating_sub(1);
+            if copy_len > max_payload {
+                copy_len = max_payload;
+                adverse = true;
+                global_healing_policy().record(&HealingAction::TruncateWithNull {
+                    requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
+                    truncated: copy_len,
+                });
+            }
+        }
+    }
+
+    if has_room {
         unsafe {
             std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
             *str_buf.add(copy_len) = 0;
@@ -3277,7 +3309,7 @@ pub unsafe extern "C" fn snprintf(
         ApiFamily::Stdio,
         decision.profile,
         runtime_policy::scaled_cost(15, total_len),
-        false,
+        adverse,
     );
     printf_result_to_c_int(total_len)
 }
@@ -3425,7 +3457,20 @@ pub unsafe extern "C" fn fprintf(
                         write_result.flush_data.len() - written,
                     )
                 };
-                if rc <= 0 {
+                let errno_val = if rc < 0 {
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                } else {
+                    0
+                };
+                match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                    StreamPolicyAction::Retry => continue,
+                    StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                        success = false;
+                        break;
+                    }
+                    StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+                }
+                if rc == 0 {
                     success = false;
                     break;
                 }
@@ -3568,7 +3613,20 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
                         write_result.flush_data.len() - written,
                     )
                 };
-                if rc <= 0 {
+                let errno_val = if rc < 0 {
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                } else {
+                    0
+                };
+                match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                    StreamPolicyAction::Retry => continue,
+                    StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                        success = false;
+                        break;
+                    }
+                    StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+                }
+                if rc == 0 {
                     success = false;
                     break;
                 }
@@ -3870,7 +3928,7 @@ pub unsafe extern "C" fn vsnprintf(
         return -1;
     }
     let _trace_scope = runtime_policy::entrypoint_scope("vsnprintf");
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::Stdio, str_buf as usize, size, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -3886,8 +3944,37 @@ pub unsafe extern "C" fn vsnprintf(
     let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
     let total_len = rendered.len();
 
-    if !str_buf.is_null() && size > 0 {
-        let copy_len = total_len.min(size - 1);
+    let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
+    let mut adverse = false;
+    let mut has_room = size > 0 && !str_buf.is_null();
+
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(str_buf as usize)
+    {
+        let safe_size = size.min(bound);
+        if safe_size == 0 {
+            has_room = false;
+            if size > 0 {
+                adverse = true;
+                global_healing_policy().record(&HealingAction::ClampSize {
+                    requested: size,
+                    clamped: 0,
+                });
+            }
+        } else {
+            let max_payload = safe_size.saturating_sub(1);
+            if copy_len > max_payload {
+                copy_len = max_payload;
+                adverse = true;
+                global_healing_policy().record(&HealingAction::TruncateWithNull {
+                    requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
+                    truncated: copy_len,
+                });
+            }
+        }
+    }
+
+    if has_room {
         unsafe {
             std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
             *str_buf.add(copy_len) = 0;
@@ -3898,7 +3985,7 @@ pub unsafe extern "C" fn vsnprintf(
         ApiFamily::Stdio,
         decision.profile,
         runtime_policy::scaled_cost(15, total_len),
-        false,
+        adverse,
     );
     printf_result_to_c_int(total_len)
 }
@@ -4054,7 +4141,20 @@ pub unsafe extern "C" fn vfprintf(
                         write_result.flush_data.len() - written,
                     )
                 };
-                if rc <= 0 {
+                let errno_val = if rc < 0 {
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                } else {
+                    0
+                };
+                match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                    StreamPolicyAction::Retry => continue,
+                    StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                        success = false;
+                        break;
+                    }
+                    StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+                }
+                if rc == 0 {
                     success = false;
                     break;
                 }
@@ -4193,7 +4293,20 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
                         write_result.flush_data.len() - written,
                     )
                 };
-                if rc <= 0 {
+                let errno_val = if rc < 0 {
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                } else {
+                    0
+                };
+                match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                    StreamPolicyAction::Retry => continue,
+                    StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                        success = false;
+                        break;
+                    }
+                    StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+                }
+                if rc == 0 {
                     success = false;
                     break;
                 }
