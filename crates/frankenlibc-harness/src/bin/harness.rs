@@ -769,6 +769,20 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Look up the design-kernel cost in nanoseconds for a named runtime
+    /// probe via `frankenlibc_membrane::runtime_math::design::probe_cost_ns`.
+    /// Probe enum has 17 members (spectral..coupling).
+    ProbeCostNs {
+        /// Probe name (kebab-case): spectral, rough-path, persistence,
+        /// anytime, cvar, bridge, large-deviations, hji, mean-field,
+        /// padic, symplectic, higher-topos, commitment-audit, changepoint,
+        /// conformal, loss-minimizer, coupling.
+        #[arg(long)]
+        probe: String,
+        /// Output JSONL path: one probe_cost_ns record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Certify a candidate SIMD string-kernel implementation against the
     /// scalar reference via
     /// `frankenlibc_membrane::runtime_math::clifford::certify_simd_string_operation`.
@@ -2862,6 +2876,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::ProbeCostNs { probe, output } => {
+            use frankenlibc_membrane::runtime_math::design::{Probe, probe_cost_ns};
+            let p = match probe.as_str() {
+                "spectral" => Probe::Spectral,
+                "rough-path" => Probe::RoughPath,
+                "persistence" => Probe::Persistence,
+                "anytime" => Probe::Anytime,
+                "cvar" => Probe::Cvar,
+                "bridge" => Probe::Bridge,
+                "large-deviations" => Probe::LargeDeviations,
+                "hji" => Probe::Hji,
+                "mean-field" => Probe::MeanField,
+                "padic" => Probe::Padic,
+                "symplectic" => Probe::Symplectic,
+                "higher-topos" => Probe::HigherTopos,
+                "commitment-audit" => Probe::CommitmentAudit,
+                "changepoint" => Probe::Changepoint,
+                "conformal" => Probe::Conformal,
+                "loss-minimizer" => Probe::LossMinimizer,
+                "coupling" => Probe::Coupling,
+                other => return Err(format!("unknown probe: {other}").into()),
+            };
+            let cost = probe_cost_ns(p);
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "probe_cost_ns",
+                "probe": probe,
+                "cost_ns": cost,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!("probe-cost-ns: probe={probe} -> cost_ns={cost}");
         }
         Command::CertifySimdStringOp {
             operation,

@@ -1,0 +1,65 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "probe-cost-ns-cli-contract",
+  "bead": "bd-9axxf",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "0c3f29ba",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::design::probe_cost_ns(probe: Probe) -> u64 as a standalone CLI. The lib API returns the design-kernel cost in nanoseconds for one of 17 runtime probes (Spectral, RoughPath, Persistence, Anytime, Cvar, Bridge, LargeDeviations, Hji, MeanField, Padic, Symplectic, HigherTopos, CommitmentAudit, Changepoint, Conformal, LossMinimizer, Coupling). The cost table is the input to the D-optimal probe-scheduling controller that maximizes Δlogdet / cost under budget. Previously reachable only from Rust callers; the CLI bridge lets CI verify the probe cost-model without compiling.",
+  "subcommand_name": "probe-cost-ns",
+  "binary_target": "harness",
+  "required_flags": [
+    "--probe",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::runtime_math::design::probe_cost_ns",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "probe_cost_ns",
+    "required_fields": [
+      "kind",
+      "probe",
+      "cost_ns"
+    ]
+  },
+  "expected_costs_ns": {
+    "spectral": 20,
+    "rough-path": 28,
+    "persistence": 30,
+    "anytime": 8,
+    "cvar": 10,
+    "bridge": 12,
+    "large-deviations": 8,
+    "hji": 16,
+    "mean-field": 12,
+    "padic": 10,
+    "symplectic": 10,
+    "higher-topos": 12,
+    "commitment-audit": 10,
+    "changepoint": 8,
+    "conformal": 10,
+    "loss-minimizer": 6,
+    "coupling": 8
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "echoes_probe_name_into_output_record": true,
+    "deterministic_given_inputs": true,
+    "all_seventeen_probes_have_a_finite_cost": true,
+    "loss_minimizer_is_lowest_cost_probe": true,
+    "persistence_is_highest_cost_probe": true,
+    "unknown_probe_name_is_rejected_with_nonzero_exit": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "unknown_probe_certified_with_zero_cost",
+    "cost_table_drift_from_expected_costs_ns"
+  ],
+  "summary": {
+    "bead": "bd-9axxf",
+    "subcommand": "probe-cost-ns",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
