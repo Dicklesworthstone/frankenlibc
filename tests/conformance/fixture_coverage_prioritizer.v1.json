@@ -58,62 +58,6 @@
       ]
     },
     {
-      "campaign_id": "fcq-string-memory-hotpaths",
-      "current_coverage_pct": 85.62,
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/ld_preload_smoke.sh"
-      ],
-      "expected_coverage_after_first_wave_pct": 93.84,
-      "first_wave_fixture_count": 12,
-      "first_wave_symbols": [
-        "regfree",
-        "stpcpy",
-        "stpncpy",
-        "strcasecmp",
-        "strcasecmp_l",
-        "strcasestr",
-        "strcoll",
-        "strcspn",
-        "strdup",
-        "strncasecmp",
-        "strncasecmp_l",
-        "strncmp"
-      ],
-      "module": "string_abi",
-      "next_step": "Grow boundary, overlap, empty, invalid pointer, locale, and perf guard fixtures for uncovered string families.",
-      "oracle_kind": "glibc_fixture_oracle",
-      "rank": 2,
-      "risk_tags": [
-        "buffer_boundary",
-        "locale_sensitive",
-        "performance_regression",
-        "semantic_divergence"
-      ],
-      "scores": {
-        "coverage_gap_score": 21,
-        "feature_gap_risk_score": 3,
-        "hard_parts_risk_tags": [],
-        "implementation_complexity_score": 2,
-        "parity_risk_score": 5,
-        "priority_score": 2421,
-        "semantic_risk_score": 0,
-        "workload_risk_score": 5
-      },
-      "structured_log_fields": "required_log_fields",
-      "symbol_family": "mem*, str*, collation-adjacent string helpers, and GNU string extensions",
-      "target_covered": 125,
-      "target_total": 146,
-      "target_uncovered": 21,
-      "title": "string and memory hot-path fixture wave",
-      "workload_domains": [
-        "performance_sensitive",
-        "shell_coreutils",
-        "allocator",
-        "language_runtimes"
-      ]
-    },
-    {
       "campaign_id": "fcq-stdio-libio",
       "current_coverage_pct": 51.59,
       "deterministic_e2e_scripts": [
@@ -139,7 +83,7 @@
       "module": "stdio_abi",
       "next_step": "Add stream-state and _IO alias fixtures that prove behavior before native stdio replacement claims advance.",
       "oracle_kind": "stdio_fixture_or_replay",
-      "rank": 3,
+      "rank": 2,
       "risk_tags": [
         "buffering_order",
         "diagnostics_gap",
@@ -167,6 +111,59 @@
         "shell_coreutils",
         "build_tools",
         "package_manager"
+      ]
+    },
+    {
+      "campaign_id": "fcq-string-memory-hotpaths",
+      "current_coverage_pct": 93.84,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "first_wave_fixture_count": 9,
+      "first_wave_symbols": [
+        "strndup",
+        "strnlen",
+        "strnstr",
+        "strpbrk",
+        "strsep",
+        "strsignal",
+        "strspn",
+        "strverscmp",
+        "strxfrm"
+      ],
+      "module": "string_abi",
+      "next_step": "Grow boundary, overlap, empty, invalid pointer, locale, and perf guard fixtures for uncovered string families.",
+      "oracle_kind": "glibc_fixture_oracle",
+      "rank": 3,
+      "risk_tags": [
+        "buffer_boundary",
+        "locale_sensitive",
+        "performance_regression",
+        "semantic_divergence"
+      ],
+      "scores": {
+        "coverage_gap_score": 9,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 2,
+        "parity_risk_score": 5,
+        "priority_score": 2409,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "mem*, str*, collation-adjacent string helpers, and GNU string extensions",
+      "target_covered": 137,
+      "target_total": 146,
+      "target_uncovered": 9,
+      "title": "string and memory hot-path fixture wave",
+      "workload_domains": [
+        "performance_sensitive",
+        "shell_coreutils",
+        "allocator",
+        "language_runtimes"
       ]
     },
     {
@@ -1042,7 +1039,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3389,
+    "all_uncovered_target_symbols": 3377,
     "campaign_count": 14,
     "covered_modules": [
       "fortify_abi",
@@ -1077,7 +1074,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3035,
-    "total_first_wave_fixture_count": 153
+    "selected_target_uncovered_symbols": 3023,
+    "total_first_wave_fixture_count": 150
   }
 }

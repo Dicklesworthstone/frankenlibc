@@ -3700,54 +3700,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 125,
-      "milestone_beads": [],
-      "module": "string_abi",
-      "recommended_bead": null,
-      "severity": "medium",
-      "severity_score": 2101,
-      "status_breakdown": {
-        "Implemented": 145,
-        "RawSyscall": 1
-      },
-      "target_coverage_pct": 85.62,
-      "target_covered": 125,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 146,
-      "target_uncovered": 21,
-      "target_uncovered_symbols": [
-        "regfree",
-        "stpcpy",
-        "stpncpy",
-        "strcasecmp",
-        "strcasecmp_l",
-        "strcasestr",
-        "strcoll",
-        "strcspn",
-        "strdup",
-        "strncasecmp",
-        "strncasecmp_l",
-        "strncmp",
-        "strndup",
-        "strnlen",
-        "strnstr",
-        "strpbrk",
-        "strsep",
-        "strsignal",
-        "strspn",
-        "strverscmp",
-        "strxfrm"
-      ],
-      "total_symbols": 146,
-      "track": "string",
-      "uncovered_symbols": 21,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 9,
       "milestone_beads": [],
       "module": "signal_abi",
@@ -3826,6 +3778,42 @@
       "total_symbols": 17,
       "track": "network/inet",
       "uncovered_symbols": 10,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 137,
+      "milestone_beads": [],
+      "module": "string_abi",
+      "recommended_bead": null,
+      "severity": "medium",
+      "severity_score": 901,
+      "status_breakdown": {
+        "Implemented": 145,
+        "RawSyscall": 1
+      },
+      "target_coverage_pct": 93.84,
+      "target_covered": 137,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 146,
+      "target_uncovered": 9,
+      "target_uncovered_symbols": [
+        "strndup",
+        "strnlen",
+        "strnstr",
+        "strpbrk",
+        "strsep",
+        "strsignal",
+        "strspn",
+        "strverscmp",
+        "strxfrm"
+      ],
+      "total_symbols": 146,
+      "track": "string",
+      "uncovered_symbols": 9,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -4442,9 +4430,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1906,
-    "fixture_json_files": 88,
-    "fixture_json_unique_functions": 745,
+    "fixture_json_cases": 1930,
+    "fixture_json_files": 89,
+    "fixture_json_unique_functions": 757,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4465,7 +4453,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 747
+    "unique_fixture_functions_total": 759
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -7959,39 +7947,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "string_abi",
-      "recommended_bead": null,
-      "severity": "medium",
-      "target_uncovered_count": 21,
-      "target_uncovered_symbols": [
-        "regfree",
-        "stpcpy",
-        "stpncpy",
-        "strcasecmp",
-        "strcasecmp_l",
-        "strcasestr",
-        "strcoll",
-        "strcspn",
-        "strdup",
-        "strncasecmp",
-        "strncasecmp_l",
-        "strncmp",
-        "strndup",
-        "strnlen",
-        "strnstr",
-        "strpbrk",
-        "strsep",
-        "strsignal",
-        "strspn",
-        "strverscmp",
-        "strxfrm"
-      ],
-      "track": "string",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "signal_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -8040,6 +7995,27 @@
         "inet_ntoa"
       ],
       "track": "network/inet",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
+      "module": "string_abi",
+      "recommended_bead": null,
+      "severity": "medium",
+      "target_uncovered_count": 9,
+      "target_uncovered_symbols": [
+        "strndup",
+        "strnlen",
+        "strnstr",
+        "strpbrk",
+        "strsep",
+        "strsignal",
+        "strspn",
+        "strverscmp",
+        "strxfrm"
+      ],
+      "track": "string",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -8221,10 +8197,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 17.09,
-      "covered": 633,
+      "coverage_pct": 17.41,
+      "covered": 645,
       "total": 3705,
-      "uncovered": 3072
+      "uncovered": 3060
     },
     "RawSyscall": {
       "coverage_pct": 23.43,
@@ -8234,18 +8210,18 @@
     }
   },
   "summary": {
-    "coverage_pct": 17.72,
-    "covered_exported_symbols": 730,
-    "target_coverage_pct": 17.72,
-    "target_covered_symbols": 730,
+    "coverage_pct": 18.01,
+    "covered_exported_symbols": 742,
+    "target_coverage_pct": 18.01,
+    "target_covered_symbols": 742,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3389,
+    "target_uncovered_symbols": 3377,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3389,
+    "uncovered_exported_symbols": 3377,
     "uncovered_target_families": 2,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 24
@@ -57315,13 +57291,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -57352,13 +57337,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -57366,13 +57360,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -57380,13 +57383,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -57394,13 +57406,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -57408,13 +57429,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -57522,13 +57552,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -57561,13 +57600,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -57575,13 +57623,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -57846,13 +57903,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -57860,13 +57926,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -57896,13 +57971,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave13"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave13.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",

@@ -1098,6 +1098,18 @@ fn should_use_string_memory_hotpath_fixture(function: &str, inputs: &serde_json:
                 | "re_set_registers"
                 | "re_set_syntax"
                 | "regerror"
+                | "regfree"
+                | "stpcpy"
+                | "stpncpy"
+                | "strcasecmp"
+                | "strcasecmp_l"
+                | "strcasestr"
+                | "strcoll"
+                | "strcspn"
+                | "strdup"
+                | "strncasecmp"
+                | "strncasecmp_l"
+                | "strncmp"
         )
 }
 
@@ -8675,6 +8687,80 @@ fn string_memory_hotpath_actual(
                 "REGERROR_TEXT_{}",
                 frankenlibc_core::string::regex::regex_error(errcode).replace(' ', "_")
             ))
+        }
+        "regfree" => Ok(String::from("REGFREE_RESET_NOOP")),
+        "stpcpy" => {
+            let src = nul_terminated_bytes(&parse_string(inputs, "src")?);
+            let mut dst = vec![0_u8; parse_usize(inputs, "dst_len")?];
+            let offset = frankenlibc_core::string::str::stpcpy(&mut dst, &src);
+            Ok(format!(
+                "STPCPY_RETURN_{}_LEN_{}_HEX_{}",
+                offset,
+                dst.len(),
+                string_hotpath_hex(&dst)
+            ))
+        }
+        "stpncpy" => {
+            let src = nul_terminated_bytes(&parse_string(inputs, "src")?);
+            let mut dst = vec![0_u8; parse_usize(inputs, "dst_len")?];
+            let n = parse_usize(inputs, "n")?;
+            let offset = frankenlibc_core::string::str::stpncpy(&mut dst, &src, n);
+            Ok(format!(
+                "STPNCPY_RETURN_{}_LEN_{}_HEX_{}",
+                offset,
+                dst.len(),
+                string_hotpath_hex(&dst)
+            ))
+        }
+        "strcasecmp" | "strcasecmp_l" => {
+            let lhs = nul_terminated_bytes(&parse_string(inputs, "lhs")?);
+            let rhs = nul_terminated_bytes(&parse_string(inputs, "rhs")?);
+            let cmp = frankenlibc_core::string::str::strcasecmp(&lhs, &rhs).signum();
+            Ok(format!("CMP_{cmp}"))
+        }
+        "strcasestr" => {
+            let haystack = nul_terminated_bytes(&parse_string(inputs, "haystack")?);
+            let needle = nul_terminated_bytes(&parse_string(inputs, "needle")?);
+            let offset = frankenlibc_core::string::str::strcasestr(&haystack, &needle)
+                .map_or_else(|| String::from("NULL"), |offset| offset.to_string());
+            Ok(format!("STRCASESTR_OFFSET_{offset}"))
+        }
+        "strcoll" => {
+            let lhs = nul_terminated_bytes(&parse_string(inputs, "lhs")?);
+            let rhs = nul_terminated_bytes(&parse_string(inputs, "rhs")?);
+            let cmp = frankenlibc_core::string::str::strcoll(&lhs, &rhs).signum();
+            Ok(format!("CMP_{cmp}"))
+        }
+        "strcspn" => {
+            let haystack = nul_terminated_bytes(&parse_string(inputs, "haystack")?);
+            let reject = nul_terminated_bytes(&parse_string(inputs, "reject")?);
+            Ok(format!(
+                "STRCSPN_{}",
+                frankenlibc_core::string::str::strcspn(&haystack, &reject)
+            ))
+        }
+        "strdup" => {
+            let input = parse_string(inputs, "input")?;
+            let dup = frankenlibc_core::string::str::strdup_bytes(input.as_bytes());
+            Ok(format!(
+                "DUP_LEN_{}_TEXT_{}",
+                dup.len().saturating_sub(1),
+                c_fixture_text(&dup)
+            ))
+        }
+        "strncasecmp" | "strncasecmp_l" => {
+            let lhs = nul_terminated_bytes(&parse_string(inputs, "lhs")?);
+            let rhs = nul_terminated_bytes(&parse_string(inputs, "rhs")?);
+            let n = parse_usize(inputs, "n")?;
+            let cmp = frankenlibc_core::string::str::strncasecmp(&lhs, &rhs, n).signum();
+            Ok(format!("CMP_{cmp}"))
+        }
+        "strncmp" => {
+            let lhs = nul_terminated_bytes(&parse_string(inputs, "lhs")?);
+            let rhs = nul_terminated_bytes(&parse_string(inputs, "rhs")?);
+            let n = parse_usize(inputs, "n")?;
+            let cmp = frankenlibc_core::string::str::strncmp(&lhs, &rhs, n).signum();
+            Ok(format!("CMP_{cmp}"))
         }
         "envz_entry" => {
             let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
