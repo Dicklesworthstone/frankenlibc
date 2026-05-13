@@ -1,0 +1,378 @@
+{
+  "version": "v1",
+  "family": "string_memory_hotpaths_wave07",
+  "captured_at": "2026-05-13T02:40:00Z",
+  "description": "Strict/hardened deterministic fixture wave for additional GNU argz helpers without recording pointers, allocation addresses, errno buffers, or process-global state.",
+  "spec_reference": "GNU libc argz vector construction, mutation, iteration, replacement, extraction, and stringification semantics",
+  "campaign": {
+    "bead": "pending-string-memory-wave07",
+    "campaign_id": "fcq-string-memory-hotpaths",
+    "wave_id": "wave-07-string-memory-hotpaths",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture",
+    "first_wave_symbols": [
+      "argz_add_sep",
+      "argz_append",
+      "argz_count",
+      "argz_create_sep",
+      "argz_delete",
+      "argz_extract",
+      "argz_insert",
+      "argz_next",
+      "argz_replace",
+      "argz_stringify"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "argz_add_sep_skip_repeated_separator_strict",
+      "function": "argz_add_sep",
+      "spec_section": "GNU libc argz_add_sep",
+      "inputs": {
+        "symbol": "argz_add_sep",
+        "scenario": "append_split_entries_with_trailing_empty",
+        "entries": "base",
+        "string": "red::green:",
+        "sep": ":",
+        "expected": "ARGZ_COUNT_4_LEN_16_TEXT_base|red|green|",
+        "oracle_source": "GNU argz separator split length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_add_sep;mode=strict;expected=ARGZ_COUNT_4_LEN_16_TEXT_base|red|green|;actual=ARGZ_COUNT_4_LEN_16_TEXT_base|red|green|;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argz_add_sep_skip_repeated_separator_hardened",
+      "function": "argz_add_sep",
+      "spec_section": "GNU libc argz_add_sep",
+      "inputs": {
+        "symbol": "argz_add_sep",
+        "scenario": "append_split_entries_with_trailing_empty",
+        "entries": "base",
+        "string": "red::green:",
+        "sep": ":",
+        "expected": "ARGZ_COUNT_4_LEN_16_TEXT_base|red|green|",
+        "oracle_source": "GNU argz separator split length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_add_sep;mode=hardened;expected=ARGZ_COUNT_4_LEN_16_TEXT_base|red|green|;actual=ARGZ_COUNT_4_LEN_16_TEXT_base|red|green|;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argz_append_two_vectors_strict",
+      "function": "argz_append",
+      "spec_section": "GNU libc argz_append",
+      "inputs": {
+        "symbol": "argz_append",
+        "scenario": "append_second_argz_buffer",
+        "entries": "alpha|beta",
+        "append_entries": "gamma|delta",
+        "expected": "ARGZ_COUNT_4_LEN_23_TEXT_alpha|beta|gamma|delta",
+        "oracle_source": "GNU argz append length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_append;mode=strict;expected=ARGZ_COUNT_4_LEN_23_TEXT_alpha|beta|gamma|delta;actual=ARGZ_COUNT_4_LEN_23_TEXT_alpha|beta|gamma|delta;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argz_append_two_vectors_hardened",
+      "function": "argz_append",
+      "spec_section": "GNU libc argz_append",
+      "inputs": {
+        "symbol": "argz_append",
+        "scenario": "append_second_argz_buffer",
+        "entries": "alpha|beta",
+        "append_entries": "gamma|delta",
+        "expected": "ARGZ_COUNT_4_LEN_23_TEXT_alpha|beta|gamma|delta",
+        "oracle_source": "GNU argz append length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_append;mode=hardened;expected=ARGZ_COUNT_4_LEN_23_TEXT_alpha|beta|gamma|delta;actual=ARGZ_COUNT_4_LEN_23_TEXT_alpha|beta|gamma|delta;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argz_count_three_entries_strict",
+      "function": "argz_count",
+      "spec_section": "GNU libc argz_count",
+      "inputs": {
+        "symbol": "argz_count",
+        "scenario": "count_three_nul_terminated_entries",
+        "entries": "one|two|three",
+        "expected": "ARGZ_COUNT_3_LEN_14_TEXT_one|two|three",
+        "oracle_source": "GNU argz count length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_count;mode=strict;expected=ARGZ_COUNT_3_LEN_14_TEXT_one|two|three;actual=ARGZ_COUNT_3_LEN_14_TEXT_one|two|three;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argz_count_three_entries_hardened",
+      "function": "argz_count",
+      "spec_section": "GNU libc argz_count",
+      "inputs": {
+        "symbol": "argz_count",
+        "scenario": "count_three_nul_terminated_entries",
+        "entries": "one|two|three",
+        "expected": "ARGZ_COUNT_3_LEN_14_TEXT_one|two|three",
+        "oracle_source": "GNU argz count length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_count;mode=hardened;expected=ARGZ_COUNT_3_LEN_14_TEXT_one|two|three;actual=ARGZ_COUNT_3_LEN_14_TEXT_one|two|three;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argz_create_sep_with_trailing_empty_strict",
+      "function": "argz_create_sep",
+      "spec_section": "GNU libc argz_create_sep",
+      "inputs": {
+        "symbol": "argz_create_sep",
+        "scenario": "create_vector_from_separator_string",
+        "string": "usr:bin::lib:",
+        "sep": ":",
+        "expected": "ARGZ_COUNT_4_LEN_13_TEXT_usr|bin|lib|",
+        "oracle_source": "GNU argz_create_sep split length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_create_sep;mode=strict;expected=ARGZ_COUNT_4_LEN_13_TEXT_usr|bin|lib|;actual=ARGZ_COUNT_4_LEN_13_TEXT_usr|bin|lib|;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argz_create_sep_with_trailing_empty_hardened",
+      "function": "argz_create_sep",
+      "spec_section": "GNU libc argz_create_sep",
+      "inputs": {
+        "symbol": "argz_create_sep",
+        "scenario": "create_vector_from_separator_string",
+        "string": "usr:bin::lib:",
+        "sep": ":",
+        "expected": "ARGZ_COUNT_4_LEN_13_TEXT_usr|bin|lib|",
+        "oracle_source": "GNU argz_create_sep split length model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_create_sep;mode=hardened;expected=ARGZ_COUNT_4_LEN_13_TEXT_usr|bin|lib|;actual=ARGZ_COUNT_4_LEN_13_TEXT_usr|bin|lib|;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argz_delete_middle_entry_strict",
+      "function": "argz_delete",
+      "spec_section": "GNU libc argz_delete",
+      "inputs": {
+        "symbol": "argz_delete",
+        "scenario": "delete_middle_entry",
+        "entries": "alpha|beta|gamma",
+        "target": "beta",
+        "expected": "ARGZ_COUNT_2_LEN_12_TEXT_alpha|gamma",
+        "oracle_source": "GNU argz_delete compaction model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_delete;mode=strict;expected=ARGZ_COUNT_2_LEN_12_TEXT_alpha|gamma;actual=ARGZ_COUNT_2_LEN_12_TEXT_alpha|gamma;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argz_delete_middle_entry_hardened",
+      "function": "argz_delete",
+      "spec_section": "GNU libc argz_delete",
+      "inputs": {
+        "symbol": "argz_delete",
+        "scenario": "delete_middle_entry",
+        "entries": "alpha|beta|gamma",
+        "target": "beta",
+        "expected": "ARGZ_COUNT_2_LEN_12_TEXT_alpha|gamma",
+        "oracle_source": "GNU argz_delete compaction model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_delete;mode=hardened;expected=ARGZ_COUNT_2_LEN_12_TEXT_alpha|gamma;actual=ARGZ_COUNT_2_LEN_12_TEXT_alpha|gamma;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argz_extract_argv_order_strict",
+      "function": "argz_extract",
+      "spec_section": "GNU libc argz_extract",
+      "inputs": {
+        "symbol": "argz_extract",
+        "scenario": "extract_ordered_argv_entries",
+        "entries": "path|home|tmp",
+        "expected": "ARGV_COUNT_3_TEXT_path|home|tmp",
+        "oracle_source": "GNU argz_extract pointer-free argv model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_extract;mode=strict;expected=ARGV_COUNT_3_TEXT_path|home|tmp;actual=ARGV_COUNT_3_TEXT_path|home|tmp;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argz_extract_argv_order_hardened",
+      "function": "argz_extract",
+      "spec_section": "GNU libc argz_extract",
+      "inputs": {
+        "symbol": "argz_extract",
+        "scenario": "extract_ordered_argv_entries",
+        "entries": "path|home|tmp",
+        "expected": "ARGV_COUNT_3_TEXT_path|home|tmp",
+        "oracle_source": "GNU argz_extract pointer-free argv model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_extract;mode=hardened;expected=ARGV_COUNT_3_TEXT_path|home|tmp;actual=ARGV_COUNT_3_TEXT_path|home|tmp;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argz_insert_before_entry_strict",
+      "function": "argz_insert",
+      "spec_section": "GNU libc argz_insert",
+      "inputs": {
+        "symbol": "argz_insert",
+        "scenario": "insert_before_existing_entry",
+        "entries": "alpha|gamma",
+        "before": "gamma",
+        "entry": "beta",
+        "expected": "ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma",
+        "oracle_source": "GNU argz_insert offset-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_insert;mode=strict;expected=ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma;actual=ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argz_insert_before_entry_hardened",
+      "function": "argz_insert",
+      "spec_section": "GNU libc argz_insert",
+      "inputs": {
+        "symbol": "argz_insert",
+        "scenario": "insert_before_existing_entry",
+        "entries": "alpha|gamma",
+        "before": "gamma",
+        "entry": "beta",
+        "expected": "ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma",
+        "oracle_source": "GNU argz_insert offset-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_insert;mode=hardened;expected=ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma;actual=ARGZ_COUNT_3_LEN_17_TEXT_alpha|beta|gamma;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argz_next_after_first_entry_strict",
+      "function": "argz_next",
+      "spec_section": "GNU libc argz_next",
+      "inputs": {
+        "symbol": "argz_next",
+        "scenario": "iterate_to_next_entry",
+        "entries": "alpha|beta|gamma",
+        "after": "alpha",
+        "expected": "NEXT_beta",
+        "oracle_source": "GNU argz_next pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_next;mode=strict;expected=NEXT_beta;actual=NEXT_beta;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argz_next_after_first_entry_hardened",
+      "function": "argz_next",
+      "spec_section": "GNU libc argz_next",
+      "inputs": {
+        "symbol": "argz_next",
+        "scenario": "iterate_to_next_entry",
+        "entries": "alpha|beta|gamma",
+        "after": "alpha",
+        "expected": "NEXT_beta",
+        "oracle_source": "GNU argz_next pointer-free model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_next;mode=hardened;expected=NEXT_beta;actual=NEXT_beta;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argz_replace_duplicate_entries_strict",
+      "function": "argz_replace",
+      "spec_section": "GNU libc argz_replace",
+      "inputs": {
+        "symbol": "argz_replace",
+        "scenario": "replace_all_matching_entries",
+        "entries": "alpha|beta|alpha",
+        "find": "alpha",
+        "replacement": "omega",
+        "expected": "ARGZ_REPLACED_2_ARGZ_COUNT_3_LEN_17_TEXT_omega|beta|omega",
+        "oracle_source": "GNU argz_replace full-entry replacement model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_replace;mode=strict;expected=ARGZ_REPLACED_2_ARGZ_COUNT_3_LEN_17_TEXT_omega|beta|omega;actual=ARGZ_REPLACED_2_ARGZ_COUNT_3_LEN_17_TEXT_omega|beta|omega;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argz_replace_duplicate_entries_hardened",
+      "function": "argz_replace",
+      "spec_section": "GNU libc argz_replace",
+      "inputs": {
+        "symbol": "argz_replace",
+        "scenario": "replace_all_matching_entries",
+        "entries": "alpha|beta|alpha",
+        "find": "alpha",
+        "replacement": "omega",
+        "expected": "ARGZ_REPLACED_2_ARGZ_COUNT_3_LEN_17_TEXT_omega|beta|omega",
+        "oracle_source": "GNU argz_replace full-entry replacement model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_replace;mode=hardened;expected=ARGZ_REPLACED_2_ARGZ_COUNT_3_LEN_17_TEXT_omega|beta|omega;actual=ARGZ_REPLACED_2_ARGZ_COUNT_3_LEN_17_TEXT_omega|beta|omega;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argz_stringify_comma_separator_strict",
+      "function": "argz_stringify",
+      "spec_section": "GNU libc argz_stringify",
+      "inputs": {
+        "symbol": "argz_stringify",
+        "scenario": "replace_interior_nuls_with_separator",
+        "entries": "alpha|beta|gamma",
+        "sep": ",",
+        "expected": "STRINGIFY_alpha,beta,gamma",
+        "oracle_source": "GNU argz_stringify pointer-free text model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_stringify;mode=strict;expected=STRINGIFY_alpha,beta,gamma;actual=STRINGIFY_alpha,beta,gamma;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argz_stringify_comma_separator_hardened",
+      "function": "argz_stringify",
+      "spec_section": "GNU libc argz_stringify",
+      "inputs": {
+        "symbol": "argz_stringify",
+        "scenario": "replace_interior_nuls_with_separator",
+        "entries": "alpha|beta|gamma",
+        "sep": ",",
+        "expected": "STRINGIFY_alpha,beta,gamma",
+        "oracle_source": "GNU argz_stringify pointer-free text model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=argz_stringify;mode=hardened;expected=STRINGIFY_alpha,beta,gamma;actual=STRINGIFY_alpha,beta,gamma;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

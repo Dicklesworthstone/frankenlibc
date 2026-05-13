@@ -501,7 +501,17 @@ pub fn execute_fixture_case(
         | "__strtoull_l"
         | "__strverscmp"
         | "__strxfrm_l"
-        | "argz_add" => execute_string_memory_hotpaths_case(function, inputs, mode),
+        | "argz_add"
+        | "argz_add_sep"
+        | "argz_append"
+        | "argz_count"
+        | "argz_create_sep"
+        | "argz_delete"
+        | "argz_extract"
+        | "argz_insert"
+        | "argz_next"
+        | "argz_replace"
+        | "argz_stringify" => execute_string_memory_hotpaths_case(function, inputs, mode),
         "strcmp" => execute_strcmp_case(inputs, mode),
         "strcpy" => execute_strcpy_case(inputs, mode),
         "strncpy" => execute_strncpy_case(inputs, mode),
@@ -7951,17 +7961,110 @@ fn string_memory_hotpath_actual(
             let entry = parse_string(inputs, "entry")?;
             let mut combined = entries;
             combined.push(entry);
-            let len: usize = combined.iter().map(|item| item.len() + 1).sum();
+            Ok(argz_summary(&combined))
+        }
+        "argz_add_sep" => {
+            let mut entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let string = parse_string(inputs, "string")?;
+            let sep = parse_ascii_byte(inputs, "sep")?;
+            entries.extend(argz_sep_entries_model(&string, sep));
+            Ok(argz_summary(&entries))
+        }
+        "argz_append" => {
+            let mut entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            entries.extend(parse_argz_entries(&parse_string(inputs, "append_entries")?));
+            Ok(argz_summary(&entries))
+        }
+        "argz_count" => {
+            let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            Ok(argz_summary(&entries))
+        }
+        "argz_create_sep" => {
+            let string = parse_string(inputs, "string")?;
+            let sep = parse_ascii_byte(inputs, "sep")?;
+            Ok(argz_summary(&argz_sep_entries_model(&string, sep)))
+        }
+        "argz_delete" => {
+            let mut entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let target = parse_string(inputs, "target")?;
+            if let Some(index) = entries.iter().position(|entry| entry == &target) {
+                entries.remove(index);
+            }
+            Ok(argz_summary(&entries))
+        }
+        "argz_extract" => {
+            let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
             Ok(format!(
-                "ARGZ_COUNT_{}_LEN_{len}_TEXT_{}",
-                combined.len(),
-                combined.join("|")
+                "ARGV_COUNT_{}_TEXT_{}",
+                entries.len(),
+                entries.join("|")
             ))
+        }
+        "argz_insert" => {
+            let mut entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let before = parse_string(inputs, "before")?;
+            let entry = parse_string(inputs, "entry")?;
+            match entries.iter().position(|item| item == &before) {
+                Some(index) => entries.insert(index, entry),
+                None => entries.push(entry),
+            }
+            Ok(argz_summary(&entries))
+        }
+        "argz_next" => {
+            let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let after = parse_string(inputs, "after")?;
+            let next = if after.is_empty() {
+                entries.first()
+            } else {
+                entries
+                    .iter()
+                    .position(|entry| entry == &after)
+                    .and_then(|index| entries.get(index + 1))
+            };
+            Ok(match next {
+                Some(entry) => format!("NEXT_{entry}"),
+                None => String::from("NEXT_NULL"),
+            })
+        }
+        "argz_replace" => {
+            let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let find = parse_string(inputs, "find")?;
+            let replacement = parse_string(inputs, "replacement")?;
+            let mut replacements = 0usize;
+            let replaced: Vec<String> = entries
+                .into_iter()
+                .map(|entry| {
+                    if entry == find {
+                        replacements += 1;
+                        replacement.clone()
+                    } else {
+                        entry
+                    }
+                })
+                .collect();
+            Ok(format!(
+                "ARGZ_REPLACED_{replacements}_{}",
+                argz_summary(&replaced)
+            ))
+        }
+        "argz_stringify" => {
+            let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let sep = parse_ascii_byte(inputs, "sep")?;
+            let sep = char::from(sep).to_string();
+            Ok(format!("STRINGIFY_{}", entries.join(&sep)))
         }
         other => Err(format!(
             "unsupported string/memory hotpath fixture: {other}"
         )),
     }
+}
+
+fn parse_ascii_byte(inputs: &serde_json::Value, key: &str) -> Result<u8, String> {
+    let value = parse_string(inputs, key)?;
+    if value.len() != 1 || !value.is_ascii() {
+        return Err(format!("{key} must be exactly one ASCII byte"));
+    }
+    Ok(value.as_bytes()[0])
 }
 
 fn parse_argz_entries(text: &str) -> Vec<String> {
@@ -7970,6 +8073,46 @@ fn parse_argz_entries(text: &str) -> Vec<String> {
     } else {
         text.split('|').map(ToOwned::to_owned).collect()
     }
+}
+
+fn argz_sep_entries_model(text: &str, sep: u8) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut entries = Vec::new();
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        while pos < bytes.len() && bytes[pos] == sep {
+            pos += 1;
+        }
+        if pos == bytes.len() {
+            break;
+        }
+
+        let mut end = pos;
+        while end < bytes.len() && bytes[end] != sep {
+            end += 1;
+        }
+        entries.push(String::from_utf8_lossy(&bytes[pos..end]).into_owned());
+        pos = end;
+    }
+
+    if !bytes.is_empty() && bytes[bytes.len() - 1] == sep {
+        entries.push(String::new());
+    }
+
+    entries
+}
+
+fn argz_len(entries: &[String]) -> usize {
+    entries.iter().map(|entry| entry.len() + 1).sum()
+}
+
+fn argz_summary(entries: &[String]) -> String {
+    format!(
+        "ARGZ_COUNT_{}_LEN_{}_TEXT_{}",
+        entries.len(),
+        argz_len(entries),
+        entries.join("|")
+    )
 }
 
 fn string_hotpath_strvers_byte(bytes: &[u8], index: usize) -> u8 {
