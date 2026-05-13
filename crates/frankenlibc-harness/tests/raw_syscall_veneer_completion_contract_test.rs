@@ -52,6 +52,20 @@ fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
         .collect::<Result<BTreeSet<_>, _>>()
 }
 
+const UNIT_PRIMARY_COMMAND: &str = "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_raw_syscall_veneer_unit cargo test -p frankenlibc-core syscall -- --nocapture";
+const E2E_PRIMARY_COMMAND: &str = "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_raw_syscall_veneer_e2e cargo test -p frankenlibc-core --test syscall_veneer_test -- --nocapture";
+const TELEMETRY_TEST_COMMAND: &str = "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_raw_syscall_veneer_harness cargo test -p frankenlibc-harness --test raw_syscall_veneer_completion_contract_test -- --nocapture";
+const TELEMETRY_CLIPPY_COMMAND: &str = "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_raw_syscall_veneer_clippy cargo clippy -p frankenlibc-harness --test raw_syscall_veneer_completion_contract_test -- -D warnings";
+
+fn required_commands(manifest: &Value, section: &str) -> TestResult<BTreeSet<String>> {
+    string_set(&manifest["completion_debt_evidence"][section]["required_commands"])
+}
+
+fn set_required_command(manifest: &mut Value, section: &str, index: usize, command: &str) {
+    manifest["completion_debt_evidence"][section]["required_commands"][index] =
+        Value::String(command.to_string());
+}
+
 fn unique_output_dir(root: &Path, label: &str) -> TestResult<PathBuf> {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -150,6 +164,21 @@ fn contract_anchors_raw_syscall_veneer_completion_debt() -> TestResult {
             .as_u64()
             .is_some_and(|count| count >= 90)
     );
+    assert_eq!(
+        required_commands(&manifest, "unit_primary")?,
+        BTreeSet::from([UNIT_PRIMARY_COMMAND.to_string()])
+    );
+    assert_eq!(
+        required_commands(&manifest, "e2e_primary")?,
+        BTreeSet::from([E2E_PRIMARY_COMMAND.to_string()])
+    );
+    assert_eq!(
+        required_commands(&manifest, "telemetry_primary")?,
+        BTreeSet::from([
+            TELEMETRY_TEST_COMMAND.to_string(),
+            TELEMETRY_CLIPPY_COMMAND.to_string(),
+        ])
+    );
     for reference in manifest["implementation_refs"]
         .as_array()
         .ok_or_else(|| test_error("implementation refs should be array"))?
@@ -161,6 +190,86 @@ fn contract_anchors_raw_syscall_veneer_completion_debt() -> TestResult {
                 .ok_or_else(|| test_error("implementation ref should be string"))?,
         )?;
     }
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_non_remote_rch_validation_commands() -> TestResult {
+    let root = workspace_root()?;
+
+    let mut missing_force = load_json(&manifest_path(&root))?;
+    set_required_command(
+        &mut missing_force,
+        "unit_primary",
+        0,
+        &UNIT_PRIMARY_COMMAND.replacen("RCH_FORCE_REMOTE=true ", "", 1),
+    );
+    let out_dir = unique_output_dir(&root, "missing-force-remote")?;
+    let mutated = out_dir.join("missing-force.json");
+    write_json(&mutated, &missing_force)?;
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert!(
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr).contains("must set RCH_FORCE_REMOTE=true"),
+        "{}",
+        output_text(&output)
+    );
+
+    let mut missing_target = load_json(&manifest_path(&root))?;
+    set_required_command(
+        &mut missing_target,
+        "e2e_primary",
+        0,
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env cargo test -p frankenlibc-core --test syscall_veneer_test -- --nocapture",
+    );
+    let out_dir = unique_output_dir(&root, "missing-target-dir")?;
+    let mutated = out_dir.join("missing-target.json");
+    write_json(&mutated, &missing_target)?;
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert!(
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr)
+                .contains("must set isolated CARGO_TARGET_DIR"),
+        "{}",
+        output_text(&output)
+    );
+
+    let mut shell_wrapped = load_json(&manifest_path(&root))?;
+    set_required_command(
+        &mut shell_wrapped,
+        "telemetry_primary",
+        1,
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- bash -c 'cargo clippy -p frankenlibc-harness --test raw_syscall_veneer_completion_contract_test -- -D warnings'",
+    );
+    let out_dir = unique_output_dir(&root, "shell-wrapped")?;
+    let mutated = out_dir.join("shell-wrapped.json");
+    write_json(&mutated, &shell_wrapped)?;
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert!(
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr).contains("must not shell-wrap cargo"),
+        "{}",
+        output_text(&output)
+    );
+
+    let mut local_fallback = load_json(&manifest_path(&root))?;
+    set_required_command(
+        &mut local_fallback,
+        "telemetry_primary",
+        0,
+        &format!("{TELEMETRY_TEST_COMMAND} [RCH] local (remote execution failed)"),
+    );
+    let out_dir = unique_output_dir(&root, "local-fallback")?;
+    let mutated = out_dir.join("local-fallback.json");
+    write_json(&mutated, &local_fallback)?;
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert!(
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr)
+                .contains("must not accept local rch fallback"),
+        "{}",
+        output_text(&output)
+    );
     Ok(())
 }
 

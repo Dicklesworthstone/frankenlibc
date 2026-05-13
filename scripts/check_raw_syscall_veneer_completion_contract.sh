@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -65,6 +66,18 @@ REQUIRED_LOG_FIELDS = {
     "source_commit",
     "artifact_refs",
     "details",
+}
+EXPECTED_REQUIRED_COMMANDS = {
+    "unit_primary": {
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_raw_syscall_veneer_unit cargo test -p frankenlibc-core syscall -- --nocapture",
+    },
+    "e2e_primary": {
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_raw_syscall_veneer_e2e cargo test -p frankenlibc-core --test syscall_veneer_test -- --nocapture",
+    },
+    "telemetry_primary": {
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_raw_syscall_veneer_harness cargo test -p frankenlibc-harness --test raw_syscall_veneer_completion_contract_test -- --nocapture",
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_raw_syscall_veneer_clippy cargo clippy -p frankenlibc-harness --test raw_syscall_veneer_completion_contract_test -- -D warnings",
+    },
 }
 
 errors: list[str] = []
@@ -150,6 +163,55 @@ def strings(value: Any, label: str, allow_empty: bool = False) -> list[str]:
         else:
             out.append(item)
     return out
+
+
+def split_command(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError as exc:
+        error(f"required command is not shell-parseable: {command}: {exc}")
+        return []
+
+
+def validate_remote_cargo_command(section_name: str, command: str) -> None:
+    if "[RCH] local" in command or "remote execution failed" in command:
+        error(f"{section_name}.required_commands must not accept local rch fallback output: {command}")
+        return
+
+    parts = split_command(command)
+    if not parts:
+        return
+    try:
+        rch_index = parts.index("rch")
+    except ValueError:
+        error(f"{section_name}.required_commands must run cargo through rch exec: {command}")
+        return
+
+    if "RCH_FORCE_REMOTE=true" not in parts[:rch_index]:
+        error(f"{section_name}.required_commands must set RCH_FORCE_REMOTE=true: {command}")
+    if parts[rch_index : rch_index + 3] != ["rch", "exec", "--"]:
+        error(f"{section_name}.required_commands must run cargo through rch exec: {command}")
+        return
+
+    remote_parts = parts[rch_index + 3 :]
+    if any(part in {"bash", "sh", "zsh"} for part in remote_parts):
+        error(f"{section_name}.required_commands must not shell-wrap cargo under rch: {command}")
+        return
+    if not remote_parts or remote_parts[0] != "env":
+        error(f"{section_name}.required_commands must use rch exec -- env: {command}")
+        return
+    try:
+        cargo_index = remote_parts.index("cargo")
+    except ValueError:
+        error(f"{section_name}.required_commands must invoke cargo after rch exec -- env: {command}")
+        return
+    env_tokens = remote_parts[1:cargo_index]
+    has_target_dir = any(
+        token.startswith("CARGO_TARGET_DIR=") and token != "CARGO_TARGET_DIR="
+        for token in env_tokens
+    )
+    if not has_target_dir:
+        error(f"{section_name}.required_commands must set isolated CARGO_TARGET_DIR: {command}")
 
 
 def write_json(path: pathlib.Path, value: dict[str, Any]) -> None:
@@ -346,9 +408,16 @@ def validate_binding(section: dict[str, Any], section_name: str, event_name: str
         validate_test_ref(source, name, section_name)
         test_ref_count += 1
     commands = strings(section.get("required_commands"), f"{section_name}.required_commands")
+    expected_commands = EXPECTED_REQUIRED_COMMANDS.get(section_name)
+    if expected_commands is None:
+        error(f"unknown completion evidence section {section_name}")
+    elif set(commands) != expected_commands:
+        error(
+            f"{section_name}.required_commands must match expected remote-only command set: "
+            f"expected={sorted(expected_commands)} got={sorted(commands)}"
+        )
     for command in commands:
-        if not command.startswith("rch exec -- cargo "):
-            error(f"{section_name}.required_commands must use rch cargo: {command}")
+        validate_remote_cargo_command(section_name, command)
     required_events = set(strings(section.get("required_completion_events"), f"{section_name}.required_completion_events"))
     require(event_name in required_events, f"{section_name}.required_completion_events missing {event_name}")
     append_event(
