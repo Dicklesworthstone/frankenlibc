@@ -1,0 +1,38 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "render-diff-cli-contract",
+  "bead": "bd-bdi7r",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "03478f89a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes diff::render_diff as a standalone CLI for surfacing expected-vs-actual divergences from CI without compiling.",
+  "subcommand_name": "render-diff",
+  "binary_target": "harness",
+  "required_flags": [
+    "--expected",
+    "--actual",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_harness::diff::render_diff",
+  "output_contract": {
+    "format": "plain_text",
+    "identical_marker_default": "[identical]",
+    "divergent_header_default": "--- expected\n+++ actual\n"
+  },
+  "policy": {
+    "identical_inputs_produce_identical_marker_default_features": true,
+    "divergent_inputs_start_with_minus_minus_minus_expected_header_default_features": true,
+    "missing_expected_file_must_fail_closed": true,
+    "missing_actual_file_must_fail_closed": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "missing_input_file_accepted",
+    "identical_inputs_produce_unmarked_output_default_features"
+  ],
+  "summary": {
+    "bead": "bd-bdi7r",
+    "subcommand": "render-diff",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}

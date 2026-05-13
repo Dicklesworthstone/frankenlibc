@@ -737,6 +737,22 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Render a text diff between two files via
+    /// `harness::diff::render_diff`. Useful for surfacing
+    /// expected-vs-actual divergences from CI without compiling.
+    /// Output is unstructured plain text (the diff itself).
+    RenderDiff {
+        /// Path to the expected text file.
+        #[arg(long)]
+        expected: PathBuf,
+        /// Path to the actual text file.
+        #[arg(long)]
+        actual: PathBuf,
+        /// Output path for the rendered diff. When the files are
+        /// identical the literal marker "[identical]" is written.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Validate a stdio_evidence JSONL artifact against the
     /// StdioEvidenceRow schema (bd-9chy.4) via
     /// `stdio_evidence::parse_stdio_evidence_file`. Iterates every
@@ -2188,6 +2204,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&output, out)?;
             eprintln!(
                 "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
+                output.display()
+            );
+        }
+        Command::RenderDiff {
+            expected,
+            actual,
+            output,
+        } => {
+            use frankenlibc_harness::diff::render_diff;
+            let exp = std::fs::read_to_string(&expected)
+                .map_err(|e| format!("read --expected {}: {e}", expected.display()))?;
+            let act = std::fs::read_to_string(&actual)
+                .map_err(|e| format!("read --actual {}: {e}", actual.display()))?;
+            let rendered = render_diff(&exp, &act);
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&output, &rendered)?;
+            eprintln!(
+                "render-diff: wrote {} bytes to {}",
+                rendered.len(),
                 output.display()
             );
         }
