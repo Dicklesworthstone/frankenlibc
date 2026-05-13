@@ -1,0 +1,52 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "validate-stdio-evidence-cli-contract",
+  "bead": "bd-2t33m",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "2b77ec6fa4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes stdio_evidence::parse_stdio_evidence_file as a standalone CLI. The lib API is the canonical parser for stdio_evidence JSONL artifacts emitted by the ABI stdio entrypoints (bd-9chy.4): it iterates the file line-by-line, validates each row against StdioEvidenceRow, and rejects unsupported schema versions. Previously reachable only from Rust callers; the CLI bridge lets CI validate stdio_evidence artifacts without compiling.",
+  "subcommand_name": "validate-stdio-evidence",
+  "binary_target": "harness",
+  "required_flags": [
+    "--jsonl",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_harness::stdio_evidence::parse_stdio_evidence_file",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "stdio_evidence_validation",
+    "required_fields": [
+      "kind",
+      "input",
+      "total_rows",
+      "ok",
+      "errors"
+    ],
+    "error_kind_enum": [
+      "io",
+      "json",
+      "unsupported_version"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "ok_true_iff_errors_array_is_empty": true,
+    "exit_non_zero_when_ok_false": true,
+    "empty_jsonl_must_pass": true,
+    "supports_current_schema_version": true,
+    "io_failure_to_open_input_must_be_reported": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "ok_true_with_nonempty_errors",
+    "ok_false_with_zero_exit",
+    "empty_jsonl_rejected"
+  ],
+  "summary": {
+    "bead": "bd-2t33m",
+    "subcommand": "validate-stdio-evidence",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}

@@ -737,6 +737,20 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Validate a stdio_evidence JSONL artifact against the
+    /// StdioEvidenceRow schema (bd-9chy.4) via
+    /// `stdio_evidence::parse_stdio_evidence_file`. Iterates every
+    /// row and reports parse failures + unsupported schema versions
+    /// in one structured summary JSONL record. Exits non-zero when
+    /// any error is encountered.
+    ValidateStdioEvidence {
+        /// Path to the stdio_evidence JSONL artifact.
+        #[arg(long)]
+        jsonl: PathBuf,
+        /// Output JSONL path: one stdio_evidence_validation record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Parse a setjmp_semantics_contract.v1.json document and run
     /// its intrinsic-consistency checks via
     /// `setjmp_contract::{parse_contract_str, validate_intrinsic}`.
@@ -2176,6 +2190,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
                 output.display()
             );
+        }
+        Command::ValidateStdioEvidence { jsonl, output } => {
+            use frankenlibc_harness::stdio_evidence::{ParseError, parse_stdio_evidence_file};
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut total_rows: u64 = 0;
+            let mut errors: Vec<serde_json::Value> = Vec::new();
+            match parse_stdio_evidence_file(&jsonl) {
+                Ok(iter) => {
+                    for item in iter {
+                        match item {
+                            Ok(_row) => total_rows += 1,
+                            Err(ParseError::Io(e)) => errors.push(serde_json::json!({
+                                "line": 0,
+                                "kind": "io",
+                                "detail": e.to_string(),
+                            })),
+                            Err(ParseError::Json { line, error }) => {
+                                errors.push(serde_json::json!({
+                                    "line": line,
+                                    "kind": "json",
+                                    "detail": error.to_string(),
+                                }))
+                            }
+                            Err(ParseError::UnsupportedVersion { line, version }) => {
+                                errors.push(serde_json::json!({
+                                    "line": line,
+                                    "kind": "unsupported_version",
+                                    "detail": format!("schema version {version} is not supported"),
+                                }))
+                            }
+                        }
+                    }
+                }
+                Err(e) => errors.push(serde_json::json!({
+                    "line": 0,
+                    "kind": "io",
+                    "detail": e.to_string(),
+                })),
+            }
+            let ok = errors.is_empty();
+            let line = serde_json::json!({
+                "kind": "stdio_evidence_validation",
+                "input": jsonl.display().to_string(),
+                "total_rows": total_rows,
+                "ok": ok,
+                "errors": errors,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "validate-stdio-evidence: total_rows={total_rows} ok={ok} → wrote 1 JSONL record to {}",
+                output.display()
+            );
+            if !ok {
+                return Err(format!(
+                    "validate-stdio-evidence: {} error(s) — see {}",
+                    errors.len(),
+                    output.display()
+                )
+                .into());
+            }
         }
         Command::ValidateSetjmpContract { contract, output } => {
             use frankenlibc_harness::setjmp_contract::parse_contract_str;
