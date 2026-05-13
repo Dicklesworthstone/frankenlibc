@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T01:50:01Z",
-  "report_hash": "5f9a3189dd940993",
+  "generated_at": "2026-05-13T02:11:45Z",
+  "report_hash": "915a949a3725322c",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 489,
-    "symbols_without_fixtures": 3630,
-    "fixture_coverage_pct": 11.9,
-    "implemented_coverage_pct": 11.5,
-    "total_fixture_files": 65,
-    "total_cases": 1456,
+    "symbols_with_fixtures": 501,
+    "symbols_without_fixtures": 3618,
+    "fixture_coverage_pct": 12.2,
+    "implemented_coverage_pct": 11.8,
+    "total_fixture_files": 66,
+    "total_cases": 1480,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 349,
-    "symbols_with_errno_checks": 486,
-    "total_quality_issues": 3613,
-    "uncovered_action_count": 3630
+    "symbols_with_edge_cases": 352,
+    "symbols_with_errno_checks": 498,
+    "total_quality_issues": 3610,
+    "uncovered_action_count": 3618
   },
   "fixture_file_analyses": [
     {
@@ -413,6 +413,14 @@
     {
       "file": "string_memory_hotpaths.json",
       "family": "string_memory_hotpaths",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave05.json",
+      "family": "string_memory_hotpaths_wave05",
       "valid": true,
       "total_cases": 24,
       "unique_symbols": 12,
@@ -11746,14 +11754,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -11761,14 +11774,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -11776,14 +11794,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -11791,14 +11814,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -11806,14 +11834,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -11821,14 +11854,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -11836,15 +11874,20 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__strtod_nan",
@@ -11896,14 +11939,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -11911,15 +11959,20 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__strtof_nan",
@@ -11941,14 +11994,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -11956,14 +12014,19 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -11971,15 +12034,20 @@
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_hotpaths_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__strtol_l",
@@ -68563,55 +68631,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__strsep_3c",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__strsep_g",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__strspn_c1",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__strspn_c2",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__strspn_c3",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__strtod_internal",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__strtod_l",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__strtod_nan",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -68633,44 +68652,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "__strtof_internal",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__strtof_l",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__strtof_nan",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__strtok_r",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__strtok_r_1c",
-      "status": "Implemented",
-      "module": "string_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__strtol_internal",
-      "status": "Implemented",
-      "module": "string_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
