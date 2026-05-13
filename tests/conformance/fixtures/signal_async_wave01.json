@@ -1,0 +1,374 @@
+{
+  "version": "v1",
+  "family": "signal/async",
+  "captured_at": "2026-05-13T00:00:00Z",
+  "description": "Deterministic signal/async fixture wave for real-time signal range queries, process-group error classification, isolated pause interruption, null psiginfo no-op behavior, thread mask block/restore, signal abbreviation text, alternate-stack disabled query class, signal-set intersection, obsolete sighold/sigignore/siginterrupt error or restore classes, without capturing signal delivery timing, raw signal-set bytes, stack addresses, handler addresses, stderr bytes, stdout bytes, process ids, thread ids, or wall-clock values.",
+  "spec_reference": "POSIX killpg, pause, pthread_sigmask, sigaltstack, sighold, sigignore, siginterrupt; GNU __libc_current_sigrtmin/__libc_current_sigrtmax, psiginfo, sigabbrev_np, sigandset",
+  "campaign": {
+    "bead": "bd-r5k32.12",
+    "campaign_id": "fcq-signal-async",
+    "wave_id": "wave-01-signal-async",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture",
+    "first_wave_symbols": [
+      "__libc_current_sigrtmax",
+      "__libc_current_sigrtmin",
+      "killpg",
+      "pause",
+      "psiginfo",
+      "pthread_sigmask",
+      "sigabbrev_np",
+      "sigaltstack",
+      "sigandset",
+      "sighold",
+      "sigignore",
+      "siginterrupt"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "__libc_current_sigrtmax_range_strict",
+      "function": "__libc_current_sigrtmax",
+      "spec_section": "glibc real-time signal maximum range query",
+      "inputs": {
+        "symbol": "__libc_current_sigrtmax",
+        "scenario": "rt_signal_max_range",
+        "expected": "SIGRTMAX_RANGE_GE_34_VALUE_64",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__libc_current_sigrtmax;mode=strict;expected=SIGRTMAX_RANGE_GE_34_VALUE_64;actual=SIGRTMAX_RANGE_GE_34_VALUE_64;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__libc_current_sigrtmax_range_hardened",
+      "function": "__libc_current_sigrtmax",
+      "spec_section": "glibc real-time signal maximum range query",
+      "inputs": {
+        "symbol": "__libc_current_sigrtmax",
+        "scenario": "rt_signal_max_range",
+        "expected": "SIGRTMAX_RANGE_GE_34_VALUE_64",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__libc_current_sigrtmax;mode=hardened;expected=SIGRTMAX_RANGE_GE_34_VALUE_64;actual=SIGRTMAX_RANGE_GE_34_VALUE_64;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__libc_current_sigrtmin_range_strict",
+      "function": "__libc_current_sigrtmin",
+      "spec_section": "glibc real-time signal minimum range query",
+      "inputs": {
+        "symbol": "__libc_current_sigrtmin",
+        "scenario": "rt_signal_min_range",
+        "expected": "SIGRTMIN_RANGE_1_64_VALUE_34",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__libc_current_sigrtmin;mode=strict;expected=SIGRTMIN_RANGE_1_64_VALUE_34;actual=SIGRTMIN_RANGE_1_64_VALUE_34;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__libc_current_sigrtmin_range_hardened",
+      "function": "__libc_current_sigrtmin",
+      "spec_section": "glibc real-time signal minimum range query",
+      "inputs": {
+        "symbol": "__libc_current_sigrtmin",
+        "scenario": "rt_signal_min_range",
+        "expected": "SIGRTMIN_RANGE_1_64_VALUE_34",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__libc_current_sigrtmin;mode=hardened;expected=SIGRTMIN_RANGE_1_64_VALUE_34;actual=SIGRTMIN_RANGE_1_64_VALUE_34;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "killpg_invalid_process_group_strict",
+      "function": "killpg",
+      "spec_section": "POSIX killpg invalid process-group rejection without delivery",
+      "inputs": {
+        "symbol": "killpg",
+        "scenario": "invalid_process_group_no_delivery",
+        "expected": "KILLPG_INVALID_PGRP_RC_-1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=killpg;mode=strict;expected=KILLPG_INVALID_PGRP_RC_-1;actual=KILLPG_INVALID_PGRP_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "killpg_invalid_process_group_hardened",
+      "function": "killpg",
+      "spec_section": "POSIX killpg invalid process-group rejection without delivery",
+      "inputs": {
+        "symbol": "killpg",
+        "scenario": "invalid_process_group_no_delivery",
+        "expected": "KILLPG_INVALID_PGRP_RC_-1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=killpg;mode=hardened;expected=KILLPG_INVALID_PGRP_RC_-1;actual=KILLPG_INVALID_PGRP_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pause_isolated_child_interrupted_strict",
+      "function": "pause",
+      "spec_section": "POSIX pause returns after signal interruption in an isolated child",
+      "inputs": {
+        "symbol": "pause",
+        "scenario": "isolated_child_interrupted",
+        "expected": "PAUSE_EINTR_CHILD_EXIT_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=pause;mode=strict;expected=PAUSE_EINTR_CHILD_EXIT_0;actual=PAUSE_EINTR_CHILD_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pause_isolated_child_interrupted_hardened",
+      "function": "pause",
+      "spec_section": "POSIX pause returns after signal interruption in an isolated child",
+      "inputs": {
+        "symbol": "pause",
+        "scenario": "isolated_child_interrupted",
+        "expected": "PAUSE_EINTR_CHILD_EXIT_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=pause;mode=hardened;expected=PAUSE_EINTR_CHILD_EXIT_0;actual=PAUSE_EINTR_CHILD_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "psiginfo_null_noop_strict",
+      "function": "psiginfo",
+      "spec_section": "GNU psiginfo null-info deterministic no-op",
+      "inputs": {
+        "symbol": "psiginfo",
+        "scenario": "null_info_no_stderr_capture",
+        "expected": "PSIGINFO_NULL_NOOP",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=psiginfo;mode=strict;expected=PSIGINFO_NULL_NOOP;actual=PSIGINFO_NULL_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "psiginfo_null_noop_hardened",
+      "function": "psiginfo",
+      "spec_section": "GNU psiginfo null-info deterministic no-op",
+      "inputs": {
+        "symbol": "psiginfo",
+        "scenario": "null_info_no_stderr_capture",
+        "expected": "PSIGINFO_NULL_NOOP",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=psiginfo;mode=hardened;expected=PSIGINFO_NULL_NOOP;actual=PSIGINFO_NULL_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_sigmask_block_restore_strict",
+      "function": "pthread_sigmask",
+      "spec_section": "POSIX pthread_sigmask block and restore caller-owned signal set",
+      "inputs": {
+        "symbol": "pthread_sigmask",
+        "scenario": "block_restore_sigusr1",
+        "expected": "PTHREAD_SIGMASK_BLOCK_RC_0_SET_HAS_USR1_1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=pthread_sigmask;mode=strict;expected=PTHREAD_SIGMASK_BLOCK_RC_0_SET_HAS_USR1_1;actual=PTHREAD_SIGMASK_BLOCK_RC_0_SET_HAS_USR1_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_sigmask_block_restore_hardened",
+      "function": "pthread_sigmask",
+      "spec_section": "POSIX pthread_sigmask block and restore caller-owned signal set",
+      "inputs": {
+        "symbol": "pthread_sigmask",
+        "scenario": "block_restore_sigusr1",
+        "expected": "PTHREAD_SIGMASK_BLOCK_RC_0_SET_HAS_USR1_1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=pthread_sigmask;mode=hardened;expected=PTHREAD_SIGMASK_BLOCK_RC_0_SET_HAS_USR1_1;actual=PTHREAD_SIGMASK_BLOCK_RC_0_SET_HAS_USR1_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigabbrev_np_sigterm_strict",
+      "function": "sigabbrev_np",
+      "spec_section": "GNU sigabbrev_np static abbreviation text for SIGTERM",
+      "inputs": {
+        "symbol": "sigabbrev_np",
+        "scenario": "sigterm_abbrev_static_text",
+        "expected": "SIGABBREV_SIGTERM_TERM",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigabbrev_np;mode=strict;expected=SIGABBREV_SIGTERM_TERM;actual=SIGABBREV_SIGTERM_TERM;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sigabbrev_np_sigterm_hardened",
+      "function": "sigabbrev_np",
+      "spec_section": "GNU sigabbrev_np static abbreviation text for SIGTERM",
+      "inputs": {
+        "symbol": "sigabbrev_np",
+        "scenario": "sigterm_abbrev_static_text",
+        "expected": "SIGABBREV_SIGTERM_TERM",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigabbrev_np;mode=hardened;expected=SIGABBREV_SIGTERM_TERM;actual=SIGABBREV_SIGTERM_TERM;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigaltstack_disable_query_strict",
+      "function": "sigaltstack",
+      "spec_section": "POSIX sigaltstack disabled-state query without stack address capture",
+      "inputs": {
+        "symbol": "sigaltstack",
+        "scenario": "disable_then_query_without_stack_address",
+        "expected": "SIGALTSTACK_DISABLE_RC_0_QUERY_DISABLED",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigaltstack;mode=strict;expected=SIGALTSTACK_DISABLE_RC_0_QUERY_DISABLED;actual=SIGALTSTACK_DISABLE_RC_0_QUERY_DISABLED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sigaltstack_disable_query_hardened",
+      "function": "sigaltstack",
+      "spec_section": "POSIX sigaltstack disabled-state query without stack address capture",
+      "inputs": {
+        "symbol": "sigaltstack",
+        "scenario": "disable_then_query_without_stack_address",
+        "expected": "SIGALTSTACK_DISABLE_RC_0_QUERY_DISABLED",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigaltstack;mode=hardened;expected=SIGALTSTACK_DISABLE_RC_0_QUERY_DISABLED;actual=SIGALTSTACK_DISABLE_RC_0_QUERY_DISABLED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigandset_intersection_strict",
+      "function": "sigandset",
+      "spec_section": "GNU sigandset intersection over caller-owned signal sets",
+      "inputs": {
+        "symbol": "sigandset",
+        "scenario": "intersection_sigterm_only",
+        "expected": "SIGANDSET_RC_0_INT_0_TERM_1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigandset;mode=strict;expected=SIGANDSET_RC_0_INT_0_TERM_1;actual=SIGANDSET_RC_0_INT_0_TERM_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sigandset_intersection_hardened",
+      "function": "sigandset",
+      "spec_section": "GNU sigandset intersection over caller-owned signal sets",
+      "inputs": {
+        "symbol": "sigandset",
+        "scenario": "intersection_sigterm_only",
+        "expected": "SIGANDSET_RC_0_INT_0_TERM_1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigandset;mode=hardened;expected=SIGANDSET_RC_0_INT_0_TERM_1;actual=SIGANDSET_RC_0_INT_0_TERM_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sighold_hold_restore_strict",
+      "function": "sighold",
+      "spec_section": "XSI sighold blocks one signal and restores the previous mask",
+      "inputs": {
+        "symbol": "sighold",
+        "scenario": "hold_restore_sigusr1",
+        "expected": "SIGHOLD_RC_0_USR1_HELD_1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sighold;mode=strict;expected=SIGHOLD_RC_0_USR1_HELD_1;actual=SIGHOLD_RC_0_USR1_HELD_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sighold_hold_restore_hardened",
+      "function": "sighold",
+      "spec_section": "XSI sighold blocks one signal and restores the previous mask",
+      "inputs": {
+        "symbol": "sighold",
+        "scenario": "hold_restore_sigusr1",
+        "expected": "SIGHOLD_RC_0_USR1_HELD_1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sighold;mode=hardened;expected=SIGHOLD_RC_0_USR1_HELD_1;actual=SIGHOLD_RC_0_USR1_HELD_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigignore_invalid_signal_strict",
+      "function": "sigignore",
+      "spec_section": "XSI sigignore invalid signal rejection without handler mutation",
+      "inputs": {
+        "symbol": "sigignore",
+        "scenario": "invalid_signal_error_class",
+        "expected": "SIGIGNORE_INVALID_RC_-1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigignore;mode=strict;expected=SIGIGNORE_INVALID_RC_-1;actual=SIGIGNORE_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sigignore_invalid_signal_hardened",
+      "function": "sigignore",
+      "spec_section": "XSI sigignore invalid signal rejection without handler mutation",
+      "inputs": {
+        "symbol": "sigignore",
+        "scenario": "invalid_signal_error_class",
+        "expected": "SIGIGNORE_INVALID_RC_-1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigignore;mode=hardened;expected=SIGIGNORE_INVALID_RC_-1;actual=SIGIGNORE_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "siginterrupt_invalid_signal_strict",
+      "function": "siginterrupt",
+      "spec_section": "XSI siginterrupt invalid signal rejection without restart-flag mutation",
+      "inputs": {
+        "symbol": "siginterrupt",
+        "scenario": "invalid_signal_error_class",
+        "expected": "SIGINTERRUPT_INVALID_RC_-1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=siginterrupt;mode=strict;expected=SIGINTERRUPT_INVALID_RC_-1;actual=SIGINTERRUPT_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "siginterrupt_invalid_signal_hardened",
+      "function": "siginterrupt",
+      "spec_section": "XSI siginterrupt invalid signal rejection without restart-flag mutation",
+      "inputs": {
+        "symbol": "siginterrupt",
+        "scenario": "invalid_signal_error_class",
+        "expected": "SIGINTERRUPT_INVALID_RC_-1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=siginterrupt;mode=hardened;expected=SIGINTERRUPT_INVALID_RC_-1;actual=SIGINTERRUPT_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
