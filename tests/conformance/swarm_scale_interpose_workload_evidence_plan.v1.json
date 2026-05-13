@@ -1,0 +1,261 @@
+{
+  "schema_version": "swarm_scale_interpose_workload_evidence_plan.v1",
+  "bead": "bd-waaa6.5",
+  "generated_at_utc": "2026-05-13T05:20:00Z",
+  "purpose": "Define a fail-closed evidence plan for swarm-scale LD_PRELOAD workloads on 64+ core and 256GB-class hosts without running broad stress locally.",
+  "claim_status": "plan_only",
+  "replacement_level": "L0_L1_interpose_evidence_only",
+  "source_inputs": {
+    "workload_matrix": "tests/conformance/workload_matrix.json",
+    "user_workload_replay_manifest": "tests/conformance/user_workload_replay_manifest.v1.json",
+    "real_program_smoke_suite": "tests/conformance/real_program_smoke_suite.v1.json",
+    "workload_latency_budget_join": "tests/conformance/workload_latency_budget_join.v1.json",
+    "workload_reproducer_manifest": "tests/conformance/workload_reproducer_manifest.v1.json",
+    "workload_failure_dashboard": "tests/conformance/workload_failure_dashboard.v1.json"
+  },
+  "execution_policy": {
+    "no_broad_local_stress": true,
+    "required_launcher": "rch",
+    "required_command_prefix": [
+      "RCH_FORCE_REMOTE=true",
+      "rch",
+      "exec",
+      "--"
+    ],
+    "forbidden_evidence_markers": [
+      "[RCH] local",
+      "local fallback",
+      "bare cargo stress",
+      "unbounded local loop"
+    ],
+    "minimum_host_profile": {
+      "cpu_cores": 64,
+      "memory_gib": 256
+    },
+    "target_dir_policy": {
+      "required": true,
+      "isolation_pattern": "/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_swarm_interpose_<run_id>"
+    }
+  },
+  "runtime_modes": [
+    "strict",
+    "hardened"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "workload_class",
+    "workload_id",
+    "runtime_mode",
+    "replacement_level",
+    "parallelism",
+    "process_count",
+    "thread_count",
+    "command_kind",
+    "timeout_ms",
+    "latency_ns",
+    "error_count",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "failure_signatures": {
+    "swarm_interpose_timeout": {
+      "class": "timeout",
+      "decision": "fail",
+      "next_safe_action": "Rerun only the timed-out workload class with the same parallelism and captured target_dir on remote rch hardware."
+    },
+    "swarm_interpose_segv": {
+      "class": "segv",
+      "decision": "fail",
+      "next_safe_action": "Preserve the workload replay artifact and reduce to a single failing process before widening the swarm run."
+    },
+    "swarm_interpose_symbol_lookup": {
+      "class": "symbol_lookup",
+      "decision": "fail",
+      "next_safe_action": "Inspect LD_DEBUG symbol resolution and bind the missing symbol to support_matrix plus ABI exports before rerun."
+    },
+    "swarm_interpose_parity_mismatch": {
+      "class": "parity_mismatch",
+      "decision": "fail",
+      "next_safe_action": "Compare baseline, strict, and hardened rows for the same workload_id before claiming compatibility."
+    },
+    "swarm_interpose_performance_regression": {
+      "class": "performance_regression",
+      "decision": "fail",
+      "next_safe_action": "Join fresh latency rows through workload_latency_budget_join before accepting the workload class."
+    },
+    "swarm_interpose_local_execution": {
+      "class": "local_execution",
+      "decision": "fail",
+      "next_safe_action": "Discard local fallback output and rerun with RCH_FORCE_REMOTE=true rch exec."
+    },
+    "swarm_interpose_missing_field": {
+      "class": "schema",
+      "decision": "fail",
+      "next_safe_action": "Add the missing structured field before using the plan for release or compatibility evidence."
+    }
+  },
+  "budgets": {
+    "timeout_ms_max": 120000,
+    "strict_error_rate_max": 0,
+    "hardened_error_rate_max": 0,
+    "strict_latency_regression_pct_max": 15,
+    "hardened_latency_regression_pct_max": 40,
+    "overload_policy": "skip_overloaded_host_and_retry_remote_only"
+  },
+  "workload_classes": [
+    {
+      "id": "fork_exec_coreutils_fanout",
+      "description": "High-process-count coreutils fanout for startup, env, stdio, malloc, and exit paths.",
+      "domains": [
+        "coreutils",
+        "process",
+        "stdio",
+        "malloc"
+      ],
+      "command_kind": "argv_matrix",
+      "parallelism": {
+        "process_count": 256,
+        "thread_count": 1,
+        "requires_min_cpu_cores": 64
+      },
+      "modes": [
+        "strict",
+        "hardened"
+      ],
+      "structured_logs": true,
+      "timeout_ms": 60000,
+      "expected_failure_signatures": [
+        "swarm_interpose_timeout",
+        "swarm_interpose_segv",
+        "swarm_interpose_symbol_lookup",
+        "swarm_interpose_parity_mismatch",
+        "swarm_interpose_performance_regression",
+        "swarm_interpose_local_execution"
+      ],
+      "artifact_refs": [
+        "tests/conformance/user_workload_replay_manifest.v1.json",
+        "tests/conformance/workload_reproducer_manifest.v1.json"
+      ]
+    },
+    {
+      "id": "threaded_allocator_contention",
+      "description": "Thread-heavy allocator and stdio contention workload for hardened membrane overhead and lock behavior.",
+      "domains": [
+        "malloc",
+        "pthread",
+        "stdio",
+        "membrane"
+      ],
+      "command_kind": "fixture_binary",
+      "parallelism": {
+        "process_count": 32,
+        "thread_count": 128,
+        "requires_min_cpu_cores": 64
+      },
+      "modes": [
+        "strict",
+        "hardened"
+      ],
+      "structured_logs": true,
+      "timeout_ms": 90000,
+      "expected_failure_signatures": [
+        "swarm_interpose_timeout",
+        "swarm_interpose_segv",
+        "swarm_interpose_parity_mismatch",
+        "swarm_interpose_performance_regression",
+        "swarm_interpose_local_execution"
+      ],
+      "artifact_refs": [
+        "tests/conformance/workload_latency_budget_join.v1.json",
+        "tests/conformance/perf_budget_policy.json"
+      ]
+    },
+    {
+      "id": "dynamic_runtime_script_mix",
+      "description": "Mixed Python/shell dynamic runtime smoke under LD_PRELOAD for symbol lookup, locale, resolver, and filesystem churn.",
+      "domains": [
+        "dynamic_runtime",
+        "locale",
+        "resolver",
+        "filesystem"
+      ],
+      "command_kind": "dynamic_runtime_matrix",
+      "parallelism": {
+        "process_count": 128,
+        "thread_count": 8,
+        "requires_min_cpu_cores": 64
+      },
+      "modes": [
+        "strict",
+        "hardened"
+      ],
+      "structured_logs": true,
+      "timeout_ms": 120000,
+      "expected_failure_signatures": [
+        "swarm_interpose_timeout",
+        "swarm_interpose_segv",
+        "swarm_interpose_symbol_lookup",
+        "swarm_interpose_parity_mismatch",
+        "swarm_interpose_performance_regression",
+        "swarm_interpose_local_execution"
+      ],
+      "artifact_refs": [
+        "tests/conformance/real_program_smoke_suite.v1.json",
+        "tests/conformance/workload_failure_dashboard.v1.json"
+      ]
+    },
+    {
+      "id": "c_fixture_matrix_replay",
+      "description": "Compiled C fixture matrix replay for ABI edge cases that must stay deterministic under strict and hardened interpose modes.",
+      "domains": [
+        "c_fixture",
+        "abi",
+        "string",
+        "unistd"
+      ],
+      "command_kind": "compiled_c_fixture",
+      "parallelism": {
+        "process_count": 192,
+        "thread_count": 4,
+        "requires_min_cpu_cores": 64
+      },
+      "modes": [
+        "strict",
+        "hardened"
+      ],
+      "structured_logs": true,
+      "timeout_ms": 90000,
+      "expected_failure_signatures": [
+        "swarm_interpose_timeout",
+        "swarm_interpose_segv",
+        "swarm_interpose_symbol_lookup",
+        "swarm_interpose_parity_mismatch",
+        "swarm_interpose_performance_regression",
+        "swarm_interpose_local_execution"
+      ],
+      "artifact_refs": [
+        "tests/conformance/workload_matrix.json",
+        "tests/integration/link_test.c"
+      ]
+    }
+  ],
+  "evidence_outputs": {
+    "report": "target/conformance/swarm_scale_interpose_workload_evidence_plan.report.json",
+    "jsonl_log": "target/conformance/swarm_scale_interpose_workload_evidence_plan.log.jsonl",
+    "run_manifest": "target/conformance/swarm_scale_interpose_workload_evidence_plan.run_manifest.json"
+  },
+  "validation_commands": [
+    "jq empty tests/conformance/swarm_scale_interpose_workload_evidence_plan.v1.json",
+    "bash -n scripts/check_swarm_scale_interpose_workload_evidence_plan.sh",
+    "bash scripts/check_swarm_scale_interpose_workload_evidence_plan.sh",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/swarm_scale_interpose_workload_evidence_plan_test.rs",
+    "RCH_FORCE_REMOTE=true rch exec -- env CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_swarm_interpose_plan cargo test -p frankenlibc-harness --test swarm_scale_interpose_workload_evidence_plan_test -- --nocapture",
+    "RCH_FORCE_REMOTE=true rch exec -- env CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_swarm_interpose_plan cargo check -p frankenlibc-harness --test swarm_scale_interpose_workload_evidence_plan_test",
+    "RCH_FORCE_REMOTE=true rch exec -- env CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_swarm_interpose_plan cargo clippy -p frankenlibc-harness --test swarm_scale_interpose_workload_evidence_plan_test -- -D warnings"
+  ]
+}
