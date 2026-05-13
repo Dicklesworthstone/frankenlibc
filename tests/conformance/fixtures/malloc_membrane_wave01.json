@@ -1,0 +1,408 @@
+{
+  "version": "v1",
+  "family": "malloc/membrane",
+  "captured_at": "2026-05-13T04:55:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-malloc-membrane wave-01 allocator ownership, statistics, trimming, usable-size, aligned allocation, and glibc internal lifecycle symbols. Outputs classify stable allocator API result classes without recording heap pointer addresses, heap layout, rss, stderr bytes, process-global allocation counters, thread ids, timestamps, or ambient host allocator internals.",
+  "spec_reference": "C11 aligned_alloc, GNU malloc extensions mallinfo/mallinfo2/malloc_info/malloc_stats/malloc_trim/malloc_usable_size/cfree, and glibc internal __libc_* lifecycle compatibility symbols",
+  "campaign": {
+    "bead": "tracker-blocked-empty-queue-discovery",
+    "campaign_id": "fcq-malloc-membrane",
+    "wave_id": "wave-01-malloc-membrane-allocator-stats-lifecycle",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture",
+    "first_wave_symbols": [
+      "__libc_allocate_rtsig",
+      "__libc_freeres",
+      "__libc_init_first",
+      "__libc_sa_len",
+      "aligned_alloc",
+      "cfree",
+      "mallinfo",
+      "mallinfo2",
+      "malloc_info",
+      "malloc_stats",
+      "malloc_trim",
+      "malloc_usable_size"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "libc_allocate_rtsig_low_strict",
+      "function": "__libc_allocate_rtsig",
+      "spec_section": "glibc internal realtime signal allocator low-end class",
+      "inputs": {
+        "symbol": "__libc_allocate_rtsig",
+        "scenario": "low_end_signal_allocation_without_recording_signal_counter",
+        "high": 0,
+        "expected": "RTSIG_LOW_VALID",
+        "oracle_source": "FrankenLibC realtime-signal class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=__libc_allocate_rtsig;mode=strict;expected=RTSIG_LOW_VALID;actual=RTSIG_LOW_VALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "libc_allocate_rtsig_low_hardened",
+      "function": "__libc_allocate_rtsig",
+      "spec_section": "glibc internal realtime signal allocator low-end class",
+      "inputs": {
+        "symbol": "__libc_allocate_rtsig",
+        "scenario": "low_end_signal_allocation_without_recording_signal_counter",
+        "high": 0,
+        "expected": "RTSIG_LOW_VALID",
+        "oracle_source": "FrankenLibC realtime-signal class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=__libc_allocate_rtsig;mode=hardened;expected=RTSIG_LOW_VALID;actual=RTSIG_LOW_VALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "libc_freeres_noop_strict",
+      "function": "__libc_freeres",
+      "spec_section": "glibc internal freeres lifecycle no-op",
+      "inputs": {
+        "symbol": "__libc_freeres",
+        "scenario": "lifecycle_noop_without_heap_state_capture",
+        "expected": "FREERES_NOOP_OK",
+        "oracle_source": "FrankenLibC lifecycle no-op replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=__libc_freeres;mode=strict;expected=FREERES_NOOP_OK;actual=FREERES_NOOP_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "libc_freeres_noop_hardened",
+      "function": "__libc_freeres",
+      "spec_section": "glibc internal freeres lifecycle no-op",
+      "inputs": {
+        "symbol": "__libc_freeres",
+        "scenario": "lifecycle_noop_without_heap_state_capture",
+        "expected": "FREERES_NOOP_OK",
+        "oracle_source": "FrankenLibC lifecycle no-op replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=__libc_freeres;mode=hardened;expected=FREERES_NOOP_OK;actual=FREERES_NOOP_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "libc_init_first_noop_strict",
+      "function": "__libc_init_first",
+      "spec_section": "glibc internal init-first lifecycle no-op",
+      "inputs": {
+        "symbol": "__libc_init_first",
+        "scenario": "null_argv_envp_lifecycle_replay",
+        "expected": "INIT_FIRST_NOOP_OK",
+        "oracle_source": "FrankenLibC startup lifecycle replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=__libc_init_first;mode=strict;expected=INIT_FIRST_NOOP_OK;actual=INIT_FIRST_NOOP_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "libc_init_first_noop_hardened",
+      "function": "__libc_init_first",
+      "spec_section": "glibc internal init-first lifecycle no-op",
+      "inputs": {
+        "symbol": "__libc_init_first",
+        "scenario": "null_argv_envp_lifecycle_replay",
+        "expected": "INIT_FIRST_NOOP_OK",
+        "oracle_source": "FrankenLibC startup lifecycle replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=__libc_init_first;mode=hardened;expected=INIT_FIRST_NOOP_OK;actual=INIT_FIRST_NOOP_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "libc_sa_len_inet_strict",
+      "function": "__libc_sa_len",
+      "spec_section": "glibc internal sockaddr length for AF_INET",
+      "inputs": {
+        "symbol": "__libc_sa_len",
+        "scenario": "af_inet_sockaddr_length_without_address_capture",
+        "af": 2,
+        "expected": "SA_LEN_INET_16",
+        "oracle_source": "Linux sockaddr_in layout replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=__libc_sa_len;mode=strict;expected=SA_LEN_INET_16;actual=SA_LEN_INET_16;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "libc_sa_len_inet_hardened",
+      "function": "__libc_sa_len",
+      "spec_section": "glibc internal sockaddr length for AF_INET",
+      "inputs": {
+        "symbol": "__libc_sa_len",
+        "scenario": "af_inet_sockaddr_length_without_address_capture",
+        "af": 2,
+        "expected": "SA_LEN_INET_16",
+        "oracle_source": "Linux sockaddr_in layout replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=__libc_sa_len;mode=hardened;expected=SA_LEN_INET_16;actual=SA_LEN_INET_16;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aligned_alloc_valid_strict",
+      "function": "aligned_alloc",
+      "spec_section": "C11 aligned_alloc valid alignment and size class",
+      "inputs": {
+        "symbol": "aligned_alloc",
+        "scenario": "aligned_allocation_without_pointer_capture",
+        "alignment": 64,
+        "size": 128,
+        "expected": "ALIGNED_ALLOC_64_128_ALIGNED",
+        "oracle_source": "FrankenLibC alignment class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=aligned_alloc;mode=strict;expected=ALIGNED_ALLOC_64_128_ALIGNED;actual=ALIGNED_ALLOC_64_128_ALIGNED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aligned_alloc_valid_hardened",
+      "function": "aligned_alloc",
+      "spec_section": "C11 aligned_alloc valid alignment and size class",
+      "inputs": {
+        "symbol": "aligned_alloc",
+        "scenario": "aligned_allocation_without_pointer_capture",
+        "alignment": 64,
+        "size": 128,
+        "expected": "ALIGNED_ALLOC_64_128_ALIGNED",
+        "oracle_source": "FrankenLibC alignment class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=aligned_alloc;mode=hardened;expected=ALIGNED_ALLOC_64_128_ALIGNED;actual=ALIGNED_ALLOC_64_128_ALIGNED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "cfree_allocated_pointer_strict",
+      "function": "cfree",
+      "spec_section": "BSD cfree compatibility with free",
+      "inputs": {
+        "symbol": "cfree",
+        "scenario": "allocated_pointer_released_without_pointer_capture",
+        "size": 96,
+        "expected": "CFREE_FREED_ALLOCATED",
+        "oracle_source": "FrankenLibC cfree/free equivalence replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=cfree;mode=strict;expected=CFREE_FREED_ALLOCATED;actual=CFREE_FREED_ALLOCATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "cfree_allocated_pointer_hardened",
+      "function": "cfree",
+      "spec_section": "BSD cfree compatibility with free",
+      "inputs": {
+        "symbol": "cfree",
+        "scenario": "allocated_pointer_released_without_pointer_capture",
+        "size": 96,
+        "expected": "CFREE_FREED_ALLOCATED",
+        "oracle_source": "FrankenLibC cfree/free equivalence replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=cfree;mode=hardened;expected=CFREE_FREED_ALLOCATED;actual=CFREE_FREED_ALLOCATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "mallinfo_seeded_snapshot_strict",
+      "function": "mallinfo",
+      "spec_section": "GNU mallinfo seeded stats snapshot",
+      "inputs": {
+        "symbol": "mallinfo",
+        "scenario": "seeded_stats_without_heap_layout_capture",
+        "expected": "MALLINFO_UORD_192_FREE_64",
+        "oracle_source": "FrankenLibC seeded allocator stats replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=mallinfo;mode=strict;expected=MALLINFO_UORD_192_FREE_64;actual=MALLINFO_UORD_192_FREE_64;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "mallinfo_seeded_snapshot_hardened",
+      "function": "mallinfo",
+      "spec_section": "GNU mallinfo seeded stats snapshot",
+      "inputs": {
+        "symbol": "mallinfo",
+        "scenario": "seeded_stats_without_heap_layout_capture",
+        "expected": "MALLINFO_UORD_192_FREE_64",
+        "oracle_source": "FrankenLibC seeded allocator stats replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=mallinfo;mode=hardened;expected=MALLINFO_UORD_192_FREE_64;actual=MALLINFO_UORD_192_FREE_64;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "mallinfo2_seeded_snapshot_strict",
+      "function": "mallinfo2",
+      "spec_section": "GNU mallinfo2 seeded stats snapshot",
+      "inputs": {
+        "symbol": "mallinfo2",
+        "scenario": "seeded_stats_size_t_without_heap_layout_capture",
+        "expected": "MALLINFO2_UORD_192_FREE_64",
+        "oracle_source": "FrankenLibC seeded allocator stats replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=mallinfo2;mode=strict;expected=MALLINFO2_UORD_192_FREE_64;actual=MALLINFO2_UORD_192_FREE_64;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "mallinfo2_seeded_snapshot_hardened",
+      "function": "mallinfo2",
+      "spec_section": "GNU mallinfo2 seeded stats snapshot",
+      "inputs": {
+        "symbol": "mallinfo2",
+        "scenario": "seeded_stats_size_t_without_heap_layout_capture",
+        "expected": "MALLINFO2_UORD_192_FREE_64",
+        "oracle_source": "FrankenLibC seeded allocator stats replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=mallinfo2;mode=hardened;expected=MALLINFO2_UORD_192_FREE_64;actual=MALLINFO2_UORD_192_FREE_64;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "malloc_info_null_stream_strict",
+      "function": "malloc_info",
+      "spec_section": "GNU malloc_info null stream error class",
+      "inputs": {
+        "symbol": "malloc_info",
+        "scenario": "null_stream_without_xml_or_file_capture",
+        "expected": "MALLOC_INFO_NULL_RC_-1",
+        "oracle_source": "FrankenLibC malloc_info error class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=malloc_info;mode=strict;expected=MALLOC_INFO_NULL_RC_-1;actual=MALLOC_INFO_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "malloc_info_null_stream_hardened",
+      "function": "malloc_info",
+      "spec_section": "GNU malloc_info null stream error class",
+      "inputs": {
+        "symbol": "malloc_info",
+        "scenario": "null_stream_without_xml_or_file_capture",
+        "expected": "MALLOC_INFO_NULL_RC_-1",
+        "oracle_source": "FrankenLibC malloc_info error class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=malloc_info;mode=hardened;expected=MALLOC_INFO_NULL_RC_-1;actual=MALLOC_INFO_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "malloc_stats_seeded_emit_strict",
+      "function": "malloc_stats",
+      "spec_section": "GNU malloc_stats seeded stderr emission class",
+      "inputs": {
+        "symbol": "malloc_stats",
+        "scenario": "seeded_stats_emit_without_stderr_capture",
+        "expected": "MALLOC_STATS_EMITTED",
+        "oracle_source": "FrankenLibC malloc_stats emission class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=malloc_stats;mode=strict;expected=MALLOC_STATS_EMITTED;actual=MALLOC_STATS_EMITTED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "malloc_stats_seeded_emit_hardened",
+      "function": "malloc_stats",
+      "spec_section": "GNU malloc_stats seeded stderr emission class",
+      "inputs": {
+        "symbol": "malloc_stats",
+        "scenario": "seeded_stats_emit_without_stderr_capture",
+        "expected": "MALLOC_STATS_EMITTED",
+        "oracle_source": "FrankenLibC malloc_stats emission class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=malloc_stats;mode=hardened;expected=MALLOC_STATS_EMITTED;actual=MALLOC_STATS_EMITTED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "malloc_trim_zero_pad_strict",
+      "function": "malloc_trim",
+      "spec_section": "GNU malloc_trim zero-pad result class",
+      "inputs": {
+        "symbol": "malloc_trim",
+        "scenario": "zero_pad_trim_without_rss_capture",
+        "expected": "MALLOC_TRIM_RC_1",
+        "oracle_source": "FrankenLibC malloc_trim compatibility replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=malloc_trim;mode=strict;expected=MALLOC_TRIM_RC_1;actual=MALLOC_TRIM_RC_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "malloc_trim_zero_pad_hardened",
+      "function": "malloc_trim",
+      "spec_section": "GNU malloc_trim zero-pad result class",
+      "inputs": {
+        "symbol": "malloc_trim",
+        "scenario": "zero_pad_trim_without_rss_capture",
+        "expected": "MALLOC_TRIM_RC_1",
+        "oracle_source": "FrankenLibC malloc_trim compatibility replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=malloc_trim;mode=hardened;expected=MALLOC_TRIM_RC_1;actual=MALLOC_TRIM_RC_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "malloc_usable_size_null_strict",
+      "function": "malloc_usable_size",
+      "spec_section": "GNU malloc_usable_size null pointer result",
+      "inputs": {
+        "symbol": "malloc_usable_size",
+        "scenario": "null_pointer_without_heap_layout_capture",
+        "expected": "MALLOC_USABLE_SIZE_NULL_0",
+        "oracle_source": "FrankenLibC malloc_usable_size null replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=malloc_usable_size;mode=strict;expected=MALLOC_USABLE_SIZE_NULL_0;actual=MALLOC_USABLE_SIZE_NULL_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "malloc_usable_size_null_hardened",
+      "function": "malloc_usable_size",
+      "spec_section": "GNU malloc_usable_size null pointer result",
+      "inputs": {
+        "symbol": "malloc_usable_size",
+        "scenario": "null_pointer_without_heap_layout_capture",
+        "expected": "MALLOC_USABLE_SIZE_NULL_0",
+        "oracle_source": "FrankenLibC malloc_usable_size null replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=malloc_usable_size;mode=hardened;expected=MALLOC_USABLE_SIZE_NULL_0;actual=MALLOC_USABLE_SIZE_NULL_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

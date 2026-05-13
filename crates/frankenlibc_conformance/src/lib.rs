@@ -574,6 +574,18 @@ pub fn execute_fixture_case(
         "wcsspn" => execute_wcsspn_case(inputs, mode),
         "wcscspn" => execute_wcscspn_case(inputs, mode),
         "wcspbrk" => execute_wcspbrk_case(inputs, mode),
+        "__libc_allocate_rtsig"
+        | "__libc_freeres"
+        | "__libc_init_first"
+        | "__libc_sa_len"
+        | "aligned_alloc"
+        | "cfree"
+        | "mallinfo"
+        | "mallinfo2"
+        | "malloc_info"
+        | "malloc_stats"
+        | "malloc_trim"
+        | "malloc_usable_size" => execute_malloc_membrane_wave01_case(function, inputs, mode),
         "malloc" => execute_malloc_case(inputs, mode),
         "free" => execute_free_case(inputs, mode),
         "calloc" => execute_calloc_case(inputs, mode),
@@ -10511,6 +10523,149 @@ fn execute_realloc_case(
         host_parity: host_valid == impl_valid,
         note: None,
     })
+}
+
+fn execute_malloc_membrane_wave01_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "malloc/membrane fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = malloc_membrane_symbol_actual(function, inputs)?;
+
+    Ok(non_host_execution(malloc_membrane_fixture_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn malloc_membrane_fixture_log(symbol: &str, mode: &str, expected: &str, actual: &str) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn malloc_membrane_symbol_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    match function {
+        "__libc_allocate_rtsig" => {
+            let high = parse_i32(inputs, "high").unwrap_or(0);
+            let rc = unsafe { frankenlibc_abi::glibc_internal_abi::__libc_allocate_rtsig(high) };
+            if (34..=64).contains(&rc) {
+                if high == 0 {
+                    Ok(String::from("RTSIG_LOW_VALID"))
+                } else {
+                    Ok(String::from("RTSIG_HIGH_VALID"))
+                }
+            } else {
+                Ok(format!("RTSIG_RC_{rc}"))
+            }
+        }
+        "__libc_freeres" => {
+            unsafe { frankenlibc_abi::malloc_abi::__libc_freeres() };
+            Ok(String::from("FREERES_NOOP_OK"))
+        }
+        "__libc_init_first" => {
+            unsafe {
+                frankenlibc_abi::glibc_internal_abi::__libc_init_first(
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            Ok(String::from("INIT_FIRST_NOOP_OK"))
+        }
+        "__libc_sa_len" => {
+            let af = parse_i32(inputs, "af").unwrap_or(libc::AF_INET);
+            let rc = unsafe { frankenlibc_abi::glibc_internal_abi::__libc_sa_len(af as u16) };
+            let family = match af {
+                x if x == libc::AF_INET => "INET",
+                x if x == libc::AF_INET6 => "INET6",
+                x if x == libc::AF_UNIX => "UNIX",
+                _ => "UNKNOWN",
+            };
+            Ok(format!("SA_LEN_{family}_{rc}"))
+        }
+        "aligned_alloc" => {
+            let alignment = parse_usize(inputs, "alignment").unwrap_or(64);
+            let size = parse_usize(inputs, "size").unwrap_or(128);
+            let ptr = unsafe { frankenlibc_abi::malloc_abi::aligned_alloc(alignment, size) };
+            if ptr.is_null() {
+                return Ok(String::from("ALIGNED_ALLOC_NULL"));
+            }
+            let aligned = (ptr as usize).is_multiple_of(alignment);
+            unsafe { frankenlibc_abi::malloc_abi::free(ptr) };
+            if aligned {
+                Ok(format!("ALIGNED_ALLOC_{alignment}_{size}_ALIGNED"))
+            } else {
+                Ok(format!("ALIGNED_ALLOC_{alignment}_{size}_MISALIGNED"))
+            }
+        }
+        "cfree" => {
+            let size = parse_usize(inputs, "size").unwrap_or(64);
+            let ptr = unsafe { frankenlibc_abi::malloc_abi::malloc(size) };
+            if ptr.is_null() {
+                return Ok(String::from("CFREE_ALLOC_NULL"));
+            }
+            unsafe { frankenlibc_abi::malloc_abi::cfree(ptr) };
+            Ok(String::from("CFREE_FREED_ALLOCATED"))
+        }
+        "mallinfo" => {
+            seed_malloc_stats_for_fixture();
+            let info = unsafe { frankenlibc_abi::malloc_abi::mallinfo() };
+            Ok(format!(
+                "MALLINFO_UORD_{}_FREE_{}",
+                info.uordblks, info.fordblks
+            ))
+        }
+        "mallinfo2" => {
+            seed_malloc_stats_for_fixture();
+            let info = unsafe { frankenlibc_abi::malloc_abi::mallinfo2() };
+            Ok(format!(
+                "MALLINFO2_UORD_{}_FREE_{}",
+                info.uordblks, info.fordblks
+            ))
+        }
+        "malloc_info" => {
+            let rc = unsafe { frankenlibc_abi::malloc_abi::malloc_info(0, std::ptr::null_mut()) };
+            Ok(format!("MALLOC_INFO_NULL_RC_{rc}"))
+        }
+        "malloc_stats" => {
+            seed_malloc_stats_for_fixture();
+            unsafe { frankenlibc_abi::malloc_abi::malloc_stats() };
+            Ok(String::from("MALLOC_STATS_EMITTED"))
+        }
+        "malloc_trim" => {
+            let rc = unsafe { frankenlibc_abi::malloc_abi::malloc_trim(0) };
+            Ok(format!("MALLOC_TRIM_RC_{rc}"))
+        }
+        "malloc_usable_size" => {
+            let usable =
+                unsafe { frankenlibc_abi::malloc_abi::malloc_usable_size(std::ptr::null_mut()) };
+            Ok(format!("MALLOC_USABLE_SIZE_NULL_{usable}"))
+        }
+        other => Err(format!("unsupported malloc/membrane fixture: {other}")),
+    }
+}
+
+fn seed_malloc_stats_for_fixture() {
+    frankenlibc_abi::malloc_abi::malloc_stats_init_for_tests();
+    frankenlibc_abi::malloc_abi::malloc_stats_reset_for_harness();
+    frankenlibc_abi::malloc_abi::malloc_stats_record_alloc_for_harness(256);
+    frankenlibc_abi::malloc_abi::malloc_stats_record_free_for_harness(64);
 }
 
 fn run_host_atoi(s: &[u8]) -> i32 {
