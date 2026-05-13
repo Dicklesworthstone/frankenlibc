@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import shlex
 import stat
 import subprocess
 import sys
@@ -56,9 +57,9 @@ REQUIRED_TESTS = {
 }
 REQUIRED_COMMANDS = {
     "bash scripts/check_math_core_diff_completion_contract.sh",
-    "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_math -- --nocapture",
-    "rch exec -- cargo test -p frankenlibc-harness --test math_core_diff_completion_contract_test -- --nocapture",
-    "rch exec -- cargo clippy -p frankenlibc-harness --test math_core_diff_completion_contract_test -- -D warnings",
+    "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_math_core_diff_abi cargo test -p frankenlibc-abi --test conformance_diff_math -- --nocapture",
+    "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_math_core_diff_harness cargo test -p frankenlibc-harness --test math_core_diff_completion_contract_test -- --nocapture",
+    "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_math_core_diff_clippy cargo clippy -p frankenlibc-harness --test math_core_diff_completion_contract_test -- -D warnings",
 }
 REQUIRED_EVENTS = {
     "math_core_diff.source_artifacts_validated",
@@ -144,6 +145,65 @@ def string_set(value: Any, label: str, allow_empty: bool = False) -> set[str]:
         else:
             result.add(item)
     return result
+
+
+def split_command(command: str, label: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError as exc:
+        error(f"{label} must be shell-parseable: {exc}: {command}")
+        return []
+
+
+def validate_remote_cargo_command(command: str, label: str) -> None:
+    if "[RCH] local" in command or "remote execution failed" in command:
+        error(f"{label} must not include local rch fallback evidence: {command}")
+
+    tokens = split_command(command, label)
+    shell_wrapped = "bash" in tokens or "sh" in tokens or "-c" in tokens
+    if "cargo" in command and "cargo" not in tokens and shell_wrapped:
+        error(f"{label} must not shell-wrap cargo: {command}")
+        return
+
+    if "cargo" not in tokens:
+        return
+
+    cargo_index = tokens.index("cargo")
+    if shell_wrapped and (
+        "bash" in tokens[:cargo_index] or "sh" in tokens[:cargo_index] or "-c" in tokens[:cargo_index]
+    ):
+        error(f"{label} must not shell-wrap cargo: {command}")
+        return
+
+    if "RCH_FORCE_REMOTE=true" not in tokens:
+        error(f"{label} must set RCH_FORCE_REMOTE=true: {command}")
+
+    try:
+        rch_index = tokens.index("rch")
+    except ValueError:
+        error(f"{label} must run cargo through rch exec: {command}")
+        return
+
+    if rch_index + 1 >= len(tokens) or tokens[rch_index + 1] != "exec":
+        error(f"{label} must use rch exec: {command}")
+        return
+
+    try:
+        dashdash_index = tokens.index("--", rch_index + 2)
+    except ValueError:
+        error(f"{label} must use rch exec -- env: {command}")
+        return
+
+    if dashdash_index >= cargo_index:
+        error(f"{label} must place cargo after rch exec -- env: {command}")
+        return
+
+    if dashdash_index + 1 >= len(tokens) or tokens[dashdash_index + 1] != "env":
+        error(f"{label} must use env after rch exec --: {command}")
+
+    env_tokens = tokens[dashdash_index + 1 : cargo_index]
+    if not any(token.startswith("CARGO_TARGET_DIR=") and token != "CARGO_TARGET_DIR=" for token in env_tokens):
+        error(f"{label} must set isolated CARGO_TARGET_DIR before cargo: {command}")
 
 
 def append_event(event: str, status: str, details: dict[str, Any]) -> None:
@@ -251,11 +311,7 @@ def validate_conformance(contract: dict[str, Any]) -> None:
     require("sqrt divergences" in failures, "failure signatures must name sqrt divergence output")
     require("hyperbolic divergences" in failures, "failure signatures must name hyperbolic divergence output")
     for command in commands:
-        if "cargo " in command:
-            require(
-                command.startswith("rch exec -- cargo ") or command.startswith("rch exec -- env "),
-                f"cargo validation must run through rch: {command}",
-            )
+        validate_remote_cargo_command(command, "conformance_binding.required_commands")
     test_count = len(tests)
     command_count = len(commands)
 

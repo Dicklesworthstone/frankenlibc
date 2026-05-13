@@ -106,6 +106,21 @@ fn read_log_events(path: &Path) -> TestResult<BTreeSet<String>> {
         .collect::<Result<BTreeSet<_>, _>>()
 }
 
+fn set_required_command(manifest: &mut Value, expected: &str, replacement: &str) -> TestResult {
+    let commands = manifest["conformance_binding"]["required_commands"]
+        .as_array_mut()
+        .ok_or_else(|| test_error("required commands should be array"))?;
+    let mut replaced = false;
+    for command in commands {
+        if command.as_str() == Some(expected) {
+            *command = Value::String(replacement.to_string());
+            replaced = true;
+        }
+    }
+    assert!(replaced, "expected command was not present: {expected}");
+    Ok(())
+}
+
 fn assert_file_line_ref_exists(root: &Path, value: &str) -> TestResult {
     let (path, line) = value
         .rsplit_once(':')
@@ -118,6 +133,10 @@ fn assert_file_line_ref_exists(root: &Path, value: &str) -> TestResult {
     assert!(line_no <= line_count, "file-line ref outside file: {value}");
     Ok(())
 }
+
+const ABI_MATH_DIFF_COMMAND: &str = "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_math_core_diff_abi cargo test -p frankenlibc-abi --test conformance_diff_math -- --nocapture";
+const HARNESS_TEST_COMMAND: &str = "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_math_core_diff_harness cargo test -p frankenlibc-harness --test math_core_diff_completion_contract_test -- --nocapture";
+const HARNESS_CLIPPY_COMMAND: &str = "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_math_core_diff_clippy cargo clippy -p frankenlibc-harness --test math_core_diff_completion_contract_test -- -D warnings";
 
 #[test]
 fn contract_binds_math_core_diff_completion_debt() -> TestResult {
@@ -197,6 +216,22 @@ fn source_artifacts_bind_math_core_diff_surfaces() -> TestResult {
             "missing math diff test {expected}"
         );
     }
+    let commands = string_set(&manifest["conformance_binding"]["required_commands"])?;
+    for expected in [
+        ABI_MATH_DIFF_COMMAND,
+        HARNESS_TEST_COMMAND,
+        HARNESS_CLIPPY_COMMAND,
+    ] {
+        assert!(
+            commands.contains(expected),
+            "missing remote-only command {expected}"
+        );
+        assert!(
+            expected.contains("RCH_FORCE_REMOTE=true")
+                && expected.contains("rch exec -- env CARGO_TARGET_DIR="),
+            "command must force remote rch with isolated target dir: {expected}"
+        );
+    }
     Ok(())
 }
 
@@ -263,19 +298,11 @@ fn checker_rejects_missing_required_telemetry_event() -> TestResult {
 fn checker_rejects_local_cargo_validation_command() -> TestResult {
     let root = workspace_root()?;
     let mut manifest = load_json(&manifest_path(&root))?;
-    let commands = manifest["conformance_binding"]["required_commands"]
-        .as_array_mut()
-        .ok_or_else(|| test_error("required commands should be array"))?;
-    for command in commands {
-        if command.as_str()
-            == Some(
-                "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_math -- --nocapture",
-            )
-        {
-            *command =
-                Value::String("cargo test -p frankenlibc-abi --test conformance_diff_math".into());
-        }
-    }
+    set_required_command(
+        &mut manifest,
+        ABI_MATH_DIFF_COMMAND,
+        "cargo test -p frankenlibc-abi --test conformance_diff_math",
+    )?;
     let out_dir = unique_output_dir(&root, "local-cargo")?;
     let bad_manifest = out_dir.join("local-cargo-contract.json");
     write_json(&bad_manifest, &manifest)?;
@@ -283,9 +310,85 @@ fn checker_rejects_local_cargo_validation_command() -> TestResult {
     let output = run_checker(&root, &bad_manifest, &out_dir)?;
     assert!(!output.status.success(), "{}", output_text(&output));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("cargo validation must run through rch"),
+        String::from_utf8_lossy(&output.stderr).contains("must run cargo through rch exec"),
         "{}",
         output_text(&output)
     );
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_non_remote_rch_validation_commands() -> TestResult {
+    let root = workspace_root()?;
+    let base = load_json(&manifest_path(&root))?;
+
+    let mut missing_force = base.clone();
+    set_required_command(
+        &mut missing_force,
+        ABI_MATH_DIFF_COMMAND,
+        "RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_math_core_diff_bad cargo test -p frankenlibc-abi --test conformance_diff_math -- --nocapture",
+    )?;
+    let out_dir = unique_output_dir(&root, "missing-force")?;
+    let bad_manifest = out_dir.join("missing-force-contract.json");
+    write_json(&bad_manifest, &missing_force)?;
+    let output = run_checker(&root, &bad_manifest, &out_dir)?;
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("must set RCH_FORCE_REMOTE=true"),
+        "{}",
+        output_text(&output)
+    );
+
+    let mut missing_target_dir = base.clone();
+    set_required_command(
+        &mut missing_target_dir,
+        HARNESS_TEST_COMMAND,
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env cargo test -p frankenlibc-harness --test math_core_diff_completion_contract_test -- --nocapture",
+    )?;
+    let out_dir = unique_output_dir(&root, "missing-target-dir")?;
+    let bad_manifest = out_dir.join("missing-target-dir-contract.json");
+    write_json(&bad_manifest, &missing_target_dir)?;
+    let output = run_checker(&root, &bad_manifest, &out_dir)?;
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("must set isolated CARGO_TARGET_DIR"),
+        "{}",
+        output_text(&output)
+    );
+
+    let mut shell_wrapped = base.clone();
+    set_required_command(
+        &mut shell_wrapped,
+        HARNESS_CLIPPY_COMMAND,
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- bash -c 'cargo clippy -p frankenlibc-harness --test math_core_diff_completion_contract_test -- -D warnings'",
+    )?;
+    let out_dir = unique_output_dir(&root, "shell-wrapped")?;
+    let bad_manifest = out_dir.join("shell-wrapped-contract.json");
+    write_json(&bad_manifest, &shell_wrapped)?;
+    let output = run_checker(&root, &bad_manifest, &out_dir)?;
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("must not shell-wrap cargo"),
+        "{}",
+        output_text(&output)
+    );
+
+    let mut local_fallback = base;
+    set_required_command(
+        &mut local_fallback,
+        ABI_MATH_DIFF_COMMAND,
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_math_core_diff_bad cargo test -p frankenlibc-abi --test conformance_diff_math -- --nocapture [RCH] local (remote execution failed)",
+    )?;
+    let out_dir = unique_output_dir(&root, "local-fallback")?;
+    let bad_manifest = out_dir.join("local-fallback-contract.json");
+    write_json(&bad_manifest, &local_fallback)?;
+    let output = run_checker(&root, &bad_manifest, &out_dir)?;
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("must not include local rch fallback"),
+        "{}",
+        output_text(&output)
+    );
+
     Ok(())
 }
