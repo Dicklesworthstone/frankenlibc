@@ -58,62 +58,6 @@
       ]
     },
     {
-      "campaign_id": "fcq-stdio-libio",
-      "current_coverage_pct": 51.59,
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "expected_coverage_after_first_wave_pct": 61.11,
-      "first_wave_fixture_count": 12,
-      "first_wave_symbols": [
-        "fgetc_unlocked",
-        "fgetpos",
-        "fgetpos64",
-        "fgets_unlocked",
-        "fgetwc_unlocked",
-        "fgetws_unlocked",
-        "fileno_unlocked",
-        "flockfile",
-        "fmemopen",
-        "fopen64",
-        "fopencookie",
-        "fputc_unlocked"
-      ],
-      "module": "stdio_abi",
-      "next_step": "Add stream-state and _IO alias fixtures that prove behavior before native stdio replacement claims advance.",
-      "oracle_kind": "stdio_fixture_or_replay",
-      "rank": 2,
-      "risk_tags": [
-        "buffering_order",
-        "diagnostics_gap",
-        "semantic_divergence",
-        "stdio_libio_divergence"
-      ],
-      "scores": {
-        "coverage_gap_score": 61,
-        "feature_gap_risk_score": 3,
-        "hard_parts_risk_tags": [],
-        "implementation_complexity_score": 3,
-        "parity_risk_score": 5,
-        "priority_score": 2411,
-        "semantic_risk_score": 0,
-        "workload_risk_score": 5
-      },
-      "structured_log_fields": "required_log_fields",
-      "symbol_family": "FILE state, _IO compatibility names, locking, formatted IO, buffering, and stream errors",
-      "target_covered": 65,
-      "target_total": 126,
-      "target_uncovered": 61,
-      "title": "stdio/libio stream semantics fixture wave",
-      "workload_domains": [
-        "stdio_libio",
-        "shell_coreutils",
-        "build_tools",
-        "package_manager"
-      ]
-    },
-    {
       "campaign_id": "fcq-string-memory-hotpaths",
       "current_coverage_pct": 93.84,
       "deterministic_e2e_scripts": [
@@ -136,7 +80,7 @@
       "module": "string_abi",
       "next_step": "Grow boundary, overlap, empty, invalid pointer, locale, and perf guard fixtures for uncovered string families.",
       "oracle_kind": "glibc_fixture_oracle",
-      "rank": 3,
+      "rank": 2,
       "risk_tags": [
         "buffer_boundary",
         "locale_sensitive",
@@ -192,7 +136,7 @@
       "module": "pthread_abi",
       "next_step": "Prioritize deterministic mode-pair tests for pthread primitives that real runtimes and services depend on.",
       "oracle_kind": "threaded_mode_pair_replay",
-      "rank": 4,
+      "rank": 3,
       "risk_tags": [
         "deadlock_timeout",
         "mode_pair_mismatch",
@@ -222,6 +166,62 @@
         "threaded_services",
         "language_runtimes",
         "performance_sensitive"
+      ]
+    },
+    {
+      "campaign_id": "fcq-stdio-libio",
+      "current_coverage_pct": 61.11,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 70.63,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "fputs_unlocked",
+        "fputwc_unlocked",
+        "fputws_unlocked",
+        "fread_unlocked",
+        "freopen",
+        "freopen64",
+        "fscanf",
+        "fseeko",
+        "fseeko64",
+        "fsetpos",
+        "fsetpos64",
+        "ftello"
+      ],
+      "module": "stdio_abi",
+      "next_step": "Add stream-state and _IO alias fixtures that prove behavior before native stdio replacement claims advance.",
+      "oracle_kind": "stdio_fixture_or_replay",
+      "rank": 4,
+      "risk_tags": [
+        "buffering_order",
+        "diagnostics_gap",
+        "semantic_divergence",
+        "stdio_libio_divergence"
+      ],
+      "scores": {
+        "coverage_gap_score": 49,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 3,
+        "parity_risk_score": 5,
+        "priority_score": 2399,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "FILE state, _IO compatibility names, locking, formatted IO, buffering, and stream errors",
+      "target_covered": 77,
+      "target_total": 126,
+      "target_uncovered": 49,
+      "title": "stdio/libio stream semantics fixture wave",
+      "workload_domains": [
+        "stdio_libio",
+        "shell_coreutils",
+        "build_tools",
+        "package_manager"
       ]
     },
     {
@@ -1039,7 +1039,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3377,
+    "all_uncovered_target_symbols": 3365,
     "campaign_count": 14,
     "covered_modules": [
       "fortify_abi",
@@ -1074,7 +1074,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3023,
+    "selected_target_uncovered_symbols": 3011,
     "total_first_wave_fixture_count": 150
   }
 }

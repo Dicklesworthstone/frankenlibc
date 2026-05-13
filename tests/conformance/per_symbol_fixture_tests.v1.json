@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T12:24:25Z",
-  "report_hash": "f1bbdaa0c73243a5",
+  "generated_at": "2026-05-13T12:37:58Z",
+  "report_hash": "7926a28bdc274b4f",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 740,
-    "symbols_without_fixtures": 3379,
-    "fixture_coverage_pct": 18.0,
-    "implemented_coverage_pct": 17.4,
-    "total_fixture_files": 89,
-    "total_cases": 1930,
+    "symbols_with_fixtures": 752,
+    "symbols_without_fixtures": 3367,
+    "fixture_coverage_pct": 18.3,
+    "implemented_coverage_pct": 17.7,
+    "total_fixture_files": 90,
+    "total_cases": 1954,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 467,
-    "symbols_with_errno_checks": 737,
-    "total_quality_issues": 3556,
-    "uncovered_action_count": 3379
+    "symbols_with_edge_cases": 471,
+    "symbols_with_errno_checks": 749,
+    "total_quality_issues": 3552,
+    "uncovered_action_count": 3367
   },
   "fixture_file_analyses": [
     {
@@ -460,6 +460,14 @@
     },
     {
       "file": "stdio_libio_wave02.json",
+      "family": "stdio/libio",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "stdio_libio_wave03.json",
       "family": "stdio/libio",
       "valid": true,
       "total_cases": 24,
@@ -28133,14 +28141,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -28178,30 +28191,40 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "strict_fast",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "fgetpos64",
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "fgetpwent",
@@ -28258,14 +28281,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -28348,14 +28376,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -28378,14 +28411,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -28426,14 +28464,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -28512,14 +28555,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -29491,14 +29539,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -30438,30 +30491,40 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "fopencookie",
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "fork",
@@ -30561,14 +30624,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave03.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -75235,13 +75303,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "fgetc_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fgetgrent",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -75252,20 +75313,6 @@
       "symbol": "fgetgrent_r",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fgetpos",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fgetpos64",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -75282,13 +75329,6 @@
       "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
-    },
-    {
-      "symbol": "fgets_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "high"
     },
     {
       "symbol": "fgetsgent",
@@ -75326,13 +75366,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "fgetwc_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fgetws",
       "status": "Implemented",
       "module": "wchar_abi",
@@ -75340,23 +75373,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "fgetws_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fgetxattr",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fileno_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -75392,13 +75411,6 @@
       "symbol": "flock",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "flockfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -75844,13 +75856,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "fmemopen",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fmin",
       "status": "Implemented",
       "module": "math_abi",
@@ -76257,20 +76262,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "fopen64",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fopencookie",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "forkpty",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -76281,13 +76272,6 @@
       "symbol": "fpathconf",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fputc_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

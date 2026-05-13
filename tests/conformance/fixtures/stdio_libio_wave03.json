@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "stdio/libio",
+  "captured_at": "2026-05-13T12:33:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-stdio-libio wave-03 unlocked byte/wide reads, position snapshots, stream locks, memory streams, 64-bit open alias, cookie-open failure class, and unlocked writes without recording stream addresses, file descriptors, filesystem paths, stdout bytes, stdin payloads, thread ids, timestamps, locale-dependent bytes, or host FILE internals.",
+  "spec_reference": "POSIX/GNU fgetc_unlocked, fgetpos, fgetpos64, fgets_unlocked, fgetwc_unlocked, fgetws_unlocked, fileno_unlocked, flockfile, fmemopen, fopen64, fopencookie, and fputc_unlocked semantics",
+  "campaign": {
+    "bead": "bd-khu3s",
+    "campaign_id": "fcq-stdio-libio",
+    "wave_id": "wave-03-stdio-libio-unlocked-position-memory-stream",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture",
+    "first_wave_symbols": [
+      "fgetc_unlocked",
+      "fgetpos",
+      "fgetpos64",
+      "fgets_unlocked",
+      "fgetwc_unlocked",
+      "fgetws_unlocked",
+      "fileno_unlocked",
+      "flockfile",
+      "fmemopen",
+      "fopen64",
+      "fopencookie",
+      "fputc_unlocked"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "fgetc_unlocked_controlled_char_strict",
+      "function": "fgetc_unlocked",
+      "spec_section": "GNU fgetc_unlocked controlled byte read",
+      "inputs": {
+        "symbol": "fgetc_unlocked",
+        "scenario": "controlled_tmpfile_byte_read_without_fd_or_path_capture",
+        "expected": "FGETC_UNLOCKED_CHAR_G",
+        "oracle_source": "FrankenLibC fgetc_unlocked controlled byte replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgetc_unlocked;mode=strict;expected=FGETC_UNLOCKED_CHAR_G;actual=FGETC_UNLOCKED_CHAR_G;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetc_unlocked_controlled_char_hardened",
+      "function": "fgetc_unlocked",
+      "spec_section": "GNU fgetc_unlocked controlled byte read",
+      "inputs": {
+        "symbol": "fgetc_unlocked",
+        "scenario": "controlled_tmpfile_byte_read_without_fd_or_path_capture",
+        "expected": "FGETC_UNLOCKED_CHAR_G",
+        "oracle_source": "FrankenLibC fgetc_unlocked controlled byte replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgetc_unlocked;mode=hardened;expected=FGETC_UNLOCKED_CHAR_G;actual=FGETC_UNLOCKED_CHAR_G;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fgetpos_snapshot_class_strict",
+      "function": "fgetpos",
+      "spec_section": "POSIX fgetpos position snapshot",
+      "inputs": {
+        "symbol": "fgetpos",
+        "scenario": "controlled_tmpfile_position_snapshot_without_offset_capture",
+        "expected": "FGETPOS_RC_0_CLASS_SAVED",
+        "oracle_source": "FrankenLibC fgetpos success-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgetpos;mode=strict;expected=FGETPOS_RC_0_CLASS_SAVED;actual=FGETPOS_RC_0_CLASS_SAVED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetpos_snapshot_class_hardened",
+      "function": "fgetpos",
+      "spec_section": "POSIX fgetpos position snapshot",
+      "inputs": {
+        "symbol": "fgetpos",
+        "scenario": "controlled_tmpfile_position_snapshot_without_offset_capture",
+        "expected": "FGETPOS_RC_0_CLASS_SAVED",
+        "oracle_source": "FrankenLibC fgetpos success-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgetpos;mode=hardened;expected=FGETPOS_RC_0_CLASS_SAVED;actual=FGETPOS_RC_0_CLASS_SAVED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fgetpos64_snapshot_class_strict",
+      "function": "fgetpos64",
+      "spec_section": "GNU fgetpos64 position snapshot",
+      "inputs": {
+        "symbol": "fgetpos64",
+        "scenario": "controlled_tmpfile_position64_snapshot_without_offset_capture",
+        "expected": "FGETPOS64_RC_0_CLASS_SAVED",
+        "oracle_source": "FrankenLibC fgetpos64 success-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgetpos64;mode=strict;expected=FGETPOS64_RC_0_CLASS_SAVED;actual=FGETPOS64_RC_0_CLASS_SAVED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetpos64_snapshot_class_hardened",
+      "function": "fgetpos64",
+      "spec_section": "GNU fgetpos64 position snapshot",
+      "inputs": {
+        "symbol": "fgetpos64",
+        "scenario": "controlled_tmpfile_position64_snapshot_without_offset_capture",
+        "expected": "FGETPOS64_RC_0_CLASS_SAVED",
+        "oracle_source": "FrankenLibC fgetpos64 success-class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgetpos64;mode=hardened;expected=FGETPOS64_RC_0_CLASS_SAVED;actual=FGETPOS64_RC_0_CLASS_SAVED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fgets_unlocked_line_class_strict",
+      "function": "fgets_unlocked",
+      "spec_section": "GNU fgets_unlocked controlled line read",
+      "inputs": {
+        "symbol": "fgets_unlocked",
+        "scenario": "controlled_tmpfile_line_read_without_payload_capture",
+        "expected": "FGETS_UNLOCKED_LEN_5_NEWLINE_1",
+        "oracle_source": "FrankenLibC fgets_unlocked length/newline class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgets_unlocked;mode=strict;expected=FGETS_UNLOCKED_LEN_5_NEWLINE_1;actual=FGETS_UNLOCKED_LEN_5_NEWLINE_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fgets_unlocked_line_class_hardened",
+      "function": "fgets_unlocked",
+      "spec_section": "GNU fgets_unlocked controlled line read",
+      "inputs": {
+        "symbol": "fgets_unlocked",
+        "scenario": "controlled_tmpfile_line_read_without_payload_capture",
+        "expected": "FGETS_UNLOCKED_LEN_5_NEWLINE_1",
+        "oracle_source": "FrankenLibC fgets_unlocked length/newline class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgets_unlocked;mode=hardened;expected=FGETS_UNLOCKED_LEN_5_NEWLINE_1;actual=FGETS_UNLOCKED_LEN_5_NEWLINE_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fgetwc_unlocked_wide_char_class_strict",
+      "function": "fgetwc_unlocked",
+      "spec_section": "GNU fgetwc_unlocked controlled wide read",
+      "inputs": {
+        "symbol": "fgetwc_unlocked",
+        "scenario": "controlled_tmpfile_wide_char_read_without_locale_capture",
+        "expected": "FGETWC_UNLOCKED_CHAR_A",
+        "oracle_source": "FrankenLibC fgetwc_unlocked codepoint class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgetwc_unlocked;mode=strict;expected=FGETWC_UNLOCKED_CHAR_A;actual=FGETWC_UNLOCKED_CHAR_A;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetwc_unlocked_wide_char_class_hardened",
+      "function": "fgetwc_unlocked",
+      "spec_section": "GNU fgetwc_unlocked controlled wide read",
+      "inputs": {
+        "symbol": "fgetwc_unlocked",
+        "scenario": "controlled_tmpfile_wide_char_read_without_locale_capture",
+        "expected": "FGETWC_UNLOCKED_CHAR_A",
+        "oracle_source": "FrankenLibC fgetwc_unlocked codepoint class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgetwc_unlocked;mode=hardened;expected=FGETWC_UNLOCKED_CHAR_A;actual=FGETWC_UNLOCKED_CHAR_A;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fgetws_unlocked_wide_line_class_strict",
+      "function": "fgetws_unlocked",
+      "spec_section": "GNU fgetws_unlocked controlled wide line read",
+      "inputs": {
+        "symbol": "fgetws_unlocked",
+        "scenario": "controlled_tmpfile_wide_line_read_without_locale_capture",
+        "expected": "FGETWS_UNLOCKED_LEN_5_NEWLINE_1",
+        "oracle_source": "FrankenLibC fgetws_unlocked length/newline class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgetws_unlocked;mode=strict;expected=FGETWS_UNLOCKED_LEN_5_NEWLINE_1;actual=FGETWS_UNLOCKED_LEN_5_NEWLINE_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetws_unlocked_wide_line_class_hardened",
+      "function": "fgetws_unlocked",
+      "spec_section": "GNU fgetws_unlocked controlled wide line read",
+      "inputs": {
+        "symbol": "fgetws_unlocked",
+        "scenario": "controlled_tmpfile_wide_line_read_without_locale_capture",
+        "expected": "FGETWS_UNLOCKED_LEN_5_NEWLINE_1",
+        "oracle_source": "FrankenLibC fgetws_unlocked length/newline class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fgetws_unlocked;mode=hardened;expected=FGETWS_UNLOCKED_LEN_5_NEWLINE_1;actual=FGETWS_UNLOCKED_LEN_5_NEWLINE_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fileno_unlocked_valid_class_strict",
+      "function": "fileno_unlocked",
+      "spec_section": "GNU fileno_unlocked descriptor class",
+      "inputs": {
+        "symbol": "fileno_unlocked",
+        "scenario": "controlled_tmpfile_descriptor_validity_without_fd_capture",
+        "expected": "FILENO_UNLOCKED_VALID",
+        "oracle_source": "FrankenLibC fileno_unlocked descriptor validity class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fileno_unlocked;mode=strict;expected=FILENO_UNLOCKED_VALID;actual=FILENO_UNLOCKED_VALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fileno_unlocked_valid_class_hardened",
+      "function": "fileno_unlocked",
+      "spec_section": "GNU fileno_unlocked descriptor class",
+      "inputs": {
+        "symbol": "fileno_unlocked",
+        "scenario": "controlled_tmpfile_descriptor_validity_without_fd_capture",
+        "expected": "FILENO_UNLOCKED_VALID",
+        "oracle_source": "FrankenLibC fileno_unlocked descriptor validity class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fileno_unlocked;mode=hardened;expected=FILENO_UNLOCKED_VALID;actual=FILENO_UNLOCKED_VALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "flockfile_lock_unlock_class_strict",
+      "function": "flockfile",
+      "spec_section": "POSIX flockfile lock/unlock class",
+      "inputs": {
+        "symbol": "flockfile",
+        "scenario": "controlled_tmpfile_lock_unlock_without_thread_capture",
+        "expected": "FLOCKFILE_LOCK_UNLOCK_OK",
+        "oracle_source": "FrankenLibC flockfile/funlockfile lock class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=flockfile;mode=strict;expected=FLOCKFILE_LOCK_UNLOCK_OK;actual=FLOCKFILE_LOCK_UNLOCK_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "flockfile_lock_unlock_class_hardened",
+      "function": "flockfile",
+      "spec_section": "POSIX flockfile lock/unlock class",
+      "inputs": {
+        "symbol": "flockfile",
+        "scenario": "controlled_tmpfile_lock_unlock_without_thread_capture",
+        "expected": "FLOCKFILE_LOCK_UNLOCK_OK",
+        "oracle_source": "FrankenLibC flockfile/funlockfile lock class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=flockfile;mode=hardened;expected=FLOCKFILE_LOCK_UNLOCK_OK;actual=FLOCKFILE_LOCK_UNLOCK_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fmemopen_stream_created_class_strict",
+      "function": "fmemopen",
+      "spec_section": "POSIX fmemopen memory stream",
+      "inputs": {
+        "symbol": "fmemopen",
+        "scenario": "controlled_memory_stream_creation_without_address_capture",
+        "expected": "FMEMOPEN_STREAM_CREATED",
+        "oracle_source": "FrankenLibC fmemopen memory stream class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fmemopen;mode=strict;expected=FMEMOPEN_STREAM_CREATED;actual=FMEMOPEN_STREAM_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fmemopen_stream_created_class_hardened",
+      "function": "fmemopen",
+      "spec_section": "POSIX fmemopen memory stream",
+      "inputs": {
+        "symbol": "fmemopen",
+        "scenario": "controlled_memory_stream_creation_without_address_capture",
+        "expected": "FMEMOPEN_STREAM_CREATED",
+        "oracle_source": "FrankenLibC fmemopen memory stream class replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fmemopen;mode=hardened;expected=FMEMOPEN_STREAM_CREATED;actual=FMEMOPEN_STREAM_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fopen64_null_path_class_strict",
+      "function": "fopen64",
+      "spec_section": "GNU fopen64 null path failure class",
+      "inputs": {
+        "symbol": "fopen64",
+        "scenario": "null_path_failure_without_host_path_capture",
+        "expected": "FOPEN64_NULL_STREAM",
+        "oracle_source": "FrankenLibC fopen64 null-path safe failure class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fopen64;mode=strict;expected=FOPEN64_NULL_STREAM;actual=FOPEN64_NULL_STREAM;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fopen64_null_path_class_hardened",
+      "function": "fopen64",
+      "spec_section": "GNU fopen64 null path failure class",
+      "inputs": {
+        "symbol": "fopen64",
+        "scenario": "null_path_failure_without_host_path_capture",
+        "expected": "FOPEN64_NULL_STREAM",
+        "oracle_source": "FrankenLibC fopen64 null-path safe failure class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fopen64;mode=hardened;expected=FOPEN64_NULL_STREAM;actual=FOPEN64_NULL_STREAM;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fopencookie_null_funcs_class_strict",
+      "function": "fopencookie",
+      "spec_section": "GNU fopencookie invalid callback table class",
+      "inputs": {
+        "symbol": "fopencookie",
+        "scenario": "null_cookie_functions_failure_without_cookie_address_capture",
+        "expected": "FOPENCOOKIE_NULL_FUNCS_STREAM_NULL",
+        "oracle_source": "FrankenLibC fopencookie null-functions safe failure class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fopencookie;mode=strict;expected=FOPENCOOKIE_NULL_FUNCS_STREAM_NULL;actual=FOPENCOOKIE_NULL_FUNCS_STREAM_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fopencookie_null_funcs_class_hardened",
+      "function": "fopencookie",
+      "spec_section": "GNU fopencookie invalid callback table class",
+      "inputs": {
+        "symbol": "fopencookie",
+        "scenario": "null_cookie_functions_failure_without_cookie_address_capture",
+        "expected": "FOPENCOOKIE_NULL_FUNCS_STREAM_NULL",
+        "oracle_source": "FrankenLibC fopencookie null-functions safe failure class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fopencookie;mode=hardened;expected=FOPENCOOKIE_NULL_FUNCS_STREAM_NULL;actual=FOPENCOOKIE_NULL_FUNCS_STREAM_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fputc_unlocked_controlled_char_strict",
+      "function": "fputc_unlocked",
+      "spec_section": "GNU fputc_unlocked controlled byte write",
+      "inputs": {
+        "symbol": "fputc_unlocked",
+        "scenario": "controlled_tmpfile_byte_write_without_payload_capture",
+        "expected": "FPUTC_UNLOCKED_CHAR_P",
+        "oracle_source": "FrankenLibC fputc_unlocked controlled byte replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fputc_unlocked;mode=strict;expected=FPUTC_UNLOCKED_CHAR_P;actual=FPUTC_UNLOCKED_CHAR_P;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fputc_unlocked_controlled_char_hardened",
+      "function": "fputc_unlocked",
+      "spec_section": "GNU fputc_unlocked controlled byte write",
+      "inputs": {
+        "symbol": "fputc_unlocked",
+        "scenario": "controlled_tmpfile_byte_write_without_payload_capture",
+        "expected": "FPUTC_UNLOCKED_CHAR_P",
+        "oracle_source": "FrankenLibC fputc_unlocked controlled byte replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fputc_unlocked;mode=hardened;expected=FPUTC_UNLOCKED_CHAR_P;actual=FPUTC_UNLOCKED_CHAR_P;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

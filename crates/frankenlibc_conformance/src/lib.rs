@@ -749,7 +749,10 @@ pub fn execute_fixture_case(
         | "__isoc23_vfscanf" | "__isoc23_vscanf" | "__isoc23_vsscanf" | "__isoc99_fscanf"
         | "__isoc99_scanf" | "__isoc99_sscanf" | "__isoc99_vfscanf" | "__isoc99_vscanf"
         | "__isoc99_vsscanf" | "__isoc99_wscanf" | "clearerr" | "clearerr_unlocked"
-        | "fcloseall" | "fdopen" | "feof_unlocked" | "ferror_unlocked" | "fflush_unlocked" => {
+        | "fcloseall" | "fdopen" | "feof_unlocked" | "ferror_unlocked" | "fflush_unlocked"
+        | "fgetc_unlocked" | "fgetpos" | "fgetpos64" | "fgets_unlocked" | "fgetwc_unlocked"
+        | "fgetws_unlocked" | "fileno_unlocked" | "flockfile" | "fmemopen" | "fopen64"
+        | "fopencookie" | "fputc_unlocked" => {
             execute_stdio_libio_symbols_case(function, inputs, mode)
         }
         "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
@@ -18215,6 +18218,151 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             write_controlled_stream_bytes(stream, b"flush")?;
             let rc = unsafe { frankenlibc_abi::stdio_abi::fflush_unlocked(stream) };
             Ok(format!("FFLUSH_UNLOCKED_RC_{rc}"))
+        }),
+        "fgetc_unlocked" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"G")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let got = unsafe { frankenlibc_abi::stdio_abi::fgetc_unlocked(stream) };
+            if got == i32::from(b'G') {
+                Ok(String::from("FGETC_UNLOCKED_CHAR_G"))
+            } else {
+                Ok(format!("FGETC_UNLOCKED_RC_{got}"))
+            }
+        }),
+        "fgetpos" => stdio_libio_tmpfile(|stream| {
+            let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
+            let rc = unsafe { frankenlibc_abi::stdio_abi::fgetpos(stream, pos.as_mut_ptr()) };
+            if rc == 0 {
+                Ok(String::from("FGETPOS_RC_0_CLASS_SAVED"))
+            } else {
+                Ok(format!("FGETPOS_RC_{rc}"))
+            }
+        }),
+        "fgetpos64" => stdio_libio_tmpfile(|stream| {
+            let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
+            let rc = unsafe {
+                frankenlibc_abi::stdio_abi::fgetpos64(stream, pos.as_mut_ptr().cast::<c_void>())
+            };
+            if rc == 0 {
+                Ok(String::from("FGETPOS64_RC_0_CLASS_SAVED"))
+            } else {
+                Ok(format!("FGETPOS64_RC_{rc}"))
+            }
+        }),
+        "fgets_unlocked" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"line\n")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let mut buf = [0 as c_char; 8];
+            let ptr = unsafe {
+                frankenlibc_abi::stdio_abi::fgets_unlocked(
+                    buf.as_mut_ptr(),
+                    buf.len() as c_int,
+                    stream,
+                )
+            };
+            if ptr.is_null() {
+                return Ok(String::from("FGETS_UNLOCKED_NULL"));
+            }
+            let len = buf.iter().position(|&byte| byte == 0).unwrap_or(buf.len());
+            let newline = usize::from(len > 0 && buf[len - 1] == b'\n' as c_char);
+            Ok(format!("FGETS_UNLOCKED_LEN_{len}_NEWLINE_{newline}"))
+        }),
+        "fgetwc_unlocked" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"A")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let got =
+                unsafe { frankenlibc_abi::wchar_abi::fgetwc_unlocked(stream.cast::<libc::FILE>()) };
+            if got == u32::from(b'A') {
+                Ok(String::from("FGETWC_UNLOCKED_CHAR_A"))
+            } else {
+                Ok(format!("FGETWC_UNLOCKED_RC_{got}"))
+            }
+        }),
+        "fgetws_unlocked" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"wide\n")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let mut buf = [0 as libc::wchar_t; 8];
+            let ptr = unsafe {
+                frankenlibc_abi::wchar_abi::fgetws_unlocked(
+                    buf.as_mut_ptr(),
+                    buf.len() as c_int,
+                    stream.cast::<libc::FILE>(),
+                )
+            };
+            if ptr.is_null() {
+                return Ok(String::from("FGETWS_UNLOCKED_NULL"));
+            }
+            let len = buf
+                .iter()
+                .position(|&codepoint| codepoint == 0)
+                .unwrap_or(buf.len());
+            let newline = usize::from(len > 0 && buf[len - 1] == libc::wchar_t::from(b'\n'));
+            Ok(format!("FGETWS_UNLOCKED_LEN_{len}_NEWLINE_{newline}"))
+        }),
+        "fileno_unlocked" => stdio_libio_tmpfile(|stream| {
+            let fd = unsafe { frankenlibc_abi::stdio_abi::fileno_unlocked(stream) };
+            if fd >= 0 {
+                Ok(String::from("FILENO_UNLOCKED_VALID"))
+            } else {
+                Ok(String::from("FILENO_UNLOCKED_INVALID"))
+            }
+        }),
+        "flockfile" => stdio_libio_tmpfile(|stream| {
+            unsafe { frankenlibc_abi::stdio_abi::flockfile(stream) };
+            unsafe { frankenlibc_abi::stdio_abi::funlockfile(stream) };
+            Ok(String::from("FLOCKFILE_LOCK_UNLOCK_OK"))
+        }),
+        "fmemopen" => {
+            let mut buffer = *b"memory";
+            let mode = CString::new("r").map_err(|_| "fmemopen mode has NUL".to_string())?;
+            let stream = unsafe {
+                frankenlibc_abi::stdio_abi::fmemopen(
+                    buffer.as_mut_ptr().cast::<c_void>(),
+                    buffer.len(),
+                    mode.as_ptr(),
+                )
+            };
+            if stream.is_null() {
+                Ok(String::from("FMEMOPEN_NULL"))
+            } else {
+                let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
+                Ok(String::from("FMEMOPEN_STREAM_CREATED"))
+            }
+        }
+        "fopen64" => {
+            let mode = CString::new("r").map_err(|_| "fopen64 mode has NUL".to_string())?;
+            let stream =
+                unsafe { frankenlibc_abi::stdio_abi::fopen64(std::ptr::null(), mode.as_ptr()) };
+            if stream.is_null() {
+                Ok(String::from("FOPEN64_NULL_STREAM"))
+            } else {
+                let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
+                Ok(String::from("FOPEN64_STREAM_CREATED"))
+            }
+        }
+        "fopencookie" => {
+            let mode = CString::new("r").map_err(|_| "fopencookie mode has NUL".to_string())?;
+            let stream = unsafe {
+                frankenlibc_abi::stdio_abi::fopencookie(
+                    std::ptr::null_mut(),
+                    mode.as_ptr(),
+                    std::ptr::null(),
+                )
+            };
+            if stream.is_null() {
+                Ok(String::from("FOPENCOOKIE_NULL_FUNCS_STREAM_NULL"))
+            } else {
+                let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
+                Ok(String::from("FOPENCOOKIE_STREAM_CREATED"))
+            }
+        }
+        "fputc_unlocked" => stdio_libio_tmpfile(|stream| {
+            let rc = unsafe { frankenlibc_abi::stdio_abi::fputc_unlocked(i32::from(b'P'), stream) };
+            if rc == i32::from(b'P') {
+                Ok(String::from("FPUTC_UNLOCKED_CHAR_P"))
+            } else {
+                Ok(format!("FPUTC_UNLOCKED_RC_{rc}"))
+            }
         }),
         other => Err(format!("unsupported stdio/libio fixture: {other}")),
     }
