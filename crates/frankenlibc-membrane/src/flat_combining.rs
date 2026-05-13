@@ -380,7 +380,7 @@ impl<T, Op: Send, R: Send> Drop for FlatCombiner<T, Op, R> {
 }
 
 /// Diagnostics snapshot for a flat combiner.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct FlatCombinerDiagnostics {
     /// Total operations executed.
     pub total_ops: u64,

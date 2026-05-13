@@ -54,7 +54,7 @@ pub struct EbrGuard<'a> {
 }
 
 /// Diagnostic snapshot of the EBR collector state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct EbrDiagnostics {
     pub global_epoch: u64,
     pub active_threads: usize,

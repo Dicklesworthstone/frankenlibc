@@ -71,7 +71,7 @@ impl Default for SeqLockDiagCounters {
 }
 
 /// Snapshot of diagnostic counters.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct SeqLockDiagnostics {
     /// Total read operations.
     pub reads: u64,
