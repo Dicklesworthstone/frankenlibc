@@ -1,0 +1,274 @@
+{
+  "version": "v1",
+  "family": "locale/catalog",
+  "captured_at": "2026-05-13T17:40:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-locale-collation wave-01 gettext text-domain and XSI message-catalog symbols. Outputs classify C-locale passthrough, missing catalog, invalid descriptor, domain binding, and plural routing behavior without recording host catalog paths, locale text, raw handles, process-global registry pointers, stdout bytes, stderr bytes, process ids, thread ids, or wall-clock timing.",
+  "spec_reference": "GNU gettext C-locale passthrough semantics for bindtextdomain, dgettext, gettext, ngettext, and textdomain plus XSI catopen/catgets/catclose missing-catalog and invalid-descriptor message catalog contracts",
+  "campaign": {
+    "bead": "bd-r5k32.9",
+    "campaign_id": "fcq-locale-collation",
+    "wave_id": "wave-01-locale-catalog",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture",
+    "first_wave_symbols": [
+      "bindtextdomain",
+      "catclose",
+      "catgets",
+      "catopen",
+      "dgettext",
+      "gettext",
+      "ngettext",
+      "textdomain"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "bindtextdomain_classified_dir_strict",
+      "function": "bindtextdomain",
+      "spec_section": "GNU bindtextdomain stores domain directory without exposing path bytes",
+      "inputs": {
+        "symbol": "bindtextdomain",
+        "scenario": "bind_fixed_domain_to_classified_dir",
+        "oracle_source": "FrankenLibC locale_abi::bindtextdomain classified domain-dir replay",
+        "expected": "BINDTEXTDOMAIN_BOUND_DIR_CLASS",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=bindtextdomain;mode=strict;expected=BINDTEXTDOMAIN_BOUND_DIR_CLASS;actual=BINDTEXTDOMAIN_BOUND_DIR_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "bindtextdomain_classified_dir_hardened",
+      "function": "bindtextdomain",
+      "spec_section": "GNU bindtextdomain stores domain directory without exposing path bytes",
+      "inputs": {
+        "symbol": "bindtextdomain",
+        "scenario": "bind_fixed_domain_to_classified_dir",
+        "oracle_source": "FrankenLibC locale_abi::bindtextdomain classified domain-dir replay",
+        "expected": "BINDTEXTDOMAIN_BOUND_DIR_CLASS",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=bindtextdomain;mode=hardened;expected=BINDTEXTDOMAIN_BOUND_DIR_CLASS;actual=BINDTEXTDOMAIN_BOUND_DIR_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "catclose_invalid_descriptor_strict",
+      "function": "catclose",
+      "spec_section": "XSI catclose rejects invalid catalog descriptor without closing ambient state",
+      "inputs": {
+        "symbol": "catclose",
+        "scenario": "catclose_invalid_descriptor",
+        "oracle_source": "FrankenLibC locale_abi::catclose invalid descriptor classification",
+        "expected": "CATCLOSE_INVALID_RC_-1",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=catclose;mode=strict;expected=CATCLOSE_INVALID_RC_-1;actual=CATCLOSE_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "catclose_invalid_descriptor_hardened",
+      "function": "catclose",
+      "spec_section": "XSI catclose rejects invalid catalog descriptor without closing ambient state",
+      "inputs": {
+        "symbol": "catclose",
+        "scenario": "catclose_invalid_descriptor",
+        "oracle_source": "FrankenLibC locale_abi::catclose invalid descriptor classification",
+        "expected": "CATCLOSE_INVALID_RC_-1",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=catclose;mode=hardened;expected=CATCLOSE_INVALID_RC_-1;actual=CATCLOSE_INVALID_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "catgets_invalid_descriptor_default_strict",
+      "function": "catgets",
+      "spec_section": "XSI catgets returns default string for invalid catalog descriptor",
+      "inputs": {
+        "symbol": "catgets",
+        "scenario": "catgets_invalid_descriptor_default_passthrough",
+        "oracle_source": "FrankenLibC locale_abi::catgets invalid descriptor default replay",
+        "expected": "CATGETS_INVALID_DEFAULT",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=catgets;mode=strict;expected=CATGETS_INVALID_DEFAULT;actual=CATGETS_INVALID_DEFAULT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "catgets_invalid_descriptor_default_hardened",
+      "function": "catgets",
+      "spec_section": "XSI catgets returns default string for invalid catalog descriptor",
+      "inputs": {
+        "symbol": "catgets",
+        "scenario": "catgets_invalid_descriptor_default_passthrough",
+        "oracle_source": "FrankenLibC locale_abi::catgets invalid descriptor default replay",
+        "expected": "CATGETS_INVALID_DEFAULT",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=catgets;mode=hardened;expected=CATGETS_INVALID_DEFAULT;actual=CATGETS_INVALID_DEFAULT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "catopen_missing_catalog_strict",
+      "function": "catopen",
+      "spec_section": "XSI catopen returns invalid descriptor for missing catalog",
+      "inputs": {
+        "symbol": "catopen",
+        "scenario": "catopen_missing_catalog_returns_invalid",
+        "oracle_source": "FrankenLibC locale_abi::catopen missing catalog classification",
+        "expected": "CATOPEN_MISSING_INVALID",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=catopen;mode=strict;expected=CATOPEN_MISSING_INVALID;actual=CATOPEN_MISSING_INVALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "catopen_missing_catalog_hardened",
+      "function": "catopen",
+      "spec_section": "XSI catopen returns invalid descriptor for missing catalog",
+      "inputs": {
+        "symbol": "catopen",
+        "scenario": "catopen_missing_catalog_returns_invalid",
+        "oracle_source": "FrankenLibC locale_abi::catopen missing catalog classification",
+        "expected": "CATOPEN_MISSING_INVALID",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=catopen;mode=hardened;expected=CATOPEN_MISSING_INVALID;actual=CATOPEN_MISSING_INVALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "dgettext_passthrough_strict",
+      "function": "dgettext",
+      "spec_section": "GNU dgettext returns msgid unchanged in the C locale",
+      "inputs": {
+        "symbol": "dgettext",
+        "scenario": "dgettext_c_locale_msgid_passthrough",
+        "oracle_source": "FrankenLibC locale_abi::dgettext C-locale passthrough replay",
+        "expected": "DGETTEXT_MSGID_PASSTHROUGH",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=dgettext;mode=strict;expected=DGETTEXT_MSGID_PASSTHROUGH;actual=DGETTEXT_MSGID_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "dgettext_passthrough_hardened",
+      "function": "dgettext",
+      "spec_section": "GNU dgettext returns msgid unchanged in the C locale",
+      "inputs": {
+        "symbol": "dgettext",
+        "scenario": "dgettext_c_locale_msgid_passthrough",
+        "oracle_source": "FrankenLibC locale_abi::dgettext C-locale passthrough replay",
+        "expected": "DGETTEXT_MSGID_PASSTHROUGH",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=dgettext;mode=hardened;expected=DGETTEXT_MSGID_PASSTHROUGH;actual=DGETTEXT_MSGID_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "gettext_passthrough_strict",
+      "function": "gettext",
+      "spec_section": "GNU gettext returns msgid unchanged in the C locale",
+      "inputs": {
+        "symbol": "gettext",
+        "scenario": "gettext_c_locale_msgid_passthrough",
+        "oracle_source": "FrankenLibC locale_abi::gettext C-locale passthrough replay",
+        "expected": "GETTEXT_MSGID_PASSTHROUGH",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=gettext;mode=strict;expected=GETTEXT_MSGID_PASSTHROUGH;actual=GETTEXT_MSGID_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "gettext_passthrough_hardened",
+      "function": "gettext",
+      "spec_section": "GNU gettext returns msgid unchanged in the C locale",
+      "inputs": {
+        "symbol": "gettext",
+        "scenario": "gettext_c_locale_msgid_passthrough",
+        "oracle_source": "FrankenLibC locale_abi::gettext C-locale passthrough replay",
+        "expected": "GETTEXT_MSGID_PASSTHROUGH",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=gettext;mode=hardened;expected=GETTEXT_MSGID_PASSTHROUGH;actual=GETTEXT_MSGID_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ngettext_plural_passthrough_strict",
+      "function": "ngettext",
+      "spec_section": "GNU ngettext returns plural msgid for n != 1 in the C locale",
+      "inputs": {
+        "symbol": "ngettext",
+        "scenario": "ngettext_c_locale_plural_passthrough",
+        "oracle_source": "FrankenLibC locale_abi::ngettext C-locale plural replay",
+        "expected": "NGETTEXT_PLURAL_PASSTHROUGH",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=ngettext;mode=strict;expected=NGETTEXT_PLURAL_PASSTHROUGH;actual=NGETTEXT_PLURAL_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ngettext_plural_passthrough_hardened",
+      "function": "ngettext",
+      "spec_section": "GNU ngettext returns plural msgid for n != 1 in the C locale",
+      "inputs": {
+        "symbol": "ngettext",
+        "scenario": "ngettext_c_locale_plural_passthrough",
+        "oracle_source": "FrankenLibC locale_abi::ngettext C-locale plural replay",
+        "expected": "NGETTEXT_PLURAL_PASSTHROUGH",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=ngettext;mode=hardened;expected=NGETTEXT_PLURAL_PASSTHROUGH;actual=NGETTEXT_PLURAL_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "textdomain_custom_class_strict",
+      "function": "textdomain",
+      "spec_section": "GNU textdomain stores custom domain without exposing registry pointer",
+      "inputs": {
+        "symbol": "textdomain",
+        "scenario": "textdomain_set_custom_domain_class",
+        "oracle_source": "FrankenLibC locale_abi::textdomain classified domain replay",
+        "expected": "TEXTDOMAIN_CUSTOM_CLASS",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=textdomain;mode=strict;expected=TEXTDOMAIN_CUSTOM_CLASS;actual=TEXTDOMAIN_CUSTOM_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "textdomain_custom_class_hardened",
+      "function": "textdomain",
+      "spec_section": "GNU textdomain stores custom domain without exposing registry pointer",
+      "inputs": {
+        "symbol": "textdomain",
+        "scenario": "textdomain_set_custom_domain_class",
+        "oracle_source": "FrankenLibC locale_abi::textdomain classified domain replay",
+        "expected": "TEXTDOMAIN_CUSTOM_CLASS",
+        "ambient_state_policy": "forbid_host_catalog_path_locale_text_raw_handle_registry_pointer_stdout_stderr_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=textdomain;mode=hardened;expected=TEXTDOMAIN_CUSTOM_CLASS;actual=TEXTDOMAIN_CUSTOM_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

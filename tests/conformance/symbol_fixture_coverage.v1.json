@@ -3651,42 +3651,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 8,
-      "milestone_beads": [
-        "bd-3pe"
-      ],
-      "module": "locale_abi",
-      "recommended_bead": "bd-3pe",
-      "severity": "high",
-      "severity_score": 802,
-      "status_breakdown": {
-        "Implemented": 16
-      },
-      "target_coverage_pct": 50.0,
-      "target_covered": 8,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 16,
-      "target_uncovered": 8,
-      "target_uncovered_symbols": [
-        "bindtextdomain",
-        "catclose",
-        "catgets",
-        "catopen",
-        "dgettext",
-        "gettext",
-        "ngettext",
-        "textdomain"
-      ],
-      "total_symbols": 16,
-      "track": "locale",
-      "uncovered_symbols": 8,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 7,
       "milestone_beads": [],
       "module": "dirent_abi",
@@ -4105,6 +4069,33 @@
       "workload_ids": []
     },
     {
+      "covered_symbols": 16,
+      "milestone_beads": [
+        "bd-3pe"
+      ],
+      "module": "locale_abi",
+      "recommended_bead": "bd-3pe",
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "Implemented": 16
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 16,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 16,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 16,
+      "track": "locale",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "covered_symbols": 21,
       "milestone_beads": [],
       "module": "malloc_abi",
@@ -4287,9 +4278,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 2208,
-    "fixture_json_files": 101,
-    "fixture_json_unique_functions": 898,
+    "fixture_json_cases": 2224,
+    "fixture_json_files": 102,
+    "fixture_json_unique_functions": 906,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4310,7 +4301,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 900
+    "unique_fixture_functions_total": 908
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -7725,28 +7716,6 @@
       "workload_ids": []
     },
     {
-      "milestone_beads": [
-        "bd-3pe"
-      ],
-      "module": "locale_abi",
-      "recommended_bead": "bd-3pe",
-      "severity": "high",
-      "target_uncovered_count": 8,
-      "target_uncovered_symbols": [
-        "bindtextdomain",
-        "catclose",
-        "catgets",
-        "catopen",
-        "dgettext",
-        "gettext",
-        "ngettext",
-        "textdomain"
-      ],
-      "track": "locale",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "milestone_beads": [],
       "module": "dirent_abi",
       "recommended_bead": null,
@@ -7889,10 +7858,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 20.94,
-      "covered": 776,
+      "coverage_pct": 21.16,
+      "covered": 784,
       "total": 3705,
-      "uncovered": 2929
+      "uncovered": 2921
     },
     "RawSyscall": {
       "coverage_pct": 25.85,
@@ -7902,21 +7871,21 @@
     }
   },
   "summary": {
-    "coverage_pct": 21.44,
-    "covered_exported_symbols": 883,
-    "target_coverage_pct": 21.44,
-    "target_covered_symbols": 883,
+    "coverage_pct": 21.63,
+    "covered_exported_symbols": 891,
+    "target_coverage_pct": 21.63,
+    "target_covered_symbols": 891,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3236,
+    "target_uncovered_symbols": 3228,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3236,
+    "uncovered_exported_symbols": 3228,
     "uncovered_target_families": 1,
     "weak_family_threshold_pct": 80.0,
-    "weak_target_families": 25
+    "weak_target_families": 24
   },
   "symbols": [
     {
@@ -22403,13 +22372,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "locale/catalog"
+      ],
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "locale_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -22417,13 +22395,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "locale/catalog"
+      ],
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "locale_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -22431,13 +22418,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "locale/catalog"
+      ],
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "locale_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -22445,13 +22441,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "locale/catalog"
+      ],
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "locale_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -22459,13 +22464,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "locale/catalog"
+      ],
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "locale_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -22519,13 +22533,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "locale/catalog"
+      ],
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "locale_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -22579,13 +22602,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "locale/catalog"
+      ],
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "locale_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -22662,13 +22694,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "locale/catalog"
+      ],
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "locale_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -74512,26 +74553,6 @@
         "_IO_wsetb"
       ],
       "track": "io_internal",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "module": "locale_abi",
-      "recommended_bead": "bd-3pe",
-      "severity": "high",
-      "target_coverage_pct": 50.0,
-      "target_uncovered_count": 8,
-      "target_uncovered_symbols": [
-        "bindtextdomain",
-        "catclose",
-        "catgets",
-        "catopen",
-        "dgettext",
-        "gettext",
-        "ngettext",
-        "textdomain"
-      ],
-      "track": "locale",
       "workload_blocked_count": 0,
       "workload_ids": []
     },

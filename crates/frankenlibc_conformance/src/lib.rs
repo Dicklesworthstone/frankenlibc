@@ -1105,6 +1105,9 @@ pub fn execute_fixture_case(
         | "__isoc23_wcstol_l" | "__isoc23_wcstoll" | "__isoc23_wcstoll_l" | "__isoc23_wcstoul" => {
             execute_wchar_locale_encoding_wave01_case(function, inputs, mode)
         }
+        // locale catalog wave-01
+        "bindtextdomain" | "catclose" | "catgets" | "catopen" | "dgettext" | "gettext"
+        | "ngettext" | "textdomain" => execute_locale_catalog_wave01_case(function, inputs, mode),
         // signal ops
         "raise" => execute_raise_case(inputs, mode),
         "signal" => execute_signal_case(inputs, mode),
@@ -22763,6 +22766,192 @@ fn wchar_locale_wcstoul_actual() -> String {
     }
 }
 
+fn execute_locale_catalog_wave01_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "locale catalog wave01 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = locale_catalog_wave01_actual(function, inputs)?;
+    Ok(non_host_execution(locale_catalog_wave01_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn locale_catalog_wave01_log(symbol: &str, mode: &str, expected: &str, actual: &str) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn locale_catalog_wave01_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    let scenario = parse_string(inputs, "scenario")?;
+    match (function, scenario.as_str()) {
+        ("bindtextdomain", "bind_fixed_domain_to_classified_dir") => {
+            locale_catalog_bindtextdomain_actual()
+        }
+        ("catclose", "catclose_invalid_descriptor") => Ok(locale_catalog_catclose_actual()),
+        ("catgets", "catgets_invalid_descriptor_default_passthrough") => {
+            locale_catalog_catgets_actual()
+        }
+        ("catopen", "catopen_missing_catalog_returns_invalid") => locale_catalog_catopen_actual(),
+        ("dgettext", "dgettext_c_locale_msgid_passthrough") => locale_catalog_dgettext_actual(),
+        ("gettext", "gettext_c_locale_msgid_passthrough") => locale_catalog_gettext_actual(),
+        ("ngettext", "ngettext_c_locale_plural_passthrough") => locale_catalog_ngettext_actual(),
+        ("textdomain", "textdomain_set_custom_domain_class") => locale_catalog_textdomain_actual(),
+        _ => Err(format!(
+            "unsupported locale catalog wave01 fixture: function={function}, scenario={scenario}"
+        )),
+    }
+}
+
+fn locale_catalog_reset_state() {
+    frankenlibc_abi::locale_abi::locale_reset_gettext_state_for_tests();
+}
+
+fn locale_catalog_bindtextdomain_actual() -> Result<String, String> {
+    locale_catalog_reset_state();
+    let domain = CString::new("frankenlibc-wave01")
+        .map_err(|_| "bindtextdomain domain contains NUL".to_string())?;
+    let dirname = CString::new("/frankenlibc/locale-wave01")
+        .map_err(|_| "bindtextdomain dirname contains NUL".to_string())?;
+    // SAFETY: domain and dirname are valid NUL-terminated fixture strings; the
+    // fixture records only a classified result, not the directory bytes.
+    let ptr =
+        unsafe { frankenlibc_abi::locale_abi::bindtextdomain(domain.as_ptr(), dirname.as_ptr()) };
+    if ptr.is_null() {
+        return Ok(String::from("BINDTEXTDOMAIN_NULL"));
+    }
+    // SAFETY: ptr is non-null and returned by bindtextdomain for the live
+    // process-global binding; the fixture only reads bytes for classification.
+    let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    if bytes == dirname.as_bytes() {
+        Ok(String::from("BINDTEXTDOMAIN_BOUND_DIR_CLASS"))
+    } else {
+        Ok(String::from("BINDTEXTDOMAIN_OTHER_CLASS"))
+    }
+}
+
+fn locale_catalog_catclose_actual() -> String {
+    // SAFETY: -1 is the stable invalid descriptor class and cannot close an
+    // ambient catalog handle.
+    let rc = unsafe { frankenlibc_abi::locale_abi::catclose(-1) };
+    format!("CATCLOSE_INVALID_RC_{rc}")
+}
+
+fn locale_catalog_catgets_actual() -> Result<String, String> {
+    let fallback =
+        CString::new("catalog-default").map_err(|_| "catgets fallback contains NUL".to_string())?;
+    // SAFETY: -1 is the stable invalid descriptor class; fallback is live for
+    // the duration of the call and only pointer identity is classified.
+    let ptr = unsafe { frankenlibc_abi::locale_abi::catgets(-1, 1, 1, fallback.as_ptr()) };
+    if ptr == fallback.as_ptr() {
+        Ok(String::from("CATGETS_INVALID_DEFAULT"))
+    } else if ptr.is_null() {
+        Ok(String::from("CATGETS_NULL"))
+    } else {
+        Ok(String::from("CATGETS_OTHER_CLASS"))
+    }
+}
+
+fn locale_catalog_catopen_actual() -> Result<String, String> {
+    let missing = CString::new("/frankenlibc-locale-wave01-missing.cat")
+        .map_err(|_| "catopen path contains NUL".to_string())?;
+    // SAFETY: missing is a valid NUL-terminated fixture path. The result is
+    // classified without recording the path or errno source.
+    let catd = unsafe { frankenlibc_abi::locale_abi::catopen(missing.as_ptr(), 0) };
+    if catd == -1 {
+        Ok(String::from("CATOPEN_MISSING_INVALID"))
+    } else {
+        // SAFETY: catd came from this catopen call and is closed only on the
+        // unexpected-open branch to avoid leaking a fixture-owned descriptor.
+        unsafe {
+            let _ = frankenlibc_abi::locale_abi::catclose(catd);
+        }
+        Ok(String::from("CATOPEN_UNEXPECTED_OPEN"))
+    }
+}
+
+fn locale_catalog_dgettext_actual() -> Result<String, String> {
+    let domain = CString::new("fixture").map_err(|_| "dgettext domain contains NUL".to_string())?;
+    let msgid =
+        CString::new("fixture-message").map_err(|_| "dgettext msgid contains NUL".to_string())?;
+    // SAFETY: domain and msgid are valid fixture-owned C strings.
+    let ptr = unsafe { frankenlibc_abi::locale_abi::dgettext(domain.as_ptr(), msgid.as_ptr()) };
+    if ptr == msgid.as_ptr().cast_mut() {
+        Ok(String::from("DGETTEXT_MSGID_PASSTHROUGH"))
+    } else if ptr.is_null() {
+        Ok(String::from("DGETTEXT_NULL"))
+    } else {
+        Ok(String::from("DGETTEXT_OTHER_CLASS"))
+    }
+}
+
+fn locale_catalog_gettext_actual() -> Result<String, String> {
+    let msgid =
+        CString::new("fixture-message").map_err(|_| "gettext msgid contains NUL".to_string())?;
+    // SAFETY: msgid is a valid fixture-owned C string.
+    let ptr = unsafe { frankenlibc_abi::locale_abi::gettext(msgid.as_ptr()) };
+    if ptr == msgid.as_ptr().cast_mut() {
+        Ok(String::from("GETTEXT_MSGID_PASSTHROUGH"))
+    } else if ptr.is_null() {
+        Ok(String::from("GETTEXT_NULL"))
+    } else {
+        Ok(String::from("GETTEXT_OTHER_CLASS"))
+    }
+}
+
+fn locale_catalog_ngettext_actual() -> Result<String, String> {
+    let singular =
+        CString::new("single").map_err(|_| "ngettext singular contains NUL".to_string())?;
+    let plural = CString::new("plural").map_err(|_| "ngettext plural contains NUL".to_string())?;
+    // SAFETY: singular and plural are valid fixture-owned C strings.
+    let ptr =
+        unsafe { frankenlibc_abi::locale_abi::ngettext(singular.as_ptr(), plural.as_ptr(), 2) };
+    if ptr == plural.as_ptr().cast_mut() {
+        Ok(String::from("NGETTEXT_PLURAL_PASSTHROUGH"))
+    } else if ptr.is_null() {
+        Ok(String::from("NGETTEXT_NULL"))
+    } else {
+        Ok(String::from("NGETTEXT_OTHER_CLASS"))
+    }
+}
+
+fn locale_catalog_textdomain_actual() -> Result<String, String> {
+    locale_catalog_reset_state();
+    let domain = CString::new("frankenlibc-wave01")
+        .map_err(|_| "textdomain domain contains NUL".to_string())?;
+    // SAFETY: domain is a valid NUL-terminated fixture string; output is
+    // classified without recording the process-global pointer.
+    let ptr = unsafe { frankenlibc_abi::locale_abi::textdomain(domain.as_ptr()) };
+    if ptr.is_null() {
+        return Ok(String::from("TEXTDOMAIN_NULL"));
+    }
+    // SAFETY: ptr is non-null and returned by textdomain for the live
+    // process-global domain; the fixture only reads bytes for classification.
+    let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    if bytes == domain.as_bytes() {
+        Ok(String::from("TEXTDOMAIN_CUSTOM_CLASS"))
+    } else {
+        Ok(String::from("TEXTDOMAIN_OTHER_CLASS"))
+    }
+}
+
 fn execute_process_spawn_wave01_case(
     function: &str,
     inputs: &serde_json::Value,
@@ -25233,6 +25422,47 @@ mod tests {
             include_str!("../../../tests/conformance/fixtures/wchar_locale_encoding_wave01.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("wchar/locale wave01 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn locale_catalog_wave01_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/locale_catalog_wave01.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("locale catalog wave01 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

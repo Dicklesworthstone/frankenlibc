@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T17:34:00Z",
-  "report_hash": "2e2ba20d9218f950",
+  "generated_at": "2026-05-13T17:57:48Z",
+  "report_hash": "f68f0501f4ed7564",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 881,
-    "symbols_without_fixtures": 3238,
-    "fixture_coverage_pct": 21.4,
-    "implemented_coverage_pct": 20.9,
-    "total_fixture_files": 101,
-    "total_cases": 2208,
+    "symbols_with_fixtures": 889,
+    "symbols_without_fixtures": 3230,
+    "fixture_coverage_pct": 21.6,
+    "implemented_coverage_pct": 21.2,
+    "total_fixture_files": 102,
+    "total_cases": 2224,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 541,
-    "symbols_with_errno_checks": 878,
-    "total_quality_issues": 3503,
-    "uncovered_action_count": 3238
+    "symbols_with_edge_cases": 542,
+    "symbols_with_errno_checks": 886,
+    "total_quality_issues": 3502,
+    "uncovered_action_count": 3230
   },
   "fixture_file_analyses": [
     {
@@ -160,6 +160,14 @@
       "valid": true,
       "total_cases": 7,
       "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "locale_catalog_wave01.json",
+      "family": "locale/catalog",
+      "valid": true,
+      "total_cases": 16,
+      "unique_symbols": 8,
       "issues": []
     },
     {
@@ -18201,14 +18209,19 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -19560,29 +19573,39 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "catgets",
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -19590,14 +19613,19 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -23743,14 +23771,19 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -35188,14 +35221,19 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -44049,14 +44087,19 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -60203,14 +60246,19 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "locale_catalog_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -71934,13 +71982,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "bindtextdomain",
-      "status": "Implemented",
-      "module": "locale_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "btowc",
       "status": "Implemented",
       "module": "wchar_abi",
@@ -72469,27 +72510,6 @@
       "symbol": "catanl",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "catclose",
-      "status": "Implemented",
-      "module": "locale_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "catgets",
-      "status": "Implemented",
-      "module": "locale_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "catopen",
-      "status": "Implemented",
-      "module": "locale_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -73981,13 +74001,6 @@
       "symbol": "dfmal",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "dgettext",
-      "status": "Implemented",
-      "module": "locale_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -77884,13 +77897,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "gettext",
-      "status": "Implemented",
-      "module": "locale_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "gettid",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -81394,13 +81400,6 @@
       "symbol": "nftw64",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "ngettext",
-      "status": "Implemented",
-      "module": "locale_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -86826,13 +86825,6 @@
       "symbol": "tempnam",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "textdomain",
-      "status": "Implemented",
-      "module": "locale_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
