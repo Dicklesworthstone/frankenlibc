@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "wchar/locale-encoding",
+  "captured_at": "2026-05-13T17:10:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-wchar-locale-encoding wave-01 wide scanf, wide integer conversion, and C-locale character classification symbols using classified outputs without recording raw locale handles, wide-buffer addresses, FILE pointers, filesystem paths, stdout bytes, stderr bytes, fd numbers, process ids, or wall-clock timing.",
+  "spec_reference": "GNU C23 wide-character and locale-sensitive C/POSIX semantics for __islower_l, __isoc23_fwscanf, __isoc23_swscanf, __isoc23_vfwscanf, __isoc23_vswscanf, __isoc23_vwscanf, __isoc23_wcstoimax, __isoc23_wcstol, __isoc23_wcstol_l, __isoc23_wcstoll, __isoc23_wcstoll_l, and __isoc23_wcstoul",
+  "campaign": {
+    "bead": "bd-r5k32.7",
+    "campaign_id": "fcq-wchar-locale-encoding",
+    "wave_id": "wave-01-wchar-locale-encoding",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture",
+    "first_wave_symbols": [
+      "__islower_l",
+      "__isoc23_fwscanf",
+      "__isoc23_swscanf",
+      "__isoc23_vfwscanf",
+      "__isoc23_vswscanf",
+      "__isoc23_vwscanf",
+      "__isoc23_wcstoimax",
+      "__isoc23_wcstol",
+      "__isoc23_wcstol_l",
+      "__isoc23_wcstoll",
+      "__isoc23_wcstoll_l",
+      "__isoc23_wcstoul"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "__islower_l_c_locale_ascii_lower_strict",
+      "function": "__islower_l",
+      "spec_section": "C locale lower-case classification ignores locale handle for ASCII byte",
+      "inputs": {
+        "symbol": "__islower_l",
+        "scenario": "c_locale_lowercase_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC ctype_abi::__islower_l classified C-locale replay",
+        "expected": "ISLOWER_L_A_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__islower_l;mode=strict;expected=ISLOWER_L_A_TRUE;actual=ISLOWER_L_A_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__islower_l_c_locale_ascii_lower_hardened",
+      "function": "__islower_l",
+      "spec_section": "C locale lower-case classification ignores locale handle for ASCII byte",
+      "inputs": {
+        "symbol": "__islower_l",
+        "scenario": "c_locale_lowercase_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC ctype_abi::__islower_l classified C-locale replay",
+        "expected": "ISLOWER_L_A_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__islower_l;mode=hardened;expected=ISLOWER_L_A_TRUE;actual=ISLOWER_L_A_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_fwscanf_null_stream_strict",
+      "function": "__isoc23_fwscanf",
+      "spec_section": "C23 wide fwscanf rejects null stream before reading ambient FILE state",
+      "inputs": {
+        "symbol": "__isoc23_fwscanf",
+        "scenario": "fwscanf_null_stream_returns_eof_without_file_capture",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_fwscanf null-stream classification",
+        "expected": "WSCANF_NULL_STREAM_EOF",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_fwscanf;mode=strict;expected=WSCANF_NULL_STREAM_EOF;actual=WSCANF_NULL_STREAM_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_fwscanf_null_stream_hardened",
+      "function": "__isoc23_fwscanf",
+      "spec_section": "C23 wide fwscanf rejects null stream before reading ambient FILE state",
+      "inputs": {
+        "symbol": "__isoc23_fwscanf",
+        "scenario": "fwscanf_null_stream_returns_eof_without_file_capture",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_fwscanf null-stream classification",
+        "expected": "WSCANF_NULL_STREAM_EOF",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_fwscanf;mode=hardened;expected=WSCANF_NULL_STREAM_EOF;actual=WSCANF_NULL_STREAM_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_swscanf_empty_format_strict",
+      "function": "__isoc23_swscanf",
+      "spec_section": "C23 wide swscanf accepts empty format over bounded wide input without destination writes",
+      "inputs": {
+        "symbol": "__isoc23_swscanf",
+        "scenario": "swscanf_empty_wide_format_no_destination_capture",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_swscanf empty-format replay",
+        "expected": "WSCANF_EMPTY_FORMAT_RC_-1",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_swscanf;mode=strict;expected=WSCANF_EMPTY_FORMAT_RC_-1;actual=WSCANF_EMPTY_FORMAT_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_swscanf_empty_format_hardened",
+      "function": "__isoc23_swscanf",
+      "spec_section": "C23 wide swscanf accepts empty format over bounded wide input without destination writes",
+      "inputs": {
+        "symbol": "__isoc23_swscanf",
+        "scenario": "swscanf_empty_wide_format_no_destination_capture",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_swscanf empty-format replay",
+        "expected": "WSCANF_EMPTY_FORMAT_RC_-1",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_swscanf;mode=hardened;expected=WSCANF_EMPTY_FORMAT_RC_-1;actual=WSCANF_EMPTY_FORMAT_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_vfwscanf_null_va_list_strict",
+      "function": "__isoc23_vfwscanf",
+      "spec_section": "C23 wide vfwscanf rejects null va_list without exposing stream internals",
+      "inputs": {
+        "symbol": "__isoc23_vfwscanf",
+        "scenario": "vfwscanf_null_va_list_returns_eof",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_vfwscanf null-va-list classification",
+        "expected": "WSCANF_NULL_VA_LIST_EOF",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_vfwscanf;mode=strict;expected=WSCANF_NULL_VA_LIST_EOF;actual=WSCANF_NULL_VA_LIST_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_vfwscanf_null_va_list_hardened",
+      "function": "__isoc23_vfwscanf",
+      "spec_section": "C23 wide vfwscanf rejects null va_list without exposing stream internals",
+      "inputs": {
+        "symbol": "__isoc23_vfwscanf",
+        "scenario": "vfwscanf_null_va_list_returns_eof",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_vfwscanf null-va-list classification",
+        "expected": "WSCANF_NULL_VA_LIST_EOF",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_vfwscanf;mode=hardened;expected=WSCANF_NULL_VA_LIST_EOF;actual=WSCANF_NULL_VA_LIST_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_vswscanf_null_va_list_strict",
+      "function": "__isoc23_vswscanf",
+      "spec_section": "C23 wide vswscanf rejects null va_list over bounded wide input",
+      "inputs": {
+        "symbol": "__isoc23_vswscanf",
+        "scenario": "vswscanf_null_va_list_returns_eof",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_vswscanf null-va-list classification",
+        "expected": "WSCANF_NULL_VA_LIST_EOF",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_vswscanf;mode=strict;expected=WSCANF_NULL_VA_LIST_EOF;actual=WSCANF_NULL_VA_LIST_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_vswscanf_null_va_list_hardened",
+      "function": "__isoc23_vswscanf",
+      "spec_section": "C23 wide vswscanf rejects null va_list over bounded wide input",
+      "inputs": {
+        "symbol": "__isoc23_vswscanf",
+        "scenario": "vswscanf_null_va_list_returns_eof",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_vswscanf null-va-list classification",
+        "expected": "WSCANF_NULL_VA_LIST_EOF",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_vswscanf;mode=hardened;expected=WSCANF_NULL_VA_LIST_EOF;actual=WSCANF_NULL_VA_LIST_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_vwscanf_null_va_list_strict",
+      "function": "__isoc23_vwscanf",
+      "spec_section": "C23 wide vwscanf rejects null va_list before reading stdin",
+      "inputs": {
+        "symbol": "__isoc23_vwscanf",
+        "scenario": "vwscanf_null_va_list_returns_eof",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_vwscanf null-va-list classification",
+        "expected": "WSCANF_NULL_VA_LIST_EOF",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_vwscanf;mode=strict;expected=WSCANF_NULL_VA_LIST_EOF;actual=WSCANF_NULL_VA_LIST_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_vwscanf_null_va_list_hardened",
+      "function": "__isoc23_vwscanf",
+      "spec_section": "C23 wide vwscanf rejects null va_list before reading stdin",
+      "inputs": {
+        "symbol": "__isoc23_vwscanf",
+        "scenario": "vwscanf_null_va_list_returns_eof",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_vwscanf null-va-list classification",
+        "expected": "WSCANF_NULL_VA_LIST_EOF",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_vwscanf;mode=hardened;expected=WSCANF_NULL_VA_LIST_EOF;actual=WSCANF_NULL_VA_LIST_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_wcstoimax_negative_decimal_strict",
+      "function": "__isoc23_wcstoimax",
+      "spec_section": "C23 wcstoimax parses signed wide decimal prefix and reports consumed width",
+      "inputs": {
+        "symbol": "__isoc23_wcstoimax",
+        "scenario": "wide_intmax_negative_decimal_consumed_prefix",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoimax classified conversion replay",
+        "expected": "WCSTOIMAX_VALUE_-42_CONSUMED_5",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoimax;mode=strict;expected=WCSTOIMAX_VALUE_-42_CONSUMED_5;actual=WCSTOIMAX_VALUE_-42_CONSUMED_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_wcstoimax_negative_decimal_hardened",
+      "function": "__isoc23_wcstoimax",
+      "spec_section": "C23 wcstoimax parses signed wide decimal prefix and reports consumed width",
+      "inputs": {
+        "symbol": "__isoc23_wcstoimax",
+        "scenario": "wide_intmax_negative_decimal_consumed_prefix",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoimax classified conversion replay",
+        "expected": "WCSTOIMAX_VALUE_-42_CONSUMED_5",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoimax;mode=hardened;expected=WCSTOIMAX_VALUE_-42_CONSUMED_5;actual=WCSTOIMAX_VALUE_-42_CONSUMED_5;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_wcstol_auto_hex_strict",
+      "function": "__isoc23_wcstol",
+      "spec_section": "C23 wcstol honors base-zero wide hexadecimal prefix",
+      "inputs": {
+        "symbol": "__isoc23_wcstol",
+        "scenario": "wide_long_auto_base_hex_consumed_prefix",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstol classified conversion replay",
+        "expected": "WCSTOL_VALUE_42_CONSUMED_4",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstol;mode=strict;expected=WCSTOL_VALUE_42_CONSUMED_4;actual=WCSTOL_VALUE_42_CONSUMED_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_wcstol_auto_hex_hardened",
+      "function": "__isoc23_wcstol",
+      "spec_section": "C23 wcstol honors base-zero wide hexadecimal prefix",
+      "inputs": {
+        "symbol": "__isoc23_wcstol",
+        "scenario": "wide_long_auto_base_hex_consumed_prefix",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstol classified conversion replay",
+        "expected": "WCSTOL_VALUE_42_CONSUMED_4",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstol;mode=hardened;expected=WCSTOL_VALUE_42_CONSUMED_4;actual=WCSTOL_VALUE_42_CONSUMED_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_wcstol_l_null_locale_strict",
+      "function": "__isoc23_wcstol_l",
+      "spec_section": "C23 wcstol_l keeps C-locale numeric parsing stable with null locale handle",
+      "inputs": {
+        "symbol": "__isoc23_wcstol_l",
+        "scenario": "wide_long_locale_null_handle_ignored",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstol_l null-locale classified replay",
+        "expected": "WCSTOL_L_VALUE_77_CONSUMED_3",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstol_l;mode=strict;expected=WCSTOL_L_VALUE_77_CONSUMED_3;actual=WCSTOL_L_VALUE_77_CONSUMED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_wcstol_l_null_locale_hardened",
+      "function": "__isoc23_wcstol_l",
+      "spec_section": "C23 wcstol_l keeps C-locale numeric parsing stable with null locale handle",
+      "inputs": {
+        "symbol": "__isoc23_wcstol_l",
+        "scenario": "wide_long_locale_null_handle_ignored",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstol_l null-locale classified replay",
+        "expected": "WCSTOL_L_VALUE_77_CONSUMED_3",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstol_l;mode=hardened;expected=WCSTOL_L_VALUE_77_CONSUMED_3;actual=WCSTOL_L_VALUE_77_CONSUMED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_wcstoll_negative_decimal_strict",
+      "function": "__isoc23_wcstoll",
+      "spec_section": "C23 wcstoll parses signed wide long long decimal prefix",
+      "inputs": {
+        "symbol": "__isoc23_wcstoll",
+        "scenario": "wide_longlong_negative_decimal",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoll classified conversion replay",
+        "expected": "WCSTOLL_VALUE_-123_CONSUMED_4",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoll;mode=strict;expected=WCSTOLL_VALUE_-123_CONSUMED_4;actual=WCSTOLL_VALUE_-123_CONSUMED_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_wcstoll_negative_decimal_hardened",
+      "function": "__isoc23_wcstoll",
+      "spec_section": "C23 wcstoll parses signed wide long long decimal prefix",
+      "inputs": {
+        "symbol": "__isoc23_wcstoll",
+        "scenario": "wide_longlong_negative_decimal",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoll classified conversion replay",
+        "expected": "WCSTOLL_VALUE_-123_CONSUMED_4",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoll;mode=hardened;expected=WCSTOLL_VALUE_-123_CONSUMED_4;actual=WCSTOLL_VALUE_-123_CONSUMED_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_wcstoll_l_null_locale_strict",
+      "function": "__isoc23_wcstoll_l",
+      "spec_section": "C23 wcstoll_l keeps signed wide parsing stable with null locale handle",
+      "inputs": {
+        "symbol": "__isoc23_wcstoll_l",
+        "scenario": "wide_longlong_locale_null_handle_ignored",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoll_l null-locale classified replay",
+        "expected": "WCSTOLL_L_VALUE_-64_CONSUMED_3",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoll_l;mode=strict;expected=WCSTOLL_L_VALUE_-64_CONSUMED_3;actual=WCSTOLL_L_VALUE_-64_CONSUMED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_wcstoll_l_null_locale_hardened",
+      "function": "__isoc23_wcstoll_l",
+      "spec_section": "C23 wcstoll_l keeps signed wide parsing stable with null locale handle",
+      "inputs": {
+        "symbol": "__isoc23_wcstoll_l",
+        "scenario": "wide_longlong_locale_null_handle_ignored",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoll_l null-locale classified replay",
+        "expected": "WCSTOLL_L_VALUE_-64_CONSUMED_3",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoll_l;mode=hardened;expected=WCSTOLL_L_VALUE_-64_CONSUMED_3;actual=WCSTOLL_L_VALUE_-64_CONSUMED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_wcstoul_negative_wrap_strict",
+      "function": "__isoc23_wcstoul",
+      "spec_section": "C23 wcstoul accepts negative sign and wraps through unsigned wide conversion",
+      "inputs": {
+        "symbol": "__isoc23_wcstoul",
+        "scenario": "wide_ulong_negative_wraps_to_max",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoul classified conversion replay",
+        "expected": "WCSTOUL_VALUE_U64_MAX_CONSUMED_2",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoul;mode=strict;expected=WCSTOUL_VALUE_U64_MAX_CONSUMED_2;actual=WCSTOUL_VALUE_U64_MAX_CONSUMED_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_wcstoul_negative_wrap_hardened",
+      "function": "__isoc23_wcstoul",
+      "spec_section": "C23 wcstoul accepts negative sign and wraps through unsigned wide conversion",
+      "inputs": {
+        "symbol": "__isoc23_wcstoul",
+        "scenario": "wide_ulong_negative_wraps_to_max",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoul classified conversion replay",
+        "expected": "WCSTOUL_VALUE_U64_MAX_CONSUMED_2",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoul;mode=hardened;expected=WCSTOUL_VALUE_U64_MAX_CONSUMED_2;actual=WCSTOUL_VALUE_U64_MAX_CONSUMED_2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

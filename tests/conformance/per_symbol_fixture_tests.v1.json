@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T16:52:48Z",
-  "report_hash": "bc0f91322dc9ed80",
+  "generated_at": "2026-05-13T17:34:00Z",
+  "report_hash": "2e2ba20d9218f950",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 869,
-    "symbols_without_fixtures": 3250,
-    "fixture_coverage_pct": 21.1,
-    "implemented_coverage_pct": 20.6,
-    "total_fixture_files": 100,
-    "total_cases": 2184,
+    "symbols_with_fixtures": 881,
+    "symbols_without_fixtures": 3238,
+    "fixture_coverage_pct": 21.4,
+    "implemented_coverage_pct": 20.9,
+    "total_fixture_files": 101,
+    "total_cases": 2208,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 533,
-    "symbols_with_errno_checks": 866,
-    "total_quality_issues": 3511,
-    "uncovered_action_count": 3250
+    "symbols_with_edge_cases": 541,
+    "symbols_with_errno_checks": 878,
+    "total_quality_issues": 3503,
+    "uncovered_action_count": 3238
   },
   "fixture_file_analyses": [
     {
@@ -792,6 +792,14 @@
       "valid": true,
       "total_cases": 8,
       "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "wchar_locale_encoding_wave01.json",
+      "family": "wchar/locale-encoding",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
       "issues": []
     },
     {
@@ -6495,14 +6503,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -6601,15 +6614,20 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc23_scanf",
@@ -6807,15 +6825,21 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc23_vfscanf",
@@ -6842,15 +6866,20 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc23_vscanf",
@@ -6898,44 +6927,59 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc23_vwscanf",
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc23_wcstoimax",
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -6943,14 +6987,19 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -6958,59 +7007,79 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc23_wcstoll",
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc23_wcstoll_l",
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc23_wcstoul",
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -68288,13 +68357,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__islower_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__isnanf128",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -68305,13 +68367,6 @@
       "symbol": "__isnanl",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_fwscanf",
-      "status": "Implemented",
-      "module": "wchar_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -68382,76 +68437,6 @@
       "symbol": "__isoc23_strtoumax",
       "status": "Implemented",
       "module": "stdlib_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_swscanf",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_vfwscanf",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_vswscanf",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_vwscanf",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_wcstoimax",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_wcstol",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_wcstol_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_wcstoll",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_wcstoll_l",
-      "status": "Implemented",
-      "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_wcstoul",
-      "status": "Implemented",
-      "module": "wchar_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

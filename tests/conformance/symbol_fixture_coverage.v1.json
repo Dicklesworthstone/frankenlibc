@@ -2795,36 +2795,24 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 18,
+      "covered_symbols": 30,
       "milestone_beads": [],
       "module": "wchar_abi",
       "recommended_bead": null,
       "severity": "high",
-      "severity_score": 12802,
+      "severity_score": 11602,
       "status_breakdown": {
         "Implemented": 146
       },
-      "target_coverage_pct": 12.33,
-      "target_covered": 18,
+      "target_coverage_pct": 20.55,
+      "target_covered": 30,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
       "target_total": 146,
-      "target_uncovered": 128,
+      "target_uncovered": 116,
       "target_uncovered_symbols": [
-        "__islower_l",
-        "__isoc23_fwscanf",
-        "__isoc23_swscanf",
-        "__isoc23_vfwscanf",
-        "__isoc23_vswscanf",
-        "__isoc23_vwscanf",
-        "__isoc23_wcstoimax",
-        "__isoc23_wcstol",
-        "__isoc23_wcstol_l",
-        "__isoc23_wcstoll",
-        "__isoc23_wcstoll_l",
-        "__isoc23_wcstoul",
         "__isoc23_wcstoul_l",
         "__isoc23_wcstoull",
         "__isoc23_wcstoull_l",
@@ -2944,7 +2932,7 @@
       ],
       "total_symbols": 146,
       "track": "string/wide",
-      "uncovered_symbols": 128,
+      "uncovered_symbols": 116,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -4299,9 +4287,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 2184,
-    "fixture_json_files": 100,
-    "fixture_json_unique_functions": 886,
+    "fixture_json_cases": 2208,
+    "fixture_json_files": 101,
+    "fixture_json_unique_functions": 898,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4322,7 +4310,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 888
+    "unique_fixture_functions_total": 900
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -7057,20 +7045,8 @@
       "module": "wchar_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_uncovered_count": 128,
+      "target_uncovered_count": 116,
       "target_uncovered_symbols": [
-        "__islower_l",
-        "__isoc23_fwscanf",
-        "__isoc23_swscanf",
-        "__isoc23_vfwscanf",
-        "__isoc23_vswscanf",
-        "__isoc23_vwscanf",
-        "__isoc23_wcstoimax",
-        "__isoc23_wcstol",
-        "__isoc23_wcstol_l",
-        "__isoc23_wcstoll",
-        "__isoc23_wcstoll_l",
-        "__isoc23_wcstoul",
         "__isoc23_wcstoul_l",
         "__isoc23_wcstoull",
         "__isoc23_wcstoull_l",
@@ -7913,10 +7889,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 20.62,
-      "covered": 764,
+      "coverage_pct": 20.94,
+      "covered": 776,
       "total": 3705,
-      "uncovered": 2941
+      "uncovered": 2929
     },
     "RawSyscall": {
       "coverage_pct": 25.85,
@@ -7926,18 +7902,18 @@
     }
   },
   "summary": {
-    "coverage_pct": 21.15,
-    "covered_exported_symbols": 871,
-    "target_coverage_pct": 21.15,
-    "target_covered_symbols": 871,
+    "coverage_pct": 21.44,
+    "covered_exported_symbols": 883,
+    "target_coverage_pct": 21.44,
+    "target_covered_symbols": 883,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3248,
+    "target_uncovered_symbols": 3236,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3248,
+    "uncovered_exported_symbols": 3236,
     "uncovered_target_families": 1,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 25
@@ -71305,13 +71281,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71319,13 +71304,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71333,13 +71327,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71347,13 +71350,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71361,13 +71373,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71375,13 +71396,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71389,13 +71419,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71403,13 +71442,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71417,13 +71465,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71431,13 +71488,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71445,13 +71511,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -71459,13 +71534,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "wchar/locale-encoding"
+      ],
+      "fixture_files": [
+        "wchar_locale_encoding_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -76951,21 +77035,9 @@
       "module": "wchar_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 12.33,
-      "target_uncovered_count": 128,
+      "target_coverage_pct": 20.55,
+      "target_uncovered_count": 116,
       "target_uncovered_symbols": [
-        "__islower_l",
-        "__isoc23_fwscanf",
-        "__isoc23_swscanf",
-        "__isoc23_vfwscanf",
-        "__isoc23_vswscanf",
-        "__isoc23_vwscanf",
-        "__isoc23_wcstoimax",
-        "__isoc23_wcstol",
-        "__isoc23_wcstol_l",
-        "__isoc23_wcstoll",
-        "__isoc23_wcstoll_l",
-        "__isoc23_wcstoul",
         "__isoc23_wcstoul_l",
         "__isoc23_wcstoull",
         "__isoc23_wcstoull_l",

@@ -26,39 +26,12 @@ type c_ulonglong = u64;
 type WcharT = i32;
 
 // ---------------------------------------------------------------------------
-// Extern declarations for base functions we delegate to.
+// Base-function delegation.
 //
-// These are already exported by stdio_abi, wchar_abi, and stdlib_abi as
-// #[no_mangle] symbols. We reference them here via extern "C" blocks.
+// The ISO aliases must call FrankenLibC's local ABI modules directly. In debug
+// test binaries these base names are not exported with no_mangle, so extern-C
+// lookups can resolve to host libc and bypass the membrane.
 // ---------------------------------------------------------------------------
-
-unsafe extern "C" {
-    // ── narrow scanf family (stdio_abi) ──
-    fn vscanf(format: *const c_char, ap: *mut c_void) -> c_int;
-    fn vfscanf(stream: *mut c_void, format: *const c_char, ap: *mut c_void) -> c_int;
-    fn vsscanf(s: *const c_char, format: *const c_char, ap: *mut c_void) -> c_int;
-
-    // ── wide scanf family (wchar_abi) ──
-    fn vwscanf(format: *const WcharT, ap: *mut c_void) -> c_int;
-    fn vfwscanf(stream: *mut c_void, format: *const WcharT, ap: *mut c_void) -> c_int;
-    fn vswscanf(s: *const WcharT, format: *const WcharT, ap: *mut c_void) -> c_int;
-
-    // ── strtol family (stdlib_abi) ──
-    fn strtol(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_long;
-    fn strtoul(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_ulong;
-    fn strtoll(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_longlong;
-    fn strtoull(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_ulonglong;
-    fn strtoimax(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> i64;
-    fn strtoumax(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> u64;
-
-    // ── wcstol family (wchar_abi) ──
-    fn wcstol(nptr: *const WcharT, endptr: *mut *mut WcharT, base: c_int) -> c_long;
-    fn wcstoul(nptr: *const WcharT, endptr: *mut *mut WcharT, base: c_int) -> c_ulong;
-    fn wcstoll(nptr: *const WcharT, endptr: *mut *mut WcharT, base: c_int) -> c_longlong;
-    fn wcstoull(nptr: *const WcharT, endptr: *mut *mut WcharT, base: c_int) -> c_ulonglong;
-    fn wcstoimax(nptr: *const WcharT, endptr: *mut *mut WcharT, base: c_int) -> i64;
-    fn wcstoumax(nptr: *const WcharT, endptr: *mut *mut WcharT, base: c_int) -> u64;
-}
 
 // ===========================================================================
 // C23 __isoc23_* narrow scanf aliases (6 variadic + 6 va_list)
@@ -68,7 +41,7 @@ unsafe extern "C" {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc23_scanf(format: *const c_char, mut args: ...) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vscanf(format, ap) }
+    unsafe { crate::stdio_abi::vscanf(format, ap) }
 }
 
 /// `__isoc23_fscanf` — C23 alias for fscanf.
@@ -79,7 +52,7 @@ pub unsafe extern "C" fn __isoc23_fscanf(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vfscanf(stream, format, ap) }
+    unsafe { crate::stdio_abi::vfscanf(stream, format, ap) }
 }
 
 /// `__isoc23_sscanf` — C23 alias for sscanf.
@@ -90,14 +63,14 @@ pub unsafe extern "C" fn __isoc23_sscanf(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vsscanf(s, format, ap) }
+    unsafe { crate::stdio_abi::vsscanf(s, format, ap) }
 }
 
 /// `__isoc23_wscanf` — C23 alias for wscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc23_wscanf(format: *const WcharT, mut args: ...) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vwscanf(format, ap) }
+    unsafe { crate::wchar_abi::vwscanf(format.cast::<libc::wchar_t>(), ap) }
 }
 
 /// `__isoc23_fwscanf` — C23 alias for fwscanf.
@@ -108,7 +81,7 @@ pub unsafe extern "C" fn __isoc23_fwscanf(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vfwscanf(stream, format, ap) }
+    unsafe { crate::wchar_abi::vfwscanf(stream, format.cast::<libc::wchar_t>(), ap) }
 }
 
 /// `__isoc23_swscanf` — C23 alias for swscanf.
@@ -119,13 +92,19 @@ pub unsafe extern "C" fn __isoc23_swscanf(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vswscanf(s, format, ap) }
+    unsafe {
+        crate::wchar_abi::vswscanf(
+            s.cast::<libc::wchar_t>(),
+            format.cast::<libc::wchar_t>(),
+            ap,
+        )
+    }
 }
 
 /// `__isoc23_vscanf` — C23 alias for vscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc23_vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
-    unsafe { vscanf(format, ap) }
+    unsafe { crate::stdio_abi::vscanf(format, ap) }
 }
 
 /// `__isoc23_vfscanf` — C23 alias for vfscanf.
@@ -135,7 +114,7 @@ pub unsafe extern "C" fn __isoc23_vfscanf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vfscanf(stream, format, ap) }
+    unsafe { crate::stdio_abi::vfscanf(stream, format, ap) }
 }
 
 /// `__isoc23_vsscanf` — C23 alias for vsscanf.
@@ -145,13 +124,13 @@ pub unsafe extern "C" fn __isoc23_vsscanf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vsscanf(s, format, ap) }
+    unsafe { crate::stdio_abi::vsscanf(s, format, ap) }
 }
 
 /// `__isoc23_vwscanf` — C23 alias for vwscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc23_vwscanf(format: *const WcharT, ap: *mut c_void) -> c_int {
-    unsafe { vwscanf(format, ap) }
+    unsafe { crate::wchar_abi::vwscanf(format.cast::<libc::wchar_t>(), ap) }
 }
 
 /// `__isoc23_vfwscanf` — C23 alias for vfwscanf.
@@ -161,7 +140,7 @@ pub unsafe extern "C" fn __isoc23_vfwscanf(
     format: *const WcharT,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vfwscanf(stream, format, ap) }
+    unsafe { crate::wchar_abi::vfwscanf(stream, format.cast::<libc::wchar_t>(), ap) }
 }
 
 /// `__isoc23_vswscanf` — C23 alias for vswscanf.
@@ -171,7 +150,13 @@ pub unsafe extern "C" fn __isoc23_vswscanf(
     format: *const WcharT,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vswscanf(s, format, ap) }
+    unsafe {
+        crate::wchar_abi::vswscanf(
+            s.cast::<libc::wchar_t>(),
+            format.cast::<libc::wchar_t>(),
+            ap,
+        )
+    }
 }
 
 // ===========================================================================
@@ -185,7 +170,7 @@ pub unsafe extern "C" fn __isoc23_strtol(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_long {
-    unsafe { strtol(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtol(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtoul` — C23 alias for strtoul.
@@ -195,7 +180,7 @@ pub unsafe extern "C" fn __isoc23_strtoul(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_ulong {
-    unsafe { strtoul(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtoul(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtoll` — C23 alias for strtoll.
@@ -205,7 +190,7 @@ pub unsafe extern "C" fn __isoc23_strtoll(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_longlong {
-    unsafe { strtoll(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtoll(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtoull` — C23 alias for strtoull.
@@ -215,7 +200,7 @@ pub unsafe extern "C" fn __isoc23_strtoull(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_ulonglong {
-    unsafe { strtoull(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtoull(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtoimax` — C23 alias for strtoimax.
@@ -225,7 +210,7 @@ pub unsafe extern "C" fn __isoc23_strtoimax(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> i64 {
-    unsafe { strtoimax(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtoimax(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtoumax` — C23 alias for strtoumax.
@@ -235,7 +220,7 @@ pub unsafe extern "C" fn __isoc23_strtoumax(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> u64 {
-    unsafe { strtoumax(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtoumax(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtol_l` — C23 locale alias for strtol (locale ignored).
@@ -246,7 +231,7 @@ pub unsafe extern "C" fn __isoc23_strtol_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_long {
-    unsafe { strtol(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtol(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtoul_l` — C23 locale alias for strtoul (locale ignored).
@@ -257,7 +242,7 @@ pub unsafe extern "C" fn __isoc23_strtoul_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_ulong {
-    unsafe { strtoul(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtoul(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtoll_l` — C23 locale alias for strtoll (locale ignored).
@@ -268,7 +253,7 @@ pub unsafe extern "C" fn __isoc23_strtoll_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_longlong {
-    unsafe { strtoll(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtoll(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtoull_l` — C23 locale alias for strtoull (locale ignored).
@@ -279,7 +264,7 @@ pub unsafe extern "C" fn __isoc23_strtoull_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_ulonglong {
-    unsafe { strtoull(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtoull(nptr, endptr, base) }
 }
 
 // ===========================================================================
@@ -293,7 +278,13 @@ pub unsafe extern "C" fn __isoc23_wcstol(
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> c_long {
-    unsafe { wcstol(nptr, endptr, base) }
+    unsafe {
+        crate::wchar_abi::wcstol(
+            nptr.cast::<libc::wchar_t>(),
+            endptr.cast::<*mut libc::wchar_t>(),
+            base,
+        )
+    }
 }
 
 /// `__isoc23_wcstoul` — C23 alias for wcstoul.
@@ -303,7 +294,13 @@ pub unsafe extern "C" fn __isoc23_wcstoul(
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> c_ulong {
-    unsafe { wcstoul(nptr, endptr, base) }
+    unsafe {
+        crate::wchar_abi::wcstoul(
+            nptr.cast::<libc::wchar_t>(),
+            endptr.cast::<*mut libc::wchar_t>(),
+            base,
+        )
+    }
 }
 
 /// `__isoc23_wcstoll` — C23 alias for wcstoll.
@@ -313,7 +310,13 @@ pub unsafe extern "C" fn __isoc23_wcstoll(
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> c_longlong {
-    unsafe { wcstoll(nptr, endptr, base) }
+    unsafe {
+        crate::wchar_abi::wcstoll(
+            nptr.cast::<libc::wchar_t>(),
+            endptr.cast::<*mut libc::wchar_t>(),
+            base,
+        )
+    }
 }
 
 /// `__isoc23_wcstoull` — C23 alias for wcstoull.
@@ -323,7 +326,13 @@ pub unsafe extern "C" fn __isoc23_wcstoull(
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> c_ulonglong {
-    unsafe { wcstoull(nptr, endptr, base) }
+    unsafe {
+        crate::wchar_abi::wcstoull(
+            nptr.cast::<libc::wchar_t>(),
+            endptr.cast::<*mut libc::wchar_t>(),
+            base,
+        )
+    }
 }
 
 /// `__isoc23_wcstoimax` — C23 alias for wcstoimax.
@@ -333,7 +342,7 @@ pub unsafe extern "C" fn __isoc23_wcstoimax(
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> i64 {
-    unsafe { wcstoimax(nptr, endptr, base) }
+    unsafe { crate::wchar_abi::wcstoimax(nptr.cast::<u32>(), endptr.cast::<*mut u32>(), base) }
 }
 
 /// `__isoc23_wcstoumax` — C23 alias for wcstoumax.
@@ -343,7 +352,7 @@ pub unsafe extern "C" fn __isoc23_wcstoumax(
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> u64 {
-    unsafe { wcstoumax(nptr, endptr, base) }
+    unsafe { crate::wchar_abi::wcstoumax(nptr.cast::<u32>(), endptr.cast::<*mut u32>(), base) }
 }
 
 /// `__isoc23_wcstol_l` — C23 locale alias for wcstol (locale ignored).
@@ -354,7 +363,13 @@ pub unsafe extern "C" fn __isoc23_wcstol_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_long {
-    unsafe { wcstol(nptr, endptr, base) }
+    unsafe {
+        crate::wchar_abi::wcstol(
+            nptr.cast::<libc::wchar_t>(),
+            endptr.cast::<*mut libc::wchar_t>(),
+            base,
+        )
+    }
 }
 
 /// `__isoc23_wcstoul_l` — C23 locale alias for wcstoul (locale ignored).
@@ -365,7 +380,13 @@ pub unsafe extern "C" fn __isoc23_wcstoul_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_ulong {
-    unsafe { wcstoul(nptr, endptr, base) }
+    unsafe {
+        crate::wchar_abi::wcstoul(
+            nptr.cast::<libc::wchar_t>(),
+            endptr.cast::<*mut libc::wchar_t>(),
+            base,
+        )
+    }
 }
 
 /// `__isoc23_wcstoll_l` — C23 locale alias for wcstoll (locale ignored).
@@ -376,7 +397,13 @@ pub unsafe extern "C" fn __isoc23_wcstoll_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_longlong {
-    unsafe { wcstoll(nptr, endptr, base) }
+    unsafe {
+        crate::wchar_abi::wcstoll(
+            nptr.cast::<libc::wchar_t>(),
+            endptr.cast::<*mut libc::wchar_t>(),
+            base,
+        )
+    }
 }
 
 /// `__isoc23_wcstoull_l` — C23 locale alias for wcstoull (locale ignored).
@@ -387,7 +414,13 @@ pub unsafe extern "C" fn __isoc23_wcstoull_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_ulonglong {
-    unsafe { wcstoull(nptr, endptr, base) }
+    unsafe {
+        crate::wchar_abi::wcstoull(
+            nptr.cast::<libc::wchar_t>(),
+            endptr.cast::<*mut libc::wchar_t>(),
+            base,
+        )
+    }
 }
 
 // ===========================================================================
@@ -398,7 +431,7 @@ pub unsafe extern "C" fn __isoc23_wcstoull_l(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc99_wscanf(format: *const WcharT, mut args: ...) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vwscanf(format, ap) }
+    unsafe { crate::wchar_abi::vwscanf(format.cast::<libc::wchar_t>(), ap) }
 }
 
 /// `__isoc99_fwscanf` — C99 alias for fwscanf.
@@ -409,7 +442,7 @@ pub unsafe extern "C" fn __isoc99_fwscanf(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vfwscanf(stream, format, ap) }
+    unsafe { crate::wchar_abi::vfwscanf(stream, format.cast::<libc::wchar_t>(), ap) }
 }
 
 /// `__isoc99_swscanf` — C99 alias for swscanf.
@@ -420,13 +453,19 @@ pub unsafe extern "C" fn __isoc99_swscanf(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vswscanf(s, format, ap) }
+    unsafe {
+        crate::wchar_abi::vswscanf(
+            s.cast::<libc::wchar_t>(),
+            format.cast::<libc::wchar_t>(),
+            ap,
+        )
+    }
 }
 
 /// `__isoc99_vwscanf` — C99 alias for vwscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc99_vwscanf(format: *const WcharT, ap: *mut c_void) -> c_int {
-    unsafe { vwscanf(format, ap) }
+    unsafe { crate::wchar_abi::vwscanf(format.cast::<libc::wchar_t>(), ap) }
 }
 
 /// `__isoc99_vfwscanf` — C99 alias for vfwscanf.
@@ -436,7 +475,7 @@ pub unsafe extern "C" fn __isoc99_vfwscanf(
     format: *const WcharT,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vfwscanf(stream, format, ap) }
+    unsafe { crate::wchar_abi::vfwscanf(stream, format.cast::<libc::wchar_t>(), ap) }
 }
 
 /// `__isoc99_vswscanf` — C99 alias for vswscanf.
@@ -446,5 +485,11 @@ pub unsafe extern "C" fn __isoc99_vswscanf(
     format: *const WcharT,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vswscanf(s, format, ap) }
+    unsafe {
+        crate::wchar_abi::vswscanf(
+            s.cast::<libc::wchar_t>(),
+            format.cast::<libc::wchar_t>(),
+            ap,
+        )
+    }
 }

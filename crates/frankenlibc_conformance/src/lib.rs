@@ -1099,6 +1099,12 @@ pub fn execute_fixture_case(
         | "__fgetws_unlocked_chk"
         | "__fortify_fail"
         | "__fprintf_chk" => execute_fortify_checked_wrapper_wave01_case(function, inputs, mode),
+        // wchar / locale encoding wave-01
+        "__islower_l" | "__isoc23_fwscanf" | "__isoc23_swscanf" | "__isoc23_vfwscanf"
+        | "__isoc23_vswscanf" | "__isoc23_vwscanf" | "__isoc23_wcstoimax" | "__isoc23_wcstol"
+        | "__isoc23_wcstol_l" | "__isoc23_wcstoll" | "__isoc23_wcstoll_l" | "__isoc23_wcstoul" => {
+            execute_wchar_locale_encoding_wave01_case(function, inputs, mode)
+        }
         // signal ops
         "raise" => execute_raise_case(inputs, mode),
         "signal" => execute_signal_case(inputs, mode),
@@ -22498,6 +22504,265 @@ fn fortify_fprintf_tmpfile_actual() -> Result<String, String> {
     }
 }
 
+fn execute_wchar_locale_encoding_wave01_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "wchar/locale encoding wave01 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = wchar_locale_encoding_wave01_actual(function, inputs)?;
+    Ok(non_host_execution(wchar_locale_encoding_wave01_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn wchar_locale_encoding_wave01_log(
+    symbol: &str,
+    mode: &str,
+    expected: &str,
+    actual: &str,
+) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn wchar_locale_encoding_wave01_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    let scenario = parse_string(inputs, "scenario")?;
+    match (function, scenario.as_str()) {
+        ("__islower_l", "c_locale_lowercase_ascii_without_locale_pointer_capture") => {
+            Ok(wchar_locale_islower_l_actual())
+        }
+        ("__isoc23_fwscanf", "fwscanf_null_stream_returns_eof_without_file_capture") => {
+            Ok(wchar_locale_fwscanf_null_stream_actual())
+        }
+        ("__isoc23_swscanf", "swscanf_empty_wide_format_no_destination_capture") => {
+            Ok(wchar_locale_swscanf_empty_format_actual())
+        }
+        ("__isoc23_vfwscanf", "vfwscanf_null_va_list_returns_eof") => {
+            Ok(wchar_locale_vfwscanf_null_va_list_actual())
+        }
+        ("__isoc23_vswscanf", "vswscanf_null_va_list_returns_eof") => {
+            Ok(wchar_locale_vswscanf_null_va_list_actual())
+        }
+        ("__isoc23_vwscanf", "vwscanf_null_va_list_returns_eof") => {
+            Ok(wchar_locale_vwscanf_null_va_list_actual())
+        }
+        ("__isoc23_wcstoimax", "wide_intmax_negative_decimal_consumed_prefix") => {
+            Ok(wchar_locale_wcstoimax_actual())
+        }
+        ("__isoc23_wcstol", "wide_long_auto_base_hex_consumed_prefix") => {
+            Ok(wchar_locale_wcstol_actual())
+        }
+        ("__isoc23_wcstol_l", "wide_long_locale_null_handle_ignored") => {
+            Ok(wchar_locale_wcstol_l_actual())
+        }
+        ("__isoc23_wcstoll", "wide_longlong_negative_decimal") => Ok(wchar_locale_wcstoll_actual()),
+        ("__isoc23_wcstoll_l", "wide_longlong_locale_null_handle_ignored") => {
+            Ok(wchar_locale_wcstoll_l_actual())
+        }
+        ("__isoc23_wcstoul", "wide_ulong_negative_wraps_to_max") => {
+            Ok(wchar_locale_wcstoul_actual())
+        }
+        _ => Err(format!(
+            "unsupported wchar/locale encoding wave01 fixture: function={function}, scenario={scenario}"
+        )),
+    }
+}
+
+fn wchar_locale_wide_ascii(input: &str) -> Vec<libc::wchar_t> {
+    let mut out: Vec<libc::wchar_t> = input.bytes().map(|byte| byte as libc::wchar_t).collect();
+    out.push(0);
+    out
+}
+
+fn wchar_locale_consumed(
+    start: *const libc::wchar_t,
+    end: *mut libc::wchar_t,
+) -> Result<usize, String> {
+    if end.is_null() {
+        return Ok(0);
+    }
+    // SAFETY: all callers pass an end pointer returned by the conversion routine
+    // for the same NUL-terminated wide buffer rooted at `start`.
+    let consumed = unsafe { end.offset_from(start) };
+    usize::try_from(consumed).map_err(|_| format!("negative wide conversion offset {consumed}"))
+}
+
+fn wchar_locale_islower_l_actual() -> String {
+    // SAFETY: passing a null locale handle is valid for this fixture because the
+    // FrankenLibC shim ignores the locale and classifies the ASCII byte.
+    let rc =
+        unsafe { frankenlibc_abi::ctype_abi::__islower_l(b'a' as c_int, std::ptr::null_mut()) };
+    if rc != 0 {
+        String::from("ISLOWER_L_A_TRUE")
+    } else {
+        String::from("ISLOWER_L_A_FALSE")
+    }
+}
+
+fn wchar_locale_fwscanf_null_stream_actual() -> String {
+    let fmt = wchar_locale_wide_ascii("");
+    // SAFETY: the null stream is the tested input class; the empty format is a
+    // valid NUL-terminated wide literal and no variadic destinations are used.
+    let rc =
+        unsafe { frankenlibc_abi::isoc_abi::__isoc23_fwscanf(std::ptr::null_mut(), fmt.as_ptr()) };
+    if rc == libc::EOF {
+        String::from("WSCANF_NULL_STREAM_EOF")
+    } else {
+        format!("WSCANF_NULL_STREAM_RC_{rc}")
+    }
+}
+
+fn wchar_locale_swscanf_empty_format_actual() -> String {
+    let input = wchar_locale_wide_ascii("17");
+    let fmt = wchar_locale_wide_ascii("");
+    // SAFETY: both pointers reference NUL-terminated stack-owned wide buffers.
+    // The empty format has no conversions, so no variadic destinations are read.
+    let rc = unsafe { frankenlibc_abi::isoc_abi::__isoc23_swscanf(input.as_ptr(), fmt.as_ptr()) };
+    format!("WSCANF_EMPTY_FORMAT_RC_{rc}")
+}
+
+fn wchar_locale_vfwscanf_null_va_list_actual() -> String {
+    let fmt = wchar_locale_wide_ascii("");
+    // SAFETY: the dangling stream is never dereferenced because the null va_list
+    // makes the shim return before stream reads; this isolates va_list handling.
+    let rc = unsafe {
+        frankenlibc_abi::isoc_abi::__isoc23_vfwscanf(
+            std::ptr::dangling_mut::<c_void>(),
+            fmt.as_ptr(),
+            std::ptr::null_mut(),
+        )
+    };
+    if rc == libc::EOF {
+        String::from("WSCANF_NULL_VA_LIST_EOF")
+    } else {
+        format!("WSCANF_NULL_VA_LIST_RC_{rc}")
+    }
+}
+
+fn wchar_locale_vswscanf_null_va_list_actual() -> String {
+    let input = wchar_locale_wide_ascii("17");
+    let fmt = wchar_locale_wide_ascii("");
+    // SAFETY: input and format are NUL-terminated wide buffers; null va_list is
+    // the tested rejected input class.
+    let rc = unsafe {
+        frankenlibc_abi::isoc_abi::__isoc23_vswscanf(
+            input.as_ptr(),
+            fmt.as_ptr(),
+            std::ptr::null_mut(),
+        )
+    };
+    if rc == libc::EOF {
+        String::from("WSCANF_NULL_VA_LIST_EOF")
+    } else {
+        format!("WSCANF_NULL_VA_LIST_RC_{rc}")
+    }
+}
+
+fn wchar_locale_vwscanf_null_va_list_actual() -> String {
+    let fmt = wchar_locale_wide_ascii("");
+    // SAFETY: format is a NUL-terminated wide buffer; null va_list is rejected
+    // before the shim reads ambient stdin.
+    let rc =
+        unsafe { frankenlibc_abi::isoc_abi::__isoc23_vwscanf(fmt.as_ptr(), std::ptr::null_mut()) };
+    if rc == libc::EOF {
+        String::from("WSCANF_NULL_VA_LIST_EOF")
+    } else {
+        format!("WSCANF_NULL_VA_LIST_RC_{rc}")
+    }
+}
+
+fn wchar_locale_wcstoimax_actual() -> String {
+    let wide = wchar_locale_wide_ascii("  -42xyz");
+    let mut end: *mut libc::wchar_t = std::ptr::null_mut();
+    // SAFETY: `wide` is NUL-terminated and `end` is writable for cursor output.
+    let value =
+        unsafe { frankenlibc_abi::isoc_abi::__isoc23_wcstoimax(wide.as_ptr(), &mut end, 10) };
+    let consumed = wchar_locale_consumed(wide.as_ptr(), end).unwrap_or(usize::MAX);
+    format!("WCSTOIMAX_VALUE_{value}_CONSUMED_{consumed}")
+}
+
+fn wchar_locale_wcstol_actual() -> String {
+    let wide = wchar_locale_wide_ascii("0x2a!");
+    let mut end: *mut libc::wchar_t = std::ptr::null_mut();
+    // SAFETY: `wide` is NUL-terminated and `end` is writable for cursor output.
+    let value = unsafe { frankenlibc_abi::isoc_abi::__isoc23_wcstol(wide.as_ptr(), &mut end, 0) };
+    let consumed = wchar_locale_consumed(wide.as_ptr(), end).unwrap_or(usize::MAX);
+    format!("WCSTOL_VALUE_{value}_CONSUMED_{consumed}")
+}
+
+fn wchar_locale_wcstol_l_actual() -> String {
+    let wide = wchar_locale_wide_ascii("+77z");
+    let mut end: *mut libc::wchar_t = std::ptr::null_mut();
+    // SAFETY: `wide` is NUL-terminated, `end` is writable, and the null locale
+    // handle is the explicit locale-safe fixture input class.
+    let value = unsafe {
+        frankenlibc_abi::isoc_abi::__isoc23_wcstol_l(
+            wide.as_ptr(),
+            &mut end,
+            10,
+            std::ptr::null_mut(),
+        )
+    };
+    let consumed = wchar_locale_consumed(wide.as_ptr(), end).unwrap_or(usize::MAX);
+    format!("WCSTOL_L_VALUE_{value}_CONSUMED_{consumed}")
+}
+
+fn wchar_locale_wcstoll_actual() -> String {
+    let wide = wchar_locale_wide_ascii("-123q");
+    let mut end: *mut libc::wchar_t = std::ptr::null_mut();
+    // SAFETY: `wide` is NUL-terminated and `end` is writable for cursor output.
+    let value = unsafe { frankenlibc_abi::isoc_abi::__isoc23_wcstoll(wide.as_ptr(), &mut end, 10) };
+    let consumed = wchar_locale_consumed(wide.as_ptr(), end).unwrap_or(usize::MAX);
+    format!("WCSTOLL_VALUE_{value}_CONSUMED_{consumed}")
+}
+
+fn wchar_locale_wcstoll_l_actual() -> String {
+    let wide = wchar_locale_wide_ascii("-64z");
+    let mut end: *mut libc::wchar_t = std::ptr::null_mut();
+    // SAFETY: `wide` is NUL-terminated, `end` is writable, and the null locale
+    // handle is the explicit locale-safe fixture input class.
+    let value = unsafe {
+        frankenlibc_abi::isoc_abi::__isoc23_wcstoll_l(
+            wide.as_ptr(),
+            &mut end,
+            10,
+            std::ptr::null_mut(),
+        )
+    };
+    let consumed = wchar_locale_consumed(wide.as_ptr(), end).unwrap_or(usize::MAX);
+    format!("WCSTOLL_L_VALUE_{value}_CONSUMED_{consumed}")
+}
+
+fn wchar_locale_wcstoul_actual() -> String {
+    let wide = wchar_locale_wide_ascii("-1x");
+    let mut end: *mut libc::wchar_t = std::ptr::null_mut();
+    // SAFETY: `wide` is NUL-terminated and `end` is writable for cursor output.
+    let value = unsafe { frankenlibc_abi::isoc_abi::__isoc23_wcstoul(wide.as_ptr(), &mut end, 10) };
+    let consumed = wchar_locale_consumed(wide.as_ptr(), end).unwrap_or(usize::MAX);
+    if value == u64::MAX {
+        format!("WCSTOUL_VALUE_U64_MAX_CONSUMED_{consumed}")
+    } else {
+        format!("WCSTOUL_VALUE_{value}_CONSUMED_{consumed}")
+    }
+}
+
 fn execute_process_spawn_wave01_case(
     function: &str,
     inputs: &serde_json::Value,
@@ -24926,6 +25191,48 @@ mod tests {
             include_str!("../../../tests/conformance/fixtures/fortify_checked_wrapper_wave01.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("fortify checked-wrapper wave01 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn wchar_locale_encoding_wave01_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/wchar_locale_encoding_wave01.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("wchar/locale wave01 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
