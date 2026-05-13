@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "wchar/locale-encoding",
+  "captured_at": "2026-05-13T21:35:00Z",
+  "description": "Deterministic strict/hardened stateful multibyte/wchar fixture evidence for the fcq-wchar-locale-encoding wave-02 C23 unsigned wide conversion, wide scanf short-buffer rejection, locale-parameter classification, invalid-sequence/no-ambient-state, and C-locale wide character classification symbols using classified outputs without recording raw locale handles, wide-buffer addresses, FILE pointers, filesystem paths, stdout bytes, stderr bytes, fd numbers, process ids, argv/envp values, or wall-clock timing.",
+  "spec_reference": "GNU C23 wide-character and locale-sensitive C/POSIX semantics for __isoc23_wcstoul_l, __isoc23_wcstoull, __isoc23_wcstoull_l, __isoc23_wcstoumax, __isoc23_wscanf, __iswalnum_l, __iswalpha_l, __iswblank_l, __iswcntrl_l, __iswctype_l, __iswdigit_l, and __iswgraph_l",
+  "campaign": {
+    "bead": "bd-vm6j0.5",
+    "campaign_id": "fcq-wchar-locale-encoding",
+    "wave_id": "wave-02-wchar-locale-encoding",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture",
+    "first_wave_symbols": [
+      "__isoc23_wcstoul_l",
+      "__isoc23_wcstoull",
+      "__isoc23_wcstoull_l",
+      "__isoc23_wcstoumax",
+      "__isoc23_wscanf",
+      "__iswalnum_l",
+      "__iswalpha_l",
+      "__iswblank_l",
+      "__iswcntrl_l",
+      "__iswctype_l",
+      "__iswdigit_l",
+      "__iswgraph_l"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "__isoc23_wcstoul_l_null_locale_positive_strict",
+      "function": "__isoc23_wcstoul_l",
+      "spec_section": "C23 wcstoul_l keeps unsigned wide parsing stable with null locale handle and leading whitespace",
+      "inputs": {
+        "symbol": "__isoc23_wcstoul_l",
+        "scenario": "wide_ulong_locale_null_handle_positive_prefix",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoul_l null-locale classified replay",
+        "expected": "WCSTOUL_L_VALUE_123_CONSUMED_6",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoul_l;mode=strict;expected=WCSTOUL_L_VALUE_123_CONSUMED_6;actual=WCSTOUL_L_VALUE_123_CONSUMED_6;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_wcstoul_l_null_locale_positive_hardened",
+      "function": "__isoc23_wcstoul_l",
+      "spec_section": "C23 wcstoul_l keeps unsigned wide parsing stable with null locale handle and leading whitespace",
+      "inputs": {
+        "symbol": "__isoc23_wcstoul_l",
+        "scenario": "wide_ulong_locale_null_handle_positive_prefix",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoul_l null-locale classified replay",
+        "expected": "WCSTOUL_L_VALUE_123_CONSUMED_6",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoul_l;mode=hardened;expected=WCSTOUL_L_VALUE_123_CONSUMED_6;actual=WCSTOUL_L_VALUE_123_CONSUMED_6;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_wcstoull_auto_hex_strict",
+      "function": "__isoc23_wcstoull",
+      "spec_section": "C23 wcstoull honors base-zero wide hexadecimal prefixes without recording buffer addresses",
+      "inputs": {
+        "symbol": "__isoc23_wcstoull",
+        "scenario": "wide_ulonglong_auto_base_hex_prefix",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoull classified conversion replay",
+        "expected": "WCSTOULL_VALUE_255_CONSUMED_4",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoull;mode=strict;expected=WCSTOULL_VALUE_255_CONSUMED_4;actual=WCSTOULL_VALUE_255_CONSUMED_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_wcstoull_auto_hex_hardened",
+      "function": "__isoc23_wcstoull",
+      "spec_section": "C23 wcstoull honors base-zero wide hexadecimal prefixes without recording buffer addresses",
+      "inputs": {
+        "symbol": "__isoc23_wcstoull",
+        "scenario": "wide_ulonglong_auto_base_hex_prefix",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoull classified conversion replay",
+        "expected": "WCSTOULL_VALUE_255_CONSUMED_4",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoull;mode=hardened;expected=WCSTOULL_VALUE_255_CONSUMED_4;actual=WCSTOULL_VALUE_255_CONSUMED_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_wcstoull_l_null_locale_decimal_strict",
+      "function": "__isoc23_wcstoull_l",
+      "spec_section": "C23 wcstoull_l keeps locale-parameter handling deterministic under null locale",
+      "inputs": {
+        "symbol": "__isoc23_wcstoull_l",
+        "scenario": "wide_ulonglong_locale_null_handle_decimal",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoull_l null-locale classified replay",
+        "expected": "WCSTOULL_L_VALUE_512_CONSUMED_3",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoull_l;mode=strict;expected=WCSTOULL_L_VALUE_512_CONSUMED_3;actual=WCSTOULL_L_VALUE_512_CONSUMED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_wcstoull_l_null_locale_decimal_hardened",
+      "function": "__isoc23_wcstoull_l",
+      "spec_section": "C23 wcstoull_l keeps locale-parameter handling deterministic under null locale",
+      "inputs": {
+        "symbol": "__isoc23_wcstoull_l",
+        "scenario": "wide_ulonglong_locale_null_handle_decimal",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoull_l null-locale classified replay",
+        "expected": "WCSTOULL_L_VALUE_512_CONSUMED_3",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoull_l;mode=hardened;expected=WCSTOULL_L_VALUE_512_CONSUMED_3;actual=WCSTOULL_L_VALUE_512_CONSUMED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_wcstoumax_auto_octal_strict",
+      "function": "__isoc23_wcstoumax",
+      "spec_section": "C23 wcstoumax base-zero parsing honors octal prefix and records only consumed width",
+      "inputs": {
+        "symbol": "__isoc23_wcstoumax",
+        "scenario": "wide_uintmax_auto_base_octal_prefix",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoumax classified conversion replay",
+        "expected": "WCSTOUMAX_VALUE_63_CONSUMED_3",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoumax;mode=strict;expected=WCSTOUMAX_VALUE_63_CONSUMED_3;actual=WCSTOUMAX_VALUE_63_CONSUMED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_wcstoumax_auto_octal_hardened",
+      "function": "__isoc23_wcstoumax",
+      "spec_section": "C23 wcstoumax base-zero parsing honors octal prefix and records only consumed width",
+      "inputs": {
+        "symbol": "__isoc23_wcstoumax",
+        "scenario": "wide_uintmax_auto_base_octal_prefix",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wcstoumax classified conversion replay",
+        "expected": "WCSTOUMAX_VALUE_63_CONSUMED_3",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wcstoumax;mode=hardened;expected=WCSTOUMAX_VALUE_63_CONSUMED_3;actual=WCSTOUMAX_VALUE_63_CONSUMED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__isoc23_wscanf_null_format_strict",
+      "function": "__isoc23_wscanf",
+      "spec_section": "C23 wscanf rejects null format before reading ambient stdin or variadic destinations",
+      "inputs": {
+        "symbol": "__isoc23_wscanf",
+        "scenario": "wscanf_null_format_short_buffer_returns_eof",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wscanf null-format classification",
+        "expected": "WSCANF_NULL_FORMAT_EOF",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wscanf;mode=strict;expected=WSCANF_NULL_FORMAT_EOF;actual=WSCANF_NULL_FORMAT_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__isoc23_wscanf_null_format_hardened",
+      "function": "__isoc23_wscanf",
+      "spec_section": "C23 wscanf rejects null format before reading ambient stdin or variadic destinations",
+      "inputs": {
+        "symbol": "__isoc23_wscanf",
+        "scenario": "wscanf_null_format_short_buffer_returns_eof",
+        "oracle_source": "FrankenLibC isoc_abi::__isoc23_wscanf null-format classification",
+        "expected": "WSCANF_NULL_FORMAT_EOF",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__isoc23_wscanf;mode=hardened;expected=WSCANF_NULL_FORMAT_EOF;actual=WSCANF_NULL_FORMAT_EOF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswalnum_l_ascii_alnum_strict",
+      "function": "__iswalnum_l",
+      "spec_section": "C locale wide alnum classification ignores locale handle for ASCII code point",
+      "inputs": {
+        "symbol": "__iswalnum_l",
+        "scenario": "c_locale_alnum_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswalnum_l classified C-locale replay",
+        "expected": "ISWALNUM_L_Z_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswalnum_l;mode=strict;expected=ISWALNUM_L_Z_TRUE;actual=ISWALNUM_L_Z_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswalnum_l_ascii_alnum_hardened",
+      "function": "__iswalnum_l",
+      "spec_section": "C locale wide alnum classification ignores locale handle for ASCII code point",
+      "inputs": {
+        "symbol": "__iswalnum_l",
+        "scenario": "c_locale_alnum_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswalnum_l classified C-locale replay",
+        "expected": "ISWALNUM_L_Z_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswalnum_l;mode=hardened;expected=ISWALNUM_L_Z_TRUE;actual=ISWALNUM_L_Z_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswalpha_l_ascii_alpha_strict",
+      "function": "__iswalpha_l",
+      "spec_section": "C locale wide alpha classification ignores locale handle for ASCII code point",
+      "inputs": {
+        "symbol": "__iswalpha_l",
+        "scenario": "c_locale_alpha_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswalpha_l classified C-locale replay",
+        "expected": "ISWALPHA_L_Z_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswalpha_l;mode=strict;expected=ISWALPHA_L_Z_TRUE;actual=ISWALPHA_L_Z_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswalpha_l_ascii_alpha_hardened",
+      "function": "__iswalpha_l",
+      "spec_section": "C locale wide alpha classification ignores locale handle for ASCII code point",
+      "inputs": {
+        "symbol": "__iswalpha_l",
+        "scenario": "c_locale_alpha_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswalpha_l classified C-locale replay",
+        "expected": "ISWALPHA_L_Z_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswalpha_l;mode=hardened;expected=ISWALPHA_L_Z_TRUE;actual=ISWALPHA_L_Z_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswblank_l_tab_blank_strict",
+      "function": "__iswblank_l",
+      "spec_section": "C locale wide blank classification accepts horizontal tab without locale capture",
+      "inputs": {
+        "symbol": "__iswblank_l",
+        "scenario": "c_locale_blank_tab_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswblank_l classified C-locale replay",
+        "expected": "ISWBLANK_L_TAB_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswblank_l;mode=strict;expected=ISWBLANK_L_TAB_TRUE;actual=ISWBLANK_L_TAB_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswblank_l_tab_blank_hardened",
+      "function": "__iswblank_l",
+      "spec_section": "C locale wide blank classification accepts horizontal tab without locale capture",
+      "inputs": {
+        "symbol": "__iswblank_l",
+        "scenario": "c_locale_blank_tab_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswblank_l classified C-locale replay",
+        "expected": "ISWBLANK_L_TAB_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswblank_l;mode=hardened;expected=ISWBLANK_L_TAB_TRUE;actual=ISWBLANK_L_TAB_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswcntrl_l_newline_control_strict",
+      "function": "__iswcntrl_l",
+      "spec_section": "C locale wide control classification accepts newline without locale capture",
+      "inputs": {
+        "symbol": "__iswcntrl_l",
+        "scenario": "c_locale_control_newline_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswcntrl_l classified C-locale replay",
+        "expected": "ISWCNTRL_L_NEWLINE_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswcntrl_l;mode=strict;expected=ISWCNTRL_L_NEWLINE_TRUE;actual=ISWCNTRL_L_NEWLINE_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswcntrl_l_newline_control_hardened",
+      "function": "__iswcntrl_l",
+      "spec_section": "C locale wide control classification accepts newline without locale capture",
+      "inputs": {
+        "symbol": "__iswcntrl_l",
+        "scenario": "c_locale_control_newline_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswcntrl_l classified C-locale replay",
+        "expected": "ISWCNTRL_L_NEWLINE_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswcntrl_l;mode=hardened;expected=ISWCNTRL_L_NEWLINE_TRUE;actual=ISWCNTRL_L_NEWLINE_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswctype_l_digit_descriptor_strict",
+      "function": "__iswctype_l",
+      "spec_section": "C locale iswctype_l applies digit descriptor without recording descriptor pointers or locale handles",
+      "inputs": {
+        "symbol": "__iswctype_l",
+        "scenario": "c_locale_wctype_digit_descriptor_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswctype_l classified C-locale replay",
+        "expected": "ISWCTYPE_L_DIGIT_8_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswctype_l;mode=strict;expected=ISWCTYPE_L_DIGIT_8_TRUE;actual=ISWCTYPE_L_DIGIT_8_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswctype_l_digit_descriptor_hardened",
+      "function": "__iswctype_l",
+      "spec_section": "C locale iswctype_l applies digit descriptor without recording descriptor pointers or locale handles",
+      "inputs": {
+        "symbol": "__iswctype_l",
+        "scenario": "c_locale_wctype_digit_descriptor_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswctype_l classified C-locale replay",
+        "expected": "ISWCTYPE_L_DIGIT_8_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswctype_l;mode=hardened;expected=ISWCTYPE_L_DIGIT_8_TRUE;actual=ISWCTYPE_L_DIGIT_8_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswdigit_l_ascii_digit_strict",
+      "function": "__iswdigit_l",
+      "spec_section": "C locale wide digit classification accepts ASCII digit without locale capture",
+      "inputs": {
+        "symbol": "__iswdigit_l",
+        "scenario": "c_locale_digit_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswdigit_l classified C-locale replay",
+        "expected": "ISWDIGIT_L_8_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswdigit_l;mode=strict;expected=ISWDIGIT_L_8_TRUE;actual=ISWDIGIT_L_8_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswdigit_l_ascii_digit_hardened",
+      "function": "__iswdigit_l",
+      "spec_section": "C locale wide digit classification accepts ASCII digit without locale capture",
+      "inputs": {
+        "symbol": "__iswdigit_l",
+        "scenario": "c_locale_digit_ascii_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswdigit_l classified C-locale replay",
+        "expected": "ISWDIGIT_L_8_TRUE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswdigit_l;mode=hardened;expected=ISWDIGIT_L_8_TRUE;actual=ISWDIGIT_L_8_TRUE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__iswgraph_l_space_negative_strict",
+      "function": "__iswgraph_l",
+      "spec_section": "C locale wide graph classification rejects ASCII space without locale capture",
+      "inputs": {
+        "symbol": "__iswgraph_l",
+        "scenario": "c_locale_graph_space_negative_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswgraph_l classified C-locale replay",
+        "expected": "ISWGRAPH_L_SPACE_FALSE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswgraph_l;mode=strict;expected=ISWGRAPH_L_SPACE_FALSE;actual=ISWGRAPH_L_SPACE_FALSE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__iswgraph_l_space_negative_hardened",
+      "function": "__iswgraph_l",
+      "spec_section": "C locale wide graph classification rejects ASCII space without locale capture",
+      "inputs": {
+        "symbol": "__iswgraph_l",
+        "scenario": "c_locale_graph_space_negative_without_locale_pointer_capture",
+        "oracle_source": "FrankenLibC wchar_abi::__iswgraph_l classified C-locale replay",
+        "expected": "ISWGRAPH_L_SPACE_FALSE",
+        "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__iswgraph_l;mode=hardened;expected=ISWGRAPH_L_SPACE_FALSE;actual=ISWGRAPH_L_SPACE_FALSE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

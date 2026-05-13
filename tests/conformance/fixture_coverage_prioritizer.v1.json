@@ -219,26 +219,26 @@
     },
     {
       "campaign_id": "fcq-wchar-locale-encoding",
-      "current_coverage_pct": 20.55,
+      "current_coverage_pct": 28.77,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 28.77,
+      "expected_coverage_after_first_wave_pct": 36.99,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "__isoc23_wcstoul_l",
-        "__isoc23_wcstoull",
-        "__isoc23_wcstoull_l",
-        "__isoc23_wcstoumax",
-        "__isoc23_wscanf",
-        "__iswalnum_l",
-        "__iswalpha_l",
-        "__iswblank_l",
-        "__iswcntrl_l",
-        "__iswctype_l",
-        "__iswdigit_l",
-        "__iswgraph_l"
+        "__iswlower_l",
+        "__iswprint_l",
+        "__iswpunct_l",
+        "__iswspace_l",
+        "__iswupper_l",
+        "__iswxdigit_l",
+        "__toascii_l",
+        "__tolower_l",
+        "__toupper_l",
+        "__towctrans_l",
+        "__towlower_l",
+        "__towupper_l"
       ],
       "module": "wchar_abi",
       "next_step": "Add stateful mb/wchar fixtures with invalid sequence, short buffer, and locale variation cases.",
@@ -251,20 +251,20 @@
         "stateful_encoding"
       ],
       "scores": {
-        "coverage_gap_score": 116,
+        "coverage_gap_score": 104,
         "feature_gap_risk_score": 0,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 4,
         "parity_risk_score": 5,
-        "priority_score": 2116,
+        "priority_score": 2104,
         "semantic_risk_score": 0,
         "workload_risk_score": 4
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "wchar, mbstate, wcs*, wcsto*, and locale-sensitive multibyte conversion behavior",
-      "target_covered": 30,
+      "target_covered": 42,
       "target_total": 146,
-      "target_uncovered": 116,
+      "target_uncovered": 104,
       "title": "wide-character and multibyte fixture wave",
       "workload_domains": [
         "locale_iconv",
@@ -968,7 +968,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3132,
+    "all_uncovered_target_symbols": 3120,
     "campaign_count": 11,
     "covered_modules": [
       "fortify_abi",
@@ -1000,7 +1000,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2778,
+    "selected_target_uncovered_symbols": 2766,
     "total_first_wave_fixture_count": 115
   }
 }
