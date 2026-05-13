@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T06:05:29Z",
-  "report_hash": "c6f7d4973d9209cd",
+  "generated_at": "2026-05-13T07:19:34Z",
+  "report_hash": "a105c85747552d23",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 598,
-    "symbols_without_fixtures": 3521,
-    "fixture_coverage_pct": 14.5,
-    "implemented_coverage_pct": 14.3,
-    "total_fixture_files": 76,
-    "total_cases": 1674,
+    "symbols_with_fixtures": 634,
+    "symbols_without_fixtures": 3485,
+    "fixture_coverage_pct": 15.4,
+    "implemented_coverage_pct": 15.3,
+    "total_fixture_files": 80,
+    "total_cases": 1718,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 400,
-    "symbols_with_errno_checks": 595,
-    "total_quality_issues": 3567,
-    "uncovered_action_count": 3521
+    "symbols_with_edge_cases": 410,
+    "symbols_with_errno_checks": 631,
+    "total_quality_issues": 3585,
+    "uncovered_action_count": 3485
   },
   "fixture_file_analyses": [
     {
@@ -75,11 +75,27 @@
       "issues": []
     },
     {
+      "file": "err_ops.json",
+      "family": "err_ops",
+      "valid": true,
+      "total_cases": 12,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
       "file": "errno_ops.json",
       "family": "errno_ops",
       "valid": true,
       "total_cases": 23,
       "unique_symbols": 7,
+      "issues": []
+    },
+    {
+      "file": "fenv_ops.json",
+      "family": "fenv_ops",
+      "valid": true,
+      "total_cases": 11,
+      "unique_symbols": 11,
       "issues": []
     },
     {
@@ -112,6 +128,14 @@
       "valid": true,
       "total_cases": 31,
       "unique_symbols": 28,
+      "issues": []
+    },
+    {
+      "file": "isoc_wide_scanf_ops.json",
+      "family": "isoc_wide_scanf_ops",
+      "valid": true,
+      "total_cases": 5,
+      "unique_symbols": 5,
       "issues": []
     },
     {
@@ -279,6 +303,14 @@
       "family": "resolv/dns",
       "valid": true,
       "total_cases": 25,
+      "unique_symbols": 8,
+      "issues": []
+    },
+    {
+      "file": "resolver_nss_core_wave01.json",
+      "family": "resolver_nss_core_wave01",
+      "valid": true,
+      "total_cases": 16,
       "unique_symbols": 8,
       "issues": []
     },
@@ -5701,14 +5733,19 @@
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -6729,14 +6766,20 @@
       "status": "Implemented",
       "module": "isoc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "isoc_wide_scanf_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -6780,14 +6823,19 @@
       "status": "Implemented",
       "module": "isoc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "isoc_wide_scanf_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -6810,14 +6858,20 @@
       "status": "Implemented",
       "module": "isoc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "isoc_wide_scanf_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -6855,14 +6909,20 @@
       "status": "Implemented",
       "module": "isoc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "isoc_wide_scanf_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -6870,14 +6930,20 @@
       "status": "Implemented",
       "module": "isoc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "isoc_wide_scanf_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -24300,14 +24366,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -24315,14 +24386,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -24420,14 +24496,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -27057,14 +27138,19 @@
       "status": "Implemented",
       "module": "fenv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -27102,14 +27188,19 @@
       "status": "Implemented",
       "module": "fenv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -27132,14 +27223,19 @@
       "status": "Implemented",
       "module": "fenv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -27162,14 +27258,19 @@
       "status": "Implemented",
       "module": "fenv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -27177,14 +27278,19 @@
       "status": "Implemented",
       "module": "fenv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -27228,14 +27334,19 @@
       "status": "Implemented",
       "module": "fenv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -27278,14 +27389,19 @@
       "status": "Implemented",
       "module": "fenv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -27308,14 +27424,19 @@
       "status": "Implemented",
       "module": "fenv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -27338,14 +27459,19 @@
       "status": "Implemented",
       "module": "fenv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -27353,14 +27479,19 @@
       "status": "Implemented",
       "module": "fenv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -27383,14 +27514,19 @@
       "status": "Implemented",
       "module": "fenv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "fenv_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -31503,14 +31639,19 @@
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -32333,15 +32474,22 @@
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "gethostbyaddr_r",
@@ -32651,15 +32799,21 @@
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "getnetbyaddr",
@@ -33104,15 +33258,20 @@
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "getprotobyname_r",
@@ -33134,15 +33293,20 @@
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "getprotobynumber_r",
@@ -33561,15 +33725,20 @@
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "getservbyname_r",
@@ -33591,15 +33760,21 @@
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "getservbyport_r",
@@ -60733,14 +60908,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -60748,14 +60928,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -60763,14 +60948,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -61069,14 +61259,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -61084,14 +61279,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -61099,14 +61299,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -61218,14 +61423,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -61233,14 +61443,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -61248,14 +61463,19 @@
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "err_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -66658,13 +66878,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__h_errno_location",
-      "status": "Implemented",
-      "module": "resolv_abi",
-      "action": "create fixture cases",
-      "priority": "high"
-    },
-    {
       "symbol": "__hypot_finite",
       "status": "Implemented",
       "module": "math_abi",
@@ -67071,13 +67284,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__isoc99_fwscanf",
-      "status": "Implemented",
-      "module": "isoc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__isoc99_sscanf",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -67085,23 +67291,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "__isoc99_swscanf",
-      "status": "Implemented",
-      "module": "isoc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__isoc99_vfscanf",
       "status": "Implemented",
       "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc99_vfwscanf",
-      "status": "Implemented",
-      "module": "isoc_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -67116,20 +67308,6 @@
       "symbol": "__isoc99_vsscanf",
       "status": "Implemented",
       "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc99_vswscanf",
-      "status": "Implemented",
-      "module": "isoc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc99_vwscanf",
-      "status": "Implemented",
-      "module": "isoc_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -73532,20 +73710,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "err",
-      "status": "Implemented",
-      "module": "err_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "errc",
-      "status": "Implemented",
-      "module": "err_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "errno",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -73584,13 +73748,6 @@
       "symbol": "error_print_progname",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "errx",
-      "status": "Implemented",
-      "module": "err_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -74778,13 +74935,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "feclearexcept",
-      "status": "Implemented",
-      "module": "fenv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fedisableexcept",
       "status": "Implemented",
       "module": "math_abi",
@@ -74799,23 +74949,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "fegetenv",
-      "status": "Implemented",
-      "module": "fenv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fegetexcept",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fegetexceptflag",
-      "status": "Implemented",
-      "module": "fenv_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -74827,32 +74963,11 @@
       "priority": "normal"
     },
     {
-      "symbol": "fegetround",
-      "status": "Implemented",
-      "module": "fenv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "feholdexcept",
-      "status": "Implemented",
-      "module": "fenv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "feof_unlocked",
       "status": "Implemented",
       "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "high"
-    },
-    {
-      "symbol": "feraiseexcept",
-      "status": "Implemented",
-      "module": "fenv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
     },
     {
       "symbol": "ferror_unlocked",
@@ -74862,23 +74977,9 @@
       "priority": "high"
     },
     {
-      "symbol": "fesetenv",
-      "status": "Implemented",
-      "module": "fenv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fesetexcept",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fesetexceptflag",
-      "status": "Implemented",
-      "module": "fenv_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -74890,30 +74991,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "fesetround",
-      "status": "Implemented",
-      "module": "fenv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fetestexcept",
-      "status": "Implemented",
-      "module": "fenv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fetestexceptflag",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "feupdateenv",
-      "status": "Implemented",
-      "module": "fenv_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -76668,13 +76748,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "gai_strerror",
-      "status": "Implemented",
-      "module": "resolv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "gai_suspend",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -76983,13 +77056,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "gethostbyaddr",
-      "status": "Implemented",
-      "module": "resolv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "gethostbyaddr_r",
       "status": "Implemented",
       "module": "inet_abi",
@@ -77091,13 +77157,6 @@
       "symbol": "getmsg",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "getnameinfo",
-      "status": "Implemented",
-      "module": "resolv_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -77291,23 +77350,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "getprotobyname",
-      "status": "Implemented",
-      "module": "resolv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "getprotobyname_r",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "getprotobynumber",
-      "status": "Implemented",
-      "module": "resolv_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -77480,23 +77525,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "getservbyname",
-      "status": "Implemented",
-      "module": "resolv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "getservbyname_r",
       "status": "Implemented",
       "module": "inet_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "getservbyport",
-      "status": "Implemented",
-      "module": "resolv_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -87791,27 +87822,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "verr",
-      "status": "Implemented",
-      "module": "err_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "verrc",
-      "status": "Implemented",
-      "module": "err_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "verrx",
-      "status": "Implemented",
-      "module": "err_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "versionsort",
       "status": "Implemented",
       "module": "dirent_abi",
@@ -87931,27 +87941,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "vwarn",
-      "status": "Implemented",
-      "module": "err_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "vwarnc",
-      "status": "Implemented",
-      "module": "err_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "vwarnx",
-      "status": "Implemented",
-      "module": "err_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "vwprintf",
       "status": "Implemented",
       "module": "wchar_abi",
@@ -87990,27 +87979,6 @@
       "symbol": "waitid",
       "status": "RawSyscall",
       "module": "process_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "warn",
-      "status": "Implemented",
-      "module": "err_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "warnc",
-      "status": "Implemented",
-      "module": "err_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "warnx",
-      "status": "Implemented",
-      "module": "err_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

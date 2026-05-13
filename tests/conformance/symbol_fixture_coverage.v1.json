@@ -4013,42 +4013,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 3,
-      "milestone_beads": [
-        "bd-66s"
-      ],
-      "module": "resolv_abi",
-      "recommended_bead": "bd-66s",
-      "severity": "high",
-      "severity_score": 802,
-      "status_breakdown": {
-        "Implemented": 11
-      },
-      "target_coverage_pct": 27.27,
-      "target_covered": 3,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 11,
-      "target_uncovered": 8,
-      "target_uncovered_symbols": [
-        "__h_errno_location",
-        "gai_strerror",
-        "gethostbyaddr",
-        "getnameinfo",
-        "getprotobyname",
-        "getprotobynumber",
-        "getservbyname",
-        "getservbyport"
-      ],
-      "total_symbols": 11,
-      "track": "resolver",
-      "uncovered_symbols": 8,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 7,
       "milestone_beads": [],
       "module": "dirent_abi",
@@ -4492,6 +4456,33 @@
       "workload_ids": []
     },
     {
+      "covered_symbols": 11,
+      "milestone_beads": [
+        "bd-66s"
+      ],
+      "module": "resolv_abi",
+      "recommended_bead": "bd-66s",
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "Implemented": 11
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 11,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 11,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 11,
+      "track": "resolver",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "covered_symbols": 2,
       "milestone_beads": [],
       "module": "search_abi",
@@ -4546,9 +4537,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1702,
-    "fixture_json_files": 79,
-    "fixture_json_unique_functions": 643,
+    "fixture_json_cases": 1718,
+    "fixture_json_files": 80,
+    "fixture_json_unique_functions": 651,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4569,7 +4560,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 645
+    "unique_fixture_functions_total": 653
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -8289,28 +8280,6 @@
       "workload_ids": []
     },
     {
-      "milestone_beads": [
-        "bd-66s"
-      ],
-      "module": "resolv_abi",
-      "recommended_bead": "bd-66s",
-      "severity": "high",
-      "target_uncovered_count": 8,
-      "target_uncovered_symbols": [
-        "__h_errno_location",
-        "gai_strerror",
-        "gethostbyaddr",
-        "getnameinfo",
-        "getprotobyname",
-        "getprotobynumber",
-        "getservbyname",
-        "getservbyport"
-      ],
-      "track": "resolver",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "milestone_beads": [],
       "module": "dirent_abi",
       "recommended_bead": null,
@@ -8453,10 +8422,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 15.09,
-      "covered": 559,
+      "coverage_pct": 15.3,
+      "covered": 567,
       "total": 3705,
-      "uncovered": 3146
+      "uncovered": 3138
     },
     "RawSyscall": {
       "coverage_pct": 16.67,
@@ -8466,21 +8435,21 @@
     }
   },
   "summary": {
-    "coverage_pct": 15.25,
-    "covered_exported_symbols": 628,
-    "target_coverage_pct": 15.25,
-    "target_covered_symbols": 628,
+    "coverage_pct": 15.44,
+    "covered_exported_symbols": 636,
+    "target_coverage_pct": 15.44,
+    "target_covered_symbols": 636,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3491,
+    "target_uncovered_symbols": 3483,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3491,
+    "uncovered_exported_symbols": 3483,
     "uncovered_target_families": 2,
     "weak_family_threshold_pct": 80.0,
-    "weak_target_families": 28
+    "weak_target_families": 27
   },
   "symbols": [
     {
@@ -44965,13 +44934,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "resolver_nss_core_wave01"
+      ],
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "resolv_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -45006,13 +44984,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "resolver_nss_core_wave01"
+      ],
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "resolv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -45047,13 +45034,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "resolver_nss_core_wave01"
+      ],
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "resolv_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -45084,13 +45080,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "resolver_nss_core_wave01"
+      ],
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "resolv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -45098,13 +45103,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "resolver_nss_core_wave01"
+      ],
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "resolv_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -45112,13 +45126,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "resolver_nss_core_wave01"
+      ],
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "resolv_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -45126,13 +45149,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "resolver_nss_core_wave01"
+      ],
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "resolv_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -45140,13 +45172,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "resolver_nss_core_wave01"
+      ],
+      "fixture_files": [
+        "resolver_nss_core_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "resolv_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -74335,26 +74376,6 @@
         "ulckpwdf"
       ],
       "track": "identity",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "module": "resolv_abi",
-      "recommended_bead": "bd-66s",
-      "severity": "high",
-      "target_coverage_pct": 27.27,
-      "target_uncovered_count": 8,
-      "target_uncovered_symbols": [
-        "__h_errno_location",
-        "gai_strerror",
-        "gethostbyaddr",
-        "getnameinfo",
-        "getprotobyname",
-        "getprotobynumber",
-        "getservbyname",
-        "getservbyport"
-      ],
-      "track": "resolver",
       "workload_blocked_count": 0,
       "workload_ids": []
     },

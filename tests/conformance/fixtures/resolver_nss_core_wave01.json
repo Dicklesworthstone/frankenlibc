@@ -1,0 +1,298 @@
+{
+  "version": "v1",
+  "family": "resolver_nss_core_wave01",
+  "captured_at": "2026-05-13T07:20:00Z",
+  "description": "Strict/hardened deterministic resolver/NSS core fixture wave using class-only outcomes for h_errno, gai_strerror, reverse lookup, numeric getnameinfo, protocol lookup, and service lookup without live DNS, raw pointer addresses, host paths, fd numbers, timestamps, stderr bytes, or process-global counters.",
+  "spec_reference": "POSIX/GNU __h_errno_location, gai_strerror, gethostbyaddr, getnameinfo, getprotobyname, getprotobynumber, getservbyname, and getservbyport resolver/NSS semantics",
+  "campaign": {
+    "bead": "bd-kgy3r.1",
+    "campaign_id": "fcq-resolver-nss-core",
+    "wave_id": "wave-01-resolver-nss-core",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture",
+    "first_wave_symbols": [
+      "__h_errno_location",
+      "gai_strerror",
+      "gethostbyaddr",
+      "getnameinfo",
+      "getprotobyname",
+      "getprotobynumber",
+      "getservbyname",
+      "getservbyport"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "h_errno_location_writable_strict",
+      "function": "__h_errno_location",
+      "spec_section": "GNU resolver h_errno thread-local access",
+      "inputs": {
+        "symbol": "__h_errno_location",
+        "scenario": "thread_local_slot_writable",
+        "value": 2468,
+        "expected": "H_ERRNO_WRITABLE_2468",
+        "oracle_source": "class-only writable thread-local h_errno slot",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=__h_errno_location;mode=strict;expected=H_ERRNO_WRITABLE_2468;actual=H_ERRNO_WRITABLE_2468;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "h_errno_location_writable_hardened",
+      "function": "__h_errno_location",
+      "spec_section": "GNU resolver h_errno thread-local access",
+      "inputs": {
+        "symbol": "__h_errno_location",
+        "scenario": "thread_local_slot_writable",
+        "value": 2468,
+        "expected": "H_ERRNO_WRITABLE_2468",
+        "oracle_source": "class-only writable thread-local h_errno slot",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=__h_errno_location;mode=hardened;expected=H_ERRNO_WRITABLE_2468;actual=H_ERRNO_WRITABLE_2468;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "gai_strerror_noname_class_strict",
+      "function": "gai_strerror",
+      "spec_section": "POSIX gai_strerror",
+      "inputs": {
+        "symbol": "gai_strerror",
+        "scenario": "known_error_code_class",
+        "errcode": -2,
+        "expected": "GAI_STRERROR_NAME_OR_SERVICE_NOT_KNOWN",
+        "oracle_source": "class-only EAI_NONAME status text",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=gai_strerror;mode=strict;expected=GAI_STRERROR_NAME_OR_SERVICE_NOT_KNOWN;actual=GAI_STRERROR_NAME_OR_SERVICE_NOT_KNOWN;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "gai_strerror_noname_class_hardened",
+      "function": "gai_strerror",
+      "spec_section": "POSIX gai_strerror",
+      "inputs": {
+        "symbol": "gai_strerror",
+        "scenario": "known_error_code_class",
+        "errcode": -2,
+        "expected": "GAI_STRERROR_NAME_OR_SERVICE_NOT_KNOWN",
+        "oracle_source": "class-only EAI_NONAME status text",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=gai_strerror;mode=hardened;expected=GAI_STRERROR_NAME_OR_SERVICE_NOT_KNOWN;actual=GAI_STRERROR_NAME_OR_SERVICE_NOT_KNOWN;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "gethostbyaddr_unsupported_family_strict",
+      "function": "gethostbyaddr",
+      "spec_section": "POSIX gethostbyaddr",
+      "inputs": {
+        "symbol": "gethostbyaddr",
+        "scenario": "unsupported_family_class",
+        "addr": "127.0.0.1",
+        "af": 10,
+        "expected": "GETHOSTBYADDR_NULL_HERRNO_HOST_NOT_FOUND",
+        "oracle_source": "class-only unsupported address family result",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=gethostbyaddr;mode=strict;expected=GETHOSTBYADDR_NULL_HERRNO_HOST_NOT_FOUND;actual=GETHOSTBYADDR_NULL_HERRNO_HOST_NOT_FOUND;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "gethostbyaddr_unsupported_family_hardened",
+      "function": "gethostbyaddr",
+      "spec_section": "POSIX gethostbyaddr",
+      "inputs": {
+        "symbol": "gethostbyaddr",
+        "scenario": "unsupported_family_class",
+        "addr": "127.0.0.1",
+        "af": 10,
+        "expected": "GETHOSTBYADDR_NULL_HERRNO_HOST_NOT_FOUND",
+        "oracle_source": "class-only unsupported address family result",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=gethostbyaddr;mode=hardened;expected=GETHOSTBYADDR_NULL_HERRNO_HOST_NOT_FOUND;actual=GETHOSTBYADDR_NULL_HERRNO_HOST_NOT_FOUND;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getnameinfo_numeric_ipv4_strict",
+      "function": "getnameinfo",
+      "spec_section": "POSIX getnameinfo numeric host/service",
+      "inputs": {
+        "symbol": "getnameinfo",
+        "scenario": "numeric_ipv4_class",
+        "addr": "127.0.0.1",
+        "port": 8080,
+        "expected": "GETNAMEINFO_RC_0_HOST_127.0.0.1_SERV_8080",
+        "oracle_source": "numeric sockaddr formatter without reverse DNS",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=getnameinfo;mode=strict;expected=GETNAMEINFO_RC_0_HOST_127.0.0.1_SERV_8080;actual=GETNAMEINFO_RC_0_HOST_127.0.0.1_SERV_8080;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getnameinfo_numeric_ipv4_hardened",
+      "function": "getnameinfo",
+      "spec_section": "POSIX getnameinfo numeric host/service",
+      "inputs": {
+        "symbol": "getnameinfo",
+        "scenario": "numeric_ipv4_class",
+        "addr": "127.0.0.1",
+        "port": 8080,
+        "expected": "GETNAMEINFO_RC_0_HOST_127.0.0.1_SERV_8080",
+        "oracle_source": "numeric sockaddr formatter without reverse DNS",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=getnameinfo;mode=hardened;expected=GETNAMEINFO_RC_0_HOST_127.0.0.1_SERV_8080;actual=GETNAMEINFO_RC_0_HOST_127.0.0.1_SERV_8080;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getprotobyname_missing_name_strict",
+      "function": "getprotobyname",
+      "spec_section": "POSIX getprotobyname",
+      "inputs": {
+        "symbol": "getprotobyname",
+        "scenario": "missing_protocol_name_class",
+        "name": "frankenlibc-no-such-protocol",
+        "expected": "GETPROTOBYNAME_NULL",
+        "oracle_source": "class-only missing protocol name",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=getprotobyname;mode=strict;expected=GETPROTOBYNAME_NULL;actual=GETPROTOBYNAME_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getprotobyname_missing_name_hardened",
+      "function": "getprotobyname",
+      "spec_section": "POSIX getprotobyname",
+      "inputs": {
+        "symbol": "getprotobyname",
+        "scenario": "missing_protocol_name_class",
+        "name": "frankenlibc-no-such-protocol",
+        "expected": "GETPROTOBYNAME_NULL",
+        "oracle_source": "class-only missing protocol name",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=getprotobyname;mode=hardened;expected=GETPROTOBYNAME_NULL;actual=GETPROTOBYNAME_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getprotobynumber_missing_number_strict",
+      "function": "getprotobynumber",
+      "spec_section": "POSIX getprotobynumber",
+      "inputs": {
+        "symbol": "getprotobynumber",
+        "scenario": "missing_protocol_number_class",
+        "proto": 99999,
+        "expected": "GETPROTOBYNUMBER_NULL",
+        "oracle_source": "class-only missing protocol number",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=getprotobynumber;mode=strict;expected=GETPROTOBYNUMBER_NULL;actual=GETPROTOBYNUMBER_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getprotobynumber_missing_number_hardened",
+      "function": "getprotobynumber",
+      "spec_section": "POSIX getprotobynumber",
+      "inputs": {
+        "symbol": "getprotobynumber",
+        "scenario": "missing_protocol_number_class",
+        "proto": 99999,
+        "expected": "GETPROTOBYNUMBER_NULL",
+        "oracle_source": "class-only missing protocol number",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=getprotobynumber;mode=hardened;expected=GETPROTOBYNUMBER_NULL;actual=GETPROTOBYNUMBER_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getservbyname_missing_service_strict",
+      "function": "getservbyname",
+      "spec_section": "POSIX getservbyname",
+      "inputs": {
+        "symbol": "getservbyname",
+        "scenario": "missing_service_name_class",
+        "name": "frankenlibc-no-such-service",
+        "proto": "tcp",
+        "expected": "GETSERVBYNAME_NULL",
+        "oracle_source": "class-only missing service name",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=getservbyname;mode=strict;expected=GETSERVBYNAME_NULL;actual=GETSERVBYNAME_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getservbyname_missing_service_hardened",
+      "function": "getservbyname",
+      "spec_section": "POSIX getservbyname",
+      "inputs": {
+        "symbol": "getservbyname",
+        "scenario": "missing_service_name_class",
+        "name": "frankenlibc-no-such-service",
+        "proto": "tcp",
+        "expected": "GETSERVBYNAME_NULL",
+        "oracle_source": "class-only missing service name",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=getservbyname;mode=hardened;expected=GETSERVBYNAME_NULL;actual=GETSERVBYNAME_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getservbyport_missing_service_strict",
+      "function": "getservbyport",
+      "spec_section": "POSIX getservbyport",
+      "inputs": {
+        "symbol": "getservbyport",
+        "scenario": "missing_service_port_class",
+        "port": 65000,
+        "proto": "frankenlibc-no-such-proto",
+        "expected": "GETSERVBYPORT_NULL",
+        "oracle_source": "class-only missing service port/protocol pair",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=getservbyport;mode=strict;expected=GETSERVBYPORT_NULL;actual=GETSERVBYPORT_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getservbyport_missing_service_hardened",
+      "function": "getservbyport",
+      "spec_section": "POSIX getservbyport",
+      "inputs": {
+        "symbol": "getservbyport",
+        "scenario": "missing_service_port_class",
+        "port": 65000,
+        "proto": "frankenlibc-no-such-proto",
+        "expected": "GETSERVBYPORT_NULL",
+        "oracle_source": "class-only missing service port/protocol pair",
+        "ambient_state_policy": "forbid_dns_network_host_path_pointer_fd_time_or_process_capture"
+      },
+      "expected_output": "symbol=getservbyport;mode=hardened;expected=GETSERVBYPORT_NULL;actual=GETSERVBYPORT_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

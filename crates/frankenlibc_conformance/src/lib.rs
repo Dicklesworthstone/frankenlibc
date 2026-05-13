@@ -722,6 +722,10 @@ pub fn execute_fixture_case(
         "lookup_hosts" => execute_lookup_hosts_case(inputs, mode),
         "getaddrinfo" => execute_getaddrinfo_case(inputs, mode),
         "gethostbyname" => execute_gethostbyname_case(inputs, mode),
+        "__h_errno_location" | "gai_strerror" | "gethostbyaddr" | "getnameinfo"
+        | "getprotobyname" | "getprotobynumber" | "getservbyname" | "getservbyport" => {
+            execute_resolver_nss_core_wave01_case(function, inputs, mode)
+        }
         "getpwnam" => execute_getpwnam_case(inputs, mode),
         "getpwuid" => execute_getpwuid_case(inputs, mode),
         "setpwent" => execute_setpwent_case(inputs, mode),
@@ -2892,6 +2896,229 @@ fn execute_gethostbyname_case(
         "HOSTENT_PTR"
     };
     Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_resolver_nss_core_wave01_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "resolver/NSS core fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = resolver_nss_core_wave01_actual(function, inputs)?;
+    Ok(non_host_execution(resolver_nss_core_wave01_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn resolver_nss_core_wave01_log(symbol: &str, mode: &str, expected: &str, actual: &str) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn resolver_nss_core_wave01_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    match function {
+        "__h_errno_location" => resolver_h_errno_location_actual(inputs),
+        "gai_strerror" => resolver_gai_strerror_actual(inputs),
+        "gethostbyaddr" => resolver_gethostbyaddr_actual(inputs),
+        "getnameinfo" => resolver_getnameinfo_actual(inputs),
+        "getprotobyname" => resolver_getprotobyname_actual(inputs),
+        "getprotobynumber" => resolver_getprotobynumber_actual(inputs),
+        "getservbyname" => resolver_getservbyname_actual(inputs),
+        "getservbyport" => resolver_getservbyport_actual(inputs),
+        other => Err(format!("unsupported resolver/NSS core fixture: {other}")),
+    }
+}
+
+fn resolver_h_errno_location_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let value = parse_i32(inputs, "value")?;
+    // SAFETY: __h_errno_location returns the process-local resolver error slot.
+    let ptr = unsafe { frankenlibc_abi::resolv_abi::__h_errno_location() };
+    if ptr.is_null() {
+        return Ok(String::from("H_ERRNO_NULL"));
+    }
+    // SAFETY: the returned pointer is the writable thread-local h_errno slot.
+    let observed = unsafe {
+        *ptr = value;
+        let observed = *ptr;
+        *ptr = 0;
+        observed
+    };
+    Ok(format!("H_ERRNO_WRITABLE_{observed}"))
+}
+
+fn resolver_gai_strerror_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let errcode = parse_i32(inputs, "errcode")?;
+    // SAFETY: gai_strerror returns a static NUL-terminated string pointer.
+    let ptr = unsafe { frankenlibc_abi::resolv_abi::gai_strerror(errcode) };
+    if ptr.is_null() {
+        return Ok(String::from("GAI_STRERROR_NULL"));
+    }
+    // SAFETY: non-null pointer returned by gai_strerror points at static C text.
+    let text = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
+    let class = if errcode == 0 && text == "Success" {
+        "SUCCESS"
+    } else if errcode == libc::EAI_NONAME && !text.is_empty() {
+        "NAME_OR_SERVICE_NOT_KNOWN"
+    } else if !text.is_empty() {
+        "NONEMPTY"
+    } else {
+        "EMPTY"
+    };
+    Ok(format!("GAI_STRERROR_{class}"))
+}
+
+fn resolver_gethostbyaddr_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let addr = parse_ipv4_fixture_octets(inputs)?;
+    let af = parse_i32(inputs, "af")?;
+    // SAFETY: __h_errno_location returns the writable thread-local h_errno slot.
+    unsafe { *frankenlibc_abi::resolv_abi::__h_errno_location() = 0 };
+    // SAFETY: addr is a live four-byte IPv4 fixture buffer.
+    let ptr = unsafe {
+        frankenlibc_abi::resolv_abi::gethostbyaddr(
+            addr.as_ptr().cast::<c_void>(),
+            addr.len() as libc::socklen_t,
+            af,
+        )
+    };
+    // SAFETY: same thread-local slot read immediately after the call.
+    let h_errno = unsafe { *frankenlibc_abi::resolv_abi::__h_errno_location() };
+    let ptr_class = if ptr.is_null() { "NULL" } else { "PTR" };
+    Ok(format!(
+        "GETHOSTBYADDR_{ptr_class}_HERRNO_{}",
+        resolver_h_errno_class(h_errno)
+    ))
+}
+
+fn resolver_getnameinfo_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let addr = parse_ipv4_fixture_octets(inputs)?;
+    let port = parse_u16(inputs, "port")?;
+    let sin = libc::sockaddr_in {
+        sin_family: libc::AF_INET as u16,
+        sin_port: port.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes(addr),
+        },
+        sin_zero: [0; 8],
+    };
+    let mut host = [0_u8; 64];
+    let mut serv = [0_u8; 16];
+    // SAFETY: sockaddr and output buffers are live for the call.
+    let rc = unsafe {
+        frankenlibc_abi::resolv_abi::getnameinfo(
+            (&sin as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
+            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            host.as_mut_ptr().cast::<c_char>(),
+            host.len() as libc::socklen_t,
+            serv.as_mut_ptr().cast::<c_char>(),
+            serv.len() as libc::socklen_t,
+            libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+        )
+    };
+    let host_text = if rc == 0 {
+        // SAFETY: getnameinfo writes NUL-terminated text on success.
+        unsafe { CStr::from_ptr(host.as_ptr().cast::<c_char>()) }
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        String::from("ERR")
+    };
+    let serv_text = if rc == 0 {
+        // SAFETY: getnameinfo writes NUL-terminated text on success.
+        unsafe { CStr::from_ptr(serv.as_ptr().cast::<c_char>()) }
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        String::from("ERR")
+    };
+    Ok(format!(
+        "GETNAMEINFO_RC_{rc}_HOST_{host_text}_SERV_{serv_text}"
+    ))
+}
+
+fn resolver_getprotobyname_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let name = CString::new(parse_string(inputs, "name")?)
+        .map_err(|_| String::from("protocol name contains interior NUL"))?;
+    // SAFETY: CString provides a valid NUL-terminated name.
+    let ptr = unsafe { frankenlibc_abi::resolv_abi::getprotobyname(name.as_ptr()) };
+    Ok(if ptr.is_null() {
+        String::from("GETPROTOBYNAME_NULL")
+    } else {
+        String::from("GETPROTOBYNAME_PTR")
+    })
+}
+
+fn resolver_getprotobynumber_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let proto = parse_i32(inputs, "proto")?;
+    // SAFETY: scalar-only lookup has no pointer preconditions.
+    let ptr = unsafe { frankenlibc_abi::resolv_abi::getprotobynumber(proto) };
+    Ok(if ptr.is_null() {
+        String::from("GETPROTOBYNUMBER_NULL")
+    } else {
+        String::from("GETPROTOBYNUMBER_PTR")
+    })
+}
+
+fn resolver_getservbyname_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let name = CString::new(parse_string(inputs, "name")?)
+        .map_err(|_| String::from("service name contains interior NUL"))?;
+    let proto = CString::new(parse_string(inputs, "proto")?)
+        .map_err(|_| String::from("service proto contains interior NUL"))?;
+    // SAFETY: CStrings provide valid NUL-terminated service/protocol names.
+    let ptr = unsafe { frankenlibc_abi::resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+    Ok(if ptr.is_null() {
+        String::from("GETSERVBYNAME_NULL")
+    } else {
+        String::from("GETSERVBYNAME_PTR")
+    })
+}
+
+fn resolver_getservbyport_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let port = parse_u16(inputs, "port")?;
+    let proto = CString::new(parse_string(inputs, "proto")?)
+        .map_err(|_| String::from("service proto contains interior NUL"))?;
+    // SAFETY: proto CString is valid and port is supplied in network byte order.
+    let ptr = unsafe {
+        frankenlibc_abi::resolv_abi::getservbyport(port.to_be() as c_int, proto.as_ptr())
+    };
+    Ok(if ptr.is_null() {
+        String::from("GETSERVBYPORT_NULL")
+    } else {
+        String::from("GETSERVBYPORT_PTR")
+    })
+}
+
+fn parse_ipv4_fixture_octets(inputs: &serde_json::Value) -> Result<[u8; 4], String> {
+    let text = parse_string(inputs, "addr")?;
+    text.parse::<std::net::Ipv4Addr>()
+        .map(|addr| addr.octets())
+        .map_err(|err| format!("invalid IPv4 fixture address '{text}': {err}"))
+}
+
+fn resolver_h_errno_class(value: c_int) -> &'static str {
+    match value {
+        0 => "OK",
+        1 => "HOST_NOT_FOUND",
+        2 => "TRY_AGAIN",
+        3 => "NO_RECOVERY",
+        4 => "NO_DATA",
+        _ => "OTHER",
+    }
 }
 
 fn execute_getpwnam_case(

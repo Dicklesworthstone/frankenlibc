@@ -284,61 +284,6 @@
       ]
     },
     {
-      "campaign_id": "fcq-resolver-nss-core",
-      "current_coverage_pct": 27.27,
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "expected_coverage_after_first_wave_pct": 100.0,
-      "first_wave_fixture_count": 8,
-      "first_wave_symbols": [
-        "__h_errno_location",
-        "gai_strerror",
-        "gethostbyaddr",
-        "getnameinfo",
-        "getprotobyname",
-        "getprotobynumber",
-        "getservbyname",
-        "getservbyport"
-      ],
-      "module": "resolv_abi",
-      "next_step": "Finish resolver fixture coverage with localhost, invalid, service, protocol, reverse, and h_errno cases.",
-      "oracle_kind": "resolver_nss_fixture_oracle",
-      "rank": 6,
-      "risk_tags": [
-        "claim_blocked",
-        "resolver",
-        "resolver_nss_failure",
-        "semantic_divergence",
-        "timeout_policy"
-      ],
-      "scores": {
-        "coverage_gap_score": 8,
-        "feature_gap_risk_score": 3,
-        "hard_parts_risk_tags": [
-          "resolver"
-        ],
-        "implementation_complexity_score": 4,
-        "parity_risk_score": 5,
-        "priority_score": 2308,
-        "semantic_risk_score": 0,
-        "workload_risk_score": 5
-      },
-      "structured_log_fields": "required_log_fields",
-      "symbol_family": "getaddrinfo-adjacent status, host/service/protocol lookup, and h_errno behavior",
-      "target_covered": 3,
-      "target_total": 11,
-      "target_uncovered": 8,
-      "title": "resolver service lookup fixture wave",
-      "workload_domains": [
-        "resolver_nss",
-        "language_runtimes",
-        "package_manager",
-        "threaded_services"
-      ]
-    },
-    {
       "campaign_id": "fcq-poll-event-loop",
       "current_coverage_pct": 13.33,
       "deterministic_e2e_scripts": [
@@ -364,7 +309,7 @@
       "module": "poll_abi",
       "next_step": "Add deterministic timeout, readiness, invalid-fd, and mode-pair cases for event-loop syscalls.",
       "oracle_kind": "threaded_service_replay",
-      "rank": 7,
+      "rank": 6,
       "risk_tags": [
         "event_loop",
         "mode_pair_mismatch",
@@ -419,7 +364,7 @@
       "module": "wchar_abi",
       "next_step": "Add stateful mb/wchar fixtures with invalid sequence, short buffer, and locale variation cases.",
       "oracle_kind": "locale_mode_pair_oracle",
-      "rank": 8,
+      "rank": 7,
       "risk_tags": [
         "buffer_boundary",
         "locale_sensitive",
@@ -472,7 +417,7 @@
       "module": "socket_abi",
       "next_step": "Add loopback-only socket fixtures with deterministic peer, timeout, and errno normalization.",
       "oracle_kind": "loopback_network_replay",
-      "rank": 9,
+      "rank": 8,
       "risk_tags": [
         "errno_mapping",
         "mode_pair_mismatch",
@@ -528,7 +473,7 @@
       "module": "fortify_abi",
       "next_step": "Add positive and negative checked-wrapper fixtures before fortify safety claims expand.",
       "oracle_kind": "hardened_bounds_oracle",
-      "rank": 10,
+      "rank": 9,
       "risk_tags": [
         "buffer_boundary",
         "claim_blocked",
@@ -579,7 +524,7 @@
       "module": "locale_abi",
       "next_step": "Add pinned-locale fixtures before user-facing locale or transliteration support claims advance.",
       "oracle_kind": "locale_fixture_oracle",
-      "rank": 11,
+      "rank": 10,
       "risk_tags": [
         "claim_blocked",
         "locale",
@@ -638,7 +583,7 @@
       "module": "time_abi",
       "next_step": "Add pinned-time and invalid-clock fixtures with deterministic tolerance rules.",
       "oracle_kind": "pinned_time_fixture_oracle",
-      "rank": 12,
+      "rank": 11,
       "risk_tags": [
         "errno_mapping",
         "semantic_divergence",
@@ -695,7 +640,7 @@
       "module": "math_abi",
       "next_step": "Start with finite aliases and fpclassification before expanding to the long libm tail.",
       "oracle_kind": "glibc_fixture_oracle",
-      "rank": 13,
+      "rank": 12,
       "risk_tags": [
         "fenv_adjacent",
         "numeric_boundary",
@@ -753,7 +698,7 @@
       "module": "signal_abi",
       "next_step": "Add deterministic signal-mask and alternate-stack fixtures before broader async-cancellation campaigns.",
       "oracle_kind": "mode_pair_process_replay",
-      "rank": 14,
+      "rank": 13,
       "risk_tags": [
         "async_signal",
         "diagnostics_gap",
@@ -807,7 +752,7 @@
       "module": "glibc_internal_abi",
       "next_step": "Split compatibility internals into supported, deterministic-fallback, and claim-blocked fixture groups.",
       "oracle_kind": "symbol_coverage_gate",
-      "rank": 15,
+      "rank": 14,
       "risk_tags": [
         "compatibility_internal",
         "diagnostics_gap",
@@ -861,7 +806,7 @@
       "module": "rpc_abi",
       "next_step": "Add deterministic compatibility/unsupported fixtures before claiming RPC-related coverage.",
       "oracle_kind": "claim_reconciliation_gate",
-      "rank": 16,
+      "rank": 15,
       "risk_tags": [
         "deterministic_fallback",
         "legacy_network",
@@ -1162,8 +1107,8 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3491,
-    "campaign_count": 16,
+    "all_uncovered_target_symbols": 3483,
+    "campaign_count": 15,
     "covered_modules": [
       "fortify_abi",
       "glibc_internal_abi",
@@ -1172,7 +1117,6 @@
       "poll_abi",
       "process_abi",
       "pthread_abi",
-      "resolv_abi",
       "rpc_abi",
       "signal_abi",
       "socket_abi",
@@ -1199,7 +1143,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3137,
-    "total_first_wave_fixture_count": 182
+    "selected_target_uncovered_symbols": 3129,
+    "total_first_wave_fixture_count": 174
   }
 }
