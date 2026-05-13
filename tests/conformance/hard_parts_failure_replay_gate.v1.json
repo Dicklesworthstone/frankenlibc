@@ -100,6 +100,14 @@
       "trigger": "oracle_kind or allowed_divergence is not declared by oracle_precedence_divergence.v1.json"
     },
     {
+      "id": "non_remote_rch_command",
+      "trigger": "cargo-bearing replay runner command omits RCH_FORCE_REMOTE=true, an isolated CARGO_TARGET_DIR, rch exec, or uses shell-wrapped cargo"
+    },
+    {
+      "id": "local_rch_fallback",
+      "trigger": "replay runner evidence includes an [RCH] local fallback marker instead of remote-only proof"
+    },
+    {
       "id": "unsupported_scenario_class",
       "trigger": "scenario failure_family is outside the required hard-parts replay family set"
     },
@@ -148,7 +156,7 @@
       },
       "direct_runner": {
         "runner_kind": "direct",
-        "command": "rch exec -- cargo test -p frankenlibc-harness --test resolver_conformance_test resolver_ops_fixture_cases_match_direct_executor -- --nocapture",
+        "command": "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_hard_parts_resolver cargo test -p frankenlibc-harness --test resolver_conformance_test resolver_ops_fixture_cases_match_direct_executor -- --nocapture",
         "artifact_refs": [
           "crates/frankenlibc-harness/tests/resolver_conformance_test.rs",
           "tests/conformance/fixtures/resolver.json"
@@ -202,7 +210,7 @@
       },
       "direct_runner": {
         "runner_kind": "direct",
-        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test -- --nocapture",
+        "command": "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_hard_parts_iconv cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test -- --nocapture",
         "artifact_refs": [
           "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
           "tests/conformance/fixtures/iconv_phase1.json"
@@ -256,7 +264,7 @@
       },
       "direct_runner": {
         "runner_kind": "direct",
-        "command": "rch exec -- cargo test -p frankenlibc-harness --test loader_edges_conformance_test -- --nocapture",
+        "command": "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_hard_parts_loader cargo test -p frankenlibc-harness --test loader_edges_conformance_test -- --nocapture",
         "artifact_refs": [
           "crates/frankenlibc-harness/tests/loader_edges_conformance_test.rs",
           "tests/conformance/fixtures/loader_edges.json"
@@ -310,7 +318,7 @@
       },
       "direct_runner": {
         "runner_kind": "direct",
-        "command": "rch exec -- cargo test -p frankenlibc-harness --test stdio_file_ops_conformance_test -- --nocapture",
+        "command": "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_hard_parts_stdio cargo test -p frankenlibc-harness --test stdio_file_ops_conformance_test -- --nocapture",
         "artifact_refs": [
           "crates/frankenlibc-harness/tests/stdio_file_ops_conformance_test.rs",
           "tests/conformance/fixtures/stdio_file_ops.json"
@@ -364,7 +372,7 @@
       },
       "direct_runner": {
         "runner_kind": "direct",
-        "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_thread_conformance_test -- --nocapture",
+        "command": "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_hard_parts_pthread cargo test -p frankenlibc-harness --test pthread_thread_conformance_test -- --nocapture",
         "artifact_refs": [
           "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs",
           "tests/conformance/fixtures/pthread_thread.json"
@@ -418,7 +426,7 @@
       },
       "direct_runner": {
         "runner_kind": "direct",
-        "command": "rch exec -- cargo test -p frankenlibc-harness --test math_ops_conformance_test -- --nocapture",
+        "command": "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_hard_parts_math cargo test -p frankenlibc-harness --test math_ops_conformance_test -- --nocapture",
         "artifact_refs": [
           "crates/frankenlibc-harness/tests/math_ops_conformance_test.rs",
           "tests/conformance/fixtures/math_ops.json"
@@ -472,7 +480,7 @@
       },
       "direct_runner": {
         "runner_kind": "direct",
-        "command": "rch exec -- cargo test -p frankenlibc-harness --test signal_ops_conformance_test -- --nocapture",
+        "command": "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_hard_parts_signal cargo test -p frankenlibc-harness --test signal_ops_conformance_test -- --nocapture",
         "artifact_refs": [
           "crates/frankenlibc-harness/tests/signal_ops_conformance_test.rs",
           "crates/frankenlibc-harness/tests/setjmp_ops_conformance_test.rs",

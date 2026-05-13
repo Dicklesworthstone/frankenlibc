@@ -45,6 +45,8 @@ const REQUIRED_DIAGNOSTIC_SIGNATURES: &[&str] = &[
     "missing_fixture",
     "nondeterministic_output",
     "oracle_mismatch",
+    "non_remote_rch_command",
+    "local_rch_fallback",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -129,6 +131,19 @@ fn mutable_scenario(manifest: &mut Value, index: usize) -> TestResult<&mut Value
     mutable_scenarios(manifest)?
         .get_mut(index)
         .ok_or_else(|| test_error(format!("manifest.scenarios[{index}] must exist")))
+}
+
+fn set_direct_runner_command(
+    manifest: &mut Value,
+    scenario_index: usize,
+    command: &str,
+) -> TestResult {
+    mutable_scenario(manifest, scenario_index)?
+        .get_mut("direct_runner")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| test_error("scenario.direct_runner must be object"))?
+        .insert("command".to_string(), Value::String(command.to_string()));
+    Ok(())
 }
 
 fn run_gate(root: &Path, manifest: Option<&Path>, out_dir: &Path) -> TestResult<Output> {
@@ -263,6 +278,23 @@ fn manifest_defines_replay_schema_and_required_hard_parts_families() -> TestResu
             )?,
             "direct"
         );
+        let direct_command = string_field(
+            field(scenario, "direct_runner", "scenario")?,
+            "command",
+            "direct_runner",
+        )?;
+        assert!(
+            direct_command.contains("RCH_FORCE_REMOTE=true"),
+            "direct runner command must force remote rch: {direct_command}"
+        );
+        assert!(
+            direct_command.contains("rch exec -- env CARGO_TARGET_DIR="),
+            "direct runner command must use rch exec with isolated target dir: {direct_command}"
+        );
+        assert!(
+            !direct_command.contains("[RCH] local"),
+            "direct runner command must not include local fallback proof: {direct_command}"
+        );
         assert_eq!(
             string_field(
                 field(scenario, "isolated_runner", "scenario")?,
@@ -272,6 +304,57 @@ fn manifest_defines_replay_schema_and_required_hard_parts_families() -> TestResu
             "isolated"
         );
     }
+
+    Ok(())
+}
+
+#[test]
+fn gate_rejects_non_remote_rch_direct_runner_commands() -> TestResult {
+    let root = workspace_root();
+    let base = load_json(&manifest_path(&root))?;
+
+    let mut missing_force = base.clone();
+    set_direct_runner_command(
+        &mut missing_force,
+        0,
+        "RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_hard_parts_bad cargo test -p frankenlibc-harness --test resolver_conformance_test -- --nocapture",
+    )?;
+    let missing_force_report =
+        run_negative_case(&root, "hard-parts-replay-missing-force", &missing_force)?;
+    expect_failure_signature(&missing_force_report, "non_remote_rch_command")?;
+
+    let mut missing_target_dir = base.clone();
+    set_direct_runner_command(
+        &mut missing_target_dir,
+        1,
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test -- --nocapture",
+    )?;
+    let missing_target_report = run_negative_case(
+        &root,
+        "hard-parts-replay-missing-target-dir",
+        &missing_target_dir,
+    )?;
+    expect_failure_signature(&missing_target_report, "non_remote_rch_command")?;
+
+    let mut shell_wrapped = base.clone();
+    set_direct_runner_command(
+        &mut shell_wrapped,
+        2,
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- bash -c 'cargo test -p frankenlibc-harness --test loader_edges_conformance_test -- --nocapture'",
+    )?;
+    let shell_wrapped_report =
+        run_negative_case(&root, "hard-parts-replay-shell-wrapped", &shell_wrapped)?;
+    expect_failure_signature(&shell_wrapped_report, "non_remote_rch_command")?;
+
+    let mut local_fallback = base;
+    set_direct_runner_command(
+        &mut local_fallback,
+        3,
+        "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_hard_parts_bad cargo test -p frankenlibc-harness --test stdio_file_ops_conformance_test -- --nocapture [RCH] local (remote execution failed)",
+    )?;
+    let local_fallback_report =
+        run_negative_case(&root, "hard-parts-replay-local-fallback", &local_fallback)?;
+    expect_failure_signature(&local_fallback_report, "local_rch_fallback")?;
 
     Ok(())
 }

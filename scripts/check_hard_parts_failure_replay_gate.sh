@@ -15,6 +15,7 @@ mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
 
 python3 - "${ROOT}" "${MANIFEST}" "${REPORT}" "${LOG}" "${SOURCE_COMMIT}" "${TARGET_DIR}" "${ARCH}" <<'PY'
 import json
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -74,6 +75,8 @@ SIGNATURE_PRIORITY = [
     "unsupported_scenario_class",
     "nondeterministic_output",
     "oracle_mismatch",
+    "non_remote_rch_command",
+    "local_rch_fallback",
 ]
 
 errors: list[tuple[str, str]] = []
@@ -132,6 +135,75 @@ def existing_path(path_text, ctx: str) -> None:
 
 def source_commit_ok(marker: str) -> bool:
     return marker in ("current", "unknown", source_commit)
+
+
+def split_command(command: str, ctx: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError as exc:
+        fail("non_remote_rch_command", f"{ctx}.command is not shell-parseable: {exc}")
+        return []
+
+
+def validate_runner_command(command: str, ctx: str) -> None:
+    if "[RCH] local" in command or "remote execution failed" in command:
+        fail(
+            "local_rch_fallback",
+            f"{ctx}.command includes local rch fallback evidence: {command}",
+        )
+
+    tokens = split_command(command, ctx)
+    shell_wrapped = "bash" in tokens or "sh" in tokens or "-c" in tokens
+    if "cargo" in command and "cargo" not in tokens and shell_wrapped:
+        fail("non_remote_rch_command", f"{ctx}.command must not shell-wrap cargo: {command}")
+        return
+
+    if "cargo" not in tokens:
+        return
+
+    cargo_index = tokens.index("cargo")
+    if shell_wrapped and (
+        "bash" in tokens[:cargo_index] or "sh" in tokens[:cargo_index] or "-c" in tokens[:cargo_index]
+    ):
+        fail("non_remote_rch_command", f"{ctx}.command must not shell-wrap cargo: {command}")
+        return
+
+    if "RCH_FORCE_REMOTE=true" not in tokens:
+        fail("non_remote_rch_command", f"{ctx}.command must set RCH_FORCE_REMOTE=true: {command}")
+
+    try:
+        rch_index = tokens.index("rch")
+    except ValueError:
+        fail("non_remote_rch_command", f"{ctx}.command must run cargo through rch exec: {command}")
+        return
+
+    if rch_index + 1 >= len(tokens) or tokens[rch_index + 1] != "exec":
+        fail("non_remote_rch_command", f"{ctx}.command must use rch exec: {command}")
+        return
+
+    try:
+        dashdash_index = tokens.index("--", rch_index + 2)
+    except ValueError:
+        fail("non_remote_rch_command", f"{ctx}.command must use rch exec -- env: {command}")
+        return
+
+    if dashdash_index >= cargo_index:
+        fail("non_remote_rch_command", f"{ctx}.command must place cargo after rch exec -- env: {command}")
+        return
+
+    if dashdash_index + 1 >= len(tokens) or tokens[dashdash_index + 1] != "env":
+        fail("non_remote_rch_command", f"{ctx}.command must use env after rch exec --: {command}")
+
+    env_tokens = tokens[dashdash_index + 1 : cargo_index]
+    if not any(token.startswith("CARGO_TARGET_DIR=") and token != "CARGO_TARGET_DIR=" for token in env_tokens):
+        fail("non_remote_rch_command", f"{ctx}.command must set isolated CARGO_TARGET_DIR: {command}")
+
+    package_ok = any(
+        token == "-p" and index + 1 < len(tokens) and tokens[index + 1] == "frankenlibc-harness"
+        for index, token in enumerate(tokens)
+    )
+    if not package_ok:
+        fail("missing_field", f"{ctx}.command must scope cargo to -p frankenlibc-harness")
 
 
 manifest = load_json(manifest_path, "manifest")
@@ -264,8 +336,7 @@ for index, scenario_value in enumerate(scenarios):
         artifact_refs = [str(ref) for ref in require_array(runner, "artifact_refs", f"{ctx}.{runner_field}")]
         if runner_kind != expected_kind:
             fail("missing_field", f"{ctx}.{runner_field}.runner_kind must be {expected_kind}")
-        if "rch exec -- cargo" in command and " -p frankenlibc-harness" not in command:
-            fail("missing_field", f"{ctx}.{runner_field}.command must scope cargo to -p frankenlibc-harness")
+        validate_runner_command(command, f"{ctx}.{runner_field}")
         for artifact_ref in artifact_refs:
             existing_path(artifact_ref, f"{ctx}.{runner_field}.artifact_refs")
         runner_counts[expected_kind] += 1
