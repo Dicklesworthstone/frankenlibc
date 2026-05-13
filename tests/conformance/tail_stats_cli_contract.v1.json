@@ -1,0 +1,71 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "tail-stats-cli-contract",
+  "bead": "bd-t3fcw",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "0381441cf6c380541c644110d7d7cc210a138961",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_harness::tail_stats::compute as a standalone CLI. The tail_stats module is the canonical deterministic p50/p95/p99/p999 and p99 bootstrap-CI calculator referenced by perf_budget_policy and high-core tail baselines, but shell/CI gates previously needed Rust glue to compute a reusable report from raw samples.",
+  "subcommand_name": "tail-stats",
+  "binary_target": "harness",
+  "required_flags": [
+    "--samples-json",
+    "--seed",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_harness::tail_stats::compute",
+  "input_contract": {
+    "format": "json_array",
+    "sample_type": "finite_json_number",
+    "minimum_count": 1
+  },
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "tail_stats_report",
+    "required_fields": [
+      "kind",
+      "input",
+      "ok",
+      "error_kind",
+      "message",
+      "n",
+      "sample_count",
+      "p50",
+      "p95",
+      "p99",
+      "p999",
+      "p99_ci_low",
+      "p99_ci_high",
+      "sufficient_for_p99",
+      "sufficient_for_p999",
+      "overloaded_host",
+      "seed",
+      "bootstrap_iters"
+    ],
+    "error_kind_enum": [
+      "io",
+      "json",
+      "root",
+      "invalid_sample",
+      "non_finite_sample",
+      "empty",
+      "invalid_quantile"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "ok_true_iff_error_kind_is_null": true,
+    "exit_non_zero_when_ok_false": true,
+    "missing_file_must_fail_closed": true,
+    "invalid_json_must_fail_closed": true,
+    "non_array_root_must_fail_closed": true,
+    "empty_samples_must_fail_closed": true,
+    "non_numeric_samples_must_fail_closed": true,
+    "same_samples_and_seed_must_be_deterministic": true
+  },
+  "summary": {
+    "bead": "bd-t3fcw",
+    "subcommand": "tail-stats",
+    "report_only": true,
+    "claim_status": "in_progress"
+  }
+}

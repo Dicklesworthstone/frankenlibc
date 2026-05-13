@@ -737,6 +737,20 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Compute deterministic tail statistics for a JSON sample array.
+    /// Emits one tail_stats_report JSONL record with p50/p95/p99/p999,
+    /// p99 bootstrap CI, sufficiency flags, and overload classification.
+    TailStats {
+        /// Input JSON path: an array of finite numeric samples.
+        #[arg(long)]
+        samples_json: PathBuf,
+        /// PCG32 seed used by tail_stats::compute for p99 bootstrap CI.
+        #[arg(long)]
+        seed: u64,
+        /// Output JSONL path: one tail_stats_report record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Validate a live-measurement p99_delta JSONL row against a
     /// budget via `tail_stats::validate_p99_delta_against_budget`.
     /// Emits one p99_delta_validation JSONL record and exits non-zero
@@ -754,6 +768,26 @@ enum Command {
         /// Output JSONL path: one p99_delta_validation record.
         #[arg(long)]
         output: PathBuf,
+    },
+    /// Load the canonical evidence rows from disk, build a
+    /// deterministic Dossier, and emit both a JSONL summary record
+    /// and the markdown render. Exposes
+    /// `explain_dossier::{load_dossier_inputs_from_disk, build_dossier,
+    /// render_markdown}` as a standalone CLI for CI.
+    ExplainDossier {
+        /// Workspace root that contains the canonical evidence
+        /// artifacts. Default: current directory.
+        #[arg(long, default_value = ".")]
+        workspace_root: PathBuf,
+        /// 40-char hex SHA every evidence row must match.
+        #[arg(long)]
+        expected_commit: String,
+        /// Output path for the rendered markdown dossier.
+        #[arg(long)]
+        output_markdown: PathBuf,
+        /// Output JSONL path: one dossier record.
+        #[arg(long)]
+        output_jsonl: PathBuf,
     },
     /// Compute repair-symbol sizing + maximum tolerated loss fraction
     /// via `frankenlibc_membrane::runtime_math::evidence::
@@ -948,6 +982,50 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+}
+
+type TailStatsCliError = (String, String);
+
+fn tail_stats_cli_error(kind: &str, message: impl Into<String>) -> TailStatsCliError {
+    (kind.to_string(), message.into())
+}
+
+fn read_tail_stats_samples(path: &Path) -> Result<Vec<f64>, TailStatsCliError> {
+    let body =
+        std::fs::read_to_string(path).map_err(|e| tail_stats_cli_error("io", e.to_string()))?;
+    let value = serde_json::from_str::<serde_json::Value>(&body)
+        .map_err(|e| tail_stats_cli_error("json", e.to_string()))?;
+    let samples = value
+        .as_array()
+        .ok_or_else(|| tail_stats_cli_error("root", "expected JSON sample array"))?;
+    samples
+        .iter()
+        .enumerate()
+        .map(|(idx, sample)| {
+            let n = sample.as_f64().ok_or_else(|| {
+                tail_stats_cli_error(
+                    "invalid_sample",
+                    format!("sample[{idx}] must be a finite JSON number"),
+                )
+            })?;
+            if n.is_finite() {
+                Ok(n)
+            } else {
+                Err(tail_stats_cli_error(
+                    "non_finite_sample",
+                    format!("sample[{idx}] must be finite"),
+                ))
+            }
+        })
+        .collect()
+}
+
+fn tail_stats_error_kind(err: frankenlibc_harness::tail_stats::TailStatsError) -> &'static str {
+    match err {
+        frankenlibc_harness::tail_stats::TailStatsError::Empty => "empty",
+        frankenlibc_harness::tail_stats::TailStatsError::NonFiniteSample => "non_finite_sample",
+        frankenlibc_harness::tail_stats::TailStatsError::InvalidQuantile => "invalid_quantile",
+    }
 }
 
 type P99DeltaCliError = (String, String);
@@ -2351,6 +2429,105 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 output.display()
             );
         }
+        Command::TailStats {
+            samples_json,
+            seed,
+            output,
+        } => {
+            use frankenlibc_harness::tail_stats::compute;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            let (sample_count, stats, error): (
+                Option<usize>,
+                Option<frankenlibc_harness::tail_stats::TailStats>,
+                Option<TailStatsCliError>,
+            ) = match read_tail_stats_samples(&samples_json) {
+                Err(e) => (None, None, Some(e)),
+                Ok(samples) => {
+                    let sample_count = Some(samples.len());
+                    match compute(&samples, seed) {
+                        Ok(stats) => (sample_count, Some(stats), None),
+                        Err(err) => (
+                            sample_count,
+                            None,
+                            Some((tail_stats_error_kind(err).to_string(), err.to_string())),
+                        ),
+                    }
+                }
+            };
+
+            let ok = error.is_none();
+            let (error_kind, message) = error
+                .map(|(kind, message)| {
+                    (
+                        serde_json::Value::String(kind),
+                        serde_json::Value::String(message),
+                    )
+                })
+                .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
+            let line = if let Some(stats) = stats {
+                serde_json::json!({
+                    "kind": "tail_stats_report",
+                    "input": samples_json.display().to_string(),
+                    "ok": ok,
+                    "error_kind": error_kind,
+                    "message": message,
+                    "n": stats.n,
+                    "sample_count": sample_count,
+                    "p50": stats.p50,
+                    "p95": stats.p95,
+                    "p99": stats.p99,
+                    "p999": stats.p999,
+                    "p99_ci_low": stats.p99_ci_low,
+                    "p99_ci_high": stats.p99_ci_high,
+                    "sufficient_for_p99": stats.sufficient_for_p99,
+                    "sufficient_for_p999": stats.sufficient_for_p999,
+                    "overloaded_host": stats.overloaded_host,
+                    "seed": stats.seed,
+                    "bootstrap_iters": stats.bootstrap_iters,
+                })
+            } else {
+                serde_json::json!({
+                    "kind": "tail_stats_report",
+                    "input": samples_json.display().to_string(),
+                    "ok": ok,
+                    "error_kind": error_kind,
+                    "message": message,
+                    "n": serde_json::Value::Null,
+                    "sample_count": sample_count,
+                    "p50": serde_json::Value::Null,
+                    "p95": serde_json::Value::Null,
+                    "p99": serde_json::Value::Null,
+                    "p999": serde_json::Value::Null,
+                    "p99_ci_low": serde_json::Value::Null,
+                    "p99_ci_high": serde_json::Value::Null,
+                    "sufficient_for_p99": serde_json::Value::Null,
+                    "sufficient_for_p999": serde_json::Value::Null,
+                    "overloaded_host": serde_json::Value::Null,
+                    "seed": seed,
+                    "bootstrap_iters": serde_json::Value::Null,
+                })
+            };
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "tail-stats: ok={ok} wrote 1 JSONL record to {}",
+                output.display()
+            );
+            if !ok {
+                return Err(format!(
+                    "tail-stats: rejected {} - see {}",
+                    samples_json.display(),
+                    output.display()
+                )
+                .into());
+            }
+        }
         Command::ValidateP99Delta {
             jsonl,
             allowed_budget_ns,
@@ -2431,6 +2608,71 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::ExplainDossier {
+            workspace_root,
+            expected_commit,
+            output_markdown,
+            output_jsonl,
+        } => {
+            use frankenlibc_harness::explain_dossier::{
+                build_dossier, load_dossier_inputs_from_disk, render_markdown,
+            };
+            if expected_commit.len() != 40 || !expected_commit.chars().all(|c| c.is_ascii_hexdigit())
+            {
+                return Err(format!(
+                    "--expected-commit must be a 40-char ascii-hex SHA; got {expected_commit:?}"
+                )
+                .into());
+            }
+            let inputs = load_dossier_inputs_from_disk(&workspace_root, &expected_commit)
+                .map_err(|err| format!("load_dossier_inputs_from_disk: {err:?}"))?;
+            let dossier = build_dossier(&inputs, &expected_commit)
+                .map_err(|err| format!("build_dossier: {err:?}"))?;
+            for p in [&output_markdown, &output_jsonl] {
+                if let Some(parent) = p.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            let markdown = render_markdown(&dossier);
+            std::fs::write(&output_markdown, &markdown)?;
+            let evidence_rows_json: Vec<serde_json::Value> = dossier
+                .evidence_rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "kind": r.kind,
+                        "summary": r.summary,
+                        "artifact_refs": r.artifact_refs,
+                        "source_commit": r.source_commit,
+                    })
+                })
+                .collect();
+            let line = serde_json::json!({
+                "kind": "dossier",
+                "schema_version": dossier.schema_version,
+                "source_commit": dossier.source_commit,
+                "practical_recommendation": dossier.practical_recommendation,
+                "replacement_level": dossier.replacement_level,
+                "first_failing_blocker": dossier.first_failing_blocker,
+                "top_decision_terms": dossier.top_decision_terms,
+                "strict_hardened_divergence_signature": dossier.strict_hardened_divergence_signature,
+                "next_diagnostic_command": dossier.next_diagnostic_command,
+                "support_taxonomy_claim": dossier.support_taxonomy_claim,
+                "evidence_rows": evidence_rows_json,
+                "all_artifact_refs": dossier.all_artifact_refs,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output_jsonl, body)?;
+            eprintln!(
+                "explain-dossier: wrote markdown ({} bytes) to {} and 1 JSONL record to {}",
+                markdown.len(),
+                output_markdown.display(),
+                output_jsonl.display()
+            );
         }
         Command::DeriveRepairMath {
             k_source,
