@@ -769,6 +769,24 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Derive a deterministic repair schedule for a single repair
+    /// symbol via
+    /// `frankenlibc_membrane::runtime_math::evidence::derive_repair_schedule_v1`.
+    /// Emits one JSONL record carrying the degree + selected indices.
+    DeriveRepairSchedule {
+        /// Epoch seed used to derive the schedule.
+        #[arg(long)]
+        epoch_seed: u64,
+        /// Number of source symbols K_source.
+        #[arg(long)]
+        k_source: u16,
+        /// Repair symbol ESI (encoding symbol id).
+        #[arg(long)]
+        repair_esi: u16,
+        /// Output JSONL path: one repair_schedule record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Decode a raw 128-byte v1 decision payload via
     /// `frankenlibc_membrane::runtime_math::evidence::decode_decision_payload_v1`
     /// and emit one structured JSONL record describing the payload.
@@ -2633,6 +2651,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::DeriveRepairSchedule {
+            epoch_seed,
+            k_source,
+            repair_esi,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::evidence::derive_repair_schedule_v1;
+            let schedule = derive_repair_schedule_v1(epoch_seed, k_source, repair_esi);
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let indices: Vec<u16> = schedule.indices().to_vec();
+            let line = serde_json::json!({
+                "kind": "repair_schedule",
+                "epoch_seed": epoch_seed,
+                "k_source": k_source,
+                "repair_esi": repair_esi,
+                "degree": schedule.degree(),
+                "indices": indices,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "derive-repair-schedule: epoch_seed={epoch_seed} k_source={k_source} repair_esi={repair_esi} → degree={} indices={:?}",
+                schedule.degree(),
+                indices
+            );
         }
         Command::DecodeDecisionPayload { payload, output } => {
             use frankenlibc_membrane::runtime_math::evidence::{

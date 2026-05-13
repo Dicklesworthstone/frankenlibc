@@ -1,0 +1,55 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "derive-repair-schedule-cli-contract",
+  "bead": "bd-sef4y",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "cf5f9e9aa4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::evidence::derive_repair_schedule_v1 as a standalone CLI. The lib API derives the deterministic repair schedule (subset of source indices) for a single repair symbol given (epoch_seed, k_source, repair_esi). The algorithm picks a degree via splitmix64 trailing-zeros distribution capped by REPAIR_MAX_DEGREE_V1=16, then chooses distinct indices with linear-probe duplicate resolution. Previously reachable only from Rust callers; the CLI bridge lets CI verify schedule derivation determinism + invariants without compiling.",
+  "subcommand_name": "derive-repair-schedule",
+  "binary_target": "harness",
+  "required_flags": [
+    "--epoch-seed",
+    "--k-source",
+    "--repair-esi",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::derive_repair_schedule_v1",
+  "repair_max_degree_v1": 16,
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "repair_schedule",
+    "required_fields": [
+      "kind",
+      "epoch_seed",
+      "k_source",
+      "repair_esi",
+      "degree",
+      "indices"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "echoes_inputs_into_output_record": true,
+    "indices_array_length_equals_degree": true,
+    "degree_zero_when_k_source_zero": true,
+    "degree_at_or_below_REPAIR_MAX_DEGREE_V1": true,
+    "degree_at_or_below_k_source_when_positive": true,
+    "indices_all_below_k_source_when_positive": true,
+    "indices_all_distinct": true,
+    "deterministic_given_seed_inputs": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "indices_length_mismatch_degree",
+    "degree_above_cap",
+    "indices_duplicate_or_out_of_range",
+    "non_deterministic_output"
+  ],
+  "summary": {
+    "bead": "bd-sef4y",
+    "subcommand": "derive-repair-schedule",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
