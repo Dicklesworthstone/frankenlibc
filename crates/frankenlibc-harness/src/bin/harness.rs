@@ -769,6 +769,32 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Evaluate the thread-safety barrier certificate via
+    /// `frankenlibc_membrane::runtime_math::sos_barrier::evaluate_thread_safety_barrier`.
+    /// Positive headroom => certified safe; negative => violation.
+    EvaluateThreadSafetyBarrier {
+        /// Concurrent threads touching allocator paths.
+        #[arg(long)]
+        thread_count: u32,
+        /// Concurrent writers observed for a single arena free-list
+        /// critical section.
+        #[arg(long)]
+        concurrent_writers: u32,
+        /// True when ownership checks disagree.
+        #[arg(long, default_value_t = false)]
+        arena_owner_conflict: bool,
+        /// Normalized skew between expected/observed free-list
+        /// generation progress (0..1_000_000).
+        #[arg(long)]
+        free_list_skew_ppm: u32,
+        /// Normalized lag between expected/observed allocation
+        /// epochs (0..1_000_000).
+        #[arg(long)]
+        allocation_epoch_lag_ppm: u32,
+        /// Output JSONL path: one thread_safety_barrier record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Evaluate the allocator-fragmentation barrier certificate via
     /// `frankenlibc_membrane::runtime_math::sos_barrier::evaluate_fragmentation_barrier`.
     /// Positive headroom => certified safe; negative => violation.
@@ -2707,6 +2733,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::EvaluateThreadSafetyBarrier {
+            thread_count,
+            concurrent_writers,
+            arena_owner_conflict,
+            free_list_skew_ppm,
+            allocation_epoch_lag_ppm,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_thread_safety_barrier;
+            let headroom = evaluate_thread_safety_barrier(
+                thread_count,
+                concurrent_writers,
+                arena_owner_conflict,
+                free_list_skew_ppm,
+                allocation_epoch_lag_ppm,
+            );
+            let safe = headroom >= 0;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "thread_safety_barrier",
+                "thread_count": thread_count,
+                "concurrent_writers": concurrent_writers,
+                "arena_owner_conflict": arena_owner_conflict,
+                "free_list_skew_ppm": free_list_skew_ppm,
+                "allocation_epoch_lag_ppm": allocation_epoch_lag_ppm,
+                "headroom": headroom,
+                "safe": safe,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "evaluate-thread-safety-barrier: threads={thread_count} writers={concurrent_writers} conflict={arena_owner_conflict} skew_ppm={free_list_skew_ppm} epoch_lag_ppm={allocation_epoch_lag_ppm} → headroom={headroom} safe={safe}"
+            );
         }
         Command::EvaluateFragmentationBarrier {
             allocation_count,

@@ -1,0 +1,57 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "evaluate-thread-safety-barrier-cli-contract",
+  "bead": "bd-fq2t0",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "d6a7d906a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::sos_barrier::evaluate_thread_safety_barrier as a standalone CLI. The lib API computes the thread-safety barrier certificate over five inputs (thread_count, concurrent_writers, arena_owner_conflict bool, free_list_skew_ppm, allocation_epoch_lag_ppm) and returns an i64 score where positive => certified-safe headroom and negative => certificate violation. Previously reachable only from Rust callers; the CLI bridge lets CI verify thread-safety invariants without compiling.",
+  "subcommand_name": "evaluate-thread-safety-barrier",
+  "binary_target": "harness",
+  "required_flags": [
+    "--thread-count",
+    "--concurrent-writers",
+    "--free-list-skew-ppm",
+    "--allocation-epoch-lag-ppm",
+    "--output"
+  ],
+  "optional_flags": [
+    "--arena-owner-conflict"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_thread_safety_barrier",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "thread_safety_barrier",
+    "required_fields": [
+      "kind",
+      "thread_count",
+      "concurrent_writers",
+      "arena_owner_conflict",
+      "free_list_skew_ppm",
+      "allocation_epoch_lag_ppm",
+      "headroom",
+      "safe"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "echoes_inputs_into_output_record": true,
+    "safe_iff_headroom_at_or_above_zero": true,
+    "deterministic_given_inputs": true,
+    "all_zero_inputs_certified_safe": true,
+    "owner_conflict_with_max_telemetry_violates_certificate": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "safe_true_with_negative_headroom",
+    "safe_false_with_non_negative_headroom",
+    "non_deterministic_output",
+    "max_stress_certified_safe"
+  ],
+  "summary": {
+    "bead": "bd-fq2t0",
+    "subcommand": "evaluate-thread-safety-barrier",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
