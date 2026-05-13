@@ -803,7 +803,9 @@ pub fn execute_fixture_case(
         | "fcloseall" | "fdopen" | "feof_unlocked" | "ferror_unlocked" | "fflush_unlocked"
         | "fgetc_unlocked" | "fgetpos" | "fgetpos64" | "fgets_unlocked" | "fgetwc_unlocked"
         | "fgetws_unlocked" | "fileno_unlocked" | "flockfile" | "fmemopen" | "fopen64"
-        | "fopencookie" | "fputc_unlocked" => {
+        | "fopencookie" | "fputc_unlocked" | "fputs_unlocked" | "fputwc_unlocked"
+        | "fputws_unlocked" | "fread_unlocked" | "freopen" | "freopen64" | "fscanf" | "fseeko"
+        | "fseeko64" | "fsetpos" | "fsetpos64" | "ftello" => {
             execute_stdio_libio_symbols_case(function, inputs, mode)
         }
         "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
@@ -19365,6 +19367,152 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
                 Ok(format!("FPUTC_UNLOCKED_RC_{rc}"))
             }
         }),
+        "fputs_unlocked" => stdio_libio_tmpfile(|stream| {
+            let text = CString::new("puts").map_err(|_| "fputs text has NUL".to_string())?;
+            let rc = unsafe { frankenlibc_abi::stdio_abi::fputs_unlocked(text.as_ptr(), stream) };
+            if rc == 0 {
+                Ok(String::from("FPUTS_UNLOCKED_RC_0"))
+            } else {
+                Ok(format!("FPUTS_UNLOCKED_RC_{rc}"))
+            }
+        }),
+        "fputwc_unlocked" => stdio_libio_tmpfile(|stream| {
+            let rc = unsafe {
+                frankenlibc_abi::wchar_abi::fputwc_unlocked(
+                    libc::wchar_t::from(b'W'),
+                    stream.cast::<libc::FILE>(),
+                )
+            };
+            if rc == u32::from(b'W') {
+                Ok(String::from("FPUTWC_UNLOCKED_CHAR_W"))
+            } else {
+                Ok(format!("FPUTWC_UNLOCKED_RC_{rc}"))
+            }
+        }),
+        "fputws_unlocked" => stdio_libio_tmpfile(|stream| {
+            let text = [
+                libc::wchar_t::from(b'w'),
+                libc::wchar_t::from(b'i'),
+                libc::wchar_t::from(b'd'),
+                libc::wchar_t::from(b'e'),
+                0,
+            ];
+            let rc = unsafe {
+                frankenlibc_abi::wchar_abi::fputws_unlocked(
+                    text.as_ptr(),
+                    stream.cast::<libc::FILE>(),
+                )
+            };
+            if rc == 0 {
+                Ok(String::from("FPUTWS_UNLOCKED_RC_0"))
+            } else {
+                Ok(format!("FPUTWS_UNLOCKED_RC_{rc}"))
+            }
+        }),
+        "fread_unlocked" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"read")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let mut buf = [0u8; 4];
+            let n = unsafe {
+                frankenlibc_abi::stdio_abi::fread_unlocked(
+                    buf.as_mut_ptr().cast::<c_void>(),
+                    1,
+                    buf.len(),
+                    stream,
+                )
+            };
+            let text = String::from_utf8_lossy(&buf[..n.min(buf.len())]);
+            Ok(format!("FREAD_UNLOCKED_N_{n}_TEXT_{text}"))
+        }),
+        "freopen" => {
+            let stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
+            if stream.is_null() {
+                return Ok(String::from("FREOPEN_TMPFILE_FAILED"));
+            }
+            let mode = CString::new("r").map_err(|_| "freopen mode has NUL".to_string())?;
+            let reopened = unsafe {
+                frankenlibc_abi::stdio_abi::freopen(std::ptr::null(), mode.as_ptr(), stream)
+            };
+            if reopened.is_null() {
+                Ok(String::from("FREOPEN_NULL_PATH_STREAM_NULL"))
+            } else {
+                let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(reopened) };
+                Ok(String::from("FREOPEN_STREAM_REOPENED"))
+            }
+        }
+        "freopen64" => {
+            let stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
+            if stream.is_null() {
+                return Ok(String::from("FREOPEN64_TMPFILE_FAILED"));
+            }
+            let mode = CString::new("r").map_err(|_| "freopen64 mode has NUL".to_string())?;
+            let reopened = unsafe {
+                frankenlibc_abi::stdio_abi::freopen64(std::ptr::null(), mode.as_ptr(), stream)
+            };
+            if reopened.is_null() {
+                Ok(String::from("FREOPEN64_NULL_PATH_STREAM_NULL"))
+            } else {
+                let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(reopened) };
+                Ok(String::from("FREOPEN64_STREAM_REOPENED"))
+            }
+        }
+        "fscanf" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"17")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let mut value: c_int = -99;
+            let rc = unsafe {
+                frankenlibc_abi::stdio_abi::fscanf(stream, fmt.as_ptr(), &mut value as *mut c_int)
+            };
+            Ok(format!("FSCANF_RC_{rc}_VALUE_{value}"))
+        }),
+        "fseeko" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"seek")?;
+            let rc = unsafe { frankenlibc_abi::stdio_abi::fseeko(stream, 2, libc::SEEK_SET) };
+            let pos = unsafe { frankenlibc_abi::stdio_abi::ftello(stream) };
+            Ok(format!("FSEEKO_RC_{rc}_POS_{pos}"))
+        }),
+        "fseeko64" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"seek64")?;
+            let rc = unsafe { frankenlibc_abi::stdio_abi::fseeko64(stream, 2, libc::SEEK_SET) };
+            let pos = unsafe { frankenlibc_abi::stdio_abi::ftello64(stream) };
+            Ok(format!("FSEEKO64_RC_{rc}_POS_{pos}"))
+        }),
+        "fsetpos" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"pos")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
+            let get_rc = unsafe { frankenlibc_abi::stdio_abi::fgetpos(stream, pos.as_mut_ptr()) };
+            let seek_rc = unsafe { frankenlibc_abi::stdio_abi::fseeko(stream, 2, libc::SEEK_SET) };
+            let set_rc = unsafe { frankenlibc_abi::stdio_abi::fsetpos(stream, pos.as_ptr()) };
+            let restored = unsafe { frankenlibc_abi::stdio_abi::ftello(stream) };
+            Ok(format!(
+                "FSETPOS_GET_{get_rc}_SEEK_{seek_rc}_SET_{set_rc}_POS_{restored}"
+            ))
+        }),
+        "fsetpos64" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"pos64")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
+            let get_rc = unsafe {
+                frankenlibc_abi::stdio_abi::fgetpos64(stream, pos.as_mut_ptr().cast::<c_void>())
+            };
+            let seek_rc =
+                unsafe { frankenlibc_abi::stdio_abi::fseeko64(stream, 2, libc::SEEK_SET) };
+            let set_rc = unsafe {
+                frankenlibc_abi::stdio_abi::fsetpos64(stream, pos.as_ptr().cast::<c_void>())
+            };
+            let restored = unsafe { frankenlibc_abi::stdio_abi::ftello64(stream) };
+            Ok(format!(
+                "FSETPOS64_GET_{get_rc}_SEEK_{seek_rc}_SET_{set_rc}_POS_{restored}"
+            ))
+        }),
+        "ftello" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"tell")?;
+            let seek_rc = unsafe { frankenlibc_abi::stdio_abi::fseeko(stream, 2, libc::SEEK_SET) };
+            let pos = unsafe { frankenlibc_abi::stdio_abi::ftello(stream) };
+            Ok(format!("FTELLO_SEEK_{seek_rc}_POS_{pos}"))
+        }),
         other => Err(format!("unsupported stdio/libio fixture: {other}")),
     }
 }
@@ -23820,6 +23968,47 @@ mod tests {
             include_str!("../../../tests/conformance/fixtures/math_finite_special_wave02.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("math finite/special wave02 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn stdio_libio_wave04_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/stdio_libio_wave04.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("stdio/libio wave04 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
