@@ -818,6 +818,32 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Convert a sparse-recovery boolean support vector over the six latent
+    /// causes into a compact Grobner canonical class id via
+    /// `frankenlibc_membrane::grobner::canonical_class_from_support`.
+    CanonicalClassFromSupport {
+        /// Active latent cause C0: temporal/provenance.
+        #[arg(long)]
+        c0_temporal: bool,
+        /// Active latent cause C1: tail-latency/congestion.
+        #[arg(long)]
+        c1_congestion: bool,
+        /// Active latent cause C2: topological/path-complexity.
+        #[arg(long)]
+        c2_topological: bool,
+        /// Active latent cause C3: transition/regime shift.
+        #[arg(long)]
+        c3_regime: bool,
+        /// Active latent cause C4: numeric/floating exceptional.
+        #[arg(long)]
+        c4_numeric: bool,
+        /// Active latent cause C5: resource admissibility.
+        #[arg(long)]
+        c5_admissibility: bool,
+        /// Output JSONL path: one canonical_class_from_support record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Iterate a JSONL file of runtime_evidence.decision.v1 rows and
     /// validate each via
     /// `frankenlibc_membrane::runtime_math::evidence::validate_runtime_evidence_row_v1`.
@@ -3136,6 +3162,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&output, body)?;
             eprintln!(
                 "recommend-healing-for-canonical-class: class_id={class_id} ({class_label}) -> action={action_label}"
+            );
+        }
+        Command::CanonicalClassFromSupport {
+            c0_temporal,
+            c1_congestion,
+            c2_topological,
+            c3_regime,
+            c4_numeric,
+            c5_admissibility,
+            output,
+        } => {
+            use frankenlibc_membrane::grobner::{
+                CANONICAL_CLASS_ADMISSIBILITY, CANONICAL_CLASS_COMPOUND,
+                CANONICAL_CLASS_CONGESTION, CANONICAL_CLASS_NONE, CANONICAL_CLASS_NUMERIC,
+                CANONICAL_CLASS_REGIME, CANONICAL_CLASS_TEMPORAL, CANONICAL_CLASS_TOPOLOGICAL,
+                canonical_class_from_support,
+            };
+            let active = [
+                c0_temporal,
+                c1_congestion,
+                c2_topological,
+                c3_regime,
+                c4_numeric,
+                c5_admissibility,
+            ];
+            let class_id = canonical_class_from_support(&active);
+            let class_label = match class_id {
+                x if x == CANONICAL_CLASS_NONE => "none",
+                x if x == CANONICAL_CLASS_TEMPORAL => "temporal",
+                x if x == CANONICAL_CLASS_CONGESTION => "congestion",
+                x if x == CANONICAL_CLASS_TOPOLOGICAL => "topological",
+                x if x == CANONICAL_CLASS_REGIME => "regime",
+                x if x == CANONICAL_CLASS_NUMERIC => "numeric",
+                x if x == CANONICAL_CLASS_ADMISSIBILITY => "admissibility",
+                x if x == CANONICAL_CLASS_COMPOUND => "compound",
+                _ => "unknown",
+            };
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "canonical_class_from_support",
+                "active": active,
+                "class_id": class_id,
+                "class_label": class_label,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "canonical-class-from-support: active={active:?} -> class_id={class_id} ({class_label})"
             );
         }
         Command::ValidateRuntimeEvidenceRows { jsonl, output } => {

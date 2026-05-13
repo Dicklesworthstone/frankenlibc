@@ -1,0 +1,71 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "canonical-class-from-support-cli-contract",
+  "bead": "bd-dk8bl",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "571c5507",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::grobner::canonical_class_from_support(active: &[bool; 6]) -> u8 as a standalone CLI. The bridge converts the sparse-recovery boolean support vector over six latent causes into a compact canonical class id so CI can verify the sparse-recovery support -> canonical class -> healing action pipeline without compiling a custom caller.",
+  "subcommand_name": "canonical-class-from-support",
+  "binary_target": "harness",
+  "input_flags": [
+    "--c0-temporal",
+    "--c1-congestion",
+    "--c2-topological",
+    "--c3-regime",
+    "--c4-numeric",
+    "--c5-admissibility"
+  ],
+  "required_flags": [
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::grobner::canonical_class_from_support",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "canonical_class_from_support",
+    "required_fields": [
+      "kind",
+      "active",
+      "class_id",
+      "class_label"
+    ]
+  },
+  "expected_class_table": [
+    {"case": "none", "active": [false, false, false, false, false, false], "class_id": 0, "class_label": "none"},
+    {"case": "temporal", "active": [true, false, false, false, false, false], "class_id": 1, "class_label": "temporal"},
+    {"case": "congestion", "active": [false, true, false, false, false, false], "class_id": 2, "class_label": "congestion"},
+    {"case": "topological", "active": [false, false, true, false, false, false], "class_id": 3, "class_label": "topological"},
+    {"case": "regime", "active": [false, false, false, true, false, false], "class_id": 4, "class_label": "regime"},
+    {"case": "numeric", "active": [false, false, false, false, true, false], "class_id": 5, "class_label": "numeric"},
+    {"case": "admissibility", "active": [false, false, false, false, false, true], "class_id": 6, "class_label": "admissibility"},
+    {"case": "temporal_regime_reduces_to_regime", "active": [true, false, false, true, false, false], "class_id": 4, "class_label": "regime"},
+    {"case": "congestion_numeric_reduces_to_congestion", "active": [false, true, false, false, true, false], "class_id": 2, "class_label": "congestion"},
+    {"case": "topological_admissibility_reduces_to_admissibility", "active": [false, false, true, false, false, true], "class_id": 6, "class_label": "admissibility"},
+    {"case": "unreduced_pair_is_compound", "active": [true, true, false, false, false, false], "class_id": 7, "class_label": "compound"},
+    {"case": "full_support_is_compound", "active": [true, true, true, true, true, true], "class_id": 7, "class_label": "compound"}
+  ],
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "echoes_active_support_vector_into_output_record": true,
+    "deterministic_given_inputs": true,
+    "empty_support_yields_none_class": true,
+    "single_cause_support_yields_matching_class": true,
+    "temporal_regime_reduces_to_regime": true,
+    "congestion_numeric_reduces_to_congestion": true,
+    "topological_admissibility_reduces_to_admissibility": true,
+    "unreduced_multi_cause_support_yields_compound": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "active_support_not_echoed",
+    "canonical_class_table_drift",
+    "multi_cause_support_overclaims_single_cause"
+  ],
+  "summary": {
+    "bead": "bd-dk8bl",
+    "subcommand": "canonical-class-from-support",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
