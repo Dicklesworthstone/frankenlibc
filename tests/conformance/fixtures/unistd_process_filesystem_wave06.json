@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-13T11:10:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-06 crypt reentrant, terminal-id, login-id, daemon isolation, gettext passthrough, and DNS wire-format helper symbols. Outputs classify prefixes, hash algorithm classes, isolated daemon exit status, gettext passthrough, and DNS label lengths without recording raw hashes, generated salt bytes, terminal paths, login names, uids, file descriptors, cwd/session state, gettext catalog files, locale state, DNS network data, timestamps, stderr bytes, raw pointers, or process-global counters.",
+  "spec_reference": "libcrypt crypt_preferred_method and crypt_r/crypt_ra/crypt_rn contracts, POSIX ctermid and cuserid class behavior, BSD daemon detach semantics under isolated child execution, GNU dcgettext/dcngettext untranslated passthrough behavior, and RFC 1035 dn_comp/dn_expand/dn_skipname DNS wire-format helper contracts.",
+  "campaign": {
+    "bead": "bd-dx0rc",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-06-unistd-process-filesystem-crypt-terminal-gettext-dns",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture",
+    "first_wave_symbols": [
+      "crypt_preferred_method",
+      "crypt_r",
+      "crypt_ra",
+      "crypt_rn",
+      "ctermid",
+      "cuserid",
+      "daemon",
+      "dcgettext",
+      "dcngettext",
+      "dn_comp",
+      "dn_expand",
+      "dn_skipname"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "crypt_preferred_method_sha512_prefix_strict",
+      "function": "crypt_preferred_method",
+      "spec_section": "libcrypt preferred method prefix class",
+      "inputs": {
+        "symbol": "crypt_preferred_method",
+        "scenario": "sha512_prefix_class_without_pointer_capture",
+        "expected": "CRYPT_PREFERRED_METHOD_SHA512_PREFIX",
+        "oracle_source": "FrankenLibC libcrypt preferred method class",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=crypt_preferred_method;mode=strict;expected=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;actual=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "crypt_preferred_method_sha512_prefix_hardened",
+      "function": "crypt_preferred_method",
+      "spec_section": "libcrypt preferred method prefix class",
+      "inputs": {
+        "symbol": "crypt_preferred_method",
+        "scenario": "sha512_prefix_class_without_pointer_capture",
+        "expected": "CRYPT_PREFERRED_METHOD_SHA512_PREFIX",
+        "oracle_source": "FrankenLibC libcrypt preferred method class",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=crypt_preferred_method;mode=hardened;expected=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;actual=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "crypt_r_sha512_class_strict",
+      "function": "crypt_r",
+      "spec_section": "libcrypt crypt_r reentrant hash class",
+      "inputs": {
+        "symbol": "crypt_r",
+        "scenario": "sha512_hash_class_without_hash_capture",
+        "expected": "CRYPT_R_SHA512_CLASS",
+        "oracle_source": "FrankenLibC crypt_r algorithm-class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=crypt_r;mode=strict;expected=CRYPT_R_SHA512_CLASS;actual=CRYPT_R_SHA512_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "crypt_r_sha512_class_hardened",
+      "function": "crypt_r",
+      "spec_section": "libcrypt crypt_r reentrant hash class",
+      "inputs": {
+        "symbol": "crypt_r",
+        "scenario": "sha512_hash_class_without_hash_capture",
+        "expected": "CRYPT_R_SHA512_CLASS",
+        "oracle_source": "FrankenLibC crypt_r algorithm-class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=crypt_r;mode=hardened;expected=CRYPT_R_SHA512_CLASS;actual=CRYPT_R_SHA512_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "crypt_ra_sha512_class_strict",
+      "function": "crypt_ra",
+      "spec_section": "libcrypt crypt_ra auto-allocating hash class",
+      "inputs": {
+        "symbol": "crypt_ra",
+        "scenario": "sha512_auto_alloc_class_without_hash_or_pointer_capture",
+        "expected": "CRYPT_RA_SHA512_CLASS_SIZE_384",
+        "oracle_source": "FrankenLibC crypt_ra algorithm-class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=crypt_ra;mode=strict;expected=CRYPT_RA_SHA512_CLASS_SIZE_384;actual=CRYPT_RA_SHA512_CLASS_SIZE_384;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "crypt_ra_sha512_class_hardened",
+      "function": "crypt_ra",
+      "spec_section": "libcrypt crypt_ra auto-allocating hash class",
+      "inputs": {
+        "symbol": "crypt_ra",
+        "scenario": "sha512_auto_alloc_class_without_hash_or_pointer_capture",
+        "expected": "CRYPT_RA_SHA512_CLASS_SIZE_384",
+        "oracle_source": "FrankenLibC crypt_ra algorithm-class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=crypt_ra;mode=hardened;expected=CRYPT_RA_SHA512_CLASS_SIZE_384;actual=CRYPT_RA_SHA512_CLASS_SIZE_384;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "crypt_rn_sha512_class_strict",
+      "function": "crypt_rn",
+      "spec_section": "libcrypt crypt_rn bounded-buffer hash class",
+      "inputs": {
+        "symbol": "crypt_rn",
+        "scenario": "sha512_bounded_buffer_class_without_hash_capture",
+        "expected": "CRYPT_RN_SHA512_CLASS",
+        "oracle_source": "FrankenLibC crypt_rn algorithm-class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=crypt_rn;mode=strict;expected=CRYPT_RN_SHA512_CLASS;actual=CRYPT_RN_SHA512_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "crypt_rn_sha512_class_hardened",
+      "function": "crypt_rn",
+      "spec_section": "libcrypt crypt_rn bounded-buffer hash class",
+      "inputs": {
+        "symbol": "crypt_rn",
+        "scenario": "sha512_bounded_buffer_class_without_hash_capture",
+        "expected": "CRYPT_RN_SHA512_CLASS",
+        "oracle_source": "FrankenLibC crypt_rn algorithm-class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=crypt_rn;mode=hardened;expected=CRYPT_RN_SHA512_CLASS;actual=CRYPT_RN_SHA512_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ctermid_terminal_class_strict",
+      "function": "ctermid",
+      "spec_section": "POSIX ctermid terminal identifier class",
+      "inputs": {
+        "symbol": "ctermid",
+        "scenario": "caller_buffer_terminal_class_without_path_capture",
+        "expected": "CTERMID_TTY_CLASS",
+        "oracle_source": "FrankenLibC ctermid terminal class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=ctermid;mode=strict;expected=CTERMID_TTY_CLASS;actual=CTERMID_TTY_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ctermid_terminal_class_hardened",
+      "function": "ctermid",
+      "spec_section": "POSIX ctermid terminal identifier class",
+      "inputs": {
+        "symbol": "ctermid",
+        "scenario": "caller_buffer_terminal_class_without_path_capture",
+        "expected": "CTERMID_TTY_CLASS",
+        "oracle_source": "FrankenLibC ctermid terminal class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=ctermid;mode=hardened;expected=CTERMID_TTY_CLASS;actual=CTERMID_TTY_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "cuserid_buffer_nonempty_class_strict",
+      "function": "cuserid",
+      "spec_section": "POSIX cuserid login identifier class",
+      "inputs": {
+        "symbol": "cuserid",
+        "scenario": "caller_buffer_nonempty_class_without_login_capture",
+        "expected": "CUSERID_BUFFER_NONEMPTY_CLASS",
+        "oracle_source": "FrankenLibC cuserid bounded nonempty class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=cuserid;mode=strict;expected=CUSERID_BUFFER_NONEMPTY_CLASS;actual=CUSERID_BUFFER_NONEMPTY_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "cuserid_buffer_nonempty_class_hardened",
+      "function": "cuserid",
+      "spec_section": "POSIX cuserid login identifier class",
+      "inputs": {
+        "symbol": "cuserid",
+        "scenario": "caller_buffer_nonempty_class_without_login_capture",
+        "expected": "CUSERID_BUFFER_NONEMPTY_CLASS",
+        "oracle_source": "FrankenLibC cuserid bounded nonempty class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=cuserid;mode=hardened;expected=CUSERID_BUFFER_NONEMPTY_CLASS;actual=CUSERID_BUFFER_NONEMPTY_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "daemon_isolated_child_exit_strict",
+      "function": "daemon",
+      "spec_section": "BSD daemon isolated child detach class",
+      "inputs": {
+        "symbol": "daemon",
+        "scenario": "forked_child_nochdir_noclose_immediate_exit_without_leaking_process_state",
+        "expected": "DAEMON_ISOLATED_EXIT_0",
+        "oracle_source": "FrankenLibC daemon isolated child exit class",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=daemon;mode=strict;expected=DAEMON_ISOLATED_EXIT_0;actual=DAEMON_ISOLATED_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "daemon_isolated_child_exit_hardened",
+      "function": "daemon",
+      "spec_section": "BSD daemon isolated child detach class",
+      "inputs": {
+        "symbol": "daemon",
+        "scenario": "forked_child_nochdir_noclose_immediate_exit_without_leaking_process_state",
+        "expected": "DAEMON_ISOLATED_EXIT_0",
+        "oracle_source": "FrankenLibC daemon isolated child exit class",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=daemon;mode=hardened;expected=DAEMON_ISOLATED_EXIT_0;actual=DAEMON_ISOLATED_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "dcgettext_passthrough_strict",
+      "function": "dcgettext",
+      "spec_section": "GNU dcgettext untranslated passthrough class",
+      "inputs": {
+        "symbol": "dcgettext",
+        "scenario": "msgid_passthrough_without_catalog_or_locale_capture",
+        "expected": "DCGETTEXT_MSGID_PASSTHROUGH",
+        "oracle_source": "FrankenLibC dcgettext passthrough oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=dcgettext;mode=strict;expected=DCGETTEXT_MSGID_PASSTHROUGH;actual=DCGETTEXT_MSGID_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "dcgettext_passthrough_hardened",
+      "function": "dcgettext",
+      "spec_section": "GNU dcgettext untranslated passthrough class",
+      "inputs": {
+        "symbol": "dcgettext",
+        "scenario": "msgid_passthrough_without_catalog_or_locale_capture",
+        "expected": "DCGETTEXT_MSGID_PASSTHROUGH",
+        "oracle_source": "FrankenLibC dcgettext passthrough oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=dcgettext;mode=hardened;expected=DCGETTEXT_MSGID_PASSTHROUGH;actual=DCGETTEXT_MSGID_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "dcngettext_plural_passthrough_strict",
+      "function": "dcngettext",
+      "spec_section": "GNU dcngettext untranslated plural passthrough class",
+      "inputs": {
+        "symbol": "dcngettext",
+        "scenario": "plural_passthrough_without_catalog_or_locale_capture",
+        "expected": "DCNGETTEXT_PLURAL_PASSTHROUGH",
+        "oracle_source": "FrankenLibC dcngettext passthrough oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=dcngettext;mode=strict;expected=DCNGETTEXT_PLURAL_PASSTHROUGH;actual=DCNGETTEXT_PLURAL_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "dcngettext_plural_passthrough_hardened",
+      "function": "dcngettext",
+      "spec_section": "GNU dcngettext untranslated plural passthrough class",
+      "inputs": {
+        "symbol": "dcngettext",
+        "scenario": "plural_passthrough_without_catalog_or_locale_capture",
+        "expected": "DCNGETTEXT_PLURAL_PASSTHROUGH",
+        "oracle_source": "FrankenLibC dcngettext passthrough oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=dcngettext;mode=hardened;expected=DCNGETTEXT_PLURAL_PASSTHROUGH;actual=DCNGETTEXT_PLURAL_PASSTHROUGH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "dn_comp_label_length_class_strict",
+      "function": "dn_comp",
+      "spec_section": "RFC 1035 dn_comp uncompressed label encoding",
+      "inputs": {
+        "symbol": "dn_comp",
+        "scenario": "in_memory_wire_name_length_without_dns_capture",
+        "expected": "DN_COMP_LABELS_LEN_17",
+        "oracle_source": "FrankenLibC dn_comp wire-format class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=dn_comp;mode=strict;expected=DN_COMP_LABELS_LEN_17;actual=DN_COMP_LABELS_LEN_17;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "dn_comp_label_length_class_hardened",
+      "function": "dn_comp",
+      "spec_section": "RFC 1035 dn_comp uncompressed label encoding",
+      "inputs": {
+        "symbol": "dn_comp",
+        "scenario": "in_memory_wire_name_length_without_dns_capture",
+        "expected": "DN_COMP_LABELS_LEN_17",
+        "oracle_source": "FrankenLibC dn_comp wire-format class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=dn_comp;mode=hardened;expected=DN_COMP_LABELS_LEN_17;actual=DN_COMP_LABELS_LEN_17;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "dn_expand_label_length_class_strict",
+      "function": "dn_expand",
+      "spec_section": "RFC 1035 dn_expand uncompressed label expansion",
+      "inputs": {
+        "symbol": "dn_expand",
+        "scenario": "in_memory_wire_name_expansion_without_dns_capture",
+        "expected": "DN_EXPAND_LABELS_LEN_17",
+        "oracle_source": "FrankenLibC dn_expand wire-format class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=dn_expand;mode=strict;expected=DN_EXPAND_LABELS_LEN_17;actual=DN_EXPAND_LABELS_LEN_17;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "dn_expand_label_length_class_hardened",
+      "function": "dn_expand",
+      "spec_section": "RFC 1035 dn_expand uncompressed label expansion",
+      "inputs": {
+        "symbol": "dn_expand",
+        "scenario": "in_memory_wire_name_expansion_without_dns_capture",
+        "expected": "DN_EXPAND_LABELS_LEN_17",
+        "oracle_source": "FrankenLibC dn_expand wire-format class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=dn_expand;mode=hardened;expected=DN_EXPAND_LABELS_LEN_17;actual=DN_EXPAND_LABELS_LEN_17;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "dn_skipname_label_length_class_strict",
+      "function": "dn_skipname",
+      "spec_section": "RFC 1035 dn_skipname uncompressed label skip",
+      "inputs": {
+        "symbol": "dn_skipname",
+        "scenario": "in_memory_wire_name_skip_without_dns_capture",
+        "expected": "DN_SKIPNAME_LABELS_LEN_17",
+        "oracle_source": "FrankenLibC dn_skipname wire-format class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=dn_skipname;mode=strict;expected=DN_SKIPNAME_LABELS_LEN_17;actual=DN_SKIPNAME_LABELS_LEN_17;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "dn_skipname_label_length_class_hardened",
+      "function": "dn_skipname",
+      "spec_section": "RFC 1035 dn_skipname uncompressed label skip",
+      "inputs": {
+        "symbol": "dn_skipname",
+        "scenario": "in_memory_wire_name_skip_without_dns_capture",
+        "expected": "DN_SKIPNAME_LABELS_LEN_17",
+        "oracle_source": "FrankenLibC dn_skipname wire-format class oracle",
+        "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
+      },
+      "expected_output": "symbol=dn_skipname;mode=hardened;expected=DN_SKIPNAME_LABELS_LEN_17;actual=DN_SKIPNAME_LABELS_LEN_17;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

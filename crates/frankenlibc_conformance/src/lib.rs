@@ -717,7 +717,19 @@ pub fn execute_fixture_case(
         | "crypt_gensalt"
         | "crypt_gensalt_r"
         | "crypt_gensalt_ra"
-        | "crypt_gensalt_rn" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        | "crypt_gensalt_rn"
+        | "crypt_preferred_method"
+        | "crypt_r"
+        | "crypt_ra"
+        | "crypt_rn"
+        | "ctermid"
+        | "cuserid"
+        | "daemon"
+        | "dcgettext"
+        | "dcngettext"
+        | "dn_comp"
+        | "dn_expand"
+        | "dn_skipname" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
         | "_IO_peekc_locked" | "_IO_putc" | "_IO_puts" | "_IO_seekoff" | "_IO_seekpos"
@@ -16356,6 +16368,18 @@ fn execute_unistd_process_filesystem_case(
         "crypt_gensalt_r" => crypt_gensalt_r_fixture_actual()?,
         "crypt_gensalt_ra" => crypt_gensalt_ra_fixture_actual()?,
         "crypt_gensalt_rn" => crypt_gensalt_rn_fixture_actual()?,
+        "crypt_preferred_method" => crypt_preferred_method_fixture_actual()?,
+        "crypt_r" => crypt_r_fixture_actual()?,
+        "crypt_ra" => crypt_ra_fixture_actual()?,
+        "crypt_rn" => crypt_rn_fixture_actual()?,
+        "ctermid" => ctermid_fixture_actual()?,
+        "cuserid" => cuserid_fixture_actual()?,
+        "daemon" => daemon_fixture_actual()?,
+        "dcgettext" => dcgettext_fixture_actual()?,
+        "dcngettext" => dcngettext_fixture_actual()?,
+        "dn_comp" => dn_comp_fixture_actual()?,
+        "dn_expand" => dn_expand_fixture_actual()?,
+        "dn_skipname" => dn_skipname_fixture_actual()?,
         other => {
             return Err(format!(
                 "unsupported unistd process/filesystem fixture: {other}"
@@ -17367,6 +17391,250 @@ fn crypt_gensalt_ra_fixture_actual() -> Result<String, String> {
         unsafe { frankenlibc_abi::malloc_abi::free(ptr.cast::<c_void>()) };
     }
     Ok(class)
+}
+
+fn crypt_preferred_method_fixture_actual() -> Result<String, String> {
+    let ptr = unsafe { frankenlibc_abi::unistd_abi::crypt_preferred_method() };
+    if ptr.is_null() {
+        return Ok(String::from("CRYPT_PREFERRED_METHOD_NULL"));
+    }
+    let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    if bytes == b"$6$" {
+        Ok(String::from("CRYPT_PREFERRED_METHOD_SHA512_PREFIX"))
+    } else {
+        Ok(String::from("CRYPT_PREFERRED_METHOD_OTHER_PREFIX"))
+    }
+}
+
+fn crypt_r_inputs() -> Result<(CString, CString), String> {
+    let key =
+        CString::new("password").map_err(|_| "crypt_r key contains interior NUL".to_string())?;
+    let salt =
+        CString::new("$6$salt$").map_err(|_| "crypt_r salt contains interior NUL".to_string())?;
+    Ok((key, salt))
+}
+
+fn crypt_hash_class(label: &str, ptr: *mut c_char) -> String {
+    if ptr.is_null() {
+        return format!("{label}_NULL");
+    }
+    let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    if bytes.starts_with(b"$6$") {
+        format!("{label}_SHA512_CLASS")
+    } else if bytes.starts_with(b"$5$") {
+        format!("{label}_SHA256_CLASS")
+    } else if bytes.starts_with(b"$1$") {
+        format!("{label}_MD5_CLASS")
+    } else {
+        format!("{label}_OTHER_CLASS")
+    }
+}
+
+fn crypt_r_fixture_actual() -> Result<String, String> {
+    let (key, salt) = crypt_r_inputs()?;
+    let mut data = [0_u8; 384];
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::crypt_r(
+            key.as_ptr(),
+            salt.as_ptr(),
+            data.as_mut_ptr().cast::<c_void>(),
+        )
+    };
+    Ok(crypt_hash_class("CRYPT_R", ptr))
+}
+
+fn crypt_rn_fixture_actual() -> Result<String, String> {
+    let (key, salt) = crypt_r_inputs()?;
+    let mut data = [0_u8; 384];
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::crypt_rn(
+            key.as_ptr(),
+            salt.as_ptr(),
+            data.as_mut_ptr().cast::<c_void>(),
+            data.len() as c_int,
+        )
+    };
+    Ok(crypt_hash_class("CRYPT_RN", ptr))
+}
+
+fn crypt_ra_fixture_actual() -> Result<String, String> {
+    let (key, salt) = crypt_r_inputs()?;
+    let mut data: *mut c_void = std::ptr::null_mut();
+    let mut size: c_int = 0;
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::crypt_ra(key.as_ptr(), salt.as_ptr(), &mut data, &mut size)
+    };
+    let class = if data.is_null() {
+        crypt_hash_class("CRYPT_RA", ptr)
+    } else {
+        format!("{}_SIZE_{size}", crypt_hash_class("CRYPT_RA", ptr))
+    };
+    if !data.is_null() {
+        unsafe { frankenlibc_abi::malloc_abi::free(data) };
+    }
+    Ok(class)
+}
+
+fn ctermid_fixture_actual() -> Result<String, String> {
+    let mut buf = [0 as c_char; 64];
+    let ptr = unsafe { frankenlibc_abi::unistd_abi::ctermid(buf.as_mut_ptr()) };
+    if ptr.is_null() {
+        return Ok(String::from("CTERMID_NULL"));
+    }
+    let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    if ptr == buf.as_mut_ptr() && bytes == b"/dev/tty" {
+        Ok(String::from("CTERMID_TTY_CLASS"))
+    } else {
+        Ok(String::from("CTERMID_OTHER_CLASS"))
+    }
+}
+
+fn cuserid_fixture_actual() -> Result<String, String> {
+    let mut buf = [0 as c_char; 32];
+    let ptr = unsafe { frankenlibc_abi::unistd_abi::cuserid(buf.as_mut_ptr()) };
+    if ptr.is_null() {
+        return Ok(String::from("CUSERID_NULL"));
+    }
+    let len = unsafe { CStr::from_ptr(ptr) }.to_bytes().len();
+    if ptr == buf.as_mut_ptr() && (1..=8).contains(&len) {
+        Ok(String::from("CUSERID_BUFFER_NONEMPTY_CLASS"))
+    } else {
+        Ok(String::from("CUSERID_OTHER_CLASS"))
+    }
+}
+
+fn daemon_fixture_actual() -> Result<String, String> {
+    let child = unsafe { libc::fork() };
+    if child == 0 {
+        let rc = unsafe { frankenlibc_abi::unistd_abi::daemon(1, 1) };
+        unsafe { libc::_exit(if rc == 0 { 0 } else { 1 }) };
+    }
+    if child < 0 {
+        return Ok(String::from("DAEMON_FORK_FAILED"));
+    }
+
+    let mut wait_status = 0;
+    let waited = unsafe { libc::waitpid(child, &mut wait_status, 0) };
+    if waited != child {
+        return Ok(format!("DAEMON_WAITPID_RC_{waited}"));
+    }
+    if libc::WIFEXITED(wait_status) {
+        Ok(format!(
+            "DAEMON_ISOLATED_EXIT_{}",
+            libc::WEXITSTATUS(wait_status)
+        ))
+    } else if libc::WIFSIGNALED(wait_status) {
+        Ok(format!(
+            "DAEMON_ISOLATED_SIGNAL_{}",
+            libc::WTERMSIG(wait_status)
+        ))
+    } else {
+        Ok(String::from("DAEMON_ISOLATED_UNKNOWN"))
+    }
+}
+
+fn dcgettext_fixture_actual() -> Result<String, String> {
+    let domain =
+        CString::new("fixture").map_err(|_| "dcgettext domain contains NUL".to_string())?;
+    let msgid =
+        CString::new("fixture-message").map_err(|_| "dcgettext msgid contains NUL".to_string())?;
+    let ptr = unsafe { frankenlibc_abi::unistd_abi::dcgettext(domain.as_ptr(), msgid.as_ptr(), 5) };
+    if ptr == msgid.as_ptr().cast_mut() {
+        Ok(String::from("DCGETTEXT_MSGID_PASSTHROUGH"))
+    } else if ptr.is_null() {
+        Ok(String::from("DCGETTEXT_NULL"))
+    } else {
+        Ok(String::from("DCGETTEXT_OTHER_CLASS"))
+    }
+}
+
+fn dcngettext_fixture_actual() -> Result<String, String> {
+    let domain =
+        CString::new("fixture").map_err(|_| "dcngettext domain contains NUL".to_string())?;
+    let singular =
+        CString::new("one").map_err(|_| "dcngettext singular contains NUL".to_string())?;
+    let plural = CString::new("many").map_err(|_| "dcngettext plural contains NUL".to_string())?;
+    let ptr = unsafe {
+        frankenlibc_abi::unistd_abi::dcngettext(
+            domain.as_ptr(),
+            singular.as_ptr(),
+            plural.as_ptr(),
+            2,
+            5,
+        )
+    };
+    if ptr == plural.as_ptr().cast_mut() {
+        Ok(String::from("DCNGETTEXT_PLURAL_PASSTHROUGH"))
+    } else if ptr.is_null() {
+        Ok(String::from("DCNGETTEXT_NULL"))
+    } else {
+        Ok(String::from("DCNGETTEXT_OTHER_CLASS"))
+    }
+}
+
+fn dns_fixture_wire_name() -> [u8; 17] {
+    [
+        3, b'w', b'w', b'w', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0,
+    ]
+}
+
+fn dn_comp_fixture_actual() -> Result<String, String> {
+    let name = CString::new("www.example.com")
+        .map_err(|_| "dn_comp fixture name contains NUL".to_string())?;
+    let mut output = [0_u8; 64];
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::dn_comp(
+            name.as_ptr(),
+            output.as_mut_ptr(),
+            output.len() as c_int,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if rc == 17 && output[..17] == dns_fixture_wire_name() {
+        Ok(String::from("DN_COMP_LABELS_LEN_17"))
+    } else {
+        Ok(format!("DN_COMP_RC_{rc}"))
+    }
+}
+
+fn dn_expand_fixture_actual() -> Result<String, String> {
+    let message = dns_fixture_wire_name();
+    let mut output = [0 as c_char; 64];
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::dn_expand(
+            message.as_ptr(),
+            message.as_ptr().add(message.len()),
+            message.as_ptr(),
+            output.as_mut_ptr(),
+            output.len() as c_int,
+        )
+    };
+    let bytes = if rc > 0 {
+        unsafe { CStr::from_ptr(output.as_ptr()) }.to_bytes()
+    } else {
+        &[]
+    };
+    if rc == 17 && bytes == b"www.example.com" {
+        Ok(String::from("DN_EXPAND_LABELS_LEN_17"))
+    } else {
+        Ok(format!("DN_EXPAND_RC_{rc}"))
+    }
+}
+
+fn dn_skipname_fixture_actual() -> Result<String, String> {
+    let message = dns_fixture_wire_name();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::dn_skipname(
+            message.as_ptr(),
+            message.as_ptr().add(message.len()),
+        )
+    };
+    if rc == 17 {
+        Ok(String::from("DN_SKIPNAME_LABELS_LEN_17"))
+    } else {
+        Ok(format!("DN_SKIPNAME_RC_{rc}"))
+    }
 }
 
 fn wait_for_aio_completion(cb: &FixtureAiocb) -> c_int {
