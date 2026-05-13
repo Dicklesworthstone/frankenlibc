@@ -78,25 +78,29 @@ impl core::fmt::Display for ReplayValidationError {
 
 impl std::error::Error for ReplayValidationError {}
 
+fn missing_or_blank_entries(values: &[String]) -> bool {
+    values.is_empty() || values.iter().any(|value| value.trim().is_empty())
+}
+
 /// Validate a replay record. Fails closed when ANY required field
 /// is missing or blank.
 pub fn validate_replay(r: &ReplayRecord) -> Result<(), ReplayValidationError> {
-    if r.schema_version.is_empty() {
+    if r.schema_version.trim().is_empty() {
         return Err(ReplayValidationError::MissingSchemaVersion);
     }
-    if r.trace_class.is_empty() {
+    if r.trace_class.trim().is_empty() {
         return Err(ReplayValidationError::MissingTraceClass);
     }
-    if r.schedule_decisions.is_empty() {
+    if missing_or_blank_entries(&r.schedule_decisions) {
         return Err(ReplayValidationError::MissingScheduleDecisions);
     }
-    if r.replay_inputs.is_empty() {
+    if missing_or_blank_entries(&r.replay_inputs) {
         return Err(ReplayValidationError::MissingReplayInputs);
     }
-    if r.expected_outputs.is_empty() {
+    if missing_or_blank_entries(&r.expected_outputs) {
         return Err(ReplayValidationError::MissingExpectedOutputs);
     }
-    if r.artifact_refs.is_empty() {
+    if missing_or_blank_entries(&r.artifact_refs) {
         return Err(ReplayValidationError::MissingArtifactRefs);
     }
     let sc = &r.source_commit;
@@ -317,12 +321,60 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_blank_top_level_strings() {
+        let mut r = record();
+        r.schema_version = " \t".to_string();
+        assert_eq!(
+            validate_replay(&r),
+            Err(ReplayValidationError::MissingSchemaVersion)
+        );
+
+        let mut r = record();
+        r.trace_class = "\n ".to_string();
+        assert_eq!(
+            validate_replay(&r),
+            Err(ReplayValidationError::MissingTraceClass)
+        );
+    }
+
+    #[test]
     fn validate_rejects_missing_replay_inputs() {
         let mut r = record();
         r.replay_inputs.clear();
         assert_eq!(
             validate_replay(&r),
             Err(ReplayValidationError::MissingReplayInputs)
+        );
+    }
+
+    #[test]
+    fn validate_rejects_blank_vector_entries() {
+        let mut r = record();
+        r.schedule_decisions.push(" ".to_string());
+        assert_eq!(
+            validate_replay(&r),
+            Err(ReplayValidationError::MissingScheduleDecisions)
+        );
+
+        let mut r = record();
+        r.replay_inputs.push("\t".to_string());
+        assert_eq!(
+            validate_replay(&r),
+            Err(ReplayValidationError::MissingReplayInputs)
+        );
+
+        let mut r = record();
+        r.expected_outputs.push("\n".to_string());
+        assert_eq!(
+            validate_replay(&r),
+            Err(ReplayValidationError::MissingExpectedOutputs)
+        );
+
+        let mut r = record();
+        r.artifact_refs.push(" ".to_string());
+        assert_eq!(
+            validate_replay(&r),
+            Err(ReplayValidationError::MissingArtifactRefs)
         );
     }
 
