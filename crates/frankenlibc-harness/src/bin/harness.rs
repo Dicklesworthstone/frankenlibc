@@ -653,6 +653,28 @@ enum Command {
         #[arg(long)]
         mode: String,
     },
+    /// Probe asupersync Lab availability (bd-qfbhc). Emits a single
+    /// LabAvailability JSONL record. By default the detector reads
+    /// process env (`FRANKENLIBC_ASUPERSYNC_AVAILABLE`, `PATH`) and
+    /// the canonical `/dp/asupersync` directory. Override via flags.
+    AsupersyncDetect {
+        /// Override the value of `FRANKENLIBC_ASUPERSYNC_AVAILABLE`.
+        /// When omitted, the detector reads the process env.
+        #[arg(long)]
+        override_var: Option<String>,
+        /// Override the asupersync install directory probed in
+        /// branch 2. Default: `/dp/asupersync`.
+        #[arg(long)]
+        asupersync_dir: Option<PathBuf>,
+        /// Override `PATH` entries for branch 3 binary discovery.
+        /// When omitted, splits the process `PATH`. Pass one
+        /// colon-separated value.
+        #[arg(long, value_delimiter = ':')]
+        path_search_paths: Vec<PathBuf>,
+        /// Output JSONL path: one LabAvailability record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Stress the production `EvidenceRingBuffer<CAP>` past
     /// capacity (bd-9nyo2) and emit a single RealRingReport as JSONL.
     /// CAP is selected by the `--cap` flag (one of 32, 128, 1024).
@@ -1778,6 +1800,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     format!("failed to exec /bin/true after case output: {exec_err}").into(),
                 );
             }
+        }
+        Command::AsupersyncDetect {
+            override_var,
+            asupersync_dir,
+            path_search_paths,
+            output,
+        } => {
+            use frankenlibc_harness::asupersync_lab_replay::{
+                DetectionEnv, detect_asupersync_available,
+            };
+            let mut env = DetectionEnv::from_process_env();
+            if let Some(v) = override_var {
+                env.override_var = Some(v);
+            }
+            if let Some(p) = asupersync_dir {
+                env.asupersync_dir = p;
+            }
+            if !path_search_paths.is_empty() {
+                env.path_search_paths = path_search_paths;
+            }
+            let availability = detect_asupersync_available(&env);
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let record = serde_json::json!({
+                "kind": "lab_availability",
+                "available": availability.available,
+                "version": availability.version,
+                "path": availability.path.as_ref().map(|p| p.display().to_string()),
+                "detection_reason": availability.detection_reason,
+            });
+            let mut body = record.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "asupersync-detect: reason={} available={} → wrote 1 JSONL record to {}",
+                availability.detection_reason,
+                availability.available,
+                output.display()
+            );
         }
         Command::EvidenceRingStress {
             seed,

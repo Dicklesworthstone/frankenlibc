@@ -1,0 +1,53 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "asupersync-detect-cli-contract",
+  "bead": "bd-dxztd",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "794bfa7471f9859ff1e48c4be5e94fcf3c77f76c",
+  "purpose": "Pin the harness binary subcommand that probes asupersync Lab availability via detect_asupersync_available (bd-qfbhc). Previously only conformance tests called this function; the CLI surface makes it invokable from rch cargo run and CI without writing Rust.",
+  "subcommand_name": "asupersync-detect",
+  "binary_target": "harness",
+  "required_flags": [
+    "--output"
+  ],
+  "optional_flags": [
+    "--override-var",
+    "--asupersync-dir",
+    "--path-search-paths"
+  ],
+  "underlying_lib_function": "frankenlibc_harness::asupersync_lab_replay::detect_asupersync_available",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "lab_availability",
+    "required_fields": [
+      "kind",
+      "available",
+      "version",
+      "path",
+      "detection_reason"
+    ],
+    "valid_detection_reasons": [
+      "env_override_disabled",
+      "env_override_enabled",
+      "asupersync_dir_present",
+      "binary_on_path",
+      "no_install_detected"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "override_var_flag_takes_precedence_over_process_env": true,
+    "detection_reason_must_be_one_of_enum": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_output_flag",
+    "wrong_record_kind",
+    "detection_reason_out_of_enum"
+  ],
+  "summary": {
+    "bead": "bd-dxztd",
+    "subcommand": "asupersync-detect",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
