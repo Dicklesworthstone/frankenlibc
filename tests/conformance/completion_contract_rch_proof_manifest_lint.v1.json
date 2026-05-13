@@ -14,7 +14,8 @@
       ""
     ],
     "forbidden_proof_markers": [
-      "[RCH] local"
+      "[RCH] local",
+      "remote execution failed"
     ],
     "required_completion_test_lanes": [
       "test",
@@ -30,6 +31,10 @@
     "tests/conformance/string_memory_hotpaths_wave11_completion_contract.v1.json",
     "tests/conformance/unistd_process_filesystem_wave05_completion_contract.v1.json"
   ],
+  "launcher_only_contract_paths": [
+    "tests/conformance/raw_syscall_veneer_completion_contract.v1.json",
+    "tests/conformance/math_core_diff_completion_contract.v1.json"
+  ],
   "expected_positive_contracts": [
     "string_memory_hotpaths_wave05_completion_contract",
     "string_memory_hotpaths_wave06_completion_contract",
@@ -37,10 +42,16 @@
     "string_memory_hotpaths_wave11_completion_contract",
     "unistd_process_filesystem_wave05_completion_contract"
   ],
+  "expected_launcher_only_contracts": [
+    "raw_syscall_veneer_completion_contract",
+    "math_core_diff_completion_contract"
+  ],
   "required_failure_signatures": [
     "bare_cargo_command",
     "missing_remote_env",
     "missing_rch_exec",
+    "missing_rch_exec_env",
+    "shell_wrapped_cargo",
     "missing_isolated_target_dir",
     "missing_targeted_test_lane",
     "missing_targeted_check_lane",
