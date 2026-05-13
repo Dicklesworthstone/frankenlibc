@@ -50,26 +50,43 @@ impl LargeAllocator {
         }
     }
 
-    /// Registers a large allocation.
-    ///
-    /// Returns allocation metadata including the base offset.
-    pub fn alloc(&mut self, size: usize) -> Option<LargeAllocation> {
+    /// Returns the page-aligned mapped size for a positive user allocation.
+    pub fn mapped_size_for(size: usize) -> Option<usize> {
         if size == 0 {
             return None;
         }
+        page_align(size)
+    }
 
-        let mapped_size = page_align(size)?;
-        let base = self.next_base;
-        self.next_base = self.next_base.checked_add(mapped_size)?;
-        self.total_mapped = self.total_mapped.saturating_add(mapped_size);
+    /// Registers an externally-backed large allocation.
+    ///
+    /// The ABI layer owns the actual mapping. This method records the live
+    /// pointer and mapped-size accounting for allocator metadata.
+    pub fn register(&mut self, base: usize, size: usize) -> Option<LargeAllocation> {
+        if base == 0 || self.allocations.contains_key(&base) {
+            return None;
+        }
 
+        let mapped_size = Self::mapped_size_for(size)?;
         let alloc = LargeAllocation {
             base,
             mapped_size,
             user_size: size,
         };
+        self.total_mapped = self.total_mapped.saturating_add(mapped_size);
         self.allocations.insert(base, alloc.clone());
         Some(alloc)
+    }
+
+    /// Registers a large allocation.
+    ///
+    /// Returns allocation metadata including the base offset.
+    pub fn alloc(&mut self, size: usize) -> Option<LargeAllocation> {
+        let mapped_size = Self::mapped_size_for(size)?;
+        let base = self.next_base;
+        self.next_base = self.next_base.checked_add(mapped_size)?;
+
+        self.register(base, size)
     }
 
     /// Frees a large allocation by base offset.
@@ -166,6 +183,46 @@ mod tests {
         assert!(alloc.mapped_size >= 65536);
         assert_eq!(alloc.mapped_size % PAGE_SIZE, 0);
         assert_eq!(allocator.active_count(), 1);
+    }
+
+    #[test]
+    fn test_register_external_large_allocation() {
+        let mut allocator = LargeAllocator::new();
+        let alloc = allocator.register(0x7fff_0000, 65_537).unwrap();
+
+        assert_eq!(alloc.base, 0x7fff_0000);
+        assert_eq!(alloc.user_size, 65_537);
+        assert_eq!(alloc.mapped_size, 69_632);
+        assert_eq!(
+            allocator.lookup(0x7fff_0000).map(|entry| entry.user_size),
+            Some(65_537)
+        );
+        assert_eq!(allocator.active_count(), 1);
+        assert_eq!(allocator.total_mapped(), 69_632);
+    }
+
+    #[test]
+    fn test_register_rejects_invalid_external_base() {
+        let mut allocator = LargeAllocator::new();
+
+        assert!(allocator.register(0, 65_536).is_none());
+        assert!(allocator.register(0x7fff_0000, 0).is_none());
+        assert!(allocator.register(0x7fff_0000, usize::MAX).is_none());
+        assert_eq!(allocator.active_count(), 0);
+        assert_eq!(allocator.total_mapped(), 0);
+    }
+
+    #[test]
+    fn test_register_rejects_duplicate_external_base() {
+        let mut allocator = LargeAllocator::new();
+
+        assert!(allocator.register(0x7fff_0000, 65_536).is_some());
+        assert!(allocator.register(0x7fff_0000, 131_072).is_none());
+        assert_eq!(allocator.active_count(), 1);
+        assert_eq!(
+            allocator.lookup(0x7fff_0000).map(|entry| entry.user_size),
+            Some(65_536)
+        );
     }
 
     #[test]

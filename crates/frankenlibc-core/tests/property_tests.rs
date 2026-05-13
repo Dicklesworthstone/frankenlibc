@@ -544,10 +544,10 @@ mod inet_properties {
 
 mod allocator_properties {
     use super::*;
-    use frankenlibc_core::malloc::large::LargeAllocator;
     use frankenlibc_core::malloc::size_class::{
         MAX_SMALL_SIZE, MIN_SIZE, NUM_SIZE_CLASSES, bin_index, bin_size,
     };
+    use frankenlibc_core::malloc::{MallocState, large::LargeAllocator};
     use std::collections::HashSet;
 
     proptest! {
@@ -635,6 +635,48 @@ mod allocator_properties {
                 allocator.lookup(replacement.base).map(|entry| entry.user_size),
                 Some(new_size)
             );
+        }
+
+        /// MallocState must register actual backend pointers in its large-allocation metadata.
+        #[test]
+        fn prop_malloc_state_tracks_large_allocation_metadata(
+            size in (MAX_SMALL_SIZE + 1)..262_145usize
+        ) {
+            let mut state = MallocState::new();
+            let mut next_ptr = 0x7000_0000usize;
+            let mut requested_from_backend = 0usize;
+
+            let ptr = state
+                .malloc(size, |requested_size| {
+                    requested_from_backend = requested_size;
+                    let ptr = next_ptr;
+                    next_ptr = next_ptr.saturating_add((requested_size + 15) & !15);
+                    Some(ptr)
+                })
+                .expect("large malloc should return backend pointer");
+
+            let expected_mapped = LargeAllocator::mapped_size_for(size).unwrap();
+            prop_assert_eq!(requested_from_backend, size);
+            prop_assert_eq!(state.active_count(), 1);
+            prop_assert_eq!(state.total_allocated(), size);
+            prop_assert_eq!(state.active_large_count(), 1);
+            prop_assert_eq!(state.total_large_mapped(), expected_mapped);
+            prop_assert_eq!(
+                state.large_allocation(ptr).map(|entry| (entry.base, entry.user_size, entry.mapped_size)),
+                Some((ptr, size, expected_mapped))
+            );
+
+            let mut freed_ptr = 0usize;
+            state.free(ptr, size, |released| {
+                freed_ptr = released;
+            });
+
+            prop_assert_eq!(freed_ptr, ptr);
+            prop_assert_eq!(state.active_count(), 0);
+            prop_assert_eq!(state.total_allocated(), 0);
+            prop_assert_eq!(state.active_large_count(), 0);
+            prop_assert_eq!(state.total_large_mapped(), 0);
+            prop_assert!(state.large_allocation(ptr).is_none());
         }
     }
 }

@@ -5,6 +5,7 @@
 //! layer managing allocation policy and metadata.
 
 use super::elimination::{DEFAULT_ELIMINATION_SLOTS, EliminationArray, OfferOutcome, TakeOutcome};
+use super::large::{LargeAllocation, LargeAllocator};
 use super::size_class::{self, NUM_SIZE_CLASSES, SizeClassIndex};
 use super::thread_cache::ThreadCache;
 use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier;
@@ -75,6 +76,8 @@ pub struct MallocState {
     elimination: Arc<EliminationArray<usize, DEFAULT_ELIMINATION_SLOTS>>,
     /// Thread cache.
     thread_cache: ThreadCache,
+    /// Active large-allocation metadata keyed by backend pointer.
+    large_allocations: LargeAllocator,
     /// Monotonic lifecycle decision id.
     next_decision_id: u64,
     /// Structured allocator lifecycle records.
@@ -104,6 +107,7 @@ impl MallocState {
             central_bins,
             elimination: Arc::new(EliminationArray::new()),
             thread_cache: ThreadCache::new(),
+            large_allocations: LargeAllocator::new(),
             next_decision_id: 1,
             lifecycle_logs: Vec::new(),
             thread_cache_hits: 0,
@@ -181,20 +185,51 @@ impl MallocState {
         let size = if size == 0 { 1 } else { size };
         let Some(bin) = size_class::small_bin_index(size) else {
             // Large allocation path
-            let out = alloc_fn(size);
-            if let Some(ptr) = out {
-                self.total_allocated = self.total_allocated.saturating_add(size);
-                self.active_count = self.active_count.saturating_add(1);
+            if LargeAllocator::mapped_size_for(size).is_none() {
                 self.record_lifecycle(
-                    AllocatorLogLevel::Trace,
+                    AllocatorLogLevel::Warn,
                     "malloc",
                     "alloc",
-                    Some(ptr),
+                    None,
                     Some(size),
                     Some(NUM_SIZE_CLASSES),
-                    "success",
-                    "path=large_allocator",
+                    "oom",
+                    "large_allocator_mapped_size_overflow",
                 );
+                return None;
+            }
+
+            let out = alloc_fn(size);
+            if let Some(ptr) = out {
+                if let Some(large_alloc) = self.large_allocations.register(ptr, size) {
+                    self.total_allocated = self.total_allocated.saturating_add(size);
+                    self.active_count = self.active_count.saturating_add(1);
+                    self.record_lifecycle(
+                        AllocatorLogLevel::Trace,
+                        "malloc",
+                        "alloc",
+                        Some(ptr),
+                        Some(size),
+                        Some(NUM_SIZE_CLASSES),
+                        "success",
+                        format!(
+                            "path=large_allocator;mapped_size={}",
+                            large_alloc.mapped_size
+                        ),
+                    );
+                } else {
+                    self.record_lifecycle(
+                        AllocatorLogLevel::Warn,
+                        "malloc",
+                        "alloc",
+                        Some(ptr),
+                        Some(size),
+                        Some(NUM_SIZE_CLASSES),
+                        "metadata_error",
+                        "path=large_allocator;metadata_register_failed",
+                    );
+                    return None;
+                }
             }
             return out;
         };
@@ -330,6 +365,7 @@ impl MallocState {
         let mut ptr = ptr;
 
         let Some(bin) = size_class::small_bin_index(size) else {
+            let removed = self.large_allocations.free(ptr);
             self.total_allocated = self.total_allocated.saturating_sub(size);
             self.active_count = self.active_count.saturating_sub(1);
             free_fn(ptr);
@@ -341,7 +377,11 @@ impl MallocState {
                 Some(size),
                 Some(NUM_SIZE_CLASSES),
                 "success",
-                "path=large_allocator",
+                if removed {
+                    "path=large_allocator;metadata_removed"
+                } else {
+                    "path=large_allocator;metadata_missing"
+                },
             );
             return;
         };
@@ -424,6 +464,21 @@ impl MallocState {
     /// Returns the total number of active allocations.
     pub fn active_count(&self) -> usize {
         self.active_count
+    }
+
+    /// Returns the total number of active large allocations.
+    pub fn active_large_count(&self) -> usize {
+        self.large_allocations.active_count()
+    }
+
+    /// Returns total mapped bytes tracked for active large allocations.
+    pub fn total_large_mapped(&self) -> usize {
+        self.large_allocations.total_mapped()
+    }
+
+    /// Looks up active large-allocation metadata by backend pointer.
+    pub fn large_allocation(&self, ptr: usize) -> Option<&LargeAllocation> {
+        self.large_allocations.lookup(ptr)
     }
 
     /// Returns whether the allocator has been initialized.
@@ -514,6 +569,65 @@ mod tests {
         let size = 64;
         let ptr = state.malloc(size, test_alloc).unwrap();
         state.free(ptr, size, |p| test_free(p, 64));
+        assert_eq!(state.active_count(), 0);
+        assert_eq!(state.total_allocated(), 0);
+    }
+
+    #[test]
+    fn test_large_malloc_registers_backend_pointer_metadata() {
+        let mut state = MallocState::new();
+        let size = size_class::MAX_SMALL_SIZE + 1;
+
+        let ptr = state.malloc(size, test_alloc).unwrap();
+        let metadata = state
+            .large_allocation(ptr)
+            .expect("large allocation metadata must be registered");
+
+        assert_eq!(metadata.base, ptr);
+        assert_eq!(metadata.user_size, size);
+        assert!(metadata.mapped_size >= size);
+        assert_eq!(metadata.mapped_size % 4096, 0);
+        assert_eq!(state.active_large_count(), 1);
+        assert_eq!(state.total_large_mapped(), metadata.mapped_size);
+        assert_eq!(state.active_count(), 1);
+        assert_eq!(state.total_allocated(), size);
+
+        state.free(ptr, size, |p| test_free(p, size));
+        assert!(state.large_allocation(ptr).is_none());
+        assert_eq!(state.active_large_count(), 0);
+        assert_eq!(state.total_large_mapped(), 0);
+        assert_eq!(state.active_count(), 0);
+        assert_eq!(state.total_allocated(), 0);
+    }
+
+    #[test]
+    fn test_large_malloc_backend_failure_does_not_register_metadata() {
+        let mut state = MallocState::new();
+        let size = size_class::MAX_SMALL_SIZE + 1;
+
+        let ptr = state.malloc(size, |_| None);
+
+        assert!(ptr.is_none());
+        assert_eq!(state.active_large_count(), 0);
+        assert_eq!(state.total_large_mapped(), 0);
+        assert_eq!(state.active_count(), 0);
+        assert_eq!(state.total_allocated(), 0);
+    }
+
+    #[test]
+    fn test_large_malloc_rejects_mapping_size_overflow_before_backend() {
+        let mut state = MallocState::new();
+        let mut backend_called = false;
+
+        let ptr = state.malloc(usize::MAX, |_| {
+            backend_called = true;
+            Some(0x7fff_0000)
+        });
+
+        assert!(ptr.is_none());
+        assert!(!backend_called);
+        assert_eq!(state.active_large_count(), 0);
+        assert_eq!(state.total_large_mapped(), 0);
         assert_eq!(state.active_count(), 0);
         assert_eq!(state.total_allocated(), 0);
     }
