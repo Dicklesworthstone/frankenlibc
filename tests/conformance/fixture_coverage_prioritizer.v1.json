@@ -556,25 +556,25 @@
     },
     {
       "campaign_id": "fcq-rpc-legacy-network",
-      "current_coverage_pct": 7.55,
+      "current_coverage_pct": 15.09,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 15.09,
+      "expected_coverage_after_first_wave_pct": 22.64,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "authunix_create",
-        "authunix_create_default",
-        "bindresvport",
-        "callrpc",
-        "cbc_crypt",
-        "clnt_broadcast",
-        "clnt_create",
-        "clnt_pcreateerror",
-        "clnt_perrno",
-        "clnt_perror",
-        "clnt_spcreateerror",
-        "clnt_sperrno"
+        "clnt_sperror",
+        "clntraw_create",
+        "clnttcp_create",
+        "clntudp_bufcreate",
+        "clntudp_create",
+        "clntunix_create",
+        "des_setparity",
+        "ecb_crypt",
+        "get_myaddress",
+        "getnetname",
+        "getpublickey",
+        "getrpcport"
       ],
       "module": "rpc_abi",
       "next_step": "Add deterministic compatibility/unsupported fixtures before claiming RPC-related coverage.",
@@ -587,20 +587,20 @@
         "unsupported_claim"
       ],
       "scores": {
-        "coverage_gap_score": 147,
+        "coverage_gap_score": 135,
         "feature_gap_risk_score": 0,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 4,
         "parity_risk_score": 3,
-        "priority_score": 1147,
+        "priority_score": 1135,
         "semantic_risk_score": 0,
         "workload_risk_score": 2
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "sunrpc/auth/xdr compatibility and deterministic unsupported behavior",
-      "target_covered": 12,
+      "target_covered": 24,
       "target_total": 159,
-      "target_uncovered": 147,
+      "target_uncovered": 135,
       "title": "legacy RPC compatibility fixture wave",
       "workload_domains": [
         "resolver_nss",
@@ -978,7 +978,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3192,
+    "all_uncovered_target_symbols": 3180,
     "campaign_count": 11,
     "covered_modules": [
       "fortify_abi",
@@ -1010,7 +1010,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2838,
+    "selected_target_uncovered_symbols": 2826,
     "total_first_wave_fixture_count": 125
   }
 }

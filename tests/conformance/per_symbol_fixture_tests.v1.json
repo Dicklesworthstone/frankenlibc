@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T19:25:41Z",
-  "report_hash": "84261013cfdba5d0",
+  "generated_at": "2026-05-13T19:48:05Z",
+  "report_hash": "a6f7eb5f0bd23471",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 925,
-    "symbols_without_fixtures": 3194,
-    "fixture_coverage_pct": 22.5,
-    "implemented_coverage_pct": 21.8,
-    "total_fixture_files": 105,
-    "total_cases": 2296,
+    "symbols_with_fixtures": 937,
+    "symbols_without_fixtures": 3182,
+    "fixture_coverage_pct": 22.7,
+    "implemented_coverage_pct": 22.1,
+    "total_fixture_files": 106,
+    "total_cases": 2320,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 567,
-    "symbols_with_errno_checks": 922,
-    "total_quality_issues": 3489,
-    "uncovered_action_count": 3194
+    "symbols_with_edge_cases": 573,
+    "symbols_with_errno_checks": 934,
+    "total_quality_issues": 3483,
+    "uncovered_action_count": 3182
   },
   "fixture_file_analyses": [
     {
@@ -412,6 +412,14 @@
     },
     {
       "file": "rpc_legacy_network.json",
+      "family": "rpc/legacy-network",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "rpc_legacy_network_wave02.json",
       "family": "rpc/legacy-network",
       "valid": true,
       "total_cases": 24,
@@ -18064,30 +18072,40 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "authunix_create_default",
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "b64_ntop",
@@ -18300,15 +18318,20 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "bindtextdomain",
@@ -18882,15 +18905,20 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "canonicalize",
@@ -19739,14 +19767,19 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -20844,14 +20877,19 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -20859,29 +20897,39 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "clnt_pcreateerror",
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -20889,14 +20937,19 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -20904,29 +20957,39 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "clnt_spcreateerror",
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -20934,14 +20997,19 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -72051,20 +72119,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "authunix_create",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "authunix_create_default",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "b64_ntop",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -72089,13 +72143,6 @@
       "symbol": "bdflush",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "bindresvport",
-      "status": "Implemented",
-      "module": "rpc_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -72285,13 +72332,6 @@
       "symbol": "cacosl",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "callrpc",
-      "status": "Implemented",
-      "module": "rpc_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -72628,13 +72668,6 @@
       "symbol": "catanl",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "cbc_crypt",
-      "status": "Implemented",
-      "module": "rpc_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -73027,55 +73060,6 @@
       "symbol": "clearenv",
       "status": "Implemented",
       "module": "stdlib_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "clnt_broadcast",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "clnt_create",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "clnt_pcreateerror",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "clnt_perrno",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "clnt_perror",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "clnt_spcreateerror",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "clnt_sperrno",
-      "status": "Implemented",
-      "module": "rpc_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
