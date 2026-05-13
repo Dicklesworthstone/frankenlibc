@@ -415,7 +415,9 @@ pub fn validate_stress_report(report: &StressReport) -> Vec<String> {
     if report.snapshot_size > report.ring_capacity {
         rej.push("snapshot_exceeds_capacity".to_string());
     }
-    if report.snapshot_last_seqno > report.total_pushed {
+    if (report.snapshot_size > 0 && report.snapshot_first_seqno > report.snapshot_last_seqno)
+        || report.snapshot_last_seqno > report.total_pushed
+    {
         rej.push("non_monotone_seqno".to_string());
     }
     if report.observed_seqno_gap != report.evidence_loss_count {
@@ -530,6 +532,16 @@ mod tests {
         report.evidence_loss_count = 0;
         let rej = validate_stress_report(&report);
         assert!(rej.iter().any(|k| k == "missing_loss_count_field"));
+    }
+
+    #[test]
+    fn validate_stress_report_rejects_inverted_snapshot_bounds() {
+        let mut r = ModelRing::new(8, 16);
+        let driver = StressDriver::new(7, 4);
+        let mut report = driver.run(&mut r);
+        report.snapshot_first_seqno = report.snapshot_last_seqno + 1;
+        let rej = validate_stress_report(&report);
+        assert!(rej.iter().any(|k| k == "non_monotone_seqno"));
     }
 
     #[test]
