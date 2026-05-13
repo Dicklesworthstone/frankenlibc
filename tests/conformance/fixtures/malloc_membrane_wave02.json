@@ -1,0 +1,197 @@
+{
+  "version": "v1",
+  "family": "malloc/membrane",
+  "captured_at": "2026-05-13T06:00:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-malloc-membrane wave-02 mallopt and aligned allocation tail symbols. Outputs classify stable allocator API result classes without recording heap pointer addresses, heap layout, page-size values, rss, stderr bytes, process-global allocation counters, thread ids, timestamps, or ambient host allocator internals.",
+  "spec_reference": "GNU malloc extensions mallopt, memalign, posix_memalign, pvalloc, and valloc alignment/result-class compatibility",
+  "campaign": {
+    "bead": "bd-7z157",
+    "campaign_id": "fcq-malloc-membrane",
+    "wave_id": "wave-02-malloc-membrane-alignment-tail",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture",
+    "first_wave_symbols": [
+      "mallopt",
+      "memalign",
+      "posix_memalign",
+      "pvalloc",
+      "valloc"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "mallopt_accepts_tuning_request_strict",
+      "function": "mallopt",
+      "spec_section": "GNU mallopt compatibility success class",
+      "inputs": {
+        "symbol": "mallopt",
+        "scenario": "compatibility_tuning_request_without_allocator_policy_capture",
+        "param": 1,
+        "value": 0,
+        "expected": "MALLOPT_RC_1",
+        "oracle_source": "FrankenLibC mallopt fixed-policy compatibility replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=mallopt;mode=strict;expected=MALLOPT_RC_1;actual=MALLOPT_RC_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "mallopt_accepts_tuning_request_hardened",
+      "function": "mallopt",
+      "spec_section": "GNU mallopt compatibility success class",
+      "inputs": {
+        "symbol": "mallopt",
+        "scenario": "compatibility_tuning_request_without_allocator_policy_capture",
+        "param": 1,
+        "value": 0,
+        "expected": "MALLOPT_RC_1",
+        "oracle_source": "FrankenLibC mallopt fixed-policy compatibility replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=mallopt;mode=hardened;expected=MALLOPT_RC_1;actual=MALLOPT_RC_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "memalign_valid_alignment_strict",
+      "function": "memalign",
+      "spec_section": "GNU memalign valid alignment and size class",
+      "inputs": {
+        "symbol": "memalign",
+        "scenario": "aligned_allocation_without_pointer_capture",
+        "alignment": 64,
+        "size": 128,
+        "expected": "MEMALIGN_64_128_ALIGNED",
+        "oracle_source": "FrankenLibC memalign alignment class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=memalign;mode=strict;expected=MEMALIGN_64_128_ALIGNED;actual=MEMALIGN_64_128_ALIGNED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "memalign_valid_alignment_hardened",
+      "function": "memalign",
+      "spec_section": "GNU memalign valid alignment and size class",
+      "inputs": {
+        "symbol": "memalign",
+        "scenario": "aligned_allocation_without_pointer_capture",
+        "alignment": 64,
+        "size": 128,
+        "expected": "MEMALIGN_64_128_ALIGNED",
+        "oracle_source": "FrankenLibC memalign alignment class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=memalign;mode=hardened;expected=MEMALIGN_64_128_ALIGNED;actual=MEMALIGN_64_128_ALIGNED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "posix_memalign_valid_alignment_strict",
+      "function": "posix_memalign",
+      "spec_section": "POSIX posix_memalign valid alignment and size class",
+      "inputs": {
+        "symbol": "posix_memalign",
+        "scenario": "aligned_allocation_result_class_without_pointer_capture",
+        "alignment": 64,
+        "size": 128,
+        "expected": "POSIX_MEMALIGN_64_128_ALIGNED_RC_0",
+        "oracle_source": "FrankenLibC posix_memalign alignment class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=posix_memalign;mode=strict;expected=POSIX_MEMALIGN_64_128_ALIGNED_RC_0;actual=POSIX_MEMALIGN_64_128_ALIGNED_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "posix_memalign_valid_alignment_hardened",
+      "function": "posix_memalign",
+      "spec_section": "POSIX posix_memalign valid alignment and size class",
+      "inputs": {
+        "symbol": "posix_memalign",
+        "scenario": "aligned_allocation_result_class_without_pointer_capture",
+        "alignment": 64,
+        "size": 128,
+        "expected": "POSIX_MEMALIGN_64_128_ALIGNED_RC_0",
+        "oracle_source": "FrankenLibC posix_memalign alignment class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=posix_memalign;mode=hardened;expected=POSIX_MEMALIGN_64_128_ALIGNED_RC_0;actual=POSIX_MEMALIGN_64_128_ALIGNED_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pvalloc_page_aligned_strict",
+      "function": "pvalloc",
+      "spec_section": "GNU pvalloc page-aligned allocation class",
+      "inputs": {
+        "symbol": "pvalloc",
+        "scenario": "page_aligned_allocation_without_pointer_or_page_size_capture",
+        "size": 123,
+        "expected": "PVALLOC_123_PAGE_ALIGNED",
+        "oracle_source": "FrankenLibC pvalloc page-alignment class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=pvalloc;mode=strict;expected=PVALLOC_123_PAGE_ALIGNED;actual=PVALLOC_123_PAGE_ALIGNED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pvalloc_page_aligned_hardened",
+      "function": "pvalloc",
+      "spec_section": "GNU pvalloc page-aligned allocation class",
+      "inputs": {
+        "symbol": "pvalloc",
+        "scenario": "page_aligned_allocation_without_pointer_or_page_size_capture",
+        "size": 123,
+        "expected": "PVALLOC_123_PAGE_ALIGNED",
+        "oracle_source": "FrankenLibC pvalloc page-alignment class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=pvalloc;mode=hardened;expected=PVALLOC_123_PAGE_ALIGNED;actual=PVALLOC_123_PAGE_ALIGNED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "valloc_page_aligned_strict",
+      "function": "valloc",
+      "spec_section": "GNU valloc page-aligned allocation class",
+      "inputs": {
+        "symbol": "valloc",
+        "scenario": "page_aligned_allocation_without_pointer_or_page_size_capture",
+        "size": 256,
+        "expected": "VALLOC_256_PAGE_ALIGNED",
+        "oracle_source": "FrankenLibC valloc page-alignment class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=valloc;mode=strict;expected=VALLOC_256_PAGE_ALIGNED;actual=VALLOC_256_PAGE_ALIGNED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "valloc_page_aligned_hardened",
+      "function": "valloc",
+      "spec_section": "GNU valloc page-aligned allocation class",
+      "inputs": {
+        "symbol": "valloc",
+        "scenario": "page_aligned_allocation_without_pointer_or_page_size_capture",
+        "size": 256,
+        "expected": "VALLOC_256_PAGE_ALIGNED",
+        "oracle_source": "FrankenLibC valloc page-alignment class replay",
+        "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture"
+      },
+      "expected_output": "symbol=valloc;mode=hardened;expected=VALLOC_256_PAGE_ALIGNED;actual=VALLOC_256_PAGE_ALIGNED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

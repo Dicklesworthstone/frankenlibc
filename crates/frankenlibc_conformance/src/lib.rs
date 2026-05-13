@@ -585,7 +585,12 @@ pub fn execute_fixture_case(
         | "malloc_info"
         | "malloc_stats"
         | "malloc_trim"
-        | "malloc_usable_size" => execute_malloc_membrane_wave01_case(function, inputs, mode),
+        | "malloc_usable_size"
+        | "mallopt"
+        | "memalign"
+        | "posix_memalign"
+        | "pvalloc"
+        | "valloc" => execute_malloc_membrane_wave01_case(function, inputs, mode),
         "malloc" => execute_malloc_case(inputs, mode),
         "free" => execute_free_case(inputs, mode),
         "calloc" => execute_calloc_case(inputs, mode),
@@ -10657,7 +10662,88 @@ fn malloc_membrane_symbol_actual(
                 unsafe { frankenlibc_abi::malloc_abi::malloc_usable_size(std::ptr::null_mut()) };
             Ok(format!("MALLOC_USABLE_SIZE_NULL_{usable}"))
         }
+        "mallopt" => {
+            let param = parse_i32(inputs, "param").unwrap_or(1);
+            let value = parse_i32(inputs, "value").unwrap_or(0);
+            let rc = unsafe { frankenlibc_abi::malloc_abi::mallopt(param, value) };
+            Ok(format!("MALLOPT_RC_{rc}"))
+        }
+        "memalign" => {
+            let alignment = parse_usize(inputs, "alignment").unwrap_or(64);
+            let size = parse_usize(inputs, "size").unwrap_or(128);
+            let ptr = unsafe { frankenlibc_abi::malloc_abi::memalign(alignment, size) };
+            classify_aligned_alloc_pointer("MEMALIGN", ptr, alignment, size)
+        }
+        "posix_memalign" => {
+            let alignment = parse_usize(inputs, "alignment").unwrap_or(64);
+            let size = parse_usize(inputs, "size").unwrap_or(128);
+            let mut out: *mut c_void = std::ptr::null_mut();
+            let rc =
+                unsafe { frankenlibc_abi::malloc_abi::posix_memalign(&mut out, alignment, size) };
+            if rc != 0 {
+                return Ok(format!("POSIX_MEMALIGN_{alignment}_{size}_RC_{rc}"));
+            }
+            classify_aligned_alloc_pointer("POSIX_MEMALIGN", out, alignment, size)
+                .map(|class| format!("{class}_RC_0"))
+        }
+        "pvalloc" => {
+            let size = parse_usize(inputs, "size").unwrap_or(123);
+            let page_size = fixture_page_size();
+            let ptr = unsafe { frankenlibc_abi::malloc_abi::pvalloc(size) };
+            classify_page_aligned_alloc_pointer("PVALLOC", ptr, page_size, size)
+        }
+        "valloc" => {
+            let size = parse_usize(inputs, "size").unwrap_or(256);
+            let page_size = fixture_page_size();
+            let ptr = unsafe { frankenlibc_abi::malloc_abi::valloc(size) };
+            classify_page_aligned_alloc_pointer("VALLOC", ptr, page_size, size)
+        }
         other => Err(format!("unsupported malloc/membrane fixture: {other}")),
+    }
+}
+
+fn classify_aligned_alloc_pointer(
+    label: &str,
+    ptr: *mut c_void,
+    alignment: usize,
+    size: usize,
+) -> Result<String, String> {
+    if ptr.is_null() {
+        return Ok(format!("{label}_{alignment}_{size}_NULL"));
+    }
+    let aligned = (ptr as usize).is_multiple_of(alignment);
+    unsafe { frankenlibc_abi::malloc_abi::free(ptr) };
+    if aligned {
+        Ok(format!("{label}_{alignment}_{size}_ALIGNED"))
+    } else {
+        Ok(format!("{label}_{alignment}_{size}_MISALIGNED"))
+    }
+}
+
+fn classify_page_aligned_alloc_pointer(
+    label: &str,
+    ptr: *mut c_void,
+    page_size: usize,
+    size: usize,
+) -> Result<String, String> {
+    if ptr.is_null() {
+        return Ok(format!("{label}_{size}_NULL"));
+    }
+    let aligned = (ptr as usize).is_multiple_of(page_size);
+    unsafe { frankenlibc_abi::malloc_abi::free(ptr) };
+    if aligned {
+        Ok(format!("{label}_{size}_PAGE_ALIGNED"))
+    } else {
+        Ok(format!("{label}_{size}_PAGE_MISALIGNED"))
+    }
+}
+
+fn fixture_page_size() -> usize {
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if page_size > 0 {
+        page_size as usize
+    } else {
+        4096
     }
 }
 
