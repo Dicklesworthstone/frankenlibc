@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "fortify/checked-wrapper",
+  "captured_at": "2026-05-13T21:35:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-fortify-bounds wave-02 checked-wrapper, object-size, status, abort, and bounded wide/multibyte symbols using classified positive and negative behavior without recording raw buffer addresses, FILE pointers, filesystem paths, stdout bytes, stderr bytes, fd numbers, hostnames, domain names, group ids, login names, process ids, or wall-clock timing.",
+  "spec_reference": "GNU _FORTIFY_SOURCE checked-wrapper object-size semantics for __fread_chk, __fread_unlocked_chk, __fwprintf_chk, __getcwd_chk, __getdomainname_chk, __getgroups_chk, __gethostname_chk, __getlogin_r_chk, __gets_chk, __getwd_chk, __longjmp_chk, and __mbsnrtowcs_chk",
+  "campaign": {
+    "bead": "bd-vm6j0.6",
+    "campaign_id": "fcq-fortify-bounds",
+    "wave_id": "wave-02-fortify-checked-wrapper-bounds",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture",
+    "first_wave_symbols": [
+      "__fread_chk",
+      "__fread_unlocked_chk",
+      "__fwprintf_chk",
+      "__getcwd_chk",
+      "__getdomainname_chk",
+      "__getgroups_chk",
+      "__gethostname_chk",
+      "__getlogin_r_chk",
+      "__gets_chk",
+      "__getwd_chk",
+      "__longjmp_chk",
+      "__mbsnrtowcs_chk"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "__fread_chk_reads_bounded_strict",
+      "function": "__fread_chk",
+      "spec_section": "GNU fread checked wrapper delegates bounded in-memory stream reads",
+      "inputs": {
+        "symbol": "__fread_chk",
+        "scenario": "bounded_memory_stream_read_without_file_or_pointer_capture",
+        "expected": "FREAD_READ_ABCD_ITEMS_4",
+        "oracle_source": "FrankenLibC fortify_abi::__fread_chk bounded fmemopen replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fread_chk;mode=strict;expected=FREAD_READ_ABCD_ITEMS_4;actual=FREAD_READ_ABCD_ITEMS_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__fread_chk_reads_bounded_hardened",
+      "function": "__fread_chk",
+      "spec_section": "GNU fread checked wrapper delegates bounded in-memory stream reads",
+      "inputs": {
+        "symbol": "__fread_chk",
+        "scenario": "bounded_memory_stream_read_without_file_or_pointer_capture",
+        "expected": "FREAD_READ_ABCD_ITEMS_4",
+        "oracle_source": "FrankenLibC fortify_abi::__fread_chk bounded fmemopen replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fread_chk;mode=hardened;expected=FREAD_READ_ABCD_ITEMS_4;actual=FREAD_READ_ABCD_ITEMS_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__fread_unlocked_chk_reads_bounded_strict",
+      "function": "__fread_unlocked_chk",
+      "spec_section": "GNU fread_unlocked checked wrapper delegates bounded in-memory stream reads",
+      "inputs": {
+        "symbol": "__fread_unlocked_chk",
+        "scenario": "bounded_memory_stream_read_without_file_or_pointer_capture",
+        "expected": "FREAD_UNLOCKED_READ_ABCD_ITEMS_4",
+        "oracle_source": "FrankenLibC fortify_abi::__fread_unlocked_chk bounded fmemopen replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fread_unlocked_chk;mode=strict;expected=FREAD_UNLOCKED_READ_ABCD_ITEMS_4;actual=FREAD_UNLOCKED_READ_ABCD_ITEMS_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__fread_unlocked_chk_reads_bounded_hardened",
+      "function": "__fread_unlocked_chk",
+      "spec_section": "GNU fread_unlocked checked wrapper delegates bounded in-memory stream reads",
+      "inputs": {
+        "symbol": "__fread_unlocked_chk",
+        "scenario": "bounded_memory_stream_read_without_file_or_pointer_capture",
+        "expected": "FREAD_UNLOCKED_READ_ABCD_ITEMS_4",
+        "oracle_source": "FrankenLibC fortify_abi::__fread_unlocked_chk bounded fmemopen replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fread_unlocked_chk;mode=hardened;expected=FREAD_UNLOCKED_READ_ABCD_ITEMS_4;actual=FREAD_UNLOCKED_READ_ABCD_ITEMS_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__fwprintf_chk_writes_wide_literal_strict",
+      "function": "__fwprintf_chk",
+      "spec_section": "GNU fwprintf checked wrapper delegates safe wide literal writes",
+      "inputs": {
+        "symbol": "__fwprintf_chk",
+        "scenario": "tmpfile_wide_literal_without_file_or_output_capture",
+        "expected": "FWPRINTF_TMPFILE_WRITE_RC_POSITIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__fwprintf_chk tmpfile write classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fwprintf_chk;mode=strict;expected=FWPRINTF_TMPFILE_WRITE_RC_POSITIVE;actual=FWPRINTF_TMPFILE_WRITE_RC_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__fwprintf_chk_writes_wide_literal_hardened",
+      "function": "__fwprintf_chk",
+      "spec_section": "GNU fwprintf checked wrapper delegates safe wide literal writes",
+      "inputs": {
+        "symbol": "__fwprintf_chk",
+        "scenario": "tmpfile_wide_literal_without_file_or_output_capture",
+        "expected": "FWPRINTF_TMPFILE_WRITE_RC_POSITIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__fwprintf_chk tmpfile write classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__fwprintf_chk;mode=hardened;expected=FWPRINTF_TMPFILE_WRITE_RC_POSITIVE;actual=FWPRINTF_TMPFILE_WRITE_RC_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__getcwd_chk_classifies_bounded_probe_strict",
+      "function": "__getcwd_chk",
+      "spec_section": "GNU getcwd checked wrapper rejects len greater than object size and otherwise delegates",
+      "inputs": {
+        "symbol": "__getcwd_chk",
+        "scenario": "bounded_cwd_probe_without_path_capture",
+        "expected": "GETCWD_NONNULL",
+        "oracle_source": "FrankenLibC fortify_abi::__getcwd_chk non-null classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__getcwd_chk;mode=strict;expected=GETCWD_NONNULL;actual=GETCWD_NONNULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__getcwd_chk_classifies_bounded_probe_hardened",
+      "function": "__getcwd_chk",
+      "spec_section": "GNU getcwd checked wrapper rejects len greater than object size and otherwise delegates",
+      "inputs": {
+        "symbol": "__getcwd_chk",
+        "scenario": "bounded_cwd_probe_without_path_capture",
+        "expected": "GETCWD_NONNULL",
+        "oracle_source": "FrankenLibC fortify_abi::__getcwd_chk non-null classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__getcwd_chk;mode=hardened;expected=GETCWD_NONNULL;actual=GETCWD_NONNULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__getdomainname_chk_classifies_status_strict",
+      "function": "__getdomainname_chk",
+      "spec_section": "GNU getdomainname checked wrapper rejects len greater than object size and otherwise delegates",
+      "inputs": {
+        "symbol": "__getdomainname_chk",
+        "scenario": "bounded_domain_probe_without_domain_capture",
+        "expected": "GETDOMAINNAME_RC_0",
+        "oracle_source": "FrankenLibC fortify_abi::__getdomainname_chk status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__getdomainname_chk;mode=strict;expected=GETDOMAINNAME_RC_0;actual=GETDOMAINNAME_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__getdomainname_chk_classifies_status_hardened",
+      "function": "__getdomainname_chk",
+      "spec_section": "GNU getdomainname checked wrapper rejects len greater than object size and otherwise delegates",
+      "inputs": {
+        "symbol": "__getdomainname_chk",
+        "scenario": "bounded_domain_probe_without_domain_capture",
+        "expected": "GETDOMAINNAME_RC_0",
+        "oracle_source": "FrankenLibC fortify_abi::__getdomainname_chk status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__getdomainname_chk;mode=hardened;expected=GETDOMAINNAME_RC_0;actual=GETDOMAINNAME_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__getgroups_chk_classifies_count_query_strict",
+      "function": "__getgroups_chk",
+      "spec_section": "GNU getgroups checked wrapper rejects group list overflow and permits zero-size count query",
+      "inputs": {
+        "symbol": "__getgroups_chk",
+        "scenario": "zero_size_group_count_query_without_group_capture",
+        "expected": "GETGROUPS_QUERY_RC_NONNEGATIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__getgroups_chk count query classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__getgroups_chk;mode=strict;expected=GETGROUPS_QUERY_RC_NONNEGATIVE;actual=GETGROUPS_QUERY_RC_NONNEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__getgroups_chk_classifies_count_query_hardened",
+      "function": "__getgroups_chk",
+      "spec_section": "GNU getgroups checked wrapper rejects group list overflow and permits zero-size count query",
+      "inputs": {
+        "symbol": "__getgroups_chk",
+        "scenario": "zero_size_group_count_query_without_group_capture",
+        "expected": "GETGROUPS_QUERY_RC_NONNEGATIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__getgroups_chk count query classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__getgroups_chk;mode=hardened;expected=GETGROUPS_QUERY_RC_NONNEGATIVE;actual=GETGROUPS_QUERY_RC_NONNEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__gethostname_chk_classifies_status_strict",
+      "function": "__gethostname_chk",
+      "spec_section": "GNU gethostname checked wrapper rejects len greater than object size and otherwise delegates",
+      "inputs": {
+        "symbol": "__gethostname_chk",
+        "scenario": "bounded_hostname_probe_without_hostname_capture",
+        "expected": "GETHOSTNAME_RC_0",
+        "oracle_source": "FrankenLibC fortify_abi::__gethostname_chk status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__gethostname_chk;mode=strict;expected=GETHOSTNAME_RC_0;actual=GETHOSTNAME_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__gethostname_chk_classifies_status_hardened",
+      "function": "__gethostname_chk",
+      "spec_section": "GNU gethostname checked wrapper rejects len greater than object size and otherwise delegates",
+      "inputs": {
+        "symbol": "__gethostname_chk",
+        "scenario": "bounded_hostname_probe_without_hostname_capture",
+        "expected": "GETHOSTNAME_RC_0",
+        "oracle_source": "FrankenLibC fortify_abi::__gethostname_chk status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__gethostname_chk;mode=hardened;expected=GETHOSTNAME_RC_0;actual=GETHOSTNAME_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__getlogin_r_chk_classifies_invalid_buffer_strict",
+      "function": "__getlogin_r_chk",
+      "spec_section": "GNU getlogin_r checked wrapper rejects logical buffer overflow and otherwise delegates status behavior",
+      "inputs": {
+        "symbol": "__getlogin_r_chk",
+        "scenario": "null_zero_login_buffer_returns_erange_without_login_capture",
+        "expected": "GETLOGIN_R_NULL_ZERO_RC_34",
+        "oracle_source": "FrankenLibC fortify_abi::__getlogin_r_chk ERANGE status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__getlogin_r_chk;mode=strict;expected=GETLOGIN_R_NULL_ZERO_RC_34;actual=GETLOGIN_R_NULL_ZERO_RC_34;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__getlogin_r_chk_classifies_invalid_buffer_hardened",
+      "function": "__getlogin_r_chk",
+      "spec_section": "GNU getlogin_r checked wrapper rejects logical buffer overflow and otherwise delegates status behavior",
+      "inputs": {
+        "symbol": "__getlogin_r_chk",
+        "scenario": "null_zero_login_buffer_returns_erange_without_login_capture",
+        "expected": "GETLOGIN_R_NULL_ZERO_RC_34",
+        "oracle_source": "FrankenLibC fortify_abi::__getlogin_r_chk ERANGE status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__getlogin_r_chk;mode=hardened;expected=GETLOGIN_R_NULL_ZERO_RC_34;actual=GETLOGIN_R_NULL_ZERO_RC_34;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__gets_chk_zero_bound_aborts_strict",
+      "function": "__gets_chk",
+      "spec_section": "GNU gets checked wrapper aborts when object size cannot hold a terminator",
+      "inputs": {
+        "symbol": "__gets_chk",
+        "scenario": "zero_bound_read_aborts_without_stdin_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__gets_chk fork/wait classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__gets_chk;mode=strict;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__gets_chk_zero_bound_aborts_hardened",
+      "function": "__gets_chk",
+      "spec_section": "GNU gets checked wrapper aborts when object size cannot hold a terminator",
+      "inputs": {
+        "symbol": "__gets_chk",
+        "scenario": "zero_bound_read_aborts_without_stdin_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__gets_chk fork/wait classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__gets_chk;mode=hardened;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__getwd_chk_classifies_bounded_probe_strict",
+      "function": "__getwd_chk",
+      "spec_section": "GNU getwd checked wrapper delegates to getcwd using caller object size",
+      "inputs": {
+        "symbol": "__getwd_chk",
+        "scenario": "bounded_deprecated_cwd_probe_without_path_capture",
+        "expected": "GETWD_NONNULL",
+        "oracle_source": "FrankenLibC fortify_abi::__getwd_chk non-null classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__getwd_chk;mode=strict;expected=GETWD_NONNULL;actual=GETWD_NONNULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__getwd_chk_classifies_bounded_probe_hardened",
+      "function": "__getwd_chk",
+      "spec_section": "GNU getwd checked wrapper delegates to getcwd using caller object size",
+      "inputs": {
+        "symbol": "__getwd_chk",
+        "scenario": "bounded_deprecated_cwd_probe_without_path_capture",
+        "expected": "GETWD_NONNULL",
+        "oracle_source": "FrankenLibC fortify_abi::__getwd_chk non-null classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__getwd_chk;mode=hardened;expected=GETWD_NONNULL;actual=GETWD_NONNULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__longjmp_chk_null_context_signals_strict",
+      "function": "__longjmp_chk",
+      "spec_section": "GNU longjmp checked wrapper rejects invalid non-local jump contexts by process signal",
+      "inputs": {
+        "symbol": "__longjmp_chk",
+        "scenario": "fork_isolated_null_context_signal_without_stack_capture",
+        "expected": "SIGNAL_SIGSEGV",
+        "oracle_source": "FrankenLibC fortify_abi::__longjmp_chk fork/wait classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__longjmp_chk;mode=strict;expected=SIGNAL_SIGSEGV;actual=SIGNAL_SIGSEGV;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__longjmp_chk_null_context_signals_hardened",
+      "function": "__longjmp_chk",
+      "spec_section": "GNU longjmp checked wrapper rejects invalid non-local jump contexts by process signal",
+      "inputs": {
+        "symbol": "__longjmp_chk",
+        "scenario": "fork_isolated_null_context_signal_without_stack_capture",
+        "expected": "SIGNAL_SIGSEGV",
+        "oracle_source": "FrankenLibC fortify_abi::__longjmp_chk fork/wait classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__longjmp_chk;mode=hardened;expected=SIGNAL_SIGSEGV;actual=SIGNAL_SIGSEGV;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__mbsnrtowcs_chk_converts_ascii_strict",
+      "function": "__mbsnrtowcs_chk",
+      "spec_section": "GNU mbsnrtowcs checked wrapper rejects wide destination overflow and otherwise delegates bounded conversion",
+      "inputs": {
+        "symbol": "__mbsnrtowcs_chk",
+        "scenario": "ascii_source_bounded_conversion_without_pointer_capture",
+        "expected": "MBSNRTOWCS_ASCII_WRITTEN_3_CONSUMED_3",
+        "oracle_source": "FrankenLibC fortify_abi::__mbsnrtowcs_chk bounded ASCII conversion classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__mbsnrtowcs_chk;mode=strict;expected=MBSNRTOWCS_ASCII_WRITTEN_3_CONSUMED_3;actual=MBSNRTOWCS_ASCII_WRITTEN_3_CONSUMED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__mbsnrtowcs_chk_converts_ascii_hardened",
+      "function": "__mbsnrtowcs_chk",
+      "spec_section": "GNU mbsnrtowcs checked wrapper rejects wide destination overflow and otherwise delegates bounded conversion",
+      "inputs": {
+        "symbol": "__mbsnrtowcs_chk",
+        "scenario": "ascii_source_bounded_conversion_without_pointer_capture",
+        "expected": "MBSNRTOWCS_ASCII_WRITTEN_3_CONSUMED_3",
+        "oracle_source": "FrankenLibC fortify_abi::__mbsnrtowcs_chk bounded ASCII conversion classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__mbsnrtowcs_chk;mode=hardened;expected=MBSNRTOWCS_ASCII_WRITTEN_3_CONSUMED_3;actual=MBSNRTOWCS_ASCII_WRITTEN_3_CONSUMED_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

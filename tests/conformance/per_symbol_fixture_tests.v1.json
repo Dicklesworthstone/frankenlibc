@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T21:46:44Z",
-  "report_hash": "96e9cfe4f6207a6e",
+  "generated_at": "2026-05-13T22:05:58Z",
+  "report_hash": "63761d3d74833a46",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 997,
-    "symbols_without_fixtures": 3122,
-    "fixture_coverage_pct": 24.2,
-    "implemented_coverage_pct": 23.5,
-    "total_fixture_files": 111,
-    "total_cases": 2440,
+    "symbols_with_fixtures": 1009,
+    "symbols_without_fixtures": 3110,
+    "fixture_coverage_pct": 24.5,
+    "implemented_coverage_pct": 23.8,
+    "total_fixture_files": 112,
+    "total_cases": 2464,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 603,
-    "symbols_with_errno_checks": 994,
-    "total_quality_issues": 3463,
-    "uncovered_action_count": 3122
+    "symbols_with_edge_cases": 609,
+    "symbols_with_errno_checks": 1006,
+    "total_quality_issues": 3457,
+    "uncovered_action_count": 3110
   },
   "fixture_file_analyses": [
     {
@@ -100,6 +100,14 @@
     },
     {
       "file": "fortify_checked_wrapper_wave01.json",
+      "family": "fortify/checked-wrapper",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "fortify_checked_wrapper_wave02.json",
       "family": "fortify/checked-wrapper",
       "valid": true,
       "total_cases": 24,
@@ -5482,14 +5490,19 @@
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -5497,14 +5510,19 @@
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -5630,14 +5648,19 @@
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -5967,15 +5990,20 @@
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__getdelim",
@@ -5997,29 +6025,39 @@
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__getgroups_chk",
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -6027,30 +6065,40 @@
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__getlogin_r_chk",
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__getmntent_r",
@@ -6130,14 +6178,19 @@
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -6160,15 +6213,20 @@
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__gmtime_r",
@@ -8930,15 +8988,20 @@
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__lseek",
@@ -9073,14 +9136,19 @@
       "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -68510,20 +68578,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__fread_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__fread_unlocked_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__freadable",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -68576,13 +68630,6 @@
       "symbol": "__ftello64",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__fwprintf_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -68699,44 +68746,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "__getcwd_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__getdelim",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__getdomainname_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__getgroups_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__gethostname_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__getlogin_r_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -68776,23 +68788,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "__gets_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__gettimeofday",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__getwd_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -69567,13 +69565,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "__longjmp_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__lseek",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -69612,13 +69603,6 @@
       "symbol": "__mbrtowc",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__mbsnrtowcs_chk",
-      "status": "Implemented",
-      "module": "fortify_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
