@@ -1029,6 +1029,18 @@ pub fn execute_fixture_case(
         | "pthread_attr_setstackaddr" => {
             execute_pthread_attribute_wave04_case(function, inputs, mode)
         }
+        "pthread_attr_setstacksize"
+        | "pthread_barrier_destroy"
+        | "pthread_barrier_init"
+        | "pthread_barrier_wait"
+        | "pthread_barrierattr_destroy"
+        | "pthread_barrierattr_getpshared"
+        | "pthread_barrierattr_init"
+        | "pthread_barrierattr_setpshared"
+        | "pthread_cancel"
+        | "pthread_condattr_destroy"
+        | "pthread_condattr_getclock"
+        | "pthread_condattr_getpshared" => execute_pthread_sync_wave05_case(function, inputs, mode),
         // pthread mutexes
         "pthread_mutex_init" => execute_pthread_mutex_init_case(inputs, mode),
         "pthread_mutex_destroy" => execute_pthread_mutex_destroy_case(inputs, mode),
@@ -15827,6 +15839,316 @@ fn pthread_attribute_wave04_actual(function: &str) -> Result<String, String> {
     }
 }
 
+fn execute_pthread_sync_wave05_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "pthread sync wave05 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = pthread_sync_wave05_actual(function)?;
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    Ok(non_host_execution(format!(
+        "symbol={function};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )))
+}
+
+fn pthread_sync_wave05_actual(function: &str) -> Result<String, String> {
+    match function {
+        "pthread_attr_setstacksize" => with_pthread_attribute_wave03(|attr| {
+            let requested = libc::PTHREAD_STACK_MIN.saturating_mul(2);
+            // SAFETY: attr is initialized and requested is above the POSIX minimum.
+            let set_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_attr_setstacksize(attr, requested) };
+            let mut observed = 0usize;
+            // SAFETY: attr is initialized and observed points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_attr_getstacksize(
+                    attr as *const libc::pthread_attr_t,
+                    &mut observed,
+                )
+            };
+            if set_rc == 0 && get_rc == 0 && observed == requested {
+                Ok(String::from("ATTR_SETSTACKSIZE_STORED_VALID"))
+            } else {
+                Ok(format!(
+                    "ATTR_SETSTACKSIZE_SET_{}_GET_{}_STORED_{}",
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    observed == requested
+                ))
+            }
+        }),
+        "pthread_barrier_destroy" => {
+            // SAFETY: zeroed pthread_barrier_t is immediately initialized before destroy.
+            let mut barrier: libc::pthread_barrier_t = unsafe { std::mem::zeroed() };
+            let barrier_ptr = (&mut barrier as *mut libc::pthread_barrier_t).cast::<c_void>();
+            // SAFETY: barrier_ptr points to owned barrier storage and count 1 is valid.
+            let init_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_barrier_init(barrier_ptr, std::ptr::null(), 1)
+            };
+            if init_rc != 0 {
+                return Ok(format!(
+                    "BARRIER_INIT_RC_{}",
+                    format_pthread_status(init_rc)
+                ));
+            }
+            // SAFETY: barrier_ptr was initialized above and is unused after destroy.
+            let destroy_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_barrier_destroy(barrier_ptr) };
+            Ok(format!(
+                "BARRIER_DESTROY_RC_{}",
+                format_pthread_status(destroy_rc)
+            ))
+        }
+        "pthread_barrier_init" => {
+            // SAFETY: zeroed pthread_barrier_t is owned storage for initialization.
+            let mut barrier: libc::pthread_barrier_t = unsafe { std::mem::zeroed() };
+            let barrier_ptr = (&mut barrier as *mut libc::pthread_barrier_t).cast::<c_void>();
+            // SAFETY: barrier_ptr points to owned barrier storage and count 1 is valid.
+            let init_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_barrier_init(barrier_ptr, std::ptr::null(), 1)
+            };
+            if init_rc == 0 {
+                // SAFETY: barrier_ptr was initialized above and is unused after destroy.
+                let _ =
+                    unsafe { frankenlibc_abi::pthread_abi::pthread_barrier_destroy(barrier_ptr) };
+            }
+            Ok(format!(
+                "BARRIER_INIT_RC_{}",
+                format_pthread_status(init_rc)
+            ))
+        }
+        "pthread_barrier_wait" => {
+            // SAFETY: zeroed pthread_barrier_t is immediately initialized before wait.
+            let mut barrier: libc::pthread_barrier_t = unsafe { std::mem::zeroed() };
+            let barrier_ptr = (&mut barrier as *mut libc::pthread_barrier_t).cast::<c_void>();
+            // SAFETY: barrier_ptr points to owned barrier storage and count 1 releases immediately.
+            let init_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_barrier_init(barrier_ptr, std::ptr::null(), 1)
+            };
+            if init_rc != 0 {
+                return Ok(format!(
+                    "BARRIER_INIT_RC_{}",
+                    format_pthread_status(init_rc)
+                ));
+            }
+            // SAFETY: barrier_ptr is initialized and count 1 cannot block.
+            let wait_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_barrier_wait(barrier_ptr) };
+            // SAFETY: barrier_ptr is initialized and no waiters remain after count-1 wait.
+            let destroy_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_barrier_destroy(barrier_ptr) };
+            if wait_rc == libc::PTHREAD_BARRIER_SERIAL_THREAD && destroy_rc == 0 {
+                Ok(String::from("BARRIER_WAIT_SERIAL_THREAD"))
+            } else {
+                Ok(format!(
+                    "BARRIER_WAIT_{}_DESTROY_{}",
+                    format_pthread_status(wait_rc),
+                    format_pthread_status(destroy_rc)
+                ))
+            }
+        }
+        "pthread_barrierattr_destroy" => {
+            // SAFETY: barrierattr is initialized before destroy observes it.
+            let mut attr: libc::pthread_barrierattr_t = unsafe { std::mem::zeroed() };
+            // SAFETY: attr points to owned storage.
+            let init_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_barrierattr_init(&mut attr) };
+            if init_rc != 0 {
+                return Ok(format!(
+                    "BARRIERATTR_INIT_RC_{}",
+                    format_pthread_status(init_rc)
+                ));
+            }
+            // SAFETY: attr was initialized above and is unused after destroy.
+            let destroy_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_barrierattr_destroy(&mut attr) };
+            Ok(format!(
+                "BARRIERATTR_DESTROY_RC_{}",
+                format_pthread_status(destroy_rc)
+            ))
+        }
+        "pthread_barrierattr_getpshared" => {
+            // SAFETY: barrierattr is initialized before getter observes it.
+            let mut attr: libc::pthread_barrierattr_t = unsafe { std::mem::zeroed() };
+            // SAFETY: attr points to owned storage.
+            let init_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_barrierattr_init(&mut attr) };
+            if init_rc != 0 {
+                return Ok(format!(
+                    "BARRIERATTR_INIT_RC_{}",
+                    format_pthread_status(init_rc)
+                ));
+            }
+            let mut pshared = -1;
+            // SAFETY: attr is initialized and pshared points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_barrierattr_getpshared(&attr, &mut pshared)
+            };
+            // SAFETY: attr was initialized above and is unused after destroy.
+            let _ = unsafe { frankenlibc_abi::pthread_abi::pthread_barrierattr_destroy(&mut attr) };
+            if get_rc == 0 && pshared == libc::PTHREAD_PROCESS_PRIVATE {
+                Ok(String::from("BARRIERATTR_PSHARED_PRIVATE"))
+            } else {
+                Ok(format!(
+                    "BARRIERATTR_GETPSHARED_RC_{}_PRIVATE_{}",
+                    format_pthread_status(get_rc),
+                    pshared == libc::PTHREAD_PROCESS_PRIVATE
+                ))
+            }
+        }
+        "pthread_barrierattr_init" => {
+            // SAFETY: barrierattr is owned output storage.
+            let mut attr: libc::pthread_barrierattr_t = unsafe { std::mem::zeroed() };
+            // SAFETY: attr points to owned storage.
+            let init_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_barrierattr_init(&mut attr) };
+            if init_rc == 0 {
+                // SAFETY: attr was initialized above and is unused after destroy.
+                let _ =
+                    unsafe { frankenlibc_abi::pthread_abi::pthread_barrierattr_destroy(&mut attr) };
+            }
+            Ok(format!(
+                "BARRIERATTR_INIT_RC_{}",
+                format_pthread_status(init_rc)
+            ))
+        }
+        "pthread_barrierattr_setpshared" => {
+            // SAFETY: barrierattr is initialized before setter/getter observe it.
+            let mut attr: libc::pthread_barrierattr_t = unsafe { std::mem::zeroed() };
+            // SAFETY: attr points to owned storage.
+            let init_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_barrierattr_init(&mut attr) };
+            if init_rc != 0 {
+                return Ok(format!(
+                    "BARRIERATTR_INIT_RC_{}",
+                    format_pthread_status(init_rc)
+                ));
+            }
+            // SAFETY: attr is initialized and private sharing is supported.
+            let set_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_barrierattr_setpshared(
+                    &mut attr,
+                    libc::PTHREAD_PROCESS_PRIVATE,
+                )
+            };
+            let mut pshared = -1;
+            // SAFETY: attr is initialized and pshared points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_barrierattr_getpshared(&attr, &mut pshared)
+            };
+            // SAFETY: attr was initialized above and is unused after destroy.
+            let _ = unsafe { frankenlibc_abi::pthread_abi::pthread_barrierattr_destroy(&mut attr) };
+            if set_rc == 0 && get_rc == 0 && pshared == libc::PTHREAD_PROCESS_PRIVATE {
+                Ok(String::from("BARRIERATTR_SETPSHARED_PRIVATE"))
+            } else {
+                Ok(format!(
+                    "BARRIERATTR_SETPSHARED_SET_{}_GET_{}_PRIVATE_{}",
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    pshared == libc::PTHREAD_PROCESS_PRIVATE
+                ))
+            }
+        }
+        "pthread_cancel" => {
+            // SAFETY: zero is not a live pthread handle and exercises the deterministic ESRCH path.
+            let rc = unsafe { frankenlibc_abi::pthread_abi::pthread_cancel(0) };
+            if rc == libc::ESRCH {
+                Ok(String::from("CANCEL_ZERO_ESRCH"))
+            } else {
+                Ok(format!("CANCEL_ZERO_RC_{}", format_pthread_status(rc)))
+            }
+        }
+        "pthread_condattr_destroy" => {
+            // SAFETY: condattr is initialized before destroy observes it.
+            let mut attr: libc::pthread_condattr_t = unsafe { std::mem::zeroed() };
+            // SAFETY: attr points to owned storage.
+            let init_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_condattr_init(&mut attr) };
+            if init_rc != 0 {
+                return Ok(format!(
+                    "CONDATTR_INIT_RC_{}",
+                    format_pthread_status(init_rc)
+                ));
+            }
+            // SAFETY: attr was initialized above and is unused after destroy.
+            let destroy_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_condattr_destroy(&mut attr) };
+            Ok(format!(
+                "CONDATTR_DESTROY_RC_{}",
+                format_pthread_status(destroy_rc)
+            ))
+        }
+        "pthread_condattr_getclock" => {
+            // SAFETY: condattr is initialized before getter observes it.
+            let mut attr: libc::pthread_condattr_t = unsafe { std::mem::zeroed() };
+            // SAFETY: attr points to owned storage.
+            let init_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_condattr_init(&mut attr) };
+            if init_rc != 0 {
+                return Ok(format!(
+                    "CONDATTR_INIT_RC_{}",
+                    format_pthread_status(init_rc)
+                ));
+            }
+            let mut clock_id = -1;
+            // SAFETY: attr is initialized and clock_id points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_condattr_getclock(&attr, &mut clock_id)
+            };
+            // SAFETY: attr was initialized above and is unused after destroy.
+            let _ = unsafe { frankenlibc_abi::pthread_abi::pthread_condattr_destroy(&mut attr) };
+            if get_rc == 0 && clock_id == libc::CLOCK_REALTIME {
+                Ok(String::from("CONDATTR_CLOCK_REALTIME"))
+            } else {
+                Ok(format!(
+                    "CONDATTR_GETCLOCK_RC_{}_REALTIME_{}",
+                    format_pthread_status(get_rc),
+                    clock_id == libc::CLOCK_REALTIME
+                ))
+            }
+        }
+        "pthread_condattr_getpshared" => {
+            // SAFETY: condattr is initialized before getter observes it.
+            let mut attr: libc::pthread_condattr_t = unsafe { std::mem::zeroed() };
+            // SAFETY: attr points to owned storage.
+            let init_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_condattr_init(&mut attr) };
+            if init_rc != 0 {
+                return Ok(format!(
+                    "CONDATTR_INIT_RC_{}",
+                    format_pthread_status(init_rc)
+                ));
+            }
+            let mut pshared = -1;
+            // SAFETY: attr is initialized and pshared points to owned output storage.
+            let get_rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_condattr_getpshared(&attr, &mut pshared)
+            };
+            // SAFETY: attr was initialized above and is unused after destroy.
+            let _ = unsafe { frankenlibc_abi::pthread_abi::pthread_condattr_destroy(&mut attr) };
+            if get_rc == 0 && pshared == libc::PTHREAD_PROCESS_PRIVATE {
+                Ok(String::from("CONDATTR_PSHARED_PRIVATE"))
+            } else {
+                Ok(format!(
+                    "CONDATTR_GETPSHARED_RC_{}_PRIVATE_{}",
+                    format_pthread_status(get_rc),
+                    pshared == libc::PTHREAD_PROCESS_PRIVATE
+                ))
+            }
+        }
+        other => Err(format!("unsupported pthread sync wave05 fixture: {other}")),
+    }
+}
+
 fn classify_pthread_unwind_next_abort() -> Result<String, String> {
     let pid = unsafe { libc::fork() };
     if pid < 0 {
@@ -28129,6 +28451,47 @@ mod tests {
         let raw = include_str!("../../../tests/conformance/fixtures/pthread_attribute_wave04.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("pthread attribute wave04 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn pthread_sync_wave05_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/pthread_sync_wave05.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("pthread sync wave05 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

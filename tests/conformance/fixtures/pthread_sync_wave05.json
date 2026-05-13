@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "pthread/sync",
+  "captured_at": "2026-05-13T23:05:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-pthread-sync wave-05 pthread attribute stack-size, barrier, barrier attribute, cancellation status, and condition attribute symbols without recording pthread object addresses, native thread ids, scheduler timing, barrier status bytes, stack addresses, stderr bytes, or process-global counters.",
+  "spec_reference": "POSIX pthread synchronization and cancellation semantics for pthread_attr_setstacksize, pthread_barrier_init, pthread_barrier_destroy, pthread_barrier_wait, pthread_barrierattr_init, pthread_barrierattr_destroy, pthread_barrierattr_getpshared, pthread_barrierattr_setpshared, pthread_cancel, pthread_condattr_destroy, pthread_condattr_getclock, and pthread_condattr_getpshared",
+  "campaign": {
+    "bead": "bd-gmbqy.3",
+    "campaign_id": "fcq-pthread-sync",
+    "wave_id": "wave-05-pthread-barrier-condattr-cancel-state",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture",
+    "first_wave_symbols": [
+      "pthread_attr_setstacksize",
+      "pthread_barrier_destroy",
+      "pthread_barrier_init",
+      "pthread_barrier_wait",
+      "pthread_barrierattr_destroy",
+      "pthread_barrierattr_getpshared",
+      "pthread_barrierattr_init",
+      "pthread_barrierattr_setpshared",
+      "pthread_cancel",
+      "pthread_condattr_destroy",
+      "pthread_condattr_getclock",
+      "pthread_condattr_getpshared"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "pthread_attr_setstacksize_roundtrip_strict",
+      "function": "pthread_attr_setstacksize",
+      "spec_section": "POSIX pthread_attr_setstacksize valid stack-size round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setstacksize",
+        "scenario": "attr_set_stacksize_valid_without_byte_or_address_capture",
+        "expected": "ATTR_SETSTACKSIZE_STORED_VALID",
+        "oracle_source": "FrankenLibC pthread attr stack-size setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setstacksize;mode=strict;expected=ATTR_SETSTACKSIZE_STORED_VALID;actual=ATTR_SETSTACKSIZE_STORED_VALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_attr_setstacksize_roundtrip_hardened",
+      "function": "pthread_attr_setstacksize",
+      "spec_section": "POSIX pthread_attr_setstacksize valid stack-size round-trip",
+      "inputs": {
+        "symbol": "pthread_attr_setstacksize",
+        "scenario": "attr_set_stacksize_valid_without_byte_or_address_capture",
+        "expected": "ATTR_SETSTACKSIZE_STORED_VALID",
+        "oracle_source": "FrankenLibC pthread attr stack-size setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_attr_setstacksize;mode=hardened;expected=ATTR_SETSTACKSIZE_STORED_VALID;actual=ATTR_SETSTACKSIZE_STORED_VALID;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_barrier_destroy_after_init_strict",
+      "function": "pthread_barrier_destroy",
+      "spec_section": "POSIX pthread_barrier_destroy after successful init",
+      "inputs": {
+        "symbol": "pthread_barrier_destroy",
+        "scenario": "barrier_init_destroy_count_one_without_waiter_capture",
+        "expected": "BARRIER_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread barrier lifecycle replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrier_destroy;mode=strict;expected=BARRIER_DESTROY_RC_0;actual=BARRIER_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_barrier_destroy_after_init_hardened",
+      "function": "pthread_barrier_destroy",
+      "spec_section": "POSIX pthread_barrier_destroy after successful init",
+      "inputs": {
+        "symbol": "pthread_barrier_destroy",
+        "scenario": "barrier_init_destroy_count_one_without_waiter_capture",
+        "expected": "BARRIER_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread barrier lifecycle replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrier_destroy;mode=hardened;expected=BARRIER_DESTROY_RC_0;actual=BARRIER_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_barrier_init_count_one_strict",
+      "function": "pthread_barrier_init",
+      "spec_section": "POSIX pthread_barrier_init count-one lifecycle",
+      "inputs": {
+        "symbol": "pthread_barrier_init",
+        "scenario": "barrier_init_count_one_without_object_capture",
+        "expected": "BARRIER_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread barrier init replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrier_init;mode=strict;expected=BARRIER_INIT_RC_0;actual=BARRIER_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_barrier_init_count_one_hardened",
+      "function": "pthread_barrier_init",
+      "spec_section": "POSIX pthread_barrier_init count-one lifecycle",
+      "inputs": {
+        "symbol": "pthread_barrier_init",
+        "scenario": "barrier_init_count_one_without_object_capture",
+        "expected": "BARRIER_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread barrier init replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrier_init;mode=hardened;expected=BARRIER_INIT_RC_0;actual=BARRIER_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_barrier_wait_single_thread_strict",
+      "function": "pthread_barrier_wait",
+      "spec_section": "POSIX pthread_barrier_wait single-thread release",
+      "inputs": {
+        "symbol": "pthread_barrier_wait",
+        "scenario": "barrier_wait_count_one_without_deadlock_or_thread_id_capture",
+        "expected": "BARRIER_WAIT_SERIAL_THREAD",
+        "oracle_source": "FrankenLibC pthread barrier wait replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrier_wait;mode=strict;expected=BARRIER_WAIT_SERIAL_THREAD;actual=BARRIER_WAIT_SERIAL_THREAD;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_barrier_wait_single_thread_hardened",
+      "function": "pthread_barrier_wait",
+      "spec_section": "POSIX pthread_barrier_wait single-thread release",
+      "inputs": {
+        "symbol": "pthread_barrier_wait",
+        "scenario": "barrier_wait_count_one_without_deadlock_or_thread_id_capture",
+        "expected": "BARRIER_WAIT_SERIAL_THREAD",
+        "oracle_source": "FrankenLibC pthread barrier wait replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrier_wait;mode=hardened;expected=BARRIER_WAIT_SERIAL_THREAD;actual=BARRIER_WAIT_SERIAL_THREAD;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_barrierattr_destroy_after_init_strict",
+      "function": "pthread_barrierattr_destroy",
+      "spec_section": "POSIX pthread_barrierattr_destroy after init",
+      "inputs": {
+        "symbol": "pthread_barrierattr_destroy",
+        "scenario": "barrierattr_init_destroy_without_attribute_capture",
+        "expected": "BARRIERATTR_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread barrierattr lifecycle replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrierattr_destroy;mode=strict;expected=BARRIERATTR_DESTROY_RC_0;actual=BARRIERATTR_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_barrierattr_destroy_after_init_hardened",
+      "function": "pthread_barrierattr_destroy",
+      "spec_section": "POSIX pthread_barrierattr_destroy after init",
+      "inputs": {
+        "symbol": "pthread_barrierattr_destroy",
+        "scenario": "barrierattr_init_destroy_without_attribute_capture",
+        "expected": "BARRIERATTR_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread barrierattr lifecycle replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrierattr_destroy;mode=hardened;expected=BARRIERATTR_DESTROY_RC_0;actual=BARRIERATTR_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_barrierattr_getpshared_private_strict",
+      "function": "pthread_barrierattr_getpshared",
+      "spec_section": "POSIX pthread_barrierattr_getpshared default private state",
+      "inputs": {
+        "symbol": "pthread_barrierattr_getpshared",
+        "scenario": "barrierattr_default_private_without_raw_word_capture",
+        "expected": "BARRIERATTR_PSHARED_PRIVATE",
+        "oracle_source": "FrankenLibC pthread barrierattr pshared getter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrierattr_getpshared;mode=strict;expected=BARRIERATTR_PSHARED_PRIVATE;actual=BARRIERATTR_PSHARED_PRIVATE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_barrierattr_getpshared_private_hardened",
+      "function": "pthread_barrierattr_getpshared",
+      "spec_section": "POSIX pthread_barrierattr_getpshared default private state",
+      "inputs": {
+        "symbol": "pthread_barrierattr_getpshared",
+        "scenario": "barrierattr_default_private_without_raw_word_capture",
+        "expected": "BARRIERATTR_PSHARED_PRIVATE",
+        "oracle_source": "FrankenLibC pthread barrierattr pshared getter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrierattr_getpshared;mode=hardened;expected=BARRIERATTR_PSHARED_PRIVATE;actual=BARRIERATTR_PSHARED_PRIVATE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_barrierattr_init_default_strict",
+      "function": "pthread_barrierattr_init",
+      "spec_section": "POSIX pthread_barrierattr_init default state",
+      "inputs": {
+        "symbol": "pthread_barrierattr_init",
+        "scenario": "barrierattr_init_destroy_without_raw_word_capture",
+        "expected": "BARRIERATTR_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread barrierattr init replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrierattr_init;mode=strict;expected=BARRIERATTR_INIT_RC_0;actual=BARRIERATTR_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_barrierattr_init_default_hardened",
+      "function": "pthread_barrierattr_init",
+      "spec_section": "POSIX pthread_barrierattr_init default state",
+      "inputs": {
+        "symbol": "pthread_barrierattr_init",
+        "scenario": "barrierattr_init_destroy_without_raw_word_capture",
+        "expected": "BARRIERATTR_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread barrierattr init replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrierattr_init;mode=hardened;expected=BARRIERATTR_INIT_RC_0;actual=BARRIERATTR_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_barrierattr_setpshared_private_strict",
+      "function": "pthread_barrierattr_setpshared",
+      "spec_section": "POSIX pthread_barrierattr_setpshared private round-trip",
+      "inputs": {
+        "symbol": "pthread_barrierattr_setpshared",
+        "scenario": "barrierattr_set_private_roundtrip_without_raw_word_capture",
+        "expected": "BARRIERATTR_SETPSHARED_PRIVATE",
+        "oracle_source": "FrankenLibC pthread barrierattr pshared setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrierattr_setpshared;mode=strict;expected=BARRIERATTR_SETPSHARED_PRIVATE;actual=BARRIERATTR_SETPSHARED_PRIVATE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_barrierattr_setpshared_private_hardened",
+      "function": "pthread_barrierattr_setpshared",
+      "spec_section": "POSIX pthread_barrierattr_setpshared private round-trip",
+      "inputs": {
+        "symbol": "pthread_barrierattr_setpshared",
+        "scenario": "barrierattr_set_private_roundtrip_without_raw_word_capture",
+        "expected": "BARRIERATTR_SETPSHARED_PRIVATE",
+        "oracle_source": "FrankenLibC pthread barrierattr pshared setter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_barrierattr_setpshared;mode=hardened;expected=BARRIERATTR_SETPSHARED_PRIVATE;actual=BARRIERATTR_SETPSHARED_PRIVATE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_cancel_zero_handle_strict",
+      "function": "pthread_cancel",
+      "spec_section": "POSIX pthread_cancel nonexistent thread status class",
+      "inputs": {
+        "symbol": "pthread_cancel",
+        "scenario": "cancel_zero_thread_handle_esrch_without_thread_creation",
+        "expected": "CANCEL_ZERO_ESRCH",
+        "oracle_source": "FrankenLibC pthread cancellation status replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_cancel;mode=strict;expected=CANCEL_ZERO_ESRCH;actual=CANCEL_ZERO_ESRCH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_cancel_zero_handle_hardened",
+      "function": "pthread_cancel",
+      "spec_section": "POSIX pthread_cancel nonexistent thread status class",
+      "inputs": {
+        "symbol": "pthread_cancel",
+        "scenario": "cancel_zero_thread_handle_esrch_without_thread_creation",
+        "expected": "CANCEL_ZERO_ESRCH",
+        "oracle_source": "FrankenLibC pthread cancellation status replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_cancel;mode=hardened;expected=CANCEL_ZERO_ESRCH;actual=CANCEL_ZERO_ESRCH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_condattr_destroy_after_init_strict",
+      "function": "pthread_condattr_destroy",
+      "spec_section": "POSIX pthread_condattr_destroy after init",
+      "inputs": {
+        "symbol": "pthread_condattr_destroy",
+        "scenario": "condattr_init_destroy_without_raw_word_capture",
+        "expected": "CONDATTR_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread condattr lifecycle replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_condattr_destroy;mode=strict;expected=CONDATTR_DESTROY_RC_0;actual=CONDATTR_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_condattr_destroy_after_init_hardened",
+      "function": "pthread_condattr_destroy",
+      "spec_section": "POSIX pthread_condattr_destroy after init",
+      "inputs": {
+        "symbol": "pthread_condattr_destroy",
+        "scenario": "condattr_init_destroy_without_raw_word_capture",
+        "expected": "CONDATTR_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread condattr lifecycle replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_condattr_destroy;mode=hardened;expected=CONDATTR_DESTROY_RC_0;actual=CONDATTR_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_condattr_getclock_realtime_strict",
+      "function": "pthread_condattr_getclock",
+      "spec_section": "POSIX pthread_condattr_getclock default clock class",
+      "inputs": {
+        "symbol": "pthread_condattr_getclock",
+        "scenario": "condattr_default_realtime_without_clock_value_capture",
+        "expected": "CONDATTR_CLOCK_REALTIME",
+        "oracle_source": "FrankenLibC pthread condattr clock getter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_condattr_getclock;mode=strict;expected=CONDATTR_CLOCK_REALTIME;actual=CONDATTR_CLOCK_REALTIME;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_condattr_getclock_realtime_hardened",
+      "function": "pthread_condattr_getclock",
+      "spec_section": "POSIX pthread_condattr_getclock default clock class",
+      "inputs": {
+        "symbol": "pthread_condattr_getclock",
+        "scenario": "condattr_default_realtime_without_clock_value_capture",
+        "expected": "CONDATTR_CLOCK_REALTIME",
+        "oracle_source": "FrankenLibC pthread condattr clock getter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_condattr_getclock;mode=hardened;expected=CONDATTR_CLOCK_REALTIME;actual=CONDATTR_CLOCK_REALTIME;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_condattr_getpshared_private_strict",
+      "function": "pthread_condattr_getpshared",
+      "spec_section": "POSIX pthread_condattr_getpshared default private state",
+      "inputs": {
+        "symbol": "pthread_condattr_getpshared",
+        "scenario": "condattr_default_private_without_raw_word_capture",
+        "expected": "CONDATTR_PSHARED_PRIVATE",
+        "oracle_source": "FrankenLibC pthread condattr pshared getter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_condattr_getpshared;mode=strict;expected=CONDATTR_PSHARED_PRIVATE;actual=CONDATTR_PSHARED_PRIVATE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_condattr_getpshared_private_hardened",
+      "function": "pthread_condattr_getpshared",
+      "spec_section": "POSIX pthread_condattr_getpshared default private state",
+      "inputs": {
+        "symbol": "pthread_condattr_getpshared",
+        "scenario": "condattr_default_private_without_raw_word_capture",
+        "expected": "CONDATTR_PSHARED_PRIVATE",
+        "oracle_source": "FrankenLibC pthread condattr pshared getter replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_status_byte_stack_or_global_counter_capture"
+      },
+      "expected_output": "symbol=pthread_condattr_getpshared;mode=hardened;expected=CONDATTR_PSHARED_PRIVATE;actual=CONDATTR_PSHARED_PRIVATE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
