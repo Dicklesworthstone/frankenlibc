@@ -1,0 +1,73 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "env-fingerprint-cli-contract",
+  "bead": "bd-fmdp3",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "6d67b7a3a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes system_fingerprint::{detect_components, environment_fingerprint, validate_environment_fingerprint} (bd-6epxt) as a standalone CLI. Previously these were only reachable transitively via LiveMeasurement; the env-fingerprint subcommand makes them invokable for CI artifact pinning + fingerprint validation without writing Rust.",
+  "subcommand_name": "env-fingerprint",
+  "binary_target": "harness",
+  "required_flags": [
+    "--output"
+  ],
+  "optional_flags": [
+    "--validate"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::system_fingerprint::detect_components",
+    "frankenlibc_harness::system_fingerprint::environment_fingerprint",
+    "frankenlibc_harness::system_fingerprint::validate_environment_fingerprint"
+  ],
+  "modes": {
+    "detect": {
+      "selected_when": "validate is absent",
+      "record_kind_marker": "environment_fingerprint",
+      "required_fields": [
+        "kind",
+        "fingerprint",
+        "os",
+        "arch",
+        "cpus",
+        "kernel_release",
+        "source"
+      ]
+    },
+    "validate": {
+      "selected_when": "validate is present",
+      "record_kind_marker": "environment_fingerprint_validation",
+      "required_fields_when_ok_true": [
+        "kind",
+        "input",
+        "ok",
+        "os",
+        "arch",
+        "cpus",
+        "kernel_release"
+      ],
+      "required_fields_when_ok_false": [
+        "kind",
+        "input",
+        "ok",
+        "error"
+      ]
+    }
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "env_override_var_honored_in_detect_mode": true,
+    "validate_mode_fails_closed_on_malformed_input_without_panicking": true,
+    "detect_mode_record_source_must_be_detected": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_output_flag",
+    "wrong_record_kind",
+    "validate_mode_panics_on_malformed_input",
+    "detect_mode_ignores_env_override"
+  ],
+  "summary": {
+    "bead": "bd-fmdp3",
+    "subcommand": "env-fingerprint",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}

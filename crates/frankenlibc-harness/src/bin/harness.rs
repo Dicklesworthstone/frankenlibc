@@ -737,6 +737,28 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Expose `system_fingerprint::{detect_components,
+    /// environment_fingerprint, from_components,
+    /// validate_environment_fingerprint}` (bd-6epxt) as a standalone
+    /// CLI. Two modes:
+    ///
+    /// 1. Detect mode (default): emit one JSONL record describing the
+    ///    host environment fingerprint and its components. Honors the
+    ///    `FRANKENLIBC_ENV_FINGERPRINT` env override end-to-end.
+    /// 2. Validate mode (`--validate <STRING>`): parse the supplied
+    ///    string via `validate_environment_fingerprint`, emit one
+    ///    JSONL record carrying ok=true|false plus either components
+    ///    or a structured error string. Fails closed without panic.
+    EnvFingerprint {
+        /// Validate a supplied fingerprint string instead of detecting.
+        /// When set the subcommand emits a record with
+        /// kind="environment_fingerprint_validation".
+        #[arg(long)]
+        validate: Option<String>,
+        /// Output JSONL path. Exactly one record is written.
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -2040,6 +2062,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&output, out)?;
             eprintln!(
                 "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
+                output.display()
+            );
+        }
+        Command::EnvFingerprint { validate, output } => {
+            use frankenlibc_harness::system_fingerprint::{
+                detect_components, environment_fingerprint, validate_environment_fingerprint,
+            };
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = match validate {
+                None => {
+                    let components = detect_components();
+                    let fingerprint = environment_fingerprint();
+                    serde_json::json!({
+                        "kind": "environment_fingerprint",
+                        "fingerprint": fingerprint,
+                        "os": components.os,
+                        "arch": components.arch,
+                        "cpus": components.cpus,
+                        "kernel_release": components.kernel_release,
+                        "source": "detected",
+                    })
+                }
+                Some(input) => match validate_environment_fingerprint(&input) {
+                    Ok(components) => serde_json::json!({
+                        "kind": "environment_fingerprint_validation",
+                        "input": input,
+                        "ok": true,
+                        "os": components.os,
+                        "arch": components.arch,
+                        "cpus": components.cpus,
+                        "kernel_release": components.kernel_release,
+                    }),
+                    Err(err) => serde_json::json!({
+                        "kind": "environment_fingerprint_validation",
+                        "input": input,
+                        "ok": false,
+                        "error": err.to_string(),
+                    }),
+                },
+            };
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "env-fingerprint: wrote 1 JSONL record to {}",
                 output.display()
             );
         }

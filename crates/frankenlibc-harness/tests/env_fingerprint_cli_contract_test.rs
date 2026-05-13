@@ -1,0 +1,304 @@
+//! Conformance gate for the harness binary `env-fingerprint`
+//! subcommand (bd-fmdp3).
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use serde_json::Value;
+
+type TestResult<T = ()> = Result<T, String>;
+
+fn workspace_root() -> TestResult<PathBuf> {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    Path::new(manifest)
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("could not derive workspace root from {manifest}"))
+}
+
+fn manifest_path(root: &Path) -> PathBuf {
+    root.join("tests")
+        .join("conformance")
+        .join("env_fingerprint_cli_contract.v1.json")
+}
+
+fn load_json(path: &Path) -> TestResult<Value> {
+    let content = std::fs::read_to_string(path).map_err(|err| format!("read {path:?}: {err}"))?;
+    serde_json::from_str(&content).map_err(|err| format!("parse {path:?}: {err}"))
+}
+
+fn require(condition: bool, message: impl Into<String>) -> TestResult {
+    if condition {
+        Ok(())
+    } else {
+        Err(message.into())
+    }
+}
+
+fn json_string<'a>(value: &'a Value, field: &str) -> TestResult<&'a str> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("missing or non-string `{field}`"))
+}
+
+fn json_bool(value: &Value, field: &str) -> TestResult<bool> {
+    value
+        .get(field)
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format!("missing or non-bool `{field}`"))
+}
+
+fn cargo_target_dir_for_bin() -> PathBuf {
+    if let Ok(p) = std::env::var("CARGO_TARGET_DIR") {
+        PathBuf::from(p)
+    } else if let Ok(p) = std::env::var("CARGO_MANIFEST_DIR") {
+        Path::new(&p)
+            .parent()
+            .and_then(Path::parent)
+            .map(|root| root.join("target"))
+            .unwrap_or_else(|| PathBuf::from("target"))
+    } else {
+        PathBuf::from("target")
+    }
+}
+
+fn find_harness_binary() -> Option<PathBuf> {
+    let root = cargo_target_dir_for_bin();
+    for prof in ["debug", "release"] {
+        let candidate = root.join(prof).join("harness");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("clock: {e}"))?
+        .as_nanos();
+    Ok(std::env::temp_dir().join(format!("bd_fmdp3_{stem}_{}_{ts}.jsonl", std::process::id())))
+}
+
+#[test]
+fn manifest_anchors_to_fmdp3_with_subcommand_name() -> TestResult {
+    let root = workspace_root()?;
+    let m = load_json(&manifest_path(&root))?;
+    require(
+        json_string(&m, "manifest_id")? == "env-fingerprint-cli-contract",
+        "manifest_id",
+    )?;
+    require(json_string(&m, "bead")? == "bd-fmdp3", "bead")?;
+    require(
+        json_string(&m, "subcommand_name")? == "env-fingerprint",
+        "subcommand_name",
+    )?;
+    require(
+        json_string(&m, "binary_target")? == "harness",
+        "binary_target",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn manifest_policy_pins_required_invariants() -> TestResult {
+    let root = workspace_root()?;
+    let m = load_json(&manifest_path(&root))?;
+    let policy = m
+        .get("policy")
+        .ok_or_else(|| "missing policy".to_string())?;
+    for f in [
+        "must_emit_exactly_one_jsonl_record",
+        "env_override_var_honored_in_detect_mode",
+        "validate_mode_fails_closed_on_malformed_input_without_panicking",
+        "detect_mode_record_source_must_be_detected",
+    ] {
+        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn harness_source_registers_env_fingerprint_subcommand() -> TestResult {
+    let root = workspace_root()?;
+    let src = std::fs::read_to_string(root.join("crates/frankenlibc-harness/src/bin/harness.rs"))
+        .map_err(|e| format!("read harness.rs: {e}"))?;
+    require(
+        src.contains("EnvFingerprint {"),
+        "harness.rs must declare EnvFingerprint Command variant",
+    )?;
+    require(
+        src.contains("system_fingerprint::{")
+            && src.contains(
+                "detect_components, environment_fingerprint, validate_environment_fingerprint",
+            ),
+        "main() must import detect_components + environment_fingerprint + validate_environment_fingerprint",
+    )?;
+    require(
+        src.contains("\"kind\": \"environment_fingerprint\"")
+            && src.contains("\"kind\": \"environment_fingerprint_validation\""),
+        "EnvFingerprint arm must emit both kind markers",
+    )
+}
+
+#[test]
+fn cli_detect_mode_honors_env_override() -> TestResult {
+    let Some(bin) = find_harness_binary() else {
+        eprintln!("skip: harness binary not built in this profile");
+        return Ok(());
+    };
+    let tmp = unique_tmp("detect_override")?;
+    let pinned = "linux-x86_64-7cpu-6.5.0-pinned";
+    let out = Command::new(&bin)
+        .arg("env-fingerprint")
+        .arg("--output")
+        .arg(&tmp)
+        .env("FRANKENLIBC_ENV_FINGERPRINT", pinned)
+        .output()
+        .map_err(|e| format!("spawn: {e}"))?;
+    if !out.status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!(
+            "env-fingerprint failed: status={:?} stderr={}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
+    let _ = std::fs::remove_file(&tmp);
+    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
+    require(
+        lines.len() == 1,
+        format!("expected exactly 1 JSONL record; got {}", lines.len()),
+    )?;
+    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse jsonl: {e}"))?;
+    require(
+        json_string(&parsed, "kind")? == "environment_fingerprint",
+        "kind must be environment_fingerprint in detect mode",
+    )?;
+    require(
+        json_string(&parsed, "fingerprint")? == pinned,
+        "FRANKENLIBC_ENV_FINGERPRINT must be honored end-to-end",
+    )?;
+    require(
+        json_string(&parsed, "source")? == "detected",
+        "detect mode record source must be 'detected'",
+    )?;
+    for f in ["os", "arch", "kernel_release"] {
+        require(
+            parsed.get(f).and_then(Value::as_str).is_some(),
+            format!("record missing string field `{f}`"),
+        )?;
+    }
+    require(
+        parsed.get("cpus").and_then(Value::as_u64).is_some(),
+        "record missing numeric field `cpus`",
+    )
+}
+
+#[test]
+fn cli_validate_mode_round_trips_well_formed_input() -> TestResult {
+    let Some(bin) = find_harness_binary() else {
+        eprintln!("skip: harness binary not built in this profile");
+        return Ok(());
+    };
+    let tmp = unique_tmp("validate_ok")?;
+    let input = "linux-x86_64-32cpu-6.1.0-25-amd64";
+    let out = Command::new(&bin)
+        .arg("env-fingerprint")
+        .arg("--validate")
+        .arg(input)
+        .arg("--output")
+        .arg(&tmp)
+        .output()
+        .map_err(|e| format!("spawn: {e}"))?;
+    if !out.status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!(
+            "env-fingerprint validate failed: status={:?} stderr={}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
+    let _ = std::fs::remove_file(&tmp);
+    let parsed: Value =
+        serde_json::from_str(body.trim()).map_err(|e| format!("parse jsonl: {e}"))?;
+    require(
+        json_string(&parsed, "kind")? == "environment_fingerprint_validation",
+        "kind must be environment_fingerprint_validation in validate mode",
+    )?;
+    require(
+        json_string(&parsed, "input")? == input,
+        "validate record must echo input",
+    )?;
+    require(
+        parsed.get("ok").and_then(Value::as_bool) == Some(true),
+        "well-formed input must produce ok=true",
+    )?;
+    require(
+        json_string(&parsed, "os")? == "linux",
+        "validated os must round-trip",
+    )?;
+    require(
+        json_string(&parsed, "arch")? == "x86_64",
+        "validated arch must round-trip",
+    )?;
+    require(
+        parsed.get("cpus").and_then(Value::as_u64) == Some(32),
+        "validated cpus must round-trip",
+    )?;
+    require(
+        json_string(&parsed, "kernel_release")? == "6.1.0-25-amd64",
+        "validated kernel_release must preserve embedded dashes",
+    )
+}
+
+#[test]
+fn cli_validate_mode_fails_closed_on_malformed_input_without_panic() -> TestResult {
+    let Some(bin) = find_harness_binary() else {
+        eprintln!("skip: harness binary not built in this profile");
+        return Ok(());
+    };
+    let tmp = unique_tmp("validate_bad")?;
+    // Missing the `cpu` suffix on the third segment → InvalidFormat.
+    let bad = "linux-x86_64-7nope-6.5.0";
+    let out = Command::new(&bin)
+        .arg("env-fingerprint")
+        .arg("--validate")
+        .arg(bad)
+        .arg("--output")
+        .arg(&tmp)
+        .output()
+        .map_err(|e| format!("spawn: {e}"))?;
+    require(
+        out.status.success(),
+        format!(
+            "validate mode must NOT exit non-zero on malformed input (must fail closed via ok=false record). stderr={}",
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )?;
+    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
+    let _ = std::fs::remove_file(&tmp);
+    let parsed: Value =
+        serde_json::from_str(body.trim()).map_err(|e| format!("parse jsonl: {e}"))?;
+    require(
+        json_string(&parsed, "kind")? == "environment_fingerprint_validation",
+        "kind must be environment_fingerprint_validation in validate mode",
+    )?;
+    require(
+        parsed.get("ok").and_then(Value::as_bool) == Some(false),
+        "malformed input must produce ok=false",
+    )?;
+    require(
+        !json_string(&parsed, "error")?.is_empty(),
+        "ok=false record must carry non-empty `error`",
+    )?;
+    require(
+        json_string(&parsed, "input")? == bad,
+        "error record must echo the malformed input",
+    )
+}
