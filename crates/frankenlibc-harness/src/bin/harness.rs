@@ -737,6 +737,17 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Dump this binary's compile-time tooling contract as one JSONL
+    /// record, exposing
+    /// `explainability_workbench::tooling_contract` so CI workflows
+    /// can verify the deployed binary was built with the expected
+    /// feature flags (asupersync-tooling, frankentui-ui) without
+    /// linking to the Rust crate.
+    ToolingContract {
+        /// Output JSONL path: one tooling_contract record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Validate a ReplayRecord JSONL row and classify the outcome
     /// against an observed-outputs JSONL list, exposing
     /// `asupersync_lab_replay::{validate_replay, classify_outcome}`
@@ -2087,6 +2098,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&output, out)?;
             eprintln!(
                 "live-measurement: wrote 3 JSONL records (2 LiveMeasurementRow + 1 P99Delta) to {}",
+                output.display()
+            );
+        }
+        Command::ToolingContract { output } => {
+            use frankenlibc_harness::explainability_workbench::tooling_contract;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let tc = tooling_contract();
+            let line = serde_json::json!({
+                "kind": "tooling_contract",
+                "has_asupersync_dependency": tc.has_asupersync_dependency,
+                "asupersync_feature_present": tc.asupersync_feature_present,
+                "default_enables_asupersync_tooling": tc.default_enables_asupersync_tooling,
+                "asupersync_tooling_enabled": tc.asupersync_tooling_enabled,
+                "frankentui_feature_present": tc.frankentui_feature_present,
+                "frankentui_dependency_set_complete": tc.frankentui_dependency_set_complete,
+                "frankentui_ui_enabled": tc.frankentui_ui_enabled,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "tooling-contract: wrote 1 JSONL record to {}",
                 output.display()
             );
         }
