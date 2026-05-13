@@ -3032,7 +3032,7 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 27,
+      "covered_symbols": 39,
       "milestone_beads": [
         "bd-yos",
         "bd-z84"
@@ -3040,31 +3040,19 @@
       "module": "pthread_abi",
       "recommended_bead": "bd-yos",
       "severity": "high",
-      "severity_score": 11402,
+      "severity_score": 10202,
       "status_breakdown": {
         "Implemented": 141
       },
-      "target_coverage_pct": 19.15,
-      "target_covered": 27,
+      "target_coverage_pct": 27.66,
+      "target_covered": 39,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
       "target_total": 141,
-      "target_uncovered": 114,
+      "target_uncovered": 102,
       "target_uncovered_symbols": [
-        "__pthread_cleanup_routine",
-        "__pthread_get_minstack",
-        "__pthread_getspecific",
-        "__pthread_key_create",
-        "__pthread_mutex_destroy",
-        "__pthread_mutex_init",
-        "__pthread_mutex_lock",
-        "__pthread_mutexattr_destroy",
-        "__pthread_mutexattr_init",
-        "__pthread_mutexattr_settype",
-        "__pthread_once",
-        "__pthread_register_cancel",
         "__pthread_register_cancel_defer",
         "__pthread_rwlock_destroy",
         "__pthread_rwlock_init",
@@ -3170,7 +3158,7 @@
       ],
       "total_symbols": 141,
       "track": "threading",
-      "uncovered_symbols": 114,
+      "uncovered_symbols": 102,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -4502,9 +4490,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1786,
-    "fixture_json_files": 83,
-    "fixture_json_unique_functions": 685,
+    "fixture_json_cases": 1810,
+    "fixture_json_files": 84,
+    "fixture_json_unique_functions": 697,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4525,7 +4513,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 687
+    "unique_fixture_functions_total": 699
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -7486,20 +7474,8 @@
       "module": "pthread_abi",
       "recommended_bead": "bd-yos",
       "severity": "high",
-      "target_uncovered_count": 114,
+      "target_uncovered_count": 102,
       "target_uncovered_symbols": [
-        "__pthread_cleanup_routine",
-        "__pthread_get_minstack",
-        "__pthread_getspecific",
-        "__pthread_key_create",
-        "__pthread_mutex_destroy",
-        "__pthread_mutex_init",
-        "__pthread_mutex_lock",
-        "__pthread_mutexattr_destroy",
-        "__pthread_mutexattr_init",
-        "__pthread_mutexattr_settype",
-        "__pthread_once",
-        "__pthread_register_cancel",
         "__pthread_register_cancel_defer",
         "__pthread_rwlock_destroy",
         "__pthread_rwlock_init",
@@ -8341,10 +8317,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 15.63,
-      "covered": 579,
+      "coverage_pct": 15.95,
+      "covered": 591,
       "total": 3705,
-      "uncovered": 3126
+      "uncovered": 3114
     },
     "RawSyscall": {
       "coverage_pct": 21.98,
@@ -8354,18 +8330,18 @@
     }
   },
   "summary": {
-    "coverage_pct": 16.27,
-    "covered_exported_symbols": 670,
-    "target_coverage_pct": 16.27,
-    "target_covered_symbols": 670,
+    "coverage_pct": 16.56,
+    "covered_exported_symbols": 682,
+    "target_coverage_pct": 16.56,
+    "target_covered_symbols": 682,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3449,
+    "target_uncovered_symbols": 3437,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3449,
+    "uncovered_exported_symbols": 3437,
     "uncovered_target_families": 2,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 25
@@ -42295,13 +42271,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42309,13 +42294,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42323,13 +42317,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42337,13 +42340,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42351,13 +42363,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42365,13 +42386,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42379,13 +42409,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42437,13 +42476,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42451,13 +42499,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42465,13 +42522,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42479,13 +42545,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42493,13 +42568,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_sync_wave01.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -74422,21 +74506,9 @@
       "module": "pthread_abi",
       "recommended_bead": "bd-yos",
       "severity": "high",
-      "target_coverage_pct": 19.15,
-      "target_uncovered_count": 114,
+      "target_coverage_pct": 27.66,
+      "target_uncovered_count": 102,
       "target_uncovered_symbols": [
-        "__pthread_cleanup_routine",
-        "__pthread_get_minstack",
-        "__pthread_getspecific",
-        "__pthread_key_create",
-        "__pthread_mutex_destroy",
-        "__pthread_mutex_init",
-        "__pthread_mutex_lock",
-        "__pthread_mutexattr_destroy",
-        "__pthread_mutexattr_init",
-        "__pthread_mutexattr_settype",
-        "__pthread_once",
-        "__pthread_register_cancel",
         "__pthread_register_cancel_defer",
         "__pthread_rwlock_destroy",
         "__pthread_rwlock_init",

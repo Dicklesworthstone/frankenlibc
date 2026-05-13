@@ -817,14 +817,32 @@ pub fn execute_fixture_case(
         // iconv lifecycle
         "iconv_open" => execute_iconv_open_case(inputs, mode),
         "iconv_close" => execute_iconv_close_case(inputs, mode),
+        "__pthread_cleanup_routine"
+        | "__pthread_get_minstack"
+        | "__pthread_getspecific"
+        | "__pthread_key_create"
+        | "__pthread_mutexattr_destroy"
+        | "__pthread_mutexattr_init"
+        | "__pthread_mutexattr_settype"
+        | "__pthread_once"
+        | "__pthread_register_cancel" => execute_pthread_sync_wave01_case(function, inputs, mode),
         // pthread mutexes
         "pthread_mutex_init" => execute_pthread_mutex_init_case(inputs, mode),
         "pthread_mutex_destroy" => execute_pthread_mutex_destroy_case(inputs, mode),
         "pthread_mutex_lock" => execute_pthread_mutex_lock_case(inputs, mode),
         "pthread_mutex_trylock" => execute_pthread_mutex_trylock_case(inputs, mode),
         "pthread_mutex_unlock" => execute_pthread_mutex_unlock_case(inputs, mode),
+        "__pthread_mutex_init" if is_pthread_sync_wave01_inputs(inputs) => {
+            execute_pthread_sync_wave01_case(function, inputs, mode)
+        }
         "__pthread_mutex_init" => execute_pthread_mutex_init_case(inputs, mode),
+        "__pthread_mutex_destroy" if is_pthread_sync_wave01_inputs(inputs) => {
+            execute_pthread_sync_wave01_case(function, inputs, mode)
+        }
         "__pthread_mutex_destroy" => execute_pthread_mutex_destroy_case(inputs, mode),
+        "__pthread_mutex_lock" if is_pthread_sync_wave01_inputs(inputs) => {
+            execute_pthread_sync_wave01_case(function, inputs, mode)
+        }
         "__pthread_mutex_lock" => execute_pthread_mutex_lock_case(inputs, mode),
         "__pthread_mutex_trylock" => execute_pthread_mutex_trylock_case(inputs, mode),
         "__pthread_mutex_unlock" => execute_pthread_mutex_unlock_case(inputs, mode),
@@ -13030,6 +13048,14 @@ fn reset_pthread_cond_case_state() {
     frankenlibc_abi::pthread_abi::pthread_mutex_reset_state_for_tests();
 }
 
+const PTHREAD_SYNC_WAVE01_AMBIENT_POLICY: &str = "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture";
+
+static PTHREAD_SYNC_ONCE_CALLS: AtomicU32 = AtomicU32::new(0);
+
+unsafe extern "C" fn pthread_sync_once_callback() {
+    PTHREAD_SYNC_ONCE_CALLS.fetch_add(1, Ordering::SeqCst);
+}
+
 fn format_pthread_status(rc: i32) -> String {
     match rc {
         0 => String::from("0"),
@@ -13231,6 +13257,244 @@ fn init_pthread_mutex_for_case(mutex: *mut libc::pthread_mutex_t) -> Result<(), 
             "pthread_mutex_init failed: {}",
             format_pthread_status(rc)
         ))
+    }
+}
+
+fn is_pthread_sync_wave01_inputs(inputs: &serde_json::Value) -> bool {
+    inputs
+        .get("ambient_state_policy")
+        .and_then(serde_json::Value::as_str)
+        == Some(PTHREAD_SYNC_WAVE01_AMBIENT_POLICY)
+}
+
+fn execute_pthread_sync_wave01_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "pthread sync fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = pthread_sync_wave01_actual(function)?;
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    Ok(non_host_execution(format!(
+        "symbol={function};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )))
+}
+
+fn pthread_sync_wave01_actual(function: &str) -> Result<String, String> {
+    match function {
+        "__pthread_cleanup_routine" => {
+            unsafe {
+                frankenlibc_abi::pthread_abi::__pthread_cleanup_routine(std::ptr::null_mut())
+            };
+            Ok(String::from("CLEANUP_ROUTINE_NOOP"))
+        }
+        "__pthread_get_minstack" => {
+            let minstack =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_get_minstack(std::ptr::null()) };
+            if minstack >= libc::PTHREAD_STACK_MIN {
+                Ok(String::from("MINSTACK_AT_LEAST_PTHREAD_STACK_MIN"))
+            } else {
+                Ok(String::from("MINSTACK_BELOW_PTHREAD_STACK_MIN"))
+            }
+        }
+        "__pthread_getspecific" => {
+            reset_pthread_tls_case_state();
+            let mut key: libc::pthread_key_t = 0;
+            let create_rc =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_key_create(&mut key, None) };
+            if create_rc != 0 {
+                return Ok(format!(
+                    "GETSPECIFIC_KEY_CREATE_{}",
+                    format_pthread_status(create_rc)
+                ));
+            }
+            let value = 0x1234usize as *const c_void;
+            let set_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_setspecific(key, value) };
+            let got = unsafe { frankenlibc_abi::pthread_abi::__pthread_getspecific(key) };
+            let _ = unsafe { frankenlibc_abi::pthread_abi::pthread_key_delete(key) };
+            if set_rc == 0 && got == value.cast_mut() {
+                Ok(String::from("GETSPECIFIC_ROUNDTRIP"))
+            } else {
+                Ok(format!(
+                    "GETSPECIFIC_SET_{}_MATCH_{}",
+                    format_pthread_status(set_rc),
+                    got == value.cast_mut()
+                ))
+            }
+        }
+        "__pthread_key_create" => {
+            reset_pthread_tls_case_state();
+            let mut key: libc::pthread_key_t = 0;
+            let rc = unsafe { frankenlibc_abi::pthread_abi::__pthread_key_create(&mut key, None) };
+            if rc == 0 {
+                let _ = unsafe { frankenlibc_abi::pthread_abi::pthread_key_delete(key) };
+            }
+            Ok(format!("KEY_CREATE_RC_{}", format_pthread_status(rc)))
+        }
+        "__pthread_mutex_destroy" => {
+            reset_pthread_cond_case_state();
+            let mutex = alloc_pthread_mutex_ptr();
+            init_pthread_mutex_for_case(mutex)?;
+            let rc = unsafe { frankenlibc_abi::pthread_abi::__pthread_mutex_destroy(mutex) };
+            unsafe { free_pthread_mutex_ptr(mutex) };
+            Ok(format!("MUTEX_DESTROY_RC_{}", format_pthread_status(rc)))
+        }
+        "__pthread_mutex_init" => {
+            reset_pthread_cond_case_state();
+            let mutex = alloc_pthread_mutex_ptr();
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::__pthread_mutex_init(mutex, std::ptr::null())
+            };
+            unsafe {
+                if rc == 0 {
+                    let _ = frankenlibc_abi::pthread_abi::pthread_mutex_destroy(mutex);
+                }
+                free_pthread_mutex_ptr(mutex);
+            }
+            Ok(format!("MUTEX_INIT_RC_{}", format_pthread_status(rc)))
+        }
+        "__pthread_mutex_lock" => {
+            reset_pthread_cond_case_state();
+            let mutex = alloc_pthread_mutex_ptr();
+            init_pthread_mutex_for_case(mutex)?;
+            let lock_rc = unsafe { frankenlibc_abi::pthread_abi::__pthread_mutex_lock(mutex) };
+            let unlock_rc = if lock_rc == 0 {
+                unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex) }
+            } else {
+                0
+            };
+            unsafe {
+                let _ = frankenlibc_abi::pthread_abi::pthread_mutex_destroy(mutex);
+                free_pthread_mutex_ptr(mutex);
+            }
+            if lock_rc == 0 && unlock_rc == 0 {
+                Ok(String::from("MUTEX_LOCK_UNLOCK_RC_0"))
+            } else {
+                Ok(format!(
+                    "MUTEX_LOCK_{}_UNLOCK_{}",
+                    format_pthread_status(lock_rc),
+                    format_pthread_status(unlock_rc)
+                ))
+            }
+        }
+        "__pthread_mutexattr_destroy" => {
+            let mut attr: libc::pthread_mutexattr_t = unsafe { std::mem::zeroed() };
+            let init_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_mutexattr_init(&mut attr) };
+            let destroy_rc =
+                unsafe { frankenlibc_abi::pthread_abi::__pthread_mutexattr_destroy(&mut attr) };
+            if init_rc == 0 && destroy_rc == 0 {
+                Ok(String::from("MUTEXATTR_DESTROY_RC_0"))
+            } else {
+                Ok(format!(
+                    "MUTEXATTR_INIT_{}_DESTROY_{}",
+                    format_pthread_status(init_rc),
+                    format_pthread_status(destroy_rc)
+                ))
+            }
+        }
+        "__pthread_mutexattr_init" => {
+            let mut attr: libc::pthread_mutexattr_t = unsafe { std::mem::zeroed() };
+            let rc = unsafe { frankenlibc_abi::pthread_abi::__pthread_mutexattr_init(&mut attr) };
+            if rc == 0 {
+                let _ =
+                    unsafe { frankenlibc_abi::pthread_abi::pthread_mutexattr_destroy(&mut attr) };
+            }
+            Ok(format!("MUTEXATTR_INIT_RC_{}", format_pthread_status(rc)))
+        }
+        "__pthread_mutexattr_settype" => {
+            let mut attr: libc::pthread_mutexattr_t = unsafe { std::mem::zeroed() };
+            let init_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_mutexattr_init(&mut attr) };
+            let set_rc = if init_rc == 0 {
+                unsafe {
+                    frankenlibc_abi::pthread_abi::__pthread_mutexattr_settype(
+                        &mut attr,
+                        libc::PTHREAD_MUTEX_RECURSIVE,
+                    )
+                }
+            } else {
+                init_rc
+            };
+            let mut observed_type = 0;
+            let get_rc = if set_rc == 0 {
+                unsafe {
+                    frankenlibc_abi::pthread_abi::pthread_mutexattr_gettype(
+                        &attr,
+                        &mut observed_type,
+                    )
+                }
+            } else {
+                set_rc
+            };
+            let _ = unsafe { frankenlibc_abi::pthread_abi::pthread_mutexattr_destroy(&mut attr) };
+            if init_rc == 0
+                && set_rc == 0
+                && get_rc == 0
+                && observed_type == libc::PTHREAD_MUTEX_RECURSIVE
+            {
+                Ok(String::from("MUTEXATTR_SETTYPE_RECURSIVE_RC_0"))
+            } else {
+                Ok(format!(
+                    "MUTEXATTR_INIT_{}_SET_{}_GET_{}_RECURSIVE_{}",
+                    format_pthread_status(init_rc),
+                    format_pthread_status(set_rc),
+                    format_pthread_status(get_rc),
+                    observed_type == libc::PTHREAD_MUTEX_RECURSIVE
+                ))
+            }
+        }
+        "__pthread_once" => {
+            PTHREAD_SYNC_ONCE_CALLS.store(0, Ordering::SeqCst);
+            let mut once = libc::PTHREAD_ONCE_INIT;
+            let first = unsafe {
+                frankenlibc_abi::pthread_abi::__pthread_once(
+                    &mut once,
+                    Some(pthread_sync_once_callback),
+                )
+            };
+            let second = unsafe {
+                frankenlibc_abi::pthread_abi::__pthread_once(
+                    &mut once,
+                    Some(pthread_sync_once_callback),
+                )
+            };
+            let third = unsafe {
+                frankenlibc_abi::pthread_abi::__pthread_once(
+                    &mut once,
+                    Some(pthread_sync_once_callback),
+                )
+            };
+            let calls = PTHREAD_SYNC_ONCE_CALLS.load(Ordering::SeqCst);
+            if first == 0 && second == 0 && third == 0 && calls == 1 {
+                Ok(String::from("PTHREAD_ONCE_SINGLE_EXECUTION"))
+            } else {
+                Ok(format!(
+                    "PTHREAD_ONCE_RCS_{}_{}_{}_CALLS_{calls}",
+                    format_pthread_status(first),
+                    format_pthread_status(second),
+                    format_pthread_status(third)
+                ))
+            }
+        }
+        "__pthread_register_cancel" => {
+            unsafe {
+                frankenlibc_abi::pthread_abi::__pthread_register_cancel(std::ptr::null_mut())
+            };
+            Ok(String::from("REGISTER_CANCEL_NOOP"))
+        }
+        other => Err(format!("unsupported pthread sync fixture: {other}")),
     }
 }
 

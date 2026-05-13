@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "pthread/sync",
+  "captured_at": "2026-05-13T10:30:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-pthread-sync wave-01 pthread sync, TLS key, once, and cancellation alias symbols without recording pthread object addresses, native thread ids, scheduler timing, stderr bytes, or process-global counters.",
+  "spec_reference": "POSIX pthread synchronization and cancellation alias semantics for __pthread_mutex_init, __pthread_mutex_destroy, __pthread_mutex_lock, __pthread_mutexattr_init, __pthread_mutexattr_destroy, __pthread_mutexattr_settype, __pthread_once, __pthread_key_create, __pthread_getspecific, __pthread_get_minstack, __pthread_cleanup_routine, and __pthread_register_cancel",
+  "campaign": {
+    "bead": "bd-kgy3r.5",
+    "campaign_id": "fcq-pthread-sync",
+    "wave_id": "wave-01-pthread-sync-alias-state",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture",
+    "first_wave_symbols": [
+      "__pthread_cleanup_routine",
+      "__pthread_get_minstack",
+      "__pthread_getspecific",
+      "__pthread_key_create",
+      "__pthread_mutex_destroy",
+      "__pthread_mutex_init",
+      "__pthread_mutex_lock",
+      "__pthread_mutexattr_destroy",
+      "__pthread_mutexattr_init",
+      "__pthread_mutexattr_settype",
+      "__pthread_once",
+      "__pthread_register_cancel"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "pthread_cleanup_routine_noop_strict",
+      "function": "__pthread_cleanup_routine",
+      "spec_section": "POSIX pthread cancellation cleanup routine no-op alias",
+      "inputs": {
+        "symbol": "__pthread_cleanup_routine",
+        "scenario": "cleanup_routine_null_buffer_noop_without_metadata_capture",
+        "expected": "CLEANUP_ROUTINE_NOOP",
+        "oracle_source": "FrankenLibC pthread cleanup alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_cleanup_routine;mode=strict;expected=CLEANUP_ROUTINE_NOOP;actual=CLEANUP_ROUTINE_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_cleanup_routine_noop_hardened",
+      "function": "__pthread_cleanup_routine",
+      "spec_section": "POSIX pthread cancellation cleanup routine no-op alias",
+      "inputs": {
+        "symbol": "__pthread_cleanup_routine",
+        "scenario": "cleanup_routine_null_buffer_noop_without_metadata_capture",
+        "expected": "CLEANUP_ROUTINE_NOOP",
+        "oracle_source": "FrankenLibC pthread cleanup alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_cleanup_routine;mode=hardened;expected=CLEANUP_ROUTINE_NOOP;actual=CLEANUP_ROUTINE_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_get_minstack_floor_strict",
+      "function": "__pthread_get_minstack",
+      "spec_section": "POSIX pthread minimum stack size floor",
+      "inputs": {
+        "symbol": "__pthread_get_minstack",
+        "scenario": "minstack_floor_without_attribute_metadata_capture",
+        "expected": "MINSTACK_AT_LEAST_PTHREAD_STACK_MIN",
+        "oracle_source": "FrankenLibC pthread minimum stack replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_get_minstack;mode=strict;expected=MINSTACK_AT_LEAST_PTHREAD_STACK_MIN;actual=MINSTACK_AT_LEAST_PTHREAD_STACK_MIN;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_get_minstack_floor_hardened",
+      "function": "__pthread_get_minstack",
+      "spec_section": "POSIX pthread minimum stack size floor",
+      "inputs": {
+        "symbol": "__pthread_get_minstack",
+        "scenario": "minstack_floor_without_attribute_metadata_capture",
+        "expected": "MINSTACK_AT_LEAST_PTHREAD_STACK_MIN",
+        "oracle_source": "FrankenLibC pthread minimum stack replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_get_minstack;mode=hardened;expected=MINSTACK_AT_LEAST_PTHREAD_STACK_MIN;actual=MINSTACK_AT_LEAST_PTHREAD_STACK_MIN;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_getspecific_roundtrip_strict",
+      "function": "__pthread_getspecific",
+      "spec_section": "POSIX pthread TLS getspecific round-trip",
+      "inputs": {
+        "symbol": "__pthread_getspecific",
+        "scenario": "tls_key_value_roundtrip_without_pointer_capture",
+        "expected": "GETSPECIFIC_ROUNDTRIP",
+        "oracle_source": "FrankenLibC pthread TLS alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_getspecific;mode=strict;expected=GETSPECIFIC_ROUNDTRIP;actual=GETSPECIFIC_ROUNDTRIP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_getspecific_roundtrip_hardened",
+      "function": "__pthread_getspecific",
+      "spec_section": "POSIX pthread TLS getspecific round-trip",
+      "inputs": {
+        "symbol": "__pthread_getspecific",
+        "scenario": "tls_key_value_roundtrip_without_pointer_capture",
+        "expected": "GETSPECIFIC_ROUNDTRIP",
+        "oracle_source": "FrankenLibC pthread TLS alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_getspecific;mode=hardened;expected=GETSPECIFIC_ROUNDTRIP;actual=GETSPECIFIC_ROUNDTRIP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_key_create_success_strict",
+      "function": "__pthread_key_create",
+      "spec_section": "POSIX pthread TLS key creation",
+      "inputs": {
+        "symbol": "__pthread_key_create",
+        "scenario": "tls_key_create_delete_without_key_id_capture",
+        "expected": "KEY_CREATE_RC_0",
+        "oracle_source": "FrankenLibC pthread key alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_key_create;mode=strict;expected=KEY_CREATE_RC_0;actual=KEY_CREATE_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_key_create_success_hardened",
+      "function": "__pthread_key_create",
+      "spec_section": "POSIX pthread TLS key creation",
+      "inputs": {
+        "symbol": "__pthread_key_create",
+        "scenario": "tls_key_create_delete_without_key_id_capture",
+        "expected": "KEY_CREATE_RC_0",
+        "oracle_source": "FrankenLibC pthread key alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_key_create;mode=hardened;expected=KEY_CREATE_RC_0;actual=KEY_CREATE_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_mutex_destroy_success_strict",
+      "function": "__pthread_mutex_destroy",
+      "spec_section": "POSIX pthread mutex destroy after init",
+      "inputs": {
+        "symbol": "__pthread_mutex_destroy",
+        "scenario": "mutex_init_destroy_without_object_capture",
+        "expected": "MUTEX_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutex_destroy;mode=strict;expected=MUTEX_DESTROY_RC_0;actual=MUTEX_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_mutex_destroy_success_hardened",
+      "function": "__pthread_mutex_destroy",
+      "spec_section": "POSIX pthread mutex destroy after init",
+      "inputs": {
+        "symbol": "__pthread_mutex_destroy",
+        "scenario": "mutex_init_destroy_without_object_capture",
+        "expected": "MUTEX_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutex_destroy;mode=hardened;expected=MUTEX_DESTROY_RC_0;actual=MUTEX_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_mutex_init_success_strict",
+      "function": "__pthread_mutex_init",
+      "spec_section": "POSIX pthread mutex init",
+      "inputs": {
+        "symbol": "__pthread_mutex_init",
+        "scenario": "mutex_init_destroy_without_object_capture",
+        "expected": "MUTEX_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutex_init;mode=strict;expected=MUTEX_INIT_RC_0;actual=MUTEX_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_mutex_init_success_hardened",
+      "function": "__pthread_mutex_init",
+      "spec_section": "POSIX pthread mutex init",
+      "inputs": {
+        "symbol": "__pthread_mutex_init",
+        "scenario": "mutex_init_destroy_without_object_capture",
+        "expected": "MUTEX_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutex_init;mode=hardened;expected=MUTEX_INIT_RC_0;actual=MUTEX_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_mutex_lock_unlock_success_strict",
+      "function": "__pthread_mutex_lock",
+      "spec_section": "POSIX pthread mutex lock/unlock",
+      "inputs": {
+        "symbol": "__pthread_mutex_lock",
+        "scenario": "mutex_lock_unlock_without_object_capture",
+        "expected": "MUTEX_LOCK_UNLOCK_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutex_lock;mode=strict;expected=MUTEX_LOCK_UNLOCK_RC_0;actual=MUTEX_LOCK_UNLOCK_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_mutex_lock_unlock_success_hardened",
+      "function": "__pthread_mutex_lock",
+      "spec_section": "POSIX pthread mutex lock/unlock",
+      "inputs": {
+        "symbol": "__pthread_mutex_lock",
+        "scenario": "mutex_lock_unlock_without_object_capture",
+        "expected": "MUTEX_LOCK_UNLOCK_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutex_lock;mode=hardened;expected=MUTEX_LOCK_UNLOCK_RC_0;actual=MUTEX_LOCK_UNLOCK_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_mutexattr_destroy_success_strict",
+      "function": "__pthread_mutexattr_destroy",
+      "spec_section": "POSIX pthread mutex attribute destroy after init",
+      "inputs": {
+        "symbol": "__pthread_mutexattr_destroy",
+        "scenario": "mutex_attribute_init_destroy_without_object_capture",
+        "expected": "MUTEXATTR_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex attribute alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutexattr_destroy;mode=strict;expected=MUTEXATTR_DESTROY_RC_0;actual=MUTEXATTR_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_mutexattr_destroy_success_hardened",
+      "function": "__pthread_mutexattr_destroy",
+      "spec_section": "POSIX pthread mutex attribute destroy after init",
+      "inputs": {
+        "symbol": "__pthread_mutexattr_destroy",
+        "scenario": "mutex_attribute_init_destroy_without_object_capture",
+        "expected": "MUTEXATTR_DESTROY_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex attribute alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutexattr_destroy;mode=hardened;expected=MUTEXATTR_DESTROY_RC_0;actual=MUTEXATTR_DESTROY_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_mutexattr_init_success_strict",
+      "function": "__pthread_mutexattr_init",
+      "spec_section": "POSIX pthread mutex attribute init",
+      "inputs": {
+        "symbol": "__pthread_mutexattr_init",
+        "scenario": "mutex_attribute_init_destroy_without_object_capture",
+        "expected": "MUTEXATTR_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex attribute alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutexattr_init;mode=strict;expected=MUTEXATTR_INIT_RC_0;actual=MUTEXATTR_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_mutexattr_init_success_hardened",
+      "function": "__pthread_mutexattr_init",
+      "spec_section": "POSIX pthread mutex attribute init",
+      "inputs": {
+        "symbol": "__pthread_mutexattr_init",
+        "scenario": "mutex_attribute_init_destroy_without_object_capture",
+        "expected": "MUTEXATTR_INIT_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex attribute alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutexattr_init;mode=hardened;expected=MUTEXATTR_INIT_RC_0;actual=MUTEXATTR_INIT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_mutexattr_settype_recursive_strict",
+      "function": "__pthread_mutexattr_settype",
+      "spec_section": "POSIX pthread mutex attribute recursive type",
+      "inputs": {
+        "symbol": "__pthread_mutexattr_settype",
+        "scenario": "mutex_attribute_recursive_type_without_object_capture",
+        "expected": "MUTEXATTR_SETTYPE_RECURSIVE_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex attribute alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutexattr_settype;mode=strict;expected=MUTEXATTR_SETTYPE_RECURSIVE_RC_0;actual=MUTEXATTR_SETTYPE_RECURSIVE_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_mutexattr_settype_recursive_hardened",
+      "function": "__pthread_mutexattr_settype",
+      "spec_section": "POSIX pthread mutex attribute recursive type",
+      "inputs": {
+        "symbol": "__pthread_mutexattr_settype",
+        "scenario": "mutex_attribute_recursive_type_without_object_capture",
+        "expected": "MUTEXATTR_SETTYPE_RECURSIVE_RC_0",
+        "oracle_source": "FrankenLibC pthread mutex attribute alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_mutexattr_settype;mode=hardened;expected=MUTEXATTR_SETTYPE_RECURSIVE_RC_0;actual=MUTEXATTR_SETTYPE_RECURSIVE_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_once_single_execution_strict",
+      "function": "__pthread_once",
+      "spec_section": "POSIX pthread once single execution",
+      "inputs": {
+        "symbol": "__pthread_once",
+        "scenario": "once_callback_single_execution_without_counter_capture",
+        "expected": "PTHREAD_ONCE_SINGLE_EXECUTION",
+        "oracle_source": "FrankenLibC pthread once alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_once;mode=strict;expected=PTHREAD_ONCE_SINGLE_EXECUTION;actual=PTHREAD_ONCE_SINGLE_EXECUTION;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_once_single_execution_hardened",
+      "function": "__pthread_once",
+      "spec_section": "POSIX pthread once single execution",
+      "inputs": {
+        "symbol": "__pthread_once",
+        "scenario": "once_callback_single_execution_without_counter_capture",
+        "expected": "PTHREAD_ONCE_SINGLE_EXECUTION",
+        "oracle_source": "FrankenLibC pthread once alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_once;mode=hardened;expected=PTHREAD_ONCE_SINGLE_EXECUTION;actual=PTHREAD_ONCE_SINGLE_EXECUTION;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "pthread_register_cancel_noop_strict",
+      "function": "__pthread_register_cancel",
+      "spec_section": "POSIX pthread cancellation register no-op alias",
+      "inputs": {
+        "symbol": "__pthread_register_cancel",
+        "scenario": "cancel_register_null_buffer_noop_without_metadata_capture",
+        "expected": "REGISTER_CANCEL_NOOP",
+        "oracle_source": "FrankenLibC pthread cancellation alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_register_cancel;mode=strict;expected=REGISTER_CANCEL_NOOP;actual=REGISTER_CANCEL_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_register_cancel_noop_hardened",
+      "function": "__pthread_register_cancel",
+      "spec_section": "POSIX pthread cancellation register no-op alias",
+      "inputs": {
+        "symbol": "__pthread_register_cancel",
+        "scenario": "cancel_register_null_buffer_noop_without_metadata_capture",
+        "expected": "REGISTER_CANCEL_NOOP",
+        "oracle_source": "FrankenLibC pthread cancellation alias replay",
+        "ambient_state_policy": "forbid_pthread_object_address_native_thread_id_scheduler_timing_stderr_or_global_counter_capture"
+      },
+      "expected_output": "symbol=__pthread_register_cancel;mode=hardened;expected=REGISTER_CANCEL_NOOP;actual=REGISTER_CANCEL_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
