@@ -769,6 +769,26 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Evaluate the pointer-provenance admissibility barrier (Invariant B)
+    /// via `frankenlibc_membrane::runtime_math::sos_barrier::evaluate_provenance_barrier`.
+    /// Positive headroom => certified safe; negative => violation.
+    EvaluateProvenanceBarrier {
+        /// Risk upper bound (0..1_000_000 ppm).
+        #[arg(long)]
+        risk_ppm: u32,
+        /// Validation depth: 0 = Fast, 1_000_000 = Full.
+        #[arg(long)]
+        validation_depth_ppm: u32,
+        /// Bloom false-positive rate (0..1_000_000 ppm).
+        #[arg(long)]
+        bloom_fp_rate_ppm: u32,
+        /// arena_used / arena_capacity (0..1_000_000 ppm).
+        #[arg(long)]
+        arena_pressure_ppm: u32,
+        /// Output JSONL path: one provenance_barrier record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Evaluate the size-class admissibility barrier certificate via
     /// `frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier`.
     /// Positive headroom => certified safe; negative => violation.
@@ -2751,6 +2771,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::EvaluateProvenanceBarrier {
+            risk_ppm,
+            validation_depth_ppm,
+            bloom_fp_rate_ppm,
+            arena_pressure_ppm,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_provenance_barrier;
+            let headroom = evaluate_provenance_barrier(
+                risk_ppm,
+                validation_depth_ppm,
+                bloom_fp_rate_ppm,
+                arena_pressure_ppm,
+            );
+            let safe = headroom >= 0;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "provenance_barrier",
+                "risk_ppm": risk_ppm,
+                "validation_depth_ppm": validation_depth_ppm,
+                "bloom_fp_rate_ppm": bloom_fp_rate_ppm,
+                "arena_pressure_ppm": arena_pressure_ppm,
+                "headroom": headroom,
+                "safe": safe,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "evaluate-provenance-barrier: risk_ppm={risk_ppm} depth_ppm={validation_depth_ppm} bloom_fp_ppm={bloom_fp_rate_ppm} arena_ppm={arena_pressure_ppm} -> headroom={headroom} safe={safe}"
+            );
         }
         Command::EvaluateSizeClassBarrier {
             requested_size,
