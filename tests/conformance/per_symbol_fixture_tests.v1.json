@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T03:55:22Z",
-  "report_hash": "85e547a16128d82e",
+  "generated_at": "2026-05-13T04:45:01Z",
+  "report_hash": "de222cba3c28a359",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 557,
-    "symbols_without_fixtures": 3562,
-    "fixture_coverage_pct": 13.5,
-    "implemented_coverage_pct": 13.4,
-    "total_fixture_files": 72,
-    "total_cases": 1592,
+    "symbols_with_fixtures": 581,
+    "symbols_without_fixtures": 3538,
+    "fixture_coverage_pct": 14.1,
+    "implemented_coverage_pct": 13.9,
+    "total_fixture_files": 74,
+    "total_cases": 1640,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 377,
-    "symbols_with_errno_checks": 554,
-    "total_quality_issues": 3585,
-    "uncovered_action_count": 3562
+    "symbols_with_edge_cases": 391,
+    "symbols_with_errno_checks": 578,
+    "total_quality_issues": 3576,
+    "uncovered_action_count": 3538
   },
   "fixture_file_analyses": [
     {
@@ -379,6 +379,14 @@
       "issues": []
     },
     {
+      "file": "stdio_libio_wave01.json",
+      "family": "stdio/libio",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
       "file": "stdlib_conversion.json",
       "family": "stdlib/conversion",
       "valid": true,
@@ -556,6 +564,14 @@
     },
     {
       "file": "unistd_process_filesystem_wave04.json",
+      "family": "unistd/process-filesystem",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave05.json",
       "family": "unistd/process-filesystem",
       "valid": true,
       "total_cases": 24,
@@ -2030,15 +2046,20 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "_IO_remove_marker",
@@ -2082,14 +2103,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -2097,14 +2123,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -2172,14 +2203,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -6144,14 +6180,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -6174,29 +6215,40 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc23_sscanf",
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -6369,14 +6421,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -6399,29 +6456,40 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc23_vsscanf",
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -6624,15 +6692,21 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc99_fwscanf",
@@ -6654,15 +6728,21 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_libio_wave01.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__isoc99_sscanf",
@@ -15596,15 +15676,20 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "argp_program_bug_address",
@@ -15656,30 +15741,40 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "argp_usage",
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "argz_add",
@@ -17349,14 +17444,19 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -17394,12 +17494,20 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -17407,14 +17515,19 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -17507,14 +17620,19 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -17953,15 +18071,20 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "canonicalizef",
@@ -18073,12 +18196,20 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -18086,12 +18217,20 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -19571,12 +19710,20 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -19599,12 +19746,20 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -64964,30 +65119,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "_IO_puts",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_IO_remove_marker",
       "status": "Implemented",
       "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_seekoff",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_seekpos",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -65016,13 +65150,6 @@
       "symbol": "_IO_setvbuf",
       "status": "Implemented",
       "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_sgetn",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -66658,30 +66785,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "__isoc23_fscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__isoc23_fwscanf",
       "status": "Implemented",
       "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_scanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_sscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -66763,30 +66869,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "__isoc23_vfscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__isoc23_vfwscanf",
       "status": "Implemented",
       "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_vscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc23_vsscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -66882,23 +66967,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "__isoc99_fscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__isoc99_fwscanf",
       "status": "Implemented",
       "module": "isoc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__isoc99_scanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -70144,13 +70215,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "argp_parse",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "argp_program_bug_address",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -70168,20 +70232,6 @@
       "symbol": "argp_program_version_hook",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "argp_state_help",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "argp_usage",
-      "status": "Implemented",
-      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -70697,13 +70747,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "bind_textdomain_codeset",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "bindresvport",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -70714,20 +70757,6 @@
       "symbol": "bindtextdomain",
       "status": "Implemented",
       "module": "locale_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "brk",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "bsd_signal",
-      "status": "Implemented",
-      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -70749,13 +70778,6 @@
       "symbol": "c32rtomb",
       "status": "Implemented",
       "module": "wchar_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "c8rtomb",
-      "status": "Implemented",
-      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -70942,13 +70964,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "canonicalize_file_name",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "canonicalizef",
       "status": "Implemented",
       "module": "math_abi",
@@ -70994,20 +71009,6 @@
       "symbol": "canonicalizel",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "capget",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "capset",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -71649,23 +71650,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "chdir",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "chflags",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "chmod",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

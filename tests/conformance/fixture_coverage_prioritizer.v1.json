@@ -3,26 +3,26 @@
   "campaigns": [
     {
       "campaign_id": "fcq-unistd-process-filesystem",
-      "current_coverage_pct": 11.19,
+      "current_coverage_pct": 12.8,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 12.8,
+      "expected_coverage_after_first_wave_pct": 14.42,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "argp_parse",
-        "argp_state_help",
-        "argp_usage",
-        "bind_textdomain_codeset",
-        "brk",
-        "bsd_signal",
-        "c8rtomb",
-        "canonicalize_file_name",
-        "capget",
-        "capset",
-        "chdir",
-        "chmod"
+        "chown",
+        "clock_getcpuclockid",
+        "close_range",
+        "closelog",
+        "creat",
+        "creat64",
+        "crypt",
+        "crypt_checksalt",
+        "crypt_gensalt",
+        "crypt_gensalt_r",
+        "crypt_gensalt_ra",
+        "crypt_gensalt_rn"
       ],
       "module": "unistd_abi",
       "next_step": "Add strict/hardened fixtures for process, stat-family, and exit-path symbols before broad syscall tail work.",
@@ -46,71 +46,15 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "process control, filesystem metadata, cwd, exec, exit, and low-level unistd wrappers",
-      "target_covered": 83,
+      "target_covered": 95,
       "target_total": 742,
-      "target_uncovered": 659,
+      "target_uncovered": 647,
       "title": "unistd/process/filesystem syscall fixture wave",
       "workload_domains": [
         "shell_coreutils",
         "build_tools",
         "package_manager",
         "startup_linking"
-      ]
-    },
-    {
-      "campaign_id": "fcq-stdio-libio",
-      "current_coverage_pct": 32.54,
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "expected_coverage_after_first_wave_pct": 42.06,
-      "first_wave_fixture_count": 12,
-      "first_wave_symbols": [
-        "_IO_puts",
-        "_IO_seekoff",
-        "_IO_seekpos",
-        "_IO_sgetn",
-        "__isoc23_fscanf",
-        "__isoc23_scanf",
-        "__isoc23_sscanf",
-        "__isoc23_vfscanf",
-        "__isoc23_vscanf",
-        "__isoc23_vsscanf",
-        "__isoc99_fscanf",
-        "__isoc99_scanf"
-      ],
-      "module": "stdio_abi",
-      "next_step": "Add stream-state and _IO alias fixtures that prove behavior before native stdio replacement claims advance.",
-      "oracle_kind": "stdio_fixture_or_replay",
-      "rank": 2,
-      "risk_tags": [
-        "buffering_order",
-        "diagnostics_gap",
-        "semantic_divergence",
-        "stdio_libio_divergence"
-      ],
-      "scores": {
-        "coverage_gap_score": 85,
-        "feature_gap_risk_score": 3,
-        "hard_parts_risk_tags": [],
-        "implementation_complexity_score": 3,
-        "parity_risk_score": 5,
-        "priority_score": 2435,
-        "semantic_risk_score": 0,
-        "workload_risk_score": 5
-      },
-      "structured_log_fields": "required_log_fields",
-      "symbol_family": "FILE state, _IO compatibility names, locking, formatted IO, buffering, and stream errors",
-      "target_covered": 41,
-      "target_total": 126,
-      "target_uncovered": 85,
-      "title": "stdio/libio stream semantics fixture wave",
-      "workload_domains": [
-        "stdio_libio",
-        "shell_coreutils",
-        "build_tools",
-        "package_manager"
       ]
     },
     {
@@ -139,7 +83,7 @@
       "module": "string_abi",
       "next_step": "Grow boundary, overlap, empty, invalid pointer, locale, and perf guard fixtures for uncovered string families.",
       "oracle_kind": "glibc_fixture_oracle",
-      "rank": 3,
+      "rank": 2,
       "risk_tags": [
         "buffer_boundary",
         "locale_sensitive",
@@ -167,6 +111,62 @@
         "shell_coreutils",
         "allocator",
         "language_runtimes"
+      ]
+    },
+    {
+      "campaign_id": "fcq-stdio-libio",
+      "current_coverage_pct": 42.06,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 51.59,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "__isoc99_sscanf",
+        "__isoc99_vfscanf",
+        "__isoc99_vscanf",
+        "__isoc99_vsscanf",
+        "__isoc99_wscanf",
+        "clearerr",
+        "clearerr_unlocked",
+        "fcloseall",
+        "fdopen",
+        "feof_unlocked",
+        "ferror_unlocked",
+        "fflush_unlocked"
+      ],
+      "module": "stdio_abi",
+      "next_step": "Add stream-state and _IO alias fixtures that prove behavior before native stdio replacement claims advance.",
+      "oracle_kind": "stdio_fixture_or_replay",
+      "rank": 3,
+      "risk_tags": [
+        "buffering_order",
+        "diagnostics_gap",
+        "semantic_divergence",
+        "stdio_libio_divergence"
+      ],
+      "scores": {
+        "coverage_gap_score": 73,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 3,
+        "parity_risk_score": 5,
+        "priority_score": 2423,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "FILE state, _IO compatibility names, locking, formatted IO, buffering, and stream errors",
+      "target_covered": 53,
+      "target_total": 126,
+      "target_uncovered": 73,
+      "title": "stdio/libio stream semantics fixture wave",
+      "workload_domains": [
+        "stdio_libio",
+        "shell_coreutils",
+        "build_tools",
+        "package_manager"
       ]
     },
     {
@@ -1257,7 +1257,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3560,
+    "all_uncovered_target_symbols": 3536,
     "campaign_count": 17,
     "covered_modules": [
       "fortify_abi",
@@ -1295,7 +1295,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3178,
+    "selected_target_uncovered_symbols": 3154,
     "total_first_wave_fixture_count": 194
   }
 }
