@@ -3,7 +3,7 @@
   "manifest_id": "high-core-tail-baseline",
   "bead": "bd-juvqm.1",
   "generated_utc": "2026-05-09T00:00:00Z",
-  "source_commit": "d8b4690105cccb5fca9e67e49477d7c091e1eaa3",
+  "source_commit": "current",
   "purpose": "Baseline contract for the next 64+ core tail-and-contention measurement of FrankenLibC membrane hot paths. Names which symbols, thread profiles, and cost decomposition rows the baseline run must capture, plus the statistical policy and artifact layout the run must emit so future optimization beads (bd-juvqm.2, bd-juvqm.3, bd-juvqm.7) can be evaluated against a frozen reference. NO optimization is performed by this bead; this manifest is the *acceptance contract* the baseline run must satisfy.",
   "rch_validation_lane": "bench-build-smoke",
   "tail_statistics_contract": {

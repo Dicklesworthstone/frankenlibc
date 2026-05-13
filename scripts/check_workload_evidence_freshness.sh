@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 import time
 from datetime import datetime, timezone
@@ -33,6 +34,7 @@ SOURCE_BEAD_ID = "bd-fp4tm.1"
 HEX_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 TARGET_PREFIXES = ("target/",)
 PLACEHOLDER_TOKENS = ("<run_id>",)
+GENERATED_EVIDENCE_PREFIX = "target/conformance/"
 
 errors: list[str] = []
 failure_signatures: list[str] = []
@@ -191,6 +193,53 @@ def list_strings(value: Any) -> list[str]:
     return [item for item in value if isinstance(item, str) and item]
 
 
+def shell_words(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
+def command_mentions_cargo(command: str) -> bool:
+    return any(word == "cargo" or word.startswith("cargo ") for word in shell_words(command))
+
+
+def validate_remote_cargo_command(source_id: str, command: str) -> None:
+    if not command_mentions_cargo(command):
+        return
+    words = shell_words(command)
+    if "[RCH] local" in command or "local fallback" in command.lower():
+        add_failure(f"{source_id}: validation_command must not accept local rch fallback output", "local_fallback_validation_marker")
+    has_force_remote = "RCH_FORCE_REMOTE=true" in words
+    has_rch_cargo = any(words[index] == "rch" and index + 1 < len(words) and words[index + 1] == "cargo" for index in range(len(words)))
+    has_rch_exec = any(words[index] == "rch" and index + 1 < len(words) and words[index + 1] == "exec" for index in range(len(words)))
+    if not has_force_remote or not (has_rch_cargo or has_rch_exec):
+        add_failure(
+            f"{source_id}: cargo validation_command must use RCH_FORCE_REMOTE=true with rch cargo or rch exec",
+            "non_remote_cargo_validation",
+        )
+
+
+def validate_generated_evidence_refs(source_id: str, source: dict[str, Any], policy: dict[str, Any]) -> list[str]:
+    generated_refs = list_strings(source.get("generated_evidence_refs"))
+    if policy.get("generated_report_required") is True and not generated_refs:
+        add_failure(f"{source_id}: generated_evidence_refs must name target/conformance report/log outputs", "missing_generated_evidence_ref")
+    if not generated_refs:
+        return []
+    has_report = False
+    has_log = False
+    for ref in generated_refs:
+        if not ref.startswith(GENERATED_EVIDENCE_PREFIX):
+            add_failure(f"{source_id}: generated evidence ref must be under target/conformance: {ref}", "invalid_generated_evidence_ref")
+        has_report = has_report or ref.endswith(".report.json")
+        has_log = has_log or ref.endswith(".log.jsonl") or ref.endswith(".rows.jsonl")
+    if not has_report:
+        add_failure(f"{source_id}: generated_evidence_refs must include a report JSON", "missing_generated_report_ref")
+    if not has_log:
+        add_failure(f"{source_id}: generated_evidence_refs must include a JSONL log", "missing_generated_log_ref")
+    return generated_refs
+
+
 contract = load_json(contract_path, "contract")
 if not contract:
     report = {
@@ -296,6 +345,10 @@ for source in evidence_sources:
     validation_command = source.get("validation_command")
     if not isinstance(validation_command, str) or not validation_command.strip():
         add_failure(f"{source_id}: validation_command must be non-empty", "missing_validation_command")
+        validation_command = ""
+    else:
+        validate_remote_cargo_command(source_id, validation_command)
+    generated_evidence_refs = validate_generated_evidence_refs(source_id, source, policy)
 
     if not isinstance(source.get("stale_failure_signature"), str) or not source.get("stale_failure_signature"):
         add_failure(f"{source_id}: stale_failure_signature must be non-empty", "missing_failure_signature")
@@ -348,6 +401,7 @@ for source in evidence_sources:
                 "max_age_policy": "refresh_on_declared_trigger",
                 "validation_command": source.get("validation_command", ""),
                 "artifact_refs": artifact_refs,
+                "generated_evidence_refs": generated_evidence_refs,
                 "failure_signature": row_signatures[0] if row_signatures else "none",
                 "next_safe_action": source.get("next_safe_action", ""),
                 "status": row_status,
@@ -362,6 +416,7 @@ for source in evidence_sources:
             "freshness_state": freshness_state,
             "status": row_status,
             "validation_command": source.get("validation_command", ""),
+            "generated_evidence_refs": generated_evidence_refs,
             "stale_failure_signature": source.get("stale_failure_signature", ""),
             "covered_workload_count": len(workloads),
             "artifact_refs": artifact_refs,

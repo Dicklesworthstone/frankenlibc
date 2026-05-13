@@ -724,6 +724,214 @@
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_workload_failure_dashboard",
       "next_safe_action": "Refresh the dashboard before downstream reproducer or compatibility dossier gates classify failures."
+    },
+    {
+      "id": "high-core-tail-baseline",
+      "owner_family": "high_core_tail_evidence",
+      "claim_scope": "64+ core membrane hot-path tail and contention baseline contract for future high-core workload evidence.",
+      "claim_refs": [
+        "feature-parity-strict-hardened-evidence"
+      ],
+      "source_artifact": "tests/conformance/high_core_tail_baseline.v1.json",
+      "artifact_refs": [
+        "tests/conformance/high_core_tail_baseline.v1.json",
+        "tests/conformance/rch_validation_lane_plan.v1.json",
+        "tests/conformance/perf_budget_policy.json",
+        "crates/frankenlibc-harness/tests/high_core_tail_baseline_test.rs",
+        "target/conformance/high_core_tail_baseline.report.json",
+        "target/conformance/high_core_tail_baseline.rows.jsonl",
+        "target/conformance/high_core_tail_baseline.env.json"
+      ],
+      "generated_evidence_refs": [
+        "target/conformance/high_core_tail_baseline.report.json",
+        "target/conformance/high_core_tail_baseline.rows.jsonl",
+        "target/conformance/high_core_tail_baseline.env.json"
+      ],
+      "validation_command": "RCH_FORCE_REMOTE=true rch exec -- env CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_high_core_tail cargo test -p frankenlibc-harness --test high_core_tail_baseline_test -- --nocapture",
+      "freshness_policy": {
+        "policy_kind": "high_core_tail_baseline_generated_outputs",
+        "source_commit_policy": "manifest pins a source_commit and downstream rows must record current source_commit before high-core tail evidence is cited.",
+        "generated_at_policy": "generated report, rows JSONL, and environment fingerprint must be regenerated for the current source_commit before high-core performance claims advance.",
+        "artifact_refs_policy": "static manifest, rch lane plan, perf budget policy, focused test, report, rows JSONL, and environment fingerprint refs must remain declared.",
+        "generated_report_required": true,
+        "refresh_triggers": [
+          "thread profiles change",
+          "hot-path catalog changes",
+          "tail statistics policy changes",
+          "strict/hardened latency budget wording changes"
+        ]
+      },
+      "covered_workload_ids": [
+        "high-core-tail-single",
+        "high-core-tail-multi-64",
+        "high-core-tail-oversub"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_high_core_tail_baseline",
+      "next_safe_action": "Refresh high-core report, rows JSONL, and environment fingerprint remotely before using tail evidence in workload or performance claims."
+    },
+    {
+      "id": "workload-latency-budget-join",
+      "owner_family": "high_core_latency_budget_evidence",
+      "claim_scope": "Join strict and hardened workload latency rows to perf budgets before workload compatibility or high-core latency claims advance.",
+      "claim_refs": [
+        "feature-parity-strict-hardened-evidence"
+      ],
+      "source_artifact": "tests/conformance/workload_latency_budget_join.v1.json",
+      "artifact_refs": [
+        "tests/conformance/workload_latency_budget_join.v1.json",
+        "tests/conformance/perf_budget_policy.json",
+        "scripts/check_workload_latency_budget_join.sh",
+        "crates/frankenlibc-harness/tests/workload_latency_budget_join_test.rs",
+        "target/conformance/workload_latency_budget_join.report.json",
+        "target/conformance/workload_latency_budget_join.log.jsonl"
+      ],
+      "generated_evidence_refs": [
+        "target/conformance/workload_latency_budget_join.report.json",
+        "target/conformance/workload_latency_budget_join.log.jsonl"
+      ],
+      "validation_command": "RCH_FORCE_REMOTE=true rch exec -- env CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_workload_latency cargo test -p frankenlibc-harness --test workload_latency_budget_join_test -- --nocapture",
+      "freshness_policy": {
+        "policy_kind": "latency_budget_join_generated_report",
+        "source_commit_policy": "checker records current source_commit in joined report/log rows and rejects stale input latency rows.",
+        "generated_at_policy": "generated latency join report and JSONL must be current when cited by workload compatibility evidence.",
+        "artifact_refs_policy": "contract, perf policy, checker, harness test, report, and JSONL output refs must remain declared.",
+        "generated_report_required": true,
+        "refresh_triggers": [
+          "workload trace rows change",
+          "perf budget thresholds change",
+          "strict/hardened latency claims change",
+          "overload policy changes"
+        ]
+      },
+      "covered_workload_ids": [
+        "workload-latency-strict",
+        "workload-latency-hardened",
+        "workload-latency-overload-policy"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_workload_latency_budget_join",
+      "next_safe_action": "Regenerate latency join report/log rows with remote validation before accepting workload latency evidence."
+    },
+    {
+      "id": "synthetic-workload-composer",
+      "owner_family": "high_core_synthetic_workload_evidence",
+      "claim_scope": "Synthetic workload motif/composition evidence must stay replayable, source-bound, and strict+hardened before rare-edge coverage claims advance.",
+      "claim_refs": [
+        "feature-parity-strict-hardened-evidence"
+      ],
+      "source_artifact": "tests/conformance/synthetic_workload_composer.v1.json",
+      "artifact_refs": [
+        "tests/conformance/synthetic_workload_composer.v1.json",
+        "scripts/check_synthetic_workload_composer.sh",
+        "crates/frankenlibc-harness/tests/synthetic_workload_composer_test.rs",
+        "target/conformance/synthetic_workload_composer.report.json",
+        "target/conformance/synthetic_workload_composer.log.jsonl"
+      ],
+      "generated_evidence_refs": [
+        "target/conformance/synthetic_workload_composer.report.json",
+        "target/conformance/synthetic_workload_composer.log.jsonl"
+      ],
+      "validation_command": "RCH_FORCE_REMOTE=true rch exec -- env CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_synthetic_workload cargo test -p frankenlibc-harness --test synthetic_workload_composer_test -- --nocapture",
+      "freshness_policy": {
+        "policy_kind": "synthetic_workload_generated_report",
+        "source_commit_policy": "checker records current source_commit and rejects stale synthetic workload contracts before generated motifs are cited.",
+        "generated_at_policy": "generated composer report and JSONL must be refreshed for the current source_commit.",
+        "artifact_refs_policy": "composer contract, checker, harness test, generated report, and JSONL output refs must remain declared.",
+        "generated_report_required": true,
+        "refresh_triggers": [
+          "workload matrix changes",
+          "trace motif set changes",
+          "composition replay command changes",
+          "strict/hardened rare-edge coverage claims change"
+        ]
+      },
+      "covered_workload_ids": [
+        "synthetic-threaded-runtime",
+        "synthetic-resolver-network",
+        "synthetic-allocator-event-loop"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_synthetic_workload_composer",
+      "next_safe_action": "Refresh composer report/log rows remotely before using synthetic workload motifs as compatibility or coverage evidence."
+    },
+    {
+      "id": "swarm-scale-interpose-workload-evidence-plan",
+      "owner_family": "swarm_scale_interpose_evidence",
+      "claim_scope": "64+ core LD_PRELOAD swarm-scale workload evidence plan must reject local execution and require remote report/log outputs before any swarm claim advances.",
+      "claim_refs": [
+        "readme-interpose-many-workloads",
+        "feature-parity-strict-hardened-evidence"
+      ],
+      "source_artifact": "tests/conformance/swarm_scale_interpose_workload_evidence_plan.v1.json",
+      "artifact_refs": [
+        "tests/conformance/swarm_scale_interpose_workload_evidence_plan.v1.json",
+        "scripts/check_swarm_scale_interpose_workload_evidence_plan.sh",
+        "crates/frankenlibc-harness/tests/swarm_scale_interpose_workload_evidence_plan_test.rs",
+        "target/conformance/swarm_scale_interpose_workload_evidence_plan.report.json",
+        "target/conformance/swarm_scale_interpose_workload_evidence_plan.log.jsonl",
+        "target/conformance/swarm_scale_interpose_workload_evidence_plan.run_manifest.json"
+      ],
+      "generated_evidence_refs": [
+        "target/conformance/swarm_scale_interpose_workload_evidence_plan.report.json",
+        "target/conformance/swarm_scale_interpose_workload_evidence_plan.log.jsonl",
+        "target/conformance/swarm_scale_interpose_workload_evidence_plan.run_manifest.json"
+      ],
+      "validation_command": "RCH_FORCE_REMOTE=true rch exec -- env CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_swarm_interpose cargo test -p frankenlibc-harness --test swarm_scale_interpose_workload_evidence_plan_test -- --nocapture",
+      "freshness_policy": {
+        "policy_kind": "swarm_scale_remote_only_generated_outputs",
+        "source_commit_policy": "plan and generated report/log rows must bind to current source_commit before swarm-scale interpose evidence is cited.",
+        "generated_at_policy": "generated report, JSONL, and run manifest must be refreshed after plan or workload-source changes.",
+        "artifact_refs_policy": "plan, checker, harness test, report, JSONL, and run-manifest refs must remain declared.",
+        "generated_report_required": true,
+        "refresh_triggers": [
+          "swarm workload classes change",
+          "remote execution policy changes",
+          "required log fields change",
+          "README swarm workload wording changes"
+        ]
+      },
+      "covered_workload_ids": [
+        "swarm-fork-exec-coreutils-fanout",
+        "swarm-threaded-allocator-contention",
+        "swarm-dynamic-runtime-script-mix",
+        "swarm-c-fixture-matrix-replay"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "freshness_state": "contracted",
+      "stale_failure_signature": "stale_swarm_scale_interpose_evidence",
+      "next_safe_action": "Discard local fallback output and regenerate remote report/log/run-manifest evidence before citing swarm-scale workload support."
     }
   ],
   "self_validation": {

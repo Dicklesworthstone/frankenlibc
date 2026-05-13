@@ -62,9 +62,9 @@ fn manifest_has_required_top_level_shape() -> TestResult {
     ensure(
         m["source_commit"]
             .as_str()
-            .map(|s| s.len() == 40)
+            .map(|s| s == "current" || s.len() == 40)
             .unwrap_or(false),
-        "source_commit must be a 40-char SHA",
+        "source_commit must be current or a 40-char SHA",
     )?;
     let policy = m["policy"]
         .as_object()

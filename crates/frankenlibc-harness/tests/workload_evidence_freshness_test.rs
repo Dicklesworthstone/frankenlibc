@@ -151,7 +151,7 @@ fn contract_declares_required_sources_policies_and_claim_refs() {
     assert!(claim_refs.contains("feature-parity-strict-hardened-evidence"));
 
     let sources = contract["evidence_sources"].as_array().unwrap();
-    assert_eq!(sources.len(), 12);
+    assert_eq!(sources.len(), 16);
     let source_ids = sources
         .iter()
         .map(|source| source["id"].as_str().unwrap())
@@ -169,6 +169,10 @@ fn contract_declares_required_sources_policies_and_claim_refs() {
         "workload-performance-budget",
         "standalone-link-run-smoke",
         "workload-failure-dashboard",
+        "high-core-tail-baseline",
+        "workload-latency-budget-join",
+        "synthetic-workload-composer",
+        "swarm-scale-interpose-workload-evidence-plan",
     ] {
         assert!(source_ids.contains(expected), "missing source {expected}");
     }
@@ -215,6 +219,50 @@ fn contract_declares_required_sources_policies_and_claim_refs() {
 }
 
 #[test]
+fn high_core_sources_require_generated_evidence_and_remote_rch_commands() {
+    let contract = load_json(&contract_path());
+    let sources = contract["evidence_sources"].as_array().unwrap();
+    for source_id in [
+        "high-core-tail-baseline",
+        "workload-latency-budget-join",
+        "synthetic-workload-composer",
+        "swarm-scale-interpose-workload-evidence-plan",
+    ] {
+        let source = sources
+            .iter()
+            .find(|source| source["id"].as_str() == Some(source_id))
+            .unwrap_or_else(|| panic!("missing source {source_id}"));
+        let generated_refs = source["generated_evidence_refs"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{source_id}: missing generated_evidence_refs"));
+        assert!(
+            generated_refs.iter().any(|value| value
+                .as_str()
+                .is_some_and(|text| text.ends_with(".report.json"))),
+            "{source_id}: must name report output"
+        );
+        assert!(
+            generated_refs.iter().any(|value| value
+                .as_str()
+                .is_some_and(|text| text.ends_with(".log.jsonl") || text.ends_with(".rows.jsonl"))),
+            "{source_id}: must name JSONL output"
+        );
+        for generated_ref in generated_refs {
+            let text = generated_ref.as_str().unwrap();
+            assert!(
+                text.starts_with("target/conformance/"),
+                "{source_id}: generated ref must stay under target/conformance: {text}"
+            );
+        }
+        let command = source["validation_command"].as_str().unwrap();
+        assert!(
+            !command.contains("cargo") || command.contains("RCH_FORCE_REMOTE=true"),
+            "{source_id}: cargo validation must force remote rch"
+        );
+    }
+}
+
+#[test]
 fn gate_passes_and_emits_report_and_jsonl_log() {
     let script = script_path();
     assert!(script.exists(), "missing {}", script.display());
@@ -242,7 +290,7 @@ fn gate_passes_and_emits_report_and_jsonl_log() {
     assert_eq!(report["source_contract_bead"].as_str(), Some("bd-fp4tm.1"));
     assert_eq!(
         report["summary"]["evidence_source_count"].as_u64(),
-        Some(12)
+        Some(16)
     );
     assert_eq!(report["summary"]["failed_source_count"].as_u64(), Some(0));
     assert!(
@@ -314,6 +362,49 @@ fn gate_fails_closed_on_missing_artifact_ref() {
         &path,
         "workload-evidence-missing-ref-run",
         "missing_artifact_ref",
+    );
+}
+
+#[test]
+fn gate_fails_closed_on_missing_generated_evidence_refs() {
+    let (path, _contract) =
+        write_contract_variant("workload-evidence-missing-generated-ref", |contract| {
+            let sources = contract["evidence_sources"].as_array_mut().unwrap();
+            let source = sources
+                .iter_mut()
+                .find(|source| source["id"].as_str() == Some("high-core-tail-baseline"))
+                .expect("high-core-tail-baseline source should exist");
+            source
+                .as_object_mut()
+                .unwrap()
+                .remove("generated_evidence_refs");
+        });
+
+    assert_gate_fails_with(
+        &path,
+        "workload-evidence-missing-generated-ref-run",
+        "missing_generated_evidence_ref",
+    );
+}
+
+#[test]
+fn gate_fails_closed_on_non_rch_cargo_validation_command() {
+    let (path, _contract) =
+        write_contract_variant("workload-evidence-local-cargo-validation", |contract| {
+            let sources = contract["evidence_sources"].as_array_mut().unwrap();
+            let source = sources
+                .iter_mut()
+                .find(|source| source["id"].as_str() == Some("high-core-tail-baseline"))
+                .expect("high-core-tail-baseline source should exist");
+            source["validation_command"] = Value::String(
+                "cargo test -p frankenlibc-harness --test high_core_tail_baseline_test".to_owned(),
+            );
+        });
+
+    assert_gate_fails_with(
+        &path,
+        "workload-evidence-local-cargo-validation-run",
+        "non_remote_cargo_validation",
     );
 }
 
