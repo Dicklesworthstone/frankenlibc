@@ -585,7 +585,19 @@ pub fn execute_fixture_case(
         | "aio_init"
         | "aio_read"
         | "aio_read64"
-        | "aio_return" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        | "aio_return"
+        | "aio_return64"
+        | "aio_suspend"
+        | "aio_suspend64"
+        | "aio_write"
+        | "aio_write64"
+        | "alarm"
+        | "arc4random"
+        | "arc4random_buf"
+        | "arc4random_uniform"
+        | "argp_error"
+        | "argp_failure"
+        | "argp_help" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
         | "_IO_peekc_locked" | "_IO_putc" => {
@@ -14556,6 +14568,16 @@ fn execute_unistd_process_filesystem_case(
         "aio_init" => aio_init_fixture_actual()?,
         "aio_read" | "aio_read64" => aio_read_fixture_actual(function)?,
         "aio_return" => aio_return_fixture_actual()?,
+        "aio_return64" => aio_return64_fixture_actual()?,
+        "aio_suspend" | "aio_suspend64" => aio_suspend_fixture_actual(function)?,
+        "aio_write" | "aio_write64" => aio_write_null_fixture_actual(function)?,
+        "alarm" => alarm_fixture_actual()?,
+        "arc4random" => arc4random_fixture_actual()?,
+        "arc4random_buf" => arc4random_buf_zero_fixture_actual()?,
+        "arc4random_uniform" => arc4random_uniform_fixture_actual()?,
+        "argp_error" => argp_error_fixture_actual()?,
+        "argp_failure" => argp_failure_fixture_actual()?,
+        "argp_help" => argp_help_fixture_actual()?,
         other => {
             return Err(format!(
                 "unsupported unistd process/filesystem fixture: {other}"
@@ -15159,6 +15181,113 @@ fn aio_return_fixture_actual() -> Result<String, String> {
     // implementation and is kept live for the whole call.
     let returned = unsafe { frankenlibc_abi::unistd_abi::aio_return(cb.as_mut_c_void()) };
     Ok(format!("AIO_RETURN_COMPLETED_VALUE_{returned}"))
+}
+
+fn aio_return64_fixture_actual() -> Result<String, String> {
+    let mut cb = completed_aiocb(11);
+    // SAFETY: The fixture aiocb buffer uses the field offsets consumed by the ABI
+    // implementation and is kept live for the whole call.
+    let returned = unsafe { frankenlibc_abi::unistd_abi::aio_return64(cb.as_mut_c_void()) };
+    Ok(format!("AIO_RETURN64_COMPLETED_VALUE_{returned}"))
+}
+
+fn aio_suspend_fixture_actual(function: &str) -> Result<String, String> {
+    let cb = completed_aiocb(0);
+    let list = [cb.as_c_void()];
+    // SAFETY: The list points to a completed synthetic aiocb that stays live for
+    // the whole call, and the timeout pointer is intentionally null.
+    let rc = unsafe {
+        match function {
+            "aio_suspend" => {
+                frankenlibc_abi::unistd_abi::aio_suspend(list.as_ptr(), 1, std::ptr::null())
+            }
+            "aio_suspend64" => {
+                frankenlibc_abi::unistd_abi::aio_suspend64(list.as_ptr(), 1, std::ptr::null())
+            }
+            _ => unreachable!("validated aio_suspend function"),
+        }
+    };
+    Ok(format!(
+        "{}_COMPLETED_RC_{rc}",
+        function.to_ascii_uppercase()
+    ))
+}
+
+fn aio_write_null_fixture_actual(function: &str) -> Result<String, String> {
+    // SAFETY: This intentionally exercises the null-aiocb error contract and
+    // records only the return-value class, not file descriptor state.
+    let rc = unsafe {
+        match function {
+            "aio_write" => frankenlibc_abi::unistd_abi::aio_write(std::ptr::null_mut()),
+            "aio_write64" => frankenlibc_abi::unistd_abi::aio_write64(std::ptr::null_mut()),
+            _ => unreachable!("validated aio_write function"),
+        }
+    };
+    Ok(format!("{}_NULL_RC_{rc}", function.to_ascii_uppercase()))
+}
+
+fn alarm_fixture_actual() -> Result<String, String> {
+    // SAFETY: The first call clears any ambient timer inherited by the isolated
+    // subprocess; the second call is the deterministic cancellation observation.
+    unsafe {
+        let _ = frankenlibc_abi::unistd_abi::alarm(0);
+        let rc = frankenlibc_abi::unistd_abi::alarm(0);
+        Ok(format!("ALARM_CANCEL_RC_{rc}"))
+    }
+}
+
+fn arc4random_fixture_actual() -> Result<String, String> {
+    // SAFETY: The value is intentionally classified, not recorded, because the
+    // function is nondeterministic by contract.
+    let _ = unsafe { frankenlibc_abi::unistd_abi::arc4random() };
+    Ok(String::from("ARC4RANDOM_U32_VALUE_CLASS"))
+}
+
+fn arc4random_buf_zero_fixture_actual() -> Result<String, String> {
+    // SAFETY: A zero-size request with a null buffer is a deterministic no-op.
+    unsafe { frankenlibc_abi::unistd_abi::arc4random_buf(std::ptr::null_mut(), 0) };
+    Ok(String::from("ARC4RANDOM_BUF_ZERO_NOOP"))
+}
+
+fn arc4random_uniform_fixture_actual() -> Result<String, String> {
+    // SAFETY: upper_bound == 1 is deterministic and returns 0 without consuming
+    // random state.
+    let rc = unsafe { frankenlibc_abi::unistd_abi::arc4random_uniform(1) };
+    Ok(format!("ARC4RANDOM_UNIFORM_UPPER_1_RC_{rc}"))
+}
+
+fn argp_help_fixture_actual() -> Result<String, String> {
+    // SAFETY: The FrankenLibC phase-1 argp help surface is a no-op for these
+    // nullable arguments, avoiding stream or terminal state capture.
+    unsafe {
+        frankenlibc_abi::unistd_abi::argp_help(
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+        );
+    }
+    Ok(String::from("ARGP_HELP_NOOP"))
+}
+
+fn argp_error_fixture_actual() -> Result<String, String> {
+    let fmt = CString::new("wave04 argp error")
+        .map_err(|_| "argp_error format contains interior NUL".to_string())?;
+    // SAFETY: The format pointer is valid and no variadic payload is required by
+    // the current no-op implementation.
+    unsafe { frankenlibc_abi::unistd_abi::argp_error(std::ptr::null_mut(), fmt.as_ptr()) };
+    Ok(String::from("ARGP_ERROR_NOOP"))
+}
+
+fn argp_failure_fixture_actual() -> Result<String, String> {
+    let fmt = CString::new("wave04 argp failure")
+        .map_err(|_| "argp_failure format contains interior NUL".to_string())?;
+    // SAFETY: The format pointer is valid and status/errnum zero avoids any
+    // process-exit behavior if this surface grows beyond the phase-1 no-op.
+    unsafe {
+        frankenlibc_abi::unistd_abi::argp_failure(std::ptr::null_mut(), 0, 0, fmt.as_ptr());
+    }
+    Ok(String::from("ARGP_FAILURE_NOOP"))
 }
 
 fn wait_for_aio_completion(cb: &FixtureAiocb) -> c_int {

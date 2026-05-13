@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-13T01:23:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the refreshed fcq-unistd-process-filesystem wave-04 AIO LFS, alarm, arc4random, and argp symbols. Outputs classify completed AIO state, null-aiocb errors, zero-size random-buffer no-ops, bounded random classes, alarm cancellation, and argp no-op helpers without recording file descriptors, random values, alarm leftovers, process ids, addresses, temporary paths, stream contents, thread ids, scheduler races, or filesystem timestamps.",
+  "spec_reference": "POSIX.1 AIO suspend/write/return contracts, glibc LFS AIO aliases, POSIX alarm cancellation semantics, BSD arc4random family contracts, and GNU argp helper no-op surfaces",
+  "campaign": {
+    "bead": "bd-mk28y.1",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-04-unistd-process-filesystem-aio-random-argp",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata",
+    "first_wave_symbols": [
+      "aio_return64",
+      "aio_suspend",
+      "aio_suspend64",
+      "aio_write",
+      "aio_write64",
+      "alarm",
+      "arc4random",
+      "arc4random_buf",
+      "arc4random_uniform",
+      "argp_error",
+      "argp_failure",
+      "argp_help"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "aio_return64_completed_aiocb_strict",
+      "function": "aio_return64",
+      "spec_section": "glibc LFS aio_return64 completed operation alias",
+      "inputs": {
+        "symbol": "aio_return64",
+        "scenario": "synthetic_completed_aiocb_return_slot_without_scheduler_capture",
+        "expected": "AIO_RETURN64_COMPLETED_VALUE_11",
+        "oracle_source": "FrankenLibC aio_return64 alias completed return-value class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=aio_return64;mode=strict;expected=AIO_RETURN64_COMPLETED_VALUE_11;actual=AIO_RETURN64_COMPLETED_VALUE_11;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_return64_completed_aiocb_hardened",
+      "function": "aio_return64",
+      "spec_section": "glibc LFS aio_return64 completed operation alias",
+      "inputs": {
+        "symbol": "aio_return64",
+        "scenario": "synthetic_completed_aiocb_return_slot_without_scheduler_capture",
+        "expected": "AIO_RETURN64_COMPLETED_VALUE_11",
+        "oracle_source": "FrankenLibC aio_return64 alias completed return-value class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=aio_return64;mode=hardened;expected=AIO_RETURN64_COMPLETED_VALUE_11;actual=AIO_RETURN64_COMPLETED_VALUE_11;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_suspend_completed_aiocb_strict",
+      "function": "aio_suspend",
+      "spec_section": "POSIX aio_suspend completed operation wait contract",
+      "inputs": {
+        "symbol": "aio_suspend",
+        "scenario": "synthetic_completed_aiocb_list_without_timeout_capture",
+        "expected": "AIO_SUSPEND_COMPLETED_RC_0",
+        "oracle_source": "FrankenLibC aio_suspend completed-list return class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=aio_suspend;mode=strict;expected=AIO_SUSPEND_COMPLETED_RC_0;actual=AIO_SUSPEND_COMPLETED_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_suspend_completed_aiocb_hardened",
+      "function": "aio_suspend",
+      "spec_section": "POSIX aio_suspend completed operation wait contract",
+      "inputs": {
+        "symbol": "aio_suspend",
+        "scenario": "synthetic_completed_aiocb_list_without_timeout_capture",
+        "expected": "AIO_SUSPEND_COMPLETED_RC_0",
+        "oracle_source": "FrankenLibC aio_suspend completed-list return class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=aio_suspend;mode=hardened;expected=AIO_SUSPEND_COMPLETED_RC_0;actual=AIO_SUSPEND_COMPLETED_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_suspend64_completed_aiocb_strict",
+      "function": "aio_suspend64",
+      "spec_section": "glibc LFS aio_suspend64 completed operation alias",
+      "inputs": {
+        "symbol": "aio_suspend64",
+        "scenario": "synthetic_completed_aiocb_list_without_timeout_capture",
+        "expected": "AIO_SUSPEND64_COMPLETED_RC_0",
+        "oracle_source": "FrankenLibC aio_suspend64 alias completed-list return class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=aio_suspend64;mode=strict;expected=AIO_SUSPEND64_COMPLETED_RC_0;actual=AIO_SUSPEND64_COMPLETED_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_suspend64_completed_aiocb_hardened",
+      "function": "aio_suspend64",
+      "spec_section": "glibc LFS aio_suspend64 completed operation alias",
+      "inputs": {
+        "symbol": "aio_suspend64",
+        "scenario": "synthetic_completed_aiocb_list_without_timeout_capture",
+        "expected": "AIO_SUSPEND64_COMPLETED_RC_0",
+        "oracle_source": "FrankenLibC aio_suspend64 alias completed-list return class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=aio_suspend64;mode=hardened;expected=AIO_SUSPEND64_COMPLETED_RC_0;actual=AIO_SUSPEND64_COMPLETED_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_write_null_aiocb_strict",
+      "function": "aio_write",
+      "spec_section": "POSIX aio_write null aiocb error class",
+      "inputs": {
+        "symbol": "aio_write",
+        "scenario": "null_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_WRITE_NULL_RC_-1",
+        "oracle_source": "FrankenLibC aio_write null aiocb return class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=aio_write;mode=strict;expected=AIO_WRITE_NULL_RC_-1;actual=AIO_WRITE_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_write_null_aiocb_hardened",
+      "function": "aio_write",
+      "spec_section": "POSIX aio_write null aiocb error class",
+      "inputs": {
+        "symbol": "aio_write",
+        "scenario": "null_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_WRITE_NULL_RC_-1",
+        "oracle_source": "FrankenLibC aio_write null aiocb return class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=aio_write;mode=hardened;expected=AIO_WRITE_NULL_RC_-1;actual=AIO_WRITE_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "aio_write64_null_aiocb_strict",
+      "function": "aio_write64",
+      "spec_section": "glibc LFS aio_write64 null aiocb alias",
+      "inputs": {
+        "symbol": "aio_write64",
+        "scenario": "null_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_WRITE64_NULL_RC_-1",
+        "oracle_source": "FrankenLibC aio_write64 alias null aiocb return class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=aio_write64;mode=strict;expected=AIO_WRITE64_NULL_RC_-1;actual=AIO_WRITE64_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "aio_write64_null_aiocb_hardened",
+      "function": "aio_write64",
+      "spec_section": "glibc LFS aio_write64 null aiocb alias",
+      "inputs": {
+        "symbol": "aio_write64",
+        "scenario": "null_aiocb_without_file_descriptor_capture",
+        "expected": "AIO_WRITE64_NULL_RC_-1",
+        "oracle_source": "FrankenLibC aio_write64 alias null aiocb return class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=aio_write64;mode=hardened;expected=AIO_WRITE64_NULL_RC_-1;actual=AIO_WRITE64_NULL_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "alarm_double_cancel_strict",
+      "function": "alarm",
+      "spec_section": "POSIX alarm cancellation return-value class",
+      "inputs": {
+        "symbol": "alarm",
+        "scenario": "double_cancel_without_recording_prior_alarm_state",
+        "expected": "ALARM_CANCEL_RC_0",
+        "oracle_source": "FrankenLibC alarm deterministic cancellation class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=alarm;mode=strict;expected=ALARM_CANCEL_RC_0;actual=ALARM_CANCEL_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "alarm_double_cancel_hardened",
+      "function": "alarm",
+      "spec_section": "POSIX alarm cancellation return-value class",
+      "inputs": {
+        "symbol": "alarm",
+        "scenario": "double_cancel_without_recording_prior_alarm_state",
+        "expected": "ALARM_CANCEL_RC_0",
+        "oracle_source": "FrankenLibC alarm deterministic cancellation class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=alarm;mode=hardened;expected=ALARM_CANCEL_RC_0;actual=ALARM_CANCEL_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "arc4random_value_class_strict",
+      "function": "arc4random",
+      "spec_section": "BSD arc4random returns a 32-bit random value",
+      "inputs": {
+        "symbol": "arc4random",
+        "scenario": "classify_random_value_without_recording_entropy",
+        "expected": "ARC4RANDOM_U32_VALUE_CLASS",
+        "oracle_source": "FrankenLibC arc4random return-type class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=arc4random;mode=strict;expected=ARC4RANDOM_U32_VALUE_CLASS;actual=ARC4RANDOM_U32_VALUE_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "arc4random_value_class_hardened",
+      "function": "arc4random",
+      "spec_section": "BSD arc4random returns a 32-bit random value",
+      "inputs": {
+        "symbol": "arc4random",
+        "scenario": "classify_random_value_without_recording_entropy",
+        "expected": "ARC4RANDOM_U32_VALUE_CLASS",
+        "oracle_source": "FrankenLibC arc4random return-type class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=arc4random;mode=hardened;expected=ARC4RANDOM_U32_VALUE_CLASS;actual=ARC4RANDOM_U32_VALUE_CLASS;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "arc4random_buf_zero_noop_strict",
+      "function": "arc4random_buf",
+      "spec_section": "BSD arc4random_buf zero-byte no-op",
+      "inputs": {
+        "symbol": "arc4random_buf",
+        "scenario": "zero_size_null_buffer_noop_without_entropy_capture",
+        "expected": "ARC4RANDOM_BUF_ZERO_NOOP",
+        "oracle_source": "FrankenLibC arc4random_buf zero-size no-op class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=arc4random_buf;mode=strict;expected=ARC4RANDOM_BUF_ZERO_NOOP;actual=ARC4RANDOM_BUF_ZERO_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "arc4random_buf_zero_noop_hardened",
+      "function": "arc4random_buf",
+      "spec_section": "BSD arc4random_buf zero-byte no-op",
+      "inputs": {
+        "symbol": "arc4random_buf",
+        "scenario": "zero_size_null_buffer_noop_without_entropy_capture",
+        "expected": "ARC4RANDOM_BUF_ZERO_NOOP",
+        "oracle_source": "FrankenLibC arc4random_buf zero-size no-op class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=arc4random_buf;mode=hardened;expected=ARC4RANDOM_BUF_ZERO_NOOP;actual=ARC4RANDOM_BUF_ZERO_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "arc4random_uniform_upper_one_strict",
+      "function": "arc4random_uniform",
+      "spec_section": "BSD arc4random_uniform upper-bound one deterministic class",
+      "inputs": {
+        "symbol": "arc4random_uniform",
+        "scenario": "upper_bound_one_without_random_draw_capture",
+        "expected": "ARC4RANDOM_UNIFORM_UPPER_1_RC_0",
+        "oracle_source": "FrankenLibC arc4random_uniform upper-bound one return class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=arc4random_uniform;mode=strict;expected=ARC4RANDOM_UNIFORM_UPPER_1_RC_0;actual=ARC4RANDOM_UNIFORM_UPPER_1_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "arc4random_uniform_upper_one_hardened",
+      "function": "arc4random_uniform",
+      "spec_section": "BSD arc4random_uniform upper-bound one deterministic class",
+      "inputs": {
+        "symbol": "arc4random_uniform",
+        "scenario": "upper_bound_one_without_random_draw_capture",
+        "expected": "ARC4RANDOM_UNIFORM_UPPER_1_RC_0",
+        "oracle_source": "FrankenLibC arc4random_uniform upper-bound one return class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=arc4random_uniform;mode=hardened;expected=ARC4RANDOM_UNIFORM_UPPER_1_RC_0;actual=ARC4RANDOM_UNIFORM_UPPER_1_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argp_error_noop_strict",
+      "function": "argp_error",
+      "spec_section": "GNU argp_error no-op helper surface",
+      "inputs": {
+        "symbol": "argp_error",
+        "scenario": "no_state_no_stream_noop_without_stderr_capture",
+        "expected": "ARGP_ERROR_NOOP",
+        "oracle_source": "FrankenLibC argp_error no-op class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=argp_error;mode=strict;expected=ARGP_ERROR_NOOP;actual=ARGP_ERROR_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argp_error_noop_hardened",
+      "function": "argp_error",
+      "spec_section": "GNU argp_error no-op helper surface",
+      "inputs": {
+        "symbol": "argp_error",
+        "scenario": "no_state_no_stream_noop_without_stderr_capture",
+        "expected": "ARGP_ERROR_NOOP",
+        "oracle_source": "FrankenLibC argp_error no-op class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=argp_error;mode=hardened;expected=ARGP_ERROR_NOOP;actual=ARGP_ERROR_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argp_failure_noop_strict",
+      "function": "argp_failure",
+      "spec_section": "GNU argp_failure no-op helper surface",
+      "inputs": {
+        "symbol": "argp_failure",
+        "scenario": "zero_status_no_state_no_stream_noop_without_stderr_capture",
+        "expected": "ARGP_FAILURE_NOOP",
+        "oracle_source": "FrankenLibC argp_failure no-op class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=argp_failure;mode=strict;expected=ARGP_FAILURE_NOOP;actual=ARGP_FAILURE_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argp_failure_noop_hardened",
+      "function": "argp_failure",
+      "spec_section": "GNU argp_failure no-op helper surface",
+      "inputs": {
+        "symbol": "argp_failure",
+        "scenario": "zero_status_no_state_no_stream_noop_without_stderr_capture",
+        "expected": "ARGP_FAILURE_NOOP",
+        "oracle_source": "FrankenLibC argp_failure no-op class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=argp_failure;mode=hardened;expected=ARGP_FAILURE_NOOP;actual=ARGP_FAILURE_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "argp_help_noop_strict",
+      "function": "argp_help",
+      "spec_section": "GNU argp_help no-op helper surface",
+      "inputs": {
+        "symbol": "argp_help",
+        "scenario": "no_argp_no_stream_noop_without_stdout_capture",
+        "expected": "ARGP_HELP_NOOP",
+        "oracle_source": "FrankenLibC argp_help no-op class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=argp_help;mode=strict;expected=ARGP_HELP_NOOP;actual=ARGP_HELP_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "argp_help_noop_hardened",
+      "function": "argp_help",
+      "spec_section": "GNU argp_help no-op helper surface",
+      "inputs": {
+        "symbol": "argp_help",
+        "scenario": "no_argp_no_stream_noop_without_stdout_capture",
+        "expected": "ARGP_HELP_NOOP",
+        "oracle_source": "FrankenLibC argp_help no-op class",
+        "ambient_state_policy": "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata"
+      },
+      "expected_output": "symbol=argp_help;mode=hardened;expected=ARGP_HELP_NOOP;actual=ARGP_HELP_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
