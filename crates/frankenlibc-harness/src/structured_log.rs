@@ -793,15 +793,29 @@ pub fn validate_log_line(
         }
     };
 
-    // Required fields
-    for field in ["timestamp", "trace_id", "level", "event"] {
-        if !obj.contains_key(field) {
-            errors.push(LogValidationError {
+    // Required string fields must be present and meaningful.
+    for field in ["timestamp", "trace_id", "event"] {
+        match obj.get(field).and_then(|v| v.as_str()) {
+            Some(value) if !value.trim().is_empty() => {}
+            Some(_) => errors.push(LogValidationError {
+                line_number,
+                field: field.to_string(),
+                message: "required field must be a non-empty string".to_string(),
+            }),
+            None => errors.push(LogValidationError {
                 line_number,
                 field: field.to_string(),
                 message: "required field missing".to_string(),
-            });
+            }),
         }
+    }
+
+    if !obj.contains_key("level") {
+        errors.push(LogValidationError {
+            line_number,
+            field: "level".to_string(),
+            message: "required field missing".to_string(),
+        });
     }
 
     // Validate level enum
@@ -1316,6 +1330,21 @@ mod tests {
             errors.iter().any(|e| e.field == "trace_id"),
             "Should report missing trace_id"
         );
+    }
+
+    #[test]
+    fn validate_rejects_blank_required_strings() {
+        let json =
+            r#"{"timestamp":" ","trace_id":"bd-test::run-1::001","level":"info","event":""}"#;
+        let result = validate_log_line(json, 1).expect_err("blank required fields must fail");
+        assert!(result.iter().any(|e| e.field == "timestamp"));
+        assert!(result.iter().any(|e| e.field == "event"));
+
+        let blank_trace =
+            r#"{"timestamp":"2026-01-01T00:00:00Z","trace_id":" ","level":"info","event":"test"}"#;
+        let errors =
+            validate_log_line(blank_trace, 2).expect_err("blank trace_id must fail validation");
+        assert!(errors.iter().any(|e| e.field == "trace_id"));
     }
 
     #[test]
