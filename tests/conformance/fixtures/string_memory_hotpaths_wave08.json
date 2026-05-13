@@ -1,0 +1,238 @@
+{
+  "version": "v1",
+  "family": "string_memory_hotpaths_wave08",
+  "captured_at": "2026-05-13T02:50:00Z",
+  "description": "Strict/hardened deterministic fixture wave for GNU envz helpers without recording pointers, allocation addresses, errno buffers, file descriptors, or process-global state.",
+  "spec_reference": "GNU libc envz entry lookup, value lookup, add, merge, remove, and strip semantics",
+  "campaign": {
+    "bead": "pending-string-memory-wave08",
+    "campaign_id": "fcq-string-memory-hotpaths",
+    "wave_id": "wave-08-string-memory-hotpaths",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture",
+    "first_wave_symbols": [
+      "envz_add",
+      "envz_entry",
+      "envz_get",
+      "envz_merge",
+      "envz_remove",
+      "envz_strip"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "envz_add_replaces_existing_name_strict",
+      "function": "envz_add",
+      "spec_section": "GNU libc envz_add",
+      "inputs": {
+        "symbol": "envz_add",
+        "scenario": "replace_existing_name_value",
+        "entries": "USER=alice|SHELL=/bin/sh",
+        "name": "USER",
+        "value": "bob",
+        "expected": "ENVZ_COUNT_2_LEN_23_TEXT_SHELL=/bin/sh|USER=bob",
+        "oracle_source": "GNU envz_add name replacement model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_add;mode=strict;expected=ENVZ_COUNT_2_LEN_23_TEXT_SHELL=/bin/sh|USER=bob;actual=ENVZ_COUNT_2_LEN_23_TEXT_SHELL=/bin/sh|USER=bob;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "envz_add_replaces_existing_name_hardened",
+      "function": "envz_add",
+      "spec_section": "GNU libc envz_add",
+      "inputs": {
+        "symbol": "envz_add",
+        "scenario": "replace_existing_name_value",
+        "entries": "USER=alice|SHELL=/bin/sh",
+        "name": "USER",
+        "value": "bob",
+        "expected": "ENVZ_COUNT_2_LEN_23_TEXT_SHELL=/bin/sh|USER=bob",
+        "oracle_source": "GNU envz_add name replacement model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_add;mode=hardened;expected=ENVZ_COUNT_2_LEN_23_TEXT_SHELL=/bin/sh|USER=bob;actual=ENVZ_COUNT_2_LEN_23_TEXT_SHELL=/bin/sh|USER=bob;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "envz_entry_name_without_value_strict",
+      "function": "envz_entry",
+      "spec_section": "GNU libc envz_entry",
+      "inputs": {
+        "symbol": "envz_entry",
+        "scenario": "find_entry_by_name_without_value",
+        "entries": "USER=alice|EMPTY|SHELL=/bin/sh",
+        "name": "EMPTY",
+        "expected": "ENVZ_ENTRY_EMPTY",
+        "oracle_source": "GNU envz_entry name match model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_entry;mode=strict;expected=ENVZ_ENTRY_EMPTY;actual=ENVZ_ENTRY_EMPTY;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "envz_entry_name_without_value_hardened",
+      "function": "envz_entry",
+      "spec_section": "GNU libc envz_entry",
+      "inputs": {
+        "symbol": "envz_entry",
+        "scenario": "find_entry_by_name_without_value",
+        "entries": "USER=alice|EMPTY|SHELL=/bin/sh",
+        "name": "EMPTY",
+        "expected": "ENVZ_ENTRY_EMPTY",
+        "oracle_source": "GNU envz_entry name match model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_entry;mode=hardened;expected=ENVZ_ENTRY_EMPTY;actual=ENVZ_ENTRY_EMPTY;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "envz_get_existing_value_strict",
+      "function": "envz_get",
+      "spec_section": "GNU libc envz_get",
+      "inputs": {
+        "symbol": "envz_get",
+        "scenario": "get_value_after_equals",
+        "entries": "USER=alice|SHELL=/bin/sh|EMPTY",
+        "name": "SHELL",
+        "expected": "ENVZ_VALUE_/bin/sh",
+        "oracle_source": "GNU envz_get value slice model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_get;mode=strict;expected=ENVZ_VALUE_/bin/sh;actual=ENVZ_VALUE_/bin/sh;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "envz_get_existing_value_hardened",
+      "function": "envz_get",
+      "spec_section": "GNU libc envz_get",
+      "inputs": {
+        "symbol": "envz_get",
+        "scenario": "get_value_after_equals",
+        "entries": "USER=alice|SHELL=/bin/sh|EMPTY",
+        "name": "SHELL",
+        "expected": "ENVZ_VALUE_/bin/sh",
+        "oracle_source": "GNU envz_get value slice model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_get;mode=hardened;expected=ENVZ_VALUE_/bin/sh;actual=ENVZ_VALUE_/bin/sh;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "envz_merge_without_override_strict",
+      "function": "envz_merge",
+      "spec_section": "GNU libc envz_merge",
+      "inputs": {
+        "symbol": "envz_merge",
+        "scenario": "merge_without_overriding_existing_name",
+        "entries": "A=1|B=base",
+        "merge_entries": "B=override|C=3",
+        "override": 0,
+        "expected": "ENVZ_COUNT_3_LEN_15_TEXT_A=1|B=base|C=3",
+        "oracle_source": "GNU envz_merge no-override model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_merge;mode=strict;expected=ENVZ_COUNT_3_LEN_15_TEXT_A=1|B=base|C=3;actual=ENVZ_COUNT_3_LEN_15_TEXT_A=1|B=base|C=3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "envz_merge_without_override_hardened",
+      "function": "envz_merge",
+      "spec_section": "GNU libc envz_merge",
+      "inputs": {
+        "symbol": "envz_merge",
+        "scenario": "merge_without_overriding_existing_name",
+        "entries": "A=1|B=base",
+        "merge_entries": "B=override|C=3",
+        "override": 0,
+        "expected": "ENVZ_COUNT_3_LEN_15_TEXT_A=1|B=base|C=3",
+        "oracle_source": "GNU envz_merge no-override model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_merge;mode=hardened;expected=ENVZ_COUNT_3_LEN_15_TEXT_A=1|B=base|C=3;actual=ENVZ_COUNT_3_LEN_15_TEXT_A=1|B=base|C=3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "envz_remove_existing_name_strict",
+      "function": "envz_remove",
+      "spec_section": "GNU libc envz_remove",
+      "inputs": {
+        "symbol": "envz_remove",
+        "scenario": "remove_existing_entry_by_name",
+        "entries": "A=1|B=2|C=3",
+        "name": "B",
+        "expected": "ENVZ_COUNT_2_LEN_8_TEXT_A=1|C=3",
+        "oracle_source": "GNU envz_remove compaction model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_remove;mode=strict;expected=ENVZ_COUNT_2_LEN_8_TEXT_A=1|C=3;actual=ENVZ_COUNT_2_LEN_8_TEXT_A=1|C=3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "envz_remove_existing_name_hardened",
+      "function": "envz_remove",
+      "spec_section": "GNU libc envz_remove",
+      "inputs": {
+        "symbol": "envz_remove",
+        "scenario": "remove_existing_entry_by_name",
+        "entries": "A=1|B=2|C=3",
+        "name": "B",
+        "expected": "ENVZ_COUNT_2_LEN_8_TEXT_A=1|C=3",
+        "oracle_source": "GNU envz_remove compaction model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_remove;mode=hardened;expected=ENVZ_COUNT_2_LEN_8_TEXT_A=1|C=3;actual=ENVZ_COUNT_2_LEN_8_TEXT_A=1|C=3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "envz_strip_names_without_values_strict",
+      "function": "envz_strip",
+      "spec_section": "GNU libc envz_strip",
+      "inputs": {
+        "symbol": "envz_strip",
+        "scenario": "remove_entries_without_equals",
+        "entries": "A=1|EMPTY|B=2|FLAG",
+        "expected": "ENVZ_COUNT_2_LEN_8_TEXT_A=1|B=2",
+        "oracle_source": "GNU envz_strip valued-entry model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_strip;mode=strict;expected=ENVZ_COUNT_2_LEN_8_TEXT_A=1|B=2;actual=ENVZ_COUNT_2_LEN_8_TEXT_A=1|B=2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "envz_strip_names_without_values_hardened",
+      "function": "envz_strip",
+      "spec_section": "GNU libc envz_strip",
+      "inputs": {
+        "symbol": "envz_strip",
+        "scenario": "remove_entries_without_equals",
+        "entries": "A=1|EMPTY|B=2|FLAG",
+        "expected": "ENVZ_COUNT_2_LEN_8_TEXT_A=1|B=2",
+        "oracle_source": "GNU envz_strip valued-entry model",
+        "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture"
+      },
+      "expected_output": "symbol=envz_strip;mode=hardened;expected=ENVZ_COUNT_2_LEN_8_TEXT_A=1|B=2;actual=ENVZ_COUNT_2_LEN_8_TEXT_A=1|B=2;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

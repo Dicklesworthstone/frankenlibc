@@ -511,7 +511,13 @@ pub fn execute_fixture_case(
         | "argz_insert"
         | "argz_next"
         | "argz_replace"
-        | "argz_stringify" => execute_string_memory_hotpaths_case(function, inputs, mode),
+        | "argz_stringify"
+        | "envz_add"
+        | "envz_entry"
+        | "envz_get"
+        | "envz_merge"
+        | "envz_remove"
+        | "envz_strip" => execute_string_memory_hotpaths_case(function, inputs, mode),
         "strcmp" => execute_strcmp_case(inputs, mode),
         "strcpy" => execute_strcpy_case(inputs, mode),
         "strncpy" => execute_strncpy_case(inputs, mode),
@@ -8053,6 +8059,58 @@ fn string_memory_hotpath_actual(
             let sep = char::from(sep).to_string();
             Ok(format!("STRINGIFY_{}", entries.join(&sep)))
         }
+        "envz_entry" => {
+            let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let name = parse_string(inputs, "name")?;
+            Ok(match envz_find_entry(&entries, &name) {
+                Some(entry) => format!("ENVZ_ENTRY_{entry}"),
+                None => String::from("ENVZ_ENTRY_NULL"),
+            })
+        }
+        "envz_get" => {
+            let entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let name = parse_string(inputs, "name")?;
+            Ok(
+                match envz_find_entry(&entries, &name).and_then(|entry| envz_value(entry)) {
+                    Some(value) => format!("ENVZ_VALUE_{value}"),
+                    None => String::from("ENVZ_VALUE_NULL"),
+                },
+            )
+        }
+        "envz_add" => {
+            let mut entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let name = parse_string(inputs, "name")?;
+            let value = parse_string(inputs, "value")?;
+            envz_remove_name(&mut entries, &name);
+            entries.push(format!("{name}={value}"));
+            Ok(envz_summary(&entries))
+        }
+        "envz_merge" => {
+            let mut entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let merge_entries = parse_argz_entries(&parse_string(inputs, "merge_entries")?);
+            let override_existing = parse_i32(inputs, "override")? != 0;
+            for entry in merge_entries {
+                let name = envz_name(&entry).to_owned();
+                if envz_find_entry(&entries, &name).is_none() || override_existing {
+                    envz_remove_name(&mut entries, &name);
+                    entries.push(entry);
+                }
+            }
+            Ok(envz_summary(&entries))
+        }
+        "envz_remove" => {
+            let mut entries = parse_argz_entries(&parse_string(inputs, "entries")?);
+            let name = parse_string(inputs, "name")?;
+            envz_remove_name(&mut entries, &name);
+            Ok(envz_summary(&entries))
+        }
+        "envz_strip" => {
+            let entries: Vec<String> = parse_argz_entries(&parse_string(inputs, "entries")?)
+                .into_iter()
+                .filter(|entry| entry.contains('='))
+                .collect();
+            Ok(envz_summary(&entries))
+        }
         other => Err(format!(
             "unsupported string/memory hotpath fixture: {other}"
         )),
@@ -8109,6 +8167,31 @@ fn argz_len(entries: &[String]) -> usize {
 fn argz_summary(entries: &[String]) -> String {
     format!(
         "ARGZ_COUNT_{}_LEN_{}_TEXT_{}",
+        entries.len(),
+        argz_len(entries),
+        entries.join("|")
+    )
+}
+
+fn envz_name(entry: &str) -> &str {
+    entry.split_once('=').map_or(entry, |(name, _)| name)
+}
+
+fn envz_value(entry: &str) -> Option<&str> {
+    entry.split_once('=').map(|(_, value)| value)
+}
+
+fn envz_find_entry<'a>(entries: &'a [String], name: &str) -> Option<&'a String> {
+    entries.iter().find(|entry| envz_name(entry) == name)
+}
+
+fn envz_remove_name(entries: &mut Vec<String>, name: &str) {
+    entries.retain(|entry| envz_name(entry) != name);
+}
+
+fn envz_summary(entries: &[String]) -> String {
+    format!(
+        "ENVZ_COUNT_{}_LEN_{}_TEXT_{}",
         entries.len(),
         argz_len(entries),
         entries.join("|")
