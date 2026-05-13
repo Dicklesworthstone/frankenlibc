@@ -1398,6 +1398,14 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
         } else {
             // SAFETY: pthread_create validated `thread_out` as writable before dispatch.
             unsafe { *thread_out = host_thread };
+            
+            // Clear any stale registration from a previous thread that reused this pthread_t.
+            // Safe because the new child is blocked in wait_for_host_thread_handoff until we publish.
+            HOST_THREAD_TID_REGISTRY
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&(host_thread as usize));
+                
             publish_host_thread_handoff(start_ctx, host_thread);
             if wait_for_host_thread_registration(host_thread) {
                 // SAFETY: the child copied the start routine/argument before
@@ -1527,6 +1535,13 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
                 drop(Box::from_raw(start_ctx));
             } else {
                 *thread_out = host_thread;
+                
+                // Clear any stale registration from a previous thread that reused this pthread_t.
+                HOST_THREAD_TID_REGISTRY
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&(host_thread as usize));
+                    
                 publish_host_thread_handoff(start_ctx, host_thread);
                 if wait_for_host_thread_registration(host_thread) {
                     // SAFETY: the child copied the start routine/argument before
