@@ -1073,6 +1073,18 @@ pub fn execute_fixture_case(
         "asctime" | "asctime_r" | "clock_adjtime" | "clock_getres" | "clock_nanosleep"
         | "clock_settime" | "ctime" | "ctime_r" | "difftime" | "environ" | "gettimeofday"
         | "gmtime" => execute_time_clock_wave01_case(function, inputs, mode),
+        "__libc_current_sigrtmax"
+        | "__libc_current_sigrtmin"
+        | "killpg"
+        | "pause"
+        | "psiginfo"
+        | "pthread_sigmask"
+        | "sigabbrev_np"
+        | "sigaltstack"
+        | "sigandset"
+        | "sighold"
+        | "sigignore"
+        | "siginterrupt" => execute_signal_async_wave01_case(function, inputs, mode),
         // dirent ops
         "opendir" => execute_opendir_case(inputs, mode),
         "readdir" => execute_readdir_case(inputs, mode),
