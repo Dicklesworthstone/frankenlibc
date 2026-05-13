@@ -1961,33 +1961,30 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 1,
+      "covered_symbols": 5,
       "milestone_beads": [],
       "module": "glibc_internal_abi",
       "recommended_bead": null,
       "severity": "high",
-      "severity_score": 56902,
+      "severity_score": 56502,
       "status_breakdown": {
         "Implemented": 548,
         "RawSyscall": 22
       },
-      "target_coverage_pct": 0.18,
-      "target_covered": 1,
+      "target_coverage_pct": 0.88,
+      "target_covered": 5,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
       "target_total": 570,
-      "target_uncovered": 569,
+      "target_uncovered": 565,
       "target_uncovered_symbols": [
         "_IO_enable_locks",
         "__abort_msg",
         "__adjtimex",
         "__after_morecore_hook",
         "__arch_prctl",
-        "__argz_count",
-        "__argz_next",
-        "__argz_stringify",
         "__asprintf",
         "__b64_ntop",
         "__b64_pton",
@@ -1995,7 +1992,6 @@
         "__backtrace_symbols",
         "__backtrace_symbols_fd",
         "__bsd_getpgrp",
-        "__bzero",
         "__call_tls_dtors",
         "__check_rhosts_file",
         "__clock_gettime",
@@ -2552,7 +2548,7 @@
       ],
       "total_symbols": 570,
       "track": "glibc_internal",
-      "uncovered_symbols": 569,
+      "uncovered_symbols": 565,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -3415,118 +3411,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 61,
-      "milestone_beads": [],
-      "module": "string_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 8502,
-      "status_breakdown": {
-        "Implemented": 145,
-        "RawSyscall": 1
-      },
-      "target_coverage_pct": 41.78,
-      "target_covered": 61,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 146,
-      "target_uncovered": 85,
-      "target_uncovered_symbols": [
-        "__strtol_l",
-        "__strtold_internal",
-        "__strtold_l",
-        "__strtoll_internal",
-        "__strtoll_l",
-        "__strtoul_internal",
-        "__strtoul_l",
-        "__strtoull_internal",
-        "__strtoull_l",
-        "__strverscmp",
-        "__strxfrm_l",
-        "argz_add",
-        "argz_add_sep",
-        "argz_append",
-        "argz_count",
-        "argz_create",
-        "argz_create_sep",
-        "argz_delete",
-        "argz_extract",
-        "argz_insert",
-        "argz_next",
-        "argz_replace",
-        "argz_stringify",
-        "bcmp",
-        "bcopy",
-        "bzero",
-        "consttime_bcmp",
-        "consttime_memequal",
-        "envz_add",
-        "envz_entry",
-        "envz_get",
-        "envz_merge",
-        "envz_remove",
-        "envz_strip",
-        "explicit_bzero",
-        "explicit_memset",
-        "globfree",
-        "index",
-        "memccpy",
-        "memmem",
-        "mempcpy",
-        "memset_explicit",
-        "psignal",
-        "rawmemchr",
-        "re_compile_fastmap",
-        "re_compile_pattern",
-        "re_match",
-        "re_match_2",
-        "re_search",
-        "re_search_2",
-        "re_set_registers",
-        "re_set_syntax",
-        "regerror",
-        "regfree",
-        "rindex",
-        "stpcpy",
-        "stpncpy",
-        "strcasecmp",
-        "strcasecmp_l",
-        "strcasestr",
-        "strchrnul",
-        "strcoll",
-        "strcspn",
-        "strdup",
-        "strerrordesc_np",
-        "strerrorname_np",
-        "strfromd",
-        "strfromf",
-        "strfroml",
-        "strmode",
-        "strncasecmp",
-        "strncasecmp_l",
-        "strncmp",
-        "strndup",
-        "strnlen",
-        "strnstr",
-        "strpbrk",
-        "strsep",
-        "strsignal",
-        "strspn",
-        "strverscmp",
-        "strxfrm",
-        "swab",
-        "timingsafe_bcmp",
-        "timingsafe_memcmp"
-      ],
-      "total_symbols": 146,
-      "track": "string",
-      "uncovered_symbols": 85,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 0,
       "milestone_beads": [],
       "module": "fortify_abi",
@@ -3627,6 +3511,90 @@
       "total_symbols": 78,
       "track": "fortify",
       "uncovered_symbols": 78,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 89,
+      "milestone_beads": [],
+      "module": "string_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "severity_score": 5702,
+      "status_breakdown": {
+        "Implemented": 145,
+        "RawSyscall": 1
+      },
+      "target_coverage_pct": 60.96,
+      "target_covered": 89,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 146,
+      "target_uncovered": 57,
+      "target_uncovered_symbols": [
+        "argz_create",
+        "bcmp",
+        "bcopy",
+        "bzero",
+        "consttime_bcmp",
+        "consttime_memequal",
+        "explicit_bzero",
+        "explicit_memset",
+        "globfree",
+        "index",
+        "memccpy",
+        "memmem",
+        "mempcpy",
+        "memset_explicit",
+        "psignal",
+        "rawmemchr",
+        "re_compile_fastmap",
+        "re_compile_pattern",
+        "re_match",
+        "re_match_2",
+        "re_search",
+        "re_search_2",
+        "re_set_registers",
+        "re_set_syntax",
+        "regerror",
+        "regfree",
+        "rindex",
+        "stpcpy",
+        "stpncpy",
+        "strcasecmp",
+        "strcasecmp_l",
+        "strcasestr",
+        "strchrnul",
+        "strcoll",
+        "strcspn",
+        "strdup",
+        "strerrordesc_np",
+        "strerrorname_np",
+        "strfromd",
+        "strfromf",
+        "strfroml",
+        "strmode",
+        "strncasecmp",
+        "strncasecmp_l",
+        "strncmp",
+        "strndup",
+        "strnlen",
+        "strnstr",
+        "strpbrk",
+        "strsep",
+        "strsignal",
+        "strspn",
+        "strverscmp",
+        "strxfrm",
+        "swab",
+        "timingsafe_bcmp",
+        "timingsafe_memcmp"
+      ],
+      "total_symbols": 146,
+      "track": "string",
+      "uncovered_symbols": 57,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -4675,9 +4643,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1480,
-    "fixture_json_files": 66,
-    "fixture_json_unique_functions": 518,
+    "fixture_json_cases": 1544,
+    "fixture_json_files": 70,
+    "fixture_json_unique_functions": 550,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4698,7 +4666,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 520
+    "unique_fixture_functions_total": 552
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -6642,16 +6610,13 @@
       "module": "glibc_internal_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_uncovered_count": 569,
+      "target_uncovered_count": 565,
       "target_uncovered_symbols": [
         "_IO_enable_locks",
         "__abort_msg",
         "__adjtimex",
         "__after_morecore_hook",
         "__arch_prctl",
-        "__argz_count",
-        "__argz_next",
-        "__argz_stringify",
         "__asprintf",
         "__b64_ntop",
         "__b64_pton",
@@ -6659,7 +6624,6 @@
         "__backtrace_symbols",
         "__backtrace_symbols_fd",
         "__bsd_getpgrp",
-        "__bzero",
         "__call_tls_dtors",
         "__check_rhosts_file",
         "__clock_gettime",
@@ -7994,103 +7958,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "string_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 85,
-      "target_uncovered_symbols": [
-        "__strtol_l",
-        "__strtold_internal",
-        "__strtold_l",
-        "__strtoll_internal",
-        "__strtoll_l",
-        "__strtoul_internal",
-        "__strtoul_l",
-        "__strtoull_internal",
-        "__strtoull_l",
-        "__strverscmp",
-        "__strxfrm_l",
-        "argz_add",
-        "argz_add_sep",
-        "argz_append",
-        "argz_count",
-        "argz_create",
-        "argz_create_sep",
-        "argz_delete",
-        "argz_extract",
-        "argz_insert",
-        "argz_next",
-        "argz_replace",
-        "argz_stringify",
-        "bcmp",
-        "bcopy",
-        "bzero",
-        "consttime_bcmp",
-        "consttime_memequal",
-        "envz_add",
-        "envz_entry",
-        "envz_get",
-        "envz_merge",
-        "envz_remove",
-        "envz_strip",
-        "explicit_bzero",
-        "explicit_memset",
-        "globfree",
-        "index",
-        "memccpy",
-        "memmem",
-        "mempcpy",
-        "memset_explicit",
-        "psignal",
-        "rawmemchr",
-        "re_compile_fastmap",
-        "re_compile_pattern",
-        "re_match",
-        "re_match_2",
-        "re_search",
-        "re_search_2",
-        "re_set_registers",
-        "re_set_syntax",
-        "regerror",
-        "regfree",
-        "rindex",
-        "stpcpy",
-        "stpncpy",
-        "strcasecmp",
-        "strcasecmp_l",
-        "strcasestr",
-        "strchrnul",
-        "strcoll",
-        "strcspn",
-        "strdup",
-        "strerrordesc_np",
-        "strerrorname_np",
-        "strfromd",
-        "strfromf",
-        "strfroml",
-        "strmode",
-        "strncasecmp",
-        "strncasecmp_l",
-        "strncmp",
-        "strndup",
-        "strnlen",
-        "strnstr",
-        "strpbrk",
-        "strsep",
-        "strsignal",
-        "strspn",
-        "strverscmp",
-        "strxfrm",
-        "swab",
-        "timingsafe_bcmp",
-        "timingsafe_memcmp"
-      ],
-      "track": "string",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "fortify_abi",
       "recommended_bead": null,
       "severity": "critical",
@@ -8176,6 +8043,75 @@
         "__wprintf_chk"
       ],
       "track": "fortify",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
+      "module": "string_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "target_uncovered_count": 57,
+      "target_uncovered_symbols": [
+        "argz_create",
+        "bcmp",
+        "bcopy",
+        "bzero",
+        "consttime_bcmp",
+        "consttime_memequal",
+        "explicit_bzero",
+        "explicit_memset",
+        "globfree",
+        "index",
+        "memccpy",
+        "memmem",
+        "mempcpy",
+        "memset_explicit",
+        "psignal",
+        "rawmemchr",
+        "re_compile_fastmap",
+        "re_compile_pattern",
+        "re_match",
+        "re_match_2",
+        "re_search",
+        "re_search_2",
+        "re_set_registers",
+        "re_set_syntax",
+        "regerror",
+        "regfree",
+        "rindex",
+        "stpcpy",
+        "stpncpy",
+        "strcasecmp",
+        "strcasecmp_l",
+        "strcasestr",
+        "strchrnul",
+        "strcoll",
+        "strcspn",
+        "strdup",
+        "strerrordesc_np",
+        "strerrorname_np",
+        "strfromd",
+        "strfromf",
+        "strfroml",
+        "strmode",
+        "strncasecmp",
+        "strncasecmp_l",
+        "strncmp",
+        "strndup",
+        "strnlen",
+        "strnstr",
+        "strpbrk",
+        "strsep",
+        "strsignal",
+        "strspn",
+        "strverscmp",
+        "strxfrm",
+        "swab",
+        "timingsafe_bcmp",
+        "timingsafe_memcmp"
+      ],
+      "track": "string",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -8755,10 +8691,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 11.85,
-      "covered": 439,
+      "coverage_pct": 12.71,
+      "covered": 471,
       "total": 3705,
-      "uncovered": 3266
+      "uncovered": 3234
     },
     "RawSyscall": {
       "coverage_pct": 15.46,
@@ -8768,18 +8704,18 @@
     }
   },
   "summary": {
-    "coverage_pct": 12.21,
-    "covered_exported_symbols": 503,
-    "target_coverage_pct": 12.21,
-    "target_covered_symbols": 503,
+    "coverage_pct": 12.99,
+    "covered_exported_symbols": 535,
+    "target_coverage_pct": 12.99,
+    "target_covered_symbols": 535,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3616,
+    "target_uncovered_symbols": 3584,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3616,
+    "uncovered_exported_symbols": 3584,
     "uncovered_target_families": 5,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 29
@@ -12068,13 +12004,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave09"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave09.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -12082,13 +12027,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave09"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave09.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -12096,13 +12050,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave09"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave09.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -12208,13 +12171,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave09"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave09.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55360,13 +55332,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55374,13 +55355,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55388,13 +55378,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55402,13 +55401,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55416,13 +55424,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55430,13 +55447,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55444,13 +55470,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55458,13 +55493,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55472,13 +55516,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55486,13 +55539,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55500,13 +55562,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -55514,13 +55585,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave06"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave06.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55528,13 +55608,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave07"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave07.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55542,13 +55631,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave07"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave07.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55556,13 +55654,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave07"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave07.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -55584,13 +55691,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave07"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave07.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55598,13 +55714,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave07"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave07.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55612,13 +55737,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave07"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave07.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55626,13 +55760,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave07"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave07.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55640,13 +55783,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave07"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave07.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -55654,13 +55806,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave07"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave07.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55668,13 +55829,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave07"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave07.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55752,13 +55922,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave08"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave08.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55766,13 +55945,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave08"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave08.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55780,13 +55968,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave08"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave08.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55794,13 +55991,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave08"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave08.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55808,13 +56014,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave08"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave08.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -55822,13 +56037,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string_memory_hotpaths_wave08"
+      ],
+      "fixture_files": [
+        "string_memory_hotpaths_wave08.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -71335,17 +71559,14 @@
       "module": "glibc_internal_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 0.18,
-      "target_uncovered_count": 569,
+      "target_coverage_pct": 0.88,
+      "target_uncovered_count": 565,
       "target_uncovered_symbols": [
         "_IO_enable_locks",
         "__abort_msg",
         "__adjtimex",
         "__after_morecore_hook",
         "__arch_prctl",
-        "__argz_count",
-        "__argz_next",
-        "__argz_stringify",
         "__asprintf",
         "__b64_ntop",
         "__b64_pton",
@@ -71353,7 +71574,6 @@
         "__backtrace_symbols",
         "__backtrace_symbols_fd",
         "__bsd_getpgrp",
-        "__bzero",
         "__call_tls_dtors",
         "__check_rhosts_file",
         "__clock_gettime",
@@ -74162,43 +74382,15 @@
       "module": "string_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 41.78,
-      "target_uncovered_count": 85,
+      "target_coverage_pct": 60.96,
+      "target_uncovered_count": 57,
       "target_uncovered_symbols": [
-        "__strtol_l",
-        "__strtold_internal",
-        "__strtold_l",
-        "__strtoll_internal",
-        "__strtoll_l",
-        "__strtoul_internal",
-        "__strtoul_l",
-        "__strtoull_internal",
-        "__strtoull_l",
-        "__strverscmp",
-        "__strxfrm_l",
-        "argz_add",
-        "argz_add_sep",
-        "argz_append",
-        "argz_count",
         "argz_create",
-        "argz_create_sep",
-        "argz_delete",
-        "argz_extract",
-        "argz_insert",
-        "argz_next",
-        "argz_replace",
-        "argz_stringify",
         "bcmp",
         "bcopy",
         "bzero",
         "consttime_bcmp",
         "consttime_memequal",
-        "envz_add",
-        "envz_entry",
-        "envz_get",
-        "envz_merge",
-        "envz_remove",
-        "envz_strip",
         "explicit_bzero",
         "explicit_memset",
         "globfree",

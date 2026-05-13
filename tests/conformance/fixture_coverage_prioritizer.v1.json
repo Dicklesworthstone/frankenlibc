@@ -59,26 +59,26 @@
     },
     {
       "campaign_id": "fcq-string-memory-hotpaths",
-      "current_coverage_pct": 41.78,
+      "current_coverage_pct": 60.96,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/ld_preload_smoke.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 50.0,
+      "expected_coverage_after_first_wave_pct": 69.18,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "__strtol_l",
-        "__strtold_internal",
-        "__strtold_l",
-        "__strtoll_internal",
-        "__strtoll_l",
-        "__strtoul_internal",
-        "__strtoul_l",
-        "__strtoull_internal",
-        "__strtoull_l",
-        "__strverscmp",
-        "__strxfrm_l",
-        "argz_add"
+        "argz_create",
+        "bcmp",
+        "bcopy",
+        "bzero",
+        "consttime_bcmp",
+        "consttime_memequal",
+        "explicit_bzero",
+        "explicit_memset",
+        "globfree",
+        "index",
+        "memccpy",
+        "memmem"
       ],
       "module": "string_abi",
       "next_step": "Grow boundary, overlap, empty, invalid pointer, locale, and perf guard fixtures for uncovered string families.",
@@ -91,20 +91,20 @@
         "semantic_divergence"
       ],
       "scores": {
-        "coverage_gap_score": 85,
+        "coverage_gap_score": 57,
         "feature_gap_risk_score": 3,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 2,
         "parity_risk_score": 5,
-        "priority_score": 2485,
+        "priority_score": 2457,
         "semantic_risk_score": 0,
         "workload_risk_score": 5
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "mem*, str*, collation-adjacent string helpers, and GNU string extensions",
-      "target_covered": 61,
+      "target_covered": 89,
       "target_total": 146,
-      "target_uncovered": 85,
+      "target_uncovered": 57,
       "title": "string and memory hot-path fixture wave",
       "workload_domains": [
         "performance_sensitive",
@@ -840,11 +840,11 @@
     },
     {
       "campaign_id": "fcq-glibc-internal-compat",
-      "current_coverage_pct": 0.18,
+      "current_coverage_pct": 0.88,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 2.28,
+      "expected_coverage_after_first_wave_pct": 2.98,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
         "_IO_enable_locks",
@@ -852,13 +852,13 @@
         "__adjtimex",
         "__after_morecore_hook",
         "__arch_prctl",
-        "__argz_count",
-        "__argz_next",
-        "__argz_stringify",
         "__asprintf",
         "__b64_ntop",
         "__b64_pton",
-        "__backtrace"
+        "__backtrace",
+        "__backtrace_symbols",
+        "__backtrace_symbols_fd",
+        "__bsd_getpgrp"
       ],
       "module": "glibc_internal_abi",
       "next_step": "Split compatibility internals into supported, deterministic-fallback, and claim-blocked fixture groups.",
@@ -882,9 +882,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "exported glibc internals, compatibility names, diagnostics, backtrace, argz, and resolver helpers",
-      "target_covered": 1,
+      "target_covered": 5,
       "target_total": 570,
-      "target_uncovered": 569,
+      "target_uncovered": 565,
       "title": "glibc internal compatibility triage fixture wave",
       "workload_domains": [
         "startup_linking",
@@ -1257,7 +1257,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3616,
+    "all_uncovered_target_symbols": 3584,
     "campaign_count": 17,
     "covered_modules": [
       "fortify_abi",
@@ -1295,7 +1295,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3234,
+    "selected_target_uncovered_symbols": 3202,
     "total_first_wave_fixture_count": 194
   }
 }
