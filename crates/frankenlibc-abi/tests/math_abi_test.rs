@@ -1207,6 +1207,47 @@ fn math_classification_f32_matches_glibc_codes() {
     assert_eq!(unsafe { finitef(f32::NAN) }, 0);
 }
 
+#[test]
+fn math_internal_classification_aliases_cover_wide_and_f128_shims() {
+    use frankenlibc_abi::math_abi::{__finitef128, __fpclassifyl, __iscanonicall};
+
+    assert_eq!(unsafe { __fpclassifyl(f64::NAN) }, 0);
+    assert_eq!(unsafe { __fpclassifyl(f64::INFINITY) }, 1);
+    assert_eq!(unsafe { __fpclassifyl(0.0) }, 2);
+    assert_eq!(unsafe { __fpclassifyl(f64::from_bits(1)) }, 3);
+    assert_eq!(unsafe { __fpclassifyl(1.0) }, 4);
+
+    assert_eq!(unsafe { __finitef128(1.0) }, 1);
+    assert_eq!(unsafe { __finitef128(f64::NEG_INFINITY) }, 0);
+    assert_eq!(unsafe { __finitef128(f64::NAN) }, 0);
+
+    assert_eq!(unsafe { __iscanonicall(f64::NAN) }, 1);
+    assert_eq!(unsafe { __iscanonicall(f64::INFINITY) }, 1);
+    assert_eq!(unsafe { __iscanonicall(-0.0) }, 1);
+    assert_eq!(unsafe { __iscanonicall(42.0) }, 1);
+}
+
+#[test]
+fn math_internal_iseqsig_aliases_match_ordered_equality() {
+    use frankenlibc_abi::math_abi::{__iseqsig, __iseqsigf, __iseqsigf128, __iseqsigl};
+
+    assert_eq!(unsafe { __iseqsig(1.0, 1.0) }, 1);
+    assert_eq!(unsafe { __iseqsig(1.0, -1.0) }, 0);
+    assert_eq!(unsafe { __iseqsig(f64::NAN, f64::NAN) }, 0);
+
+    assert_eq!(unsafe { __iseqsigf(1.0, 1.0) }, 1);
+    assert_eq!(unsafe { __iseqsigf(1.0, -1.0) }, 0);
+    assert_eq!(unsafe { __iseqsigf(f32::NAN, f32::NAN) }, 0);
+
+    assert_eq!(unsafe { __iseqsigl(1.0, 1.0) }, 1);
+    assert_eq!(unsafe { __iseqsigl(1.0, -1.0) }, 0);
+    assert_eq!(unsafe { __iseqsigl(f64::NAN, f64::NAN) }, 0);
+
+    assert_eq!(unsafe { __iseqsigf128(1.0, 1.0) }, 1);
+    assert_eq!(unsafe { __iseqsigf128(1.0, -1.0) }, 0);
+    assert_eq!(unsafe { __iseqsigf128(f64::NAN, f64::NAN) }, 0);
+}
+
 // ---------------------------------------------------------------------------
 // __finite aliases (spot checks)
 // ---------------------------------------------------------------------------
