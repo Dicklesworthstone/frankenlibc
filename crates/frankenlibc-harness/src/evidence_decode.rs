@@ -264,14 +264,18 @@ fn decode_epoch(epoch_id: u64, records: &[EvidenceSymbolRecord]) -> EpochDecodeP
     proof.notes.sort();
     proof.notes.dedup();
 
-    proof.status =
-        if missing == 0 && proof.payload_hash_mismatches == 0 && proof.chain_hash_mismatches == 0 {
-            DecodeStatus::Success
-        } else if decoded > 0 {
-            DecodeStatus::Partial
-        } else {
-            DecodeStatus::Failed
-        };
+    proof.status = if missing == 0
+        && proof.structural_errors == 0
+        && proof.payload_hash_mismatches == 0
+        && proof.chain_hash_mismatches == 0
+        && proof.repair_payload_mismatches == 0
+    {
+        DecodeStatus::Success
+    } else if decoded > 0 {
+        DecodeStatus::Partial
+    } else {
+        DecodeStatus::Failed
+    };
 
     proof
 }
@@ -494,6 +498,57 @@ mod tests {
         assert!(proof.payload_hash_mismatches >= 1, "{proof:?}");
         assert_eq!(proof.missing_systematic, 0, "{proof:?}");
         assert_eq!(proof.repair_payload_mismatches, 0);
+    }
+
+    #[test]
+    fn structural_error_prevents_success_even_when_all_sources_decode() {
+        let k_source: u16 = 8;
+        let r_repair: u16 = 1;
+        let (epoch_id, mut records) = build_epoch_records(
+            0x5EED_F00D_1234_0004,
+            0x9876_5432_10FE_DCBA,
+            k_source,
+            r_repair,
+        );
+        let bad_repair_idx = records
+            .iter()
+            .position(|rec| (rec.flags() & FLAG_REPAIR) != 0)
+            .expect("find repair record");
+
+        let payload = *records[bad_repair_idx].payload();
+        let prior_chain_hash = records
+            .get(bad_repair_idx.wrapping_sub(1))
+            .map(EvidenceSymbolRecord::chain_hash)
+            .unwrap_or(0);
+        let bad_repair = EvidenceSymbolRecord::build_v1(
+            epoch_id,
+            records[bad_repair_idx].seqno(),
+            records[bad_repair_idx].seed(),
+            ApiFamily::Allocator,
+            SafetyLevel::Hardened,
+            MembraneAction::Allow,
+            ValidationProfile::Fast,
+            FLAG_REPAIR,
+            k_source - 1,
+            k_source,
+            r_repair,
+            prior_chain_hash,
+            &payload,
+            None,
+        );
+        records[bad_repair_idx] = bad_repair;
+
+        let proof = decode_epoch(epoch_id, &records);
+
+        assert_eq!(proof.missing_systematic, 0, "{proof:?}");
+        assert_eq!(proof.payload_hash_mismatches, 0, "{proof:?}");
+        assert_eq!(proof.chain_hash_mismatches, 0, "{proof:?}");
+        assert_eq!(proof.structural_errors, 1, "{proof:?}");
+        assert!(proof.notes.contains(&"repair_esi_lt_k_source".to_string()));
+        assert!(
+            matches!(proof.status, DecodeStatus::Partial),
+            "structural errors must prevent DecodeStatus::Success: {proof:?}"
+        );
     }
 
     fn build_epoch_records(
