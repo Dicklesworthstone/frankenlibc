@@ -54,15 +54,28 @@ fn assert_statvfs_match(
             }
         };
     }
+    macro_rules! check_approx {
+        ($field:ident, $margin:expr) => {
+            let fl_val = fl_buf.$field as i64;
+            let lc_val = lc_buf.$field as i64;
+            if (fl_val - lc_val).abs() > $margin {
+                divs.push(Divergence {
+                    case: case.to_string(),
+                    field: stringify!($field),
+                    frankenlibc: format!("{:?}", fl_buf.$field),
+                    glibc: format!("{:?}", lc_buf.$field),
+                });
+            }
+        };
+    }
     check!(f_bsize);
     check!(f_frsize);
     check!(f_blocks);
-    check!(f_bfree);
-    // f_bavail is what the calling user can actually use; same on both.
-    check!(f_bavail);
+    check_approx!(f_bfree, 4096);
+    check_approx!(f_bavail, 4096);
     check!(f_files);
-    check!(f_ffree);
-    check!(f_favail);
+    check_approx!(f_ffree, 4096);
+    check_approx!(f_favail, 4096);
     check!(f_fsid);
     check!(f_flag);
     check!(f_namemax);

@@ -4636,7 +4636,8 @@ fn chdir_and_fchdir_round_trip() {
     assert_eq!(rc, 0);
 
     let mut after = [0i8; 4096];
-    unsafe { getcwd(after.as_mut_ptr(), after.len()) };
+    let p_after = unsafe { getcwd(after.as_mut_ptr(), after.len()) };
+    assert!(!p_after.is_null());
     let cwd_after = unsafe { std::ffi::CStr::from_ptr(after.as_ptr()) }.to_bytes();
     assert_eq!(cwd_after, b"/tmp");
 
@@ -12535,12 +12536,19 @@ fn nss_database_get_and_disable_nscd_safe() {
 }
 
 #[test]
-fn nss_hash_returns_zero_constant() {
+fn nss_hash_computes_fnv1a() {
     use frankenlibc_abi::unistd_abi::__nss_hash;
     let name = b"alice";
+    
+    let mut h: u32 = 0x811c9dc5;
+    for &b in name {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x01000193);
+    }
+    
     assert_eq!(
         unsafe { __nss_hash(name.as_ptr() as *const c_void, name.len()) },
-        0
+        h
     );
     assert_eq!(unsafe { __nss_hash(std::ptr::null(), 0) }, 0);
 }

@@ -97,25 +97,23 @@ fn setrlimit_nofile_same_value() {
 
 #[test]
 fn setrlimit_lower_soft_limit() {
-    // Lower the soft limit, then restore it
     let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
-    let rc = unsafe { getrlimit(libc::RLIMIT_NOFILE as i32, &mut rlim) };
+    // Use RLIMIT_MSGQUEUE or RLIMIT_RTPRIO since no other test modifies them
+    let rc = unsafe { getrlimit(libc::RLIMIT_RTPRIO as i32, &mut rlim) };
     assert_eq!(rc, 0);
 
     let original = rlim;
-    if rlim.rlim_cur > 64 {
+    if rlim.rlim_max >= 64 {
         rlim.rlim_cur = 64;
-        let rc = unsafe { setrlimit(libc::RLIMIT_NOFILE as i32, &rlim) };
+        let rc = unsafe { setrlimit(libc::RLIMIT_RTPRIO as i32, &rlim) };
         assert_eq!(rc, 0, "lowering soft limit should succeed");
 
-        // Verify it took effect
         let mut check: libc::rlimit = unsafe { std::mem::zeroed() };
-        let rc = unsafe { getrlimit(libc::RLIMIT_NOFILE as i32, &mut check) };
+        let rc = unsafe { getrlimit(libc::RLIMIT_RTPRIO as i32, &mut check) };
         assert_eq!(rc, 0);
         assert_eq!(check.rlim_cur, 64);
 
-        // Restore
-        let rc = unsafe { setrlimit(libc::RLIMIT_NOFILE as i32, &original) };
+        let rc = unsafe { setrlimit(libc::RLIMIT_RTPRIO as i32, &original) };
         assert_eq!(rc, 0);
     }
 }
