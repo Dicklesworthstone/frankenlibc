@@ -769,6 +769,35 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Certify a candidate SIMD string-kernel implementation against the
+    /// scalar reference via
+    /// `frankenlibc_membrane::runtime_math::clifford::certify_simd_string_operation`.
+    /// Emits a Clifford-algebra equivalence certificate including
+    /// grade-2/parity energy and rejection rationale on failure.
+    CertifySimdStringOp {
+        /// String operation: memcpy | memcmp | strlen.
+        #[arg(long)]
+        operation: String,
+        /// Candidate ISA: scalar | sse4.2 | avx2 | neon.
+        #[arg(long)]
+        candidate_isa: String,
+        /// Source operand address (usize).
+        #[arg(long, default_value_t = 0usize)]
+        src_addr: usize,
+        /// Destination operand address (usize).
+        #[arg(long, default_value_t = 0usize)]
+        dst_addr: usize,
+        /// Operand length in bytes.
+        #[arg(long, default_value_t = 0usize)]
+        len: usize,
+        /// Whether the operation is allowed to operate on overlapping
+        /// source/destination regions.
+        #[arg(long, default_value_t = false)]
+        overlap: bool,
+        /// Output JSONL path: one simd_string_certificate record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Reduce a u128 monomial/signature bitset mask to normal form using a
     /// table of (lhs, rhs) rewrite rules, via
     /// `frankenlibc_membrane::grobner::reduce_mask_with_limit`.
@@ -2833,6 +2862,73 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::CertifySimdStringOp {
+            operation,
+            candidate_isa,
+            src_addr,
+            dst_addr,
+            len,
+            overlap,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::clifford::{
+                CliffordState, SimdIsa, SimdStringOperation, certify_simd_string_operation,
+            };
+            let op = match operation.as_str() {
+                "memcpy" => SimdStringOperation::Memcpy,
+                "memcmp" => SimdStringOperation::Memcmp,
+                "strlen" => SimdStringOperation::Strlen,
+                other => {
+                    return Err(format!("unknown operation: {other}").into());
+                }
+            };
+            let isa = match candidate_isa.as_str() {
+                "scalar" | "portable" => SimdIsa::Scalar,
+                "sse4.2" | "sse42" => SimdIsa::Sse42,
+                "avx2" => SimdIsa::Avx2,
+                "neon" => SimdIsa::Neon,
+                other => {
+                    return Err(format!("unknown candidate_isa: {other}").into());
+                }
+            };
+            let cert =
+                certify_simd_string_operation(op, isa, src_addr, dst_addr, len, overlap);
+            let state_label = match cert.state {
+                CliffordState::Calibrating => "calibrating",
+                CliffordState::Aligned => "aligned",
+                CliffordState::MisalignmentDrift => "misalignment_drift",
+                CliffordState::OverlapViolation => "overlap_violation",
+            };
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "simd_string_certificate",
+                "operation": operation,
+                "candidate_isa": candidate_isa,
+                "architecture": cert.architecture,
+                "lane_bytes": cert.lane_bytes,
+                "src_addr": src_addr,
+                "dst_addr": dst_addr,
+                "len": len,
+                "overlap": overlap,
+                "equivalent": cert.equivalent,
+                "state": state_label,
+                "grade2_energy": cert.grade2_energy,
+                "parity_imbalance": cert.parity_imbalance,
+                "overlap_fraction": cert.overlap_fraction,
+                "rationale": cert.rationale,
+            });
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "certify-simd-string-op: op={operation} isa={candidate_isa} src={src_addr} dst={dst_addr} len={len} overlap={overlap} -> equivalent={} state={state_label}",
+                cert.equivalent
+            );
         }
         Command::ReduceMask {
             mask,

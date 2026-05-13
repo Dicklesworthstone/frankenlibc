@@ -1,0 +1,68 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "certify-simd-string-op-cli-contract",
+  "bead": "bd-63sqn",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "32e3e4dc",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::clifford::certify_simd_string_operation(operation, candidate_isa, src_addr, dst_addr, len, overlap) -> CliffordIsomorphismCertificate as a standalone CLI. The lib API builds an algebraic equivalence certificate between a candidate SIMD string kernel implementation (avx2/sse4.2/neon/scalar) and the scalar reference using a Clifford-algebra grade decomposition: grade-0 (scalar) energy, grade-2 (bivector) energy, parity imbalance, and rotor norm deviation. Equivalence requires the candidate to be lane- and tail-contract compatible AND the controller to not observe an overlap/parity violation. Memcpy with `overlap=true` is always rejected (Pin parity witness forbids overlap). Previously reachable only from Rust callers; the CLI bridge lets CI validate per-ISA SIMD-string isomorphism certificates without compiling.",
+  "subcommand_name": "certify-simd-string-op",
+  "binary_target": "harness",
+  "required_flags": [
+    "--operation",
+    "--candidate-isa",
+    "--output"
+  ],
+  "optional_flags": [
+    "--src-addr",
+    "--dst-addr",
+    "--len",
+    "--overlap"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::runtime_math::clifford::certify_simd_string_operation",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "simd_string_certificate",
+    "required_fields": [
+      "kind",
+      "operation",
+      "candidate_isa",
+      "architecture",
+      "lane_bytes",
+      "src_addr",
+      "dst_addr",
+      "len",
+      "overlap",
+      "equivalent",
+      "state",
+      "grade2_energy",
+      "parity_imbalance",
+      "overlap_fraction",
+      "rationale"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "echoes_inputs_into_output_record": true,
+    "deterministic_given_inputs": true,
+    "scalar_self_witness_certifies_equivalent": true,
+    "memcpy_with_overlap_rejected_via_pin_parity_witness": true,
+    "memcpy_without_overlap_certifies_equivalent_for_supported_isas": true,
+    "strlen_does_not_require_dst_or_overlap_inputs": true,
+    "isa_label_and_architecture_fields_pin_dispatch_family": true,
+    "rejection_records_emit_nonempty_rationale_string": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "memcpy_overlap_certified_equivalent",
+    "scalar_self_witness_rejected",
+    "rejection_with_empty_rationale"
+  ],
+  "summary": {
+    "bead": "bd-63sqn",
+    "subcommand": "certify-simd-string-op",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
