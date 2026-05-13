@@ -1,0 +1,58 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "verify-pcpt-cli-contract",
+  "bead": "bd-toeyn",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "b0f537efa4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::policy_table::verify_pcpt as a standalone CLI. The lib API is the canonical verifier for Policy Compaction Profile Table (.pcpt) artifacts: it validates magic, schema_version, hash algorithm, key/cell spec ids, table length, table+meta hashes, and per-cell invariants (strict-repair-not-allowed, deny-must-not-repair, risk monotonicity, mode refinement) before returning a VerifiedPolicyTable summary. Previously reachable only from Rust callers; the CLI bridge lets CI verify .pcpt artifacts without compiling.",
+  "subcommand_name": "verify-pcpt",
+  "binary_target": "harness",
+  "required_flags": [
+    "--pcpt",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::runtime_math::policy_table::verify_pcpt",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "pcpt_verification",
+    "required_fields_when_ok_true": [
+      "kind",
+      "input",
+      "ok",
+      "schema_version",
+      "hash_alg",
+      "key_spec_id",
+      "cell_spec_id",
+      "table_len",
+      "table_hash_hex",
+      "meta_hash_hex"
+    ],
+    "required_fields_when_ok_false": [
+      "kind",
+      "input",
+      "ok",
+      "error"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "ok_true_iff_verify_pcpt_succeeds": true,
+    "exit_non_zero_when_ok_false": true,
+    "too_short_input_must_fail_closed_with_TooShort_error": true,
+    "non_magic_bytes_must_fail_closed_with_BadMagic_error": true,
+    "missing_pcpt_file_must_fail_closed": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "ok_true_with_missing_summary_fields",
+    "ok_false_with_zero_exit",
+    "missing_input_file_accepted"
+  ],
+  "summary": {
+    "bead": "bd-toeyn",
+    "subcommand": "verify-pcpt",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}

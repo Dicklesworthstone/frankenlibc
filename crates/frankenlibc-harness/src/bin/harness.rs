@@ -769,6 +769,19 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Verify a Policy Compaction Profile Table (.pcpt) artifact via
+    /// `frankenlibc_membrane::runtime_math::policy_table::verify_pcpt`.
+    /// Checks magic, schema_version, hash alg, key/cell spec ids,
+    /// table length, hashes, and per-cell invariants. Emits one
+    /// pcpt_verification JSONL record; exits non-zero on rejection.
+    VerifyPcpt {
+        /// Path to the .pcpt artifact.
+        #[arg(long)]
+        pcpt: PathBuf,
+        /// Output JSONL path: one pcpt_verification record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Load the canonical evidence rows from disk, build a
     /// deterministic Dossier, and emit both a JSONL summary record
     /// and the markdown render. Exposes
@@ -2604,6 +2617,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err(format!(
                     "validate-p99-delta: rejected {} - see {}",
                     jsonl.display(),
+                    output.display()
+                )
+                .into());
+            }
+        }
+        Command::VerifyPcpt { pcpt, output } => {
+            use frankenlibc_membrane::runtime_math::policy_table::verify_pcpt;
+            let bytes =
+                std::fs::read(&pcpt).map_err(|e| format!("read --pcpt {}: {e}", pcpt.display()))?;
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let (line, ok) = match verify_pcpt(&bytes) {
+                Ok(verified) => {
+                    let s = verified.summary();
+                    (
+                        serde_json::json!({
+                            "kind": "pcpt_verification",
+                            "input": pcpt.display().to_string(),
+                            "ok": true,
+                            "schema_version": s.schema_version,
+                            "hash_alg": format!("{:?}", s.hash_alg),
+                            "key_spec_id": s.key_spec_id,
+                            "cell_spec_id": s.cell_spec_id,
+                            "table_len": s.table_len,
+                            "table_hash_hex": s.table_hash_hex,
+                            "meta_hash_hex": s.meta_hash_hex,
+                            "generator_build_info": s.generator_build_info,
+                            "offline_proof_digest_hex": s.offline_proof_digest_hex,
+                            "invariant_manifest": s.invariant_manifest,
+                        }),
+                        true,
+                    )
+                }
+                Err(err) => (
+                    serde_json::json!({
+                        "kind": "pcpt_verification",
+                        "input": pcpt.display().to_string(),
+                        "ok": false,
+                        "error": format!("{err:?}"),
+                    }),
+                    false,
+                ),
+            };
+            let mut body = line.to_string();
+            body.push('\n');
+            std::fs::write(&output, body)?;
+            eprintln!(
+                "verify-pcpt: ok={ok} → wrote 1 JSONL record to {}",
+                output.display()
+            );
+            if !ok {
+                return Err(format!(
+                    "verify-pcpt: rejected {} — see {}",
+                    pcpt.display(),
                     output.display()
                 )
                 .into());
