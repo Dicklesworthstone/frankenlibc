@@ -468,9 +468,9 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
         // Snapshot destructors and values via RCU read (no mutex).
         // We collect into a stack-allocated array to avoid heap allocation.
         let mut call_count = 0usize;
-        // Max 64 destructor calls per iteration to bound stack usage.
-        // POSIX doesn't limit this but 64 is more than enough for practice.
-        const MAX_CALLS: usize = 64;
+        // We use PTHREAD_KEYS_MAX to guarantee all destructors run.
+        // 1024 * 16 bytes = 16KB stack frame, perfectly safe for thread exit.
+        const MAX_CALLS: usize = PTHREAD_KEYS_MAX;
         let mut calls: [(u64, unsafe extern "C" fn(*mut c_void)); MAX_CALLS] =
             [(0, noop_destructor); MAX_CALLS];
 
