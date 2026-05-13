@@ -2949,125 +2949,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 51,
-      "milestone_beads": [
-        "bd-yos",
-        "bd-z84"
-      ],
-      "module": "pthread_abi",
-      "recommended_bead": "bd-yos",
-      "severity": "high",
-      "severity_score": 9002,
-      "status_breakdown": {
-        "Implemented": 141
-      },
-      "target_coverage_pct": 36.17,
-      "target_covered": 51,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 141,
-      "target_uncovered": 90,
-      "target_uncovered_symbols": [
-        "pthread_atfork",
-        "pthread_attr_destroy",
-        "pthread_attr_getaffinity_np",
-        "pthread_attr_getdetachstate",
-        "pthread_attr_getguardsize",
-        "pthread_attr_getinheritsched",
-        "pthread_attr_getschedparam",
-        "pthread_attr_getschedpolicy",
-        "pthread_attr_getscope",
-        "pthread_attr_getsigmask_np",
-        "pthread_attr_getstack",
-        "pthread_attr_getstackaddr",
-        "pthread_attr_getstacksize",
-        "pthread_attr_init",
-        "pthread_attr_setaffinity_np",
-        "pthread_attr_setdetachstate",
-        "pthread_attr_setguardsize",
-        "pthread_attr_setinheritsched",
-        "pthread_attr_setschedparam",
-        "pthread_attr_setschedpolicy",
-        "pthread_attr_setscope",
-        "pthread_attr_setsigmask_np",
-        "pthread_attr_setstack",
-        "pthread_attr_setstackaddr",
-        "pthread_attr_setstacksize",
-        "pthread_barrier_destroy",
-        "pthread_barrier_init",
-        "pthread_barrier_wait",
-        "pthread_barrierattr_destroy",
-        "pthread_barrierattr_getpshared",
-        "pthread_barrierattr_init",
-        "pthread_barrierattr_setpshared",
-        "pthread_cancel",
-        "pthread_condattr_destroy",
-        "pthread_condattr_getclock",
-        "pthread_condattr_getpshared",
-        "pthread_condattr_init",
-        "pthread_condattr_setclock",
-        "pthread_condattr_setpshared",
-        "pthread_exit",
-        "pthread_getaffinity_np",
-        "pthread_getattr_default_np",
-        "pthread_getconcurrency",
-        "pthread_getcpuclockid",
-        "pthread_getname_np",
-        "pthread_gettid_np",
-        "pthread_kill",
-        "pthread_mutex_clocklock",
-        "pthread_mutex_consistent",
-        "pthread_mutex_timedlock",
-        "pthread_mutexattr_destroy",
-        "pthread_mutexattr_getprotocol",
-        "pthread_mutexattr_getpshared",
-        "pthread_mutexattr_getrobust",
-        "pthread_mutexattr_gettype",
-        "pthread_mutexattr_init",
-        "pthread_mutexattr_setprotocol",
-        "pthread_mutexattr_setpshared",
-        "pthread_mutexattr_setrobust",
-        "pthread_mutexattr_settype",
-        "pthread_once",
-        "pthread_rwlock_clockrdlock",
-        "pthread_rwlock_clockwrlock",
-        "pthread_rwlock_destroy",
-        "pthread_rwlock_init",
-        "pthread_rwlock_rdlock",
-        "pthread_rwlock_timedrdlock",
-        "pthread_rwlock_timedwrlock",
-        "pthread_rwlock_tryrdlock",
-        "pthread_rwlock_trywrlock",
-        "pthread_rwlock_unlock",
-        "pthread_rwlock_wrlock",
-        "pthread_rwlockattr_destroy",
-        "pthread_rwlockattr_getpshared",
-        "pthread_rwlockattr_init",
-        "pthread_rwlockattr_setpshared",
-        "pthread_setaffinity_np",
-        "pthread_setattr_default_np",
-        "pthread_setcancelstate",
-        "pthread_setcanceltype",
-        "pthread_setconcurrency",
-        "pthread_setname_np",
-        "pthread_sigqueue",
-        "pthread_spin_destroy",
-        "pthread_spin_init",
-        "pthread_spin_lock",
-        "pthread_spin_trylock",
-        "pthread_spin_unlock",
-        "pthread_testcancel",
-        "pthread_yield"
-      ],
-      "total_symbols": 141,
-      "track": "threading",
-      "uncovered_symbols": 90,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 27,
       "milestone_beads": [],
       "module": "io_internal_abi",
@@ -3280,6 +3161,113 @@
       ],
       "total_symbols": 78,
       "track": "fortify",
+      "uncovered_symbols": 78,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 63,
+      "milestone_beads": [
+        "bd-yos",
+        "bd-z84"
+      ],
+      "module": "pthread_abi",
+      "recommended_bead": "bd-yos",
+      "severity": "high",
+      "severity_score": 7802,
+      "status_breakdown": {
+        "Implemented": 141
+      },
+      "target_coverage_pct": 44.68,
+      "target_covered": 63,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 141,
+      "target_uncovered": 78,
+      "target_uncovered_symbols": [
+        "pthread_attr_getstacksize",
+        "pthread_attr_init",
+        "pthread_attr_setaffinity_np",
+        "pthread_attr_setdetachstate",
+        "pthread_attr_setguardsize",
+        "pthread_attr_setinheritsched",
+        "pthread_attr_setschedparam",
+        "pthread_attr_setschedpolicy",
+        "pthread_attr_setscope",
+        "pthread_attr_setsigmask_np",
+        "pthread_attr_setstack",
+        "pthread_attr_setstackaddr",
+        "pthread_attr_setstacksize",
+        "pthread_barrier_destroy",
+        "pthread_barrier_init",
+        "pthread_barrier_wait",
+        "pthread_barrierattr_destroy",
+        "pthread_barrierattr_getpshared",
+        "pthread_barrierattr_init",
+        "pthread_barrierattr_setpshared",
+        "pthread_cancel",
+        "pthread_condattr_destroy",
+        "pthread_condattr_getclock",
+        "pthread_condattr_getpshared",
+        "pthread_condattr_init",
+        "pthread_condattr_setclock",
+        "pthread_condattr_setpshared",
+        "pthread_exit",
+        "pthread_getaffinity_np",
+        "pthread_getattr_default_np",
+        "pthread_getconcurrency",
+        "pthread_getcpuclockid",
+        "pthread_getname_np",
+        "pthread_gettid_np",
+        "pthread_kill",
+        "pthread_mutex_clocklock",
+        "pthread_mutex_consistent",
+        "pthread_mutex_timedlock",
+        "pthread_mutexattr_destroy",
+        "pthread_mutexattr_getprotocol",
+        "pthread_mutexattr_getpshared",
+        "pthread_mutexattr_getrobust",
+        "pthread_mutexattr_gettype",
+        "pthread_mutexattr_init",
+        "pthread_mutexattr_setprotocol",
+        "pthread_mutexattr_setpshared",
+        "pthread_mutexattr_setrobust",
+        "pthread_mutexattr_settype",
+        "pthread_once",
+        "pthread_rwlock_clockrdlock",
+        "pthread_rwlock_clockwrlock",
+        "pthread_rwlock_destroy",
+        "pthread_rwlock_init",
+        "pthread_rwlock_rdlock",
+        "pthread_rwlock_timedrdlock",
+        "pthread_rwlock_timedwrlock",
+        "pthread_rwlock_tryrdlock",
+        "pthread_rwlock_trywrlock",
+        "pthread_rwlock_unlock",
+        "pthread_rwlock_wrlock",
+        "pthread_rwlockattr_destroy",
+        "pthread_rwlockattr_getpshared",
+        "pthread_rwlockattr_init",
+        "pthread_rwlockattr_setpshared",
+        "pthread_setaffinity_np",
+        "pthread_setattr_default_np",
+        "pthread_setcancelstate",
+        "pthread_setcanceltype",
+        "pthread_setconcurrency",
+        "pthread_setname_np",
+        "pthread_sigqueue",
+        "pthread_spin_destroy",
+        "pthread_spin_init",
+        "pthread_spin_lock",
+        "pthread_spin_trylock",
+        "pthread_spin_unlock",
+        "pthread_testcancel",
+        "pthread_yield"
+      ],
+      "total_symbols": 141,
+      "track": "threading",
       "uncovered_symbols": 78,
       "workload_blocked_count": 0,
       "workload_ids": []
@@ -4335,9 +4323,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 2112,
-    "fixture_json_files": 97,
-    "fixture_json_unique_functions": 850,
+    "fixture_json_cases": 2136,
+    "fixture_json_files": 98,
+    "fixture_json_unique_functions": 862,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4358,7 +4346,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 852
+    "unique_fixture_functions_total": 864
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -7229,111 +7217,6 @@
       "workload_ids": []
     },
     {
-      "milestone_beads": [
-        "bd-yos",
-        "bd-z84"
-      ],
-      "module": "pthread_abi",
-      "recommended_bead": "bd-yos",
-      "severity": "high",
-      "target_uncovered_count": 90,
-      "target_uncovered_symbols": [
-        "pthread_atfork",
-        "pthread_attr_destroy",
-        "pthread_attr_getaffinity_np",
-        "pthread_attr_getdetachstate",
-        "pthread_attr_getguardsize",
-        "pthread_attr_getinheritsched",
-        "pthread_attr_getschedparam",
-        "pthread_attr_getschedpolicy",
-        "pthread_attr_getscope",
-        "pthread_attr_getsigmask_np",
-        "pthread_attr_getstack",
-        "pthread_attr_getstackaddr",
-        "pthread_attr_getstacksize",
-        "pthread_attr_init",
-        "pthread_attr_setaffinity_np",
-        "pthread_attr_setdetachstate",
-        "pthread_attr_setguardsize",
-        "pthread_attr_setinheritsched",
-        "pthread_attr_setschedparam",
-        "pthread_attr_setschedpolicy",
-        "pthread_attr_setscope",
-        "pthread_attr_setsigmask_np",
-        "pthread_attr_setstack",
-        "pthread_attr_setstackaddr",
-        "pthread_attr_setstacksize",
-        "pthread_barrier_destroy",
-        "pthread_barrier_init",
-        "pthread_barrier_wait",
-        "pthread_barrierattr_destroy",
-        "pthread_barrierattr_getpshared",
-        "pthread_barrierattr_init",
-        "pthread_barrierattr_setpshared",
-        "pthread_cancel",
-        "pthread_condattr_destroy",
-        "pthread_condattr_getclock",
-        "pthread_condattr_getpshared",
-        "pthread_condattr_init",
-        "pthread_condattr_setclock",
-        "pthread_condattr_setpshared",
-        "pthread_exit",
-        "pthread_getaffinity_np",
-        "pthread_getattr_default_np",
-        "pthread_getconcurrency",
-        "pthread_getcpuclockid",
-        "pthread_getname_np",
-        "pthread_gettid_np",
-        "pthread_kill",
-        "pthread_mutex_clocklock",
-        "pthread_mutex_consistent",
-        "pthread_mutex_timedlock",
-        "pthread_mutexattr_destroy",
-        "pthread_mutexattr_getprotocol",
-        "pthread_mutexattr_getpshared",
-        "pthread_mutexattr_getrobust",
-        "pthread_mutexattr_gettype",
-        "pthread_mutexattr_init",
-        "pthread_mutexattr_setprotocol",
-        "pthread_mutexattr_setpshared",
-        "pthread_mutexattr_setrobust",
-        "pthread_mutexattr_settype",
-        "pthread_once",
-        "pthread_rwlock_clockrdlock",
-        "pthread_rwlock_clockwrlock",
-        "pthread_rwlock_destroy",
-        "pthread_rwlock_init",
-        "pthread_rwlock_rdlock",
-        "pthread_rwlock_timedrdlock",
-        "pthread_rwlock_timedwrlock",
-        "pthread_rwlock_tryrdlock",
-        "pthread_rwlock_trywrlock",
-        "pthread_rwlock_unlock",
-        "pthread_rwlock_wrlock",
-        "pthread_rwlockattr_destroy",
-        "pthread_rwlockattr_getpshared",
-        "pthread_rwlockattr_init",
-        "pthread_rwlockattr_setpshared",
-        "pthread_setaffinity_np",
-        "pthread_setattr_default_np",
-        "pthread_setcancelstate",
-        "pthread_setcanceltype",
-        "pthread_setconcurrency",
-        "pthread_setname_np",
-        "pthread_sigqueue",
-        "pthread_spin_destroy",
-        "pthread_spin_init",
-        "pthread_spin_lock",
-        "pthread_spin_trylock",
-        "pthread_spin_unlock",
-        "pthread_testcancel",
-        "pthread_yield"
-      ],
-      "track": "threading",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "milestone_beads": [],
       "module": "io_internal_abi",
       "recommended_bead": null,
@@ -7519,6 +7402,99 @@
         "__wprintf_chk"
       ],
       "track": "fortify",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [
+        "bd-yos",
+        "bd-z84"
+      ],
+      "module": "pthread_abi",
+      "recommended_bead": "bd-yos",
+      "severity": "high",
+      "target_uncovered_count": 78,
+      "target_uncovered_symbols": [
+        "pthread_attr_getstacksize",
+        "pthread_attr_init",
+        "pthread_attr_setaffinity_np",
+        "pthread_attr_setdetachstate",
+        "pthread_attr_setguardsize",
+        "pthread_attr_setinheritsched",
+        "pthread_attr_setschedparam",
+        "pthread_attr_setschedpolicy",
+        "pthread_attr_setscope",
+        "pthread_attr_setsigmask_np",
+        "pthread_attr_setstack",
+        "pthread_attr_setstackaddr",
+        "pthread_attr_setstacksize",
+        "pthread_barrier_destroy",
+        "pthread_barrier_init",
+        "pthread_barrier_wait",
+        "pthread_barrierattr_destroy",
+        "pthread_barrierattr_getpshared",
+        "pthread_barrierattr_init",
+        "pthread_barrierattr_setpshared",
+        "pthread_cancel",
+        "pthread_condattr_destroy",
+        "pthread_condattr_getclock",
+        "pthread_condattr_getpshared",
+        "pthread_condattr_init",
+        "pthread_condattr_setclock",
+        "pthread_condattr_setpshared",
+        "pthread_exit",
+        "pthread_getaffinity_np",
+        "pthread_getattr_default_np",
+        "pthread_getconcurrency",
+        "pthread_getcpuclockid",
+        "pthread_getname_np",
+        "pthread_gettid_np",
+        "pthread_kill",
+        "pthread_mutex_clocklock",
+        "pthread_mutex_consistent",
+        "pthread_mutex_timedlock",
+        "pthread_mutexattr_destroy",
+        "pthread_mutexattr_getprotocol",
+        "pthread_mutexattr_getpshared",
+        "pthread_mutexattr_getrobust",
+        "pthread_mutexattr_gettype",
+        "pthread_mutexattr_init",
+        "pthread_mutexattr_setprotocol",
+        "pthread_mutexattr_setpshared",
+        "pthread_mutexattr_setrobust",
+        "pthread_mutexattr_settype",
+        "pthread_once",
+        "pthread_rwlock_clockrdlock",
+        "pthread_rwlock_clockwrlock",
+        "pthread_rwlock_destroy",
+        "pthread_rwlock_init",
+        "pthread_rwlock_rdlock",
+        "pthread_rwlock_timedrdlock",
+        "pthread_rwlock_timedwrlock",
+        "pthread_rwlock_tryrdlock",
+        "pthread_rwlock_trywrlock",
+        "pthread_rwlock_unlock",
+        "pthread_rwlock_wrlock",
+        "pthread_rwlockattr_destroy",
+        "pthread_rwlockattr_getpshared",
+        "pthread_rwlockattr_init",
+        "pthread_rwlockattr_setpshared",
+        "pthread_setaffinity_np",
+        "pthread_setattr_default_np",
+        "pthread_setcancelstate",
+        "pthread_setcanceltype",
+        "pthread_setconcurrency",
+        "pthread_setname_np",
+        "pthread_sigqueue",
+        "pthread_spin_destroy",
+        "pthread_spin_init",
+        "pthread_spin_lock",
+        "pthread_spin_trylock",
+        "pthread_spin_unlock",
+        "pthread_testcancel",
+        "pthread_yield"
+      ],
+      "track": "threading",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -7985,10 +7961,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 19.87,
-      "covered": 736,
+      "coverage_pct": 20.19,
+      "covered": 748,
       "total": 3705,
-      "uncovered": 2969
+      "uncovered": 2957
     },
     "RawSyscall": {
       "coverage_pct": 23.91,
@@ -7998,18 +7974,18 @@
     }
   },
   "summary": {
-    "coverage_pct": 20.27,
-    "covered_exported_symbols": 835,
-    "target_coverage_pct": 20.27,
-    "target_covered_symbols": 835,
+    "coverage_pct": 20.56,
+    "covered_exported_symbols": 847,
+    "target_coverage_pct": 20.56,
+    "target_covered_symbols": 847,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3284,
+    "target_uncovered_symbols": 3272,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3284,
+    "uncovered_exported_symbols": 3272,
     "uncovered_target_families": 2,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 24
@@ -42847,13 +42823,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -42861,13 +42846,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -42875,13 +42869,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -42889,13 +42892,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -42903,13 +42915,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -42917,13 +42938,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -42931,13 +42961,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -42945,13 +42984,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -42959,13 +43007,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -42973,13 +43030,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -42987,13 +43053,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -43001,13 +43076,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "pthread/sync"
+      ],
+      "fixture_files": [
+        "pthread_attribute_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -75504,21 +75588,9 @@
       "module": "pthread_abi",
       "recommended_bead": "bd-yos",
       "severity": "high",
-      "target_coverage_pct": 36.17,
-      "target_uncovered_count": 90,
+      "target_coverage_pct": 44.68,
+      "target_uncovered_count": 78,
       "target_uncovered_symbols": [
-        "pthread_atfork",
-        "pthread_attr_destroy",
-        "pthread_attr_getaffinity_np",
-        "pthread_attr_getdetachstate",
-        "pthread_attr_getguardsize",
-        "pthread_attr_getinheritsched",
-        "pthread_attr_getschedparam",
-        "pthread_attr_getschedpolicy",
-        "pthread_attr_getscope",
-        "pthread_attr_getsigmask_np",
-        "pthread_attr_getstack",
-        "pthread_attr_getstackaddr",
         "pthread_attr_getstacksize",
         "pthread_attr_init",
         "pthread_attr_setaffinity_np",

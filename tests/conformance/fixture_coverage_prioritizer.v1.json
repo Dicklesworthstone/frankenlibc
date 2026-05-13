@@ -58,64 +58,6 @@
       ]
     },
     {
-      "campaign_id": "fcq-pthread-sync",
-      "current_coverage_pct": 36.17,
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "expected_coverage_after_first_wave_pct": 44.68,
-      "first_wave_fixture_count": 12,
-      "first_wave_symbols": [
-        "pthread_atfork",
-        "pthread_attr_destroy",
-        "pthread_attr_getaffinity_np",
-        "pthread_attr_getdetachstate",
-        "pthread_attr_getguardsize",
-        "pthread_attr_getinheritsched",
-        "pthread_attr_getschedparam",
-        "pthread_attr_getschedpolicy",
-        "pthread_attr_getscope",
-        "pthread_attr_getsigmask_np",
-        "pthread_attr_getstack",
-        "pthread_attr_getstackaddr"
-      ],
-      "module": "pthread_abi",
-      "next_step": "Prioritize deterministic mode-pair tests for pthread primitives that real runtimes and services depend on.",
-      "oracle_kind": "threaded_mode_pair_replay",
-      "rank": 2,
-      "risk_tags": [
-        "deadlock_timeout",
-        "mode_pair_mismatch",
-        "performance_regression",
-        "pthread_cancellation",
-        "threading"
-      ],
-      "scores": {
-        "coverage_gap_score": 90,
-        "feature_gap_risk_score": 3,
-        "hard_parts_risk_tags": [
-          "threading"
-        ],
-        "implementation_complexity_score": 4,
-        "parity_risk_score": 5,
-        "priority_score": 2390,
-        "semantic_risk_score": 2,
-        "workload_risk_score": 5
-      },
-      "structured_log_fields": "required_log_fields",
-      "symbol_family": "pthread lifecycle, mutex, condvar, TLS keys, cancellation, and GNU extensions",
-      "target_covered": 51,
-      "target_total": 141,
-      "target_uncovered": 90,
-      "title": "pthread synchronization and cancellation fixture wave",
-      "workload_domains": [
-        "threaded_services",
-        "language_runtimes",
-        "performance_sensitive"
-      ]
-    },
-    {
       "campaign_id": "fcq-stdio-libio",
       "current_coverage_pct": 70.63,
       "deterministic_e2e_scripts": [
@@ -141,7 +83,7 @@
       "module": "stdio_abi",
       "next_step": "Add stream-state and _IO alias fixtures that prove behavior before native stdio replacement claims advance.",
       "oracle_kind": "stdio_fixture_or_replay",
-      "rank": 3,
+      "rank": 2,
       "risk_tags": [
         "buffering_order",
         "diagnostics_gap",
@@ -169,6 +111,64 @@
         "shell_coreutils",
         "build_tools",
         "package_manager"
+      ]
+    },
+    {
+      "campaign_id": "fcq-pthread-sync",
+      "current_coverage_pct": 44.68,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 53.19,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "pthread_attr_getstacksize",
+        "pthread_attr_init",
+        "pthread_attr_setaffinity_np",
+        "pthread_attr_setdetachstate",
+        "pthread_attr_setguardsize",
+        "pthread_attr_setinheritsched",
+        "pthread_attr_setschedparam",
+        "pthread_attr_setschedpolicy",
+        "pthread_attr_setscope",
+        "pthread_attr_setsigmask_np",
+        "pthread_attr_setstack",
+        "pthread_attr_setstackaddr"
+      ],
+      "module": "pthread_abi",
+      "next_step": "Prioritize deterministic mode-pair tests for pthread primitives that real runtimes and services depend on.",
+      "oracle_kind": "threaded_mode_pair_replay",
+      "rank": 3,
+      "risk_tags": [
+        "deadlock_timeout",
+        "mode_pair_mismatch",
+        "performance_regression",
+        "pthread_cancellation",
+        "threading"
+      ],
+      "scores": {
+        "coverage_gap_score": 78,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [
+          "threading"
+        ],
+        "implementation_complexity_score": 4,
+        "parity_risk_score": 5,
+        "priority_score": 2378,
+        "semantic_risk_score": 2,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "pthread lifecycle, mutex, condvar, TLS keys, cancellation, and GNU extensions",
+      "target_covered": 63,
+      "target_total": 141,
+      "target_uncovered": 78,
+      "title": "pthread synchronization and cancellation fixture wave",
+      "workload_domains": [
+        "threaded_services",
+        "language_runtimes",
+        "performance_sensitive"
       ]
     },
     {
@@ -1026,7 +1026,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3284,
+    "all_uncovered_target_symbols": 3272,
     "campaign_count": 12,
     "covered_modules": [
       "fortify_abi",
@@ -1059,7 +1059,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2930,
+    "selected_target_uncovered_symbols": 2918,
     "total_first_wave_fixture_count": 140
   }
 }
