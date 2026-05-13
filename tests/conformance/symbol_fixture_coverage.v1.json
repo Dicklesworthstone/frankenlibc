@@ -3392,36 +3392,24 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 53,
+      "covered_symbols": 65,
       "milestone_beads": [],
       "module": "stdio_abi",
       "recommended_bead": null,
       "severity": "high",
-      "severity_score": 7302,
+      "severity_score": 6102,
       "status_breakdown": {
         "Implemented": 126
       },
-      "target_coverage_pct": 42.06,
-      "target_covered": 53,
+      "target_coverage_pct": 51.59,
+      "target_covered": 65,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
       "target_total": 126,
-      "target_uncovered": 73,
+      "target_uncovered": 61,
       "target_uncovered_symbols": [
-        "__isoc99_sscanf",
-        "__isoc99_vfscanf",
-        "__isoc99_vscanf",
-        "__isoc99_vsscanf",
-        "__isoc99_wscanf",
-        "clearerr",
-        "clearerr_unlocked",
-        "fcloseall",
-        "fdopen",
-        "feof_unlocked",
-        "ferror_unlocked",
-        "fflush_unlocked",
         "fgetc_unlocked",
         "fgetpos",
         "fgetpos64",
@@ -3486,7 +3474,7 @@
       ],
       "total_symbols": 126,
       "track": "stdio",
-      "uncovered_symbols": 73,
+      "uncovered_symbols": 61,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -4514,9 +4502,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1762,
-    "fixture_json_files": 82,
-    "fixture_json_unique_functions": 673,
+    "fixture_json_cases": 1786,
+    "fixture_json_files": 83,
+    "fixture_json_unique_functions": 685,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4537,7 +4525,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 675
+    "unique_fixture_functions_total": 687
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -7813,20 +7801,8 @@
       "module": "stdio_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_uncovered_count": 73,
+      "target_uncovered_count": 61,
       "target_uncovered_symbols": [
-        "__isoc99_sscanf",
-        "__isoc99_vfscanf",
-        "__isoc99_vscanf",
-        "__isoc99_vsscanf",
-        "__isoc99_wscanf",
-        "clearerr",
-        "clearerr_unlocked",
-        "fcloseall",
-        "fdopen",
-        "feof_unlocked",
-        "ferror_unlocked",
-        "fflush_unlocked",
         "fgetc_unlocked",
         "fgetpos",
         "fgetpos64",
@@ -8365,10 +8341,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 15.3,
-      "covered": 567,
+      "coverage_pct": 15.63,
+      "covered": 579,
       "total": 3705,
-      "uncovered": 3138
+      "uncovered": 3126
     },
     "RawSyscall": {
       "coverage_pct": 21.98,
@@ -8378,18 +8354,18 @@
     }
   },
   "summary": {
-    "coverage_pct": 15.97,
-    "covered_exported_symbols": 658,
-    "target_coverage_pct": 15.97,
-    "target_covered_symbols": 658,
+    "coverage_pct": 16.27,
+    "covered_exported_symbols": 670,
+    "target_coverage_pct": 16.27,
+    "target_covered_symbols": 670,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3461,
+    "target_uncovered_symbols": 3449,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3461,
+    "uncovered_exported_symbols": 3449,
     "uncovered_target_families": 2,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 25
@@ -50878,13 +50854,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -50892,13 +50877,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -50906,13 +50900,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -50920,13 +50923,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -50934,13 +50946,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -50975,13 +50996,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -50989,13 +51019,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -51056,13 +51095,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -51070,13 +51118,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "strict_fast",
       "status": "Implemented",
@@ -51106,13 +51163,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -51143,13 +51209,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -51184,13 +51259,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdio/libio"
+      ],
+      "fixture_files": [
+        "stdio_libio_wave02.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -74731,21 +74815,9 @@
       "module": "stdio_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 42.06,
-      "target_uncovered_count": 73,
+      "target_coverage_pct": 51.59,
+      "target_uncovered_count": 61,
       "target_uncovered_symbols": [
-        "__isoc99_sscanf",
-        "__isoc99_vfscanf",
-        "__isoc99_vscanf",
-        "__isoc99_vsscanf",
-        "__isoc99_wscanf",
-        "clearerr",
-        "clearerr_unlocked",
-        "fcloseall",
-        "fdopen",
-        "feof_unlocked",
-        "ferror_unlocked",
-        "fflush_unlocked",
         "fgetc_unlocked",
         "fgetpos",
         "fgetpos64",

@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "stdio/libio",
+  "captured_at": "2026-05-13T08:45:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-stdio-libio wave-02 C99 scanf alias, C99 va_list scanf alias, wide-scanf alias, stream state, fdopen, fcloseall, and unlocked status/flush symbols. Outputs classify controlled string/tmpfile scanf, empty-stdin EOF, empty wide-format, EOF clear/status, flush, and stream creation classes without recording stream addresses, file descriptors, filesystem paths, stdout bytes, stdin payloads, thread ids, timestamps, or host FILE internals.",
+  "spec_reference": "ISO C99 scanf alias and va_list forwarding semantics for __isoc99_sscanf/__isoc99_vfscanf/__isoc99_vscanf/__isoc99_vsscanf/__isoc99_wscanf plus POSIX/GNU stdio state, fdopen, fcloseall, and unlocked clearerr/feof/ferror/fflush semantics",
+  "campaign": {
+    "bead": "bd-kgy3r.4",
+    "campaign_id": "fcq-stdio-libio",
+    "wave_id": "wave-02-stdio-libio-c99-state-stream",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture",
+    "first_wave_symbols": [
+      "__isoc99_sscanf",
+      "__isoc99_vfscanf",
+      "__isoc99_vscanf",
+      "__isoc99_vsscanf",
+      "__isoc99_wscanf",
+      "clearerr",
+      "clearerr_unlocked",
+      "fcloseall",
+      "fdopen",
+      "feof_unlocked",
+      "ferror_unlocked",
+      "fflush_unlocked"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "isoc99_sscanf_controlled_int_strict",
+      "function": "__isoc99_sscanf",
+      "spec_section": "ISO C99 __isoc99_sscanf controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc99_sscanf",
+        "scenario": "controlled_string_integer_scan_without_payload_capture",
+        "expected": "ISOC99_SSCANF_RC_1_VALUE_99",
+        "oracle_source": "FrankenLibC C99 sscanf alias replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_sscanf;mode=strict;expected=ISOC99_SSCANF_RC_1_VALUE_99;actual=ISOC99_SSCANF_RC_1_VALUE_99;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc99_sscanf_controlled_int_hardened",
+      "function": "__isoc99_sscanf",
+      "spec_section": "ISO C99 __isoc99_sscanf controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc99_sscanf",
+        "scenario": "controlled_string_integer_scan_without_payload_capture",
+        "expected": "ISOC99_SSCANF_RC_1_VALUE_99",
+        "oracle_source": "FrankenLibC C99 sscanf alias replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_sscanf;mode=hardened;expected=ISOC99_SSCANF_RC_1_VALUE_99;actual=ISOC99_SSCANF_RC_1_VALUE_99;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc99_vfscanf_controlled_int_strict",
+      "function": "__isoc99_vfscanf",
+      "spec_section": "ISO C99 __isoc99_vfscanf controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc99_vfscanf",
+        "scenario": "controlled_tmpfile_va_list_integer_scan_without_fd_or_path_capture",
+        "expected": "ISOC99_VFSCANF_RC_1_VALUE_103",
+        "oracle_source": "FrankenLibC C99 vfscanf va_list replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_vfscanf;mode=strict;expected=ISOC99_VFSCANF_RC_1_VALUE_103;actual=ISOC99_VFSCANF_RC_1_VALUE_103;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc99_vfscanf_controlled_int_hardened",
+      "function": "__isoc99_vfscanf",
+      "spec_section": "ISO C99 __isoc99_vfscanf controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc99_vfscanf",
+        "scenario": "controlled_tmpfile_va_list_integer_scan_without_fd_or_path_capture",
+        "expected": "ISOC99_VFSCANF_RC_1_VALUE_103",
+        "oracle_source": "FrankenLibC C99 vfscanf va_list replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_vfscanf;mode=hardened;expected=ISOC99_VFSCANF_RC_1_VALUE_103;actual=ISOC99_VFSCANF_RC_1_VALUE_103;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc99_vscanf_empty_stdin_strict",
+      "function": "__isoc99_vscanf",
+      "spec_section": "ISO C99 __isoc99_vscanf empty stdin EOF class",
+      "inputs": {
+        "symbol": "__isoc99_vscanf",
+        "scenario": "empty_stdin_va_list_integer_scan_without_stdin_payload_capture",
+        "expected": "ISOC99_VSCANF_EMPTY_RC_-1_VALUE_-99",
+        "oracle_source": "FrankenLibC C99 vscanf empty stdin class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_vscanf;mode=strict;expected=ISOC99_VSCANF_EMPTY_RC_-1_VALUE_-99;actual=ISOC99_VSCANF_EMPTY_RC_-1_VALUE_-99;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc99_vscanf_empty_stdin_hardened",
+      "function": "__isoc99_vscanf",
+      "spec_section": "ISO C99 __isoc99_vscanf empty stdin EOF class",
+      "inputs": {
+        "symbol": "__isoc99_vscanf",
+        "scenario": "empty_stdin_va_list_integer_scan_without_stdin_payload_capture",
+        "expected": "ISOC99_VSCANF_EMPTY_RC_-1_VALUE_-99",
+        "oracle_source": "FrankenLibC C99 vscanf empty stdin class",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_vscanf;mode=hardened;expected=ISOC99_VSCANF_EMPTY_RC_-1_VALUE_-99;actual=ISOC99_VSCANF_EMPTY_RC_-1_VALUE_-99;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc99_vsscanf_controlled_int_strict",
+      "function": "__isoc99_vsscanf",
+      "spec_section": "ISO C99 __isoc99_vsscanf controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc99_vsscanf",
+        "scenario": "controlled_string_va_list_integer_scan_without_payload_capture",
+        "expected": "ISOC99_VSSCANF_RC_1_VALUE_101",
+        "oracle_source": "FrankenLibC C99 vsscanf va_list replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_vsscanf;mode=strict;expected=ISOC99_VSSCANF_RC_1_VALUE_101;actual=ISOC99_VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc99_vsscanf_controlled_int_hardened",
+      "function": "__isoc99_vsscanf",
+      "spec_section": "ISO C99 __isoc99_vsscanf controlled integer parse",
+      "inputs": {
+        "symbol": "__isoc99_vsscanf",
+        "scenario": "controlled_string_va_list_integer_scan_without_payload_capture",
+        "expected": "ISOC99_VSSCANF_RC_1_VALUE_101",
+        "oracle_source": "FrankenLibC C99 vsscanf va_list replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_vsscanf;mode=hardened;expected=ISOC99_VSSCANF_RC_1_VALUE_101;actual=ISOC99_VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "isoc99_wscanf_empty_format_strict",
+      "function": "__isoc99_wscanf",
+      "spec_section": "ISO C99 __isoc99_wscanf empty wide-format no-conversion class",
+      "inputs": {
+        "symbol": "__isoc99_wscanf",
+        "scenario": "empty_wide_format_without_stdin_payload_capture",
+        "expected": "ISOC99_WSCANF_EMPTY_FORMAT_RC_0",
+        "oracle_source": "FrankenLibC C99 wscanf alias empty-format replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_wscanf;mode=strict;expected=ISOC99_WSCANF_EMPTY_FORMAT_RC_0;actual=ISOC99_WSCANF_EMPTY_FORMAT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "isoc99_wscanf_empty_format_hardened",
+      "function": "__isoc99_wscanf",
+      "spec_section": "ISO C99 __isoc99_wscanf empty wide-format no-conversion class",
+      "inputs": {
+        "symbol": "__isoc99_wscanf",
+        "scenario": "empty_wide_format_without_stdin_payload_capture",
+        "expected": "ISOC99_WSCANF_EMPTY_FORMAT_RC_0",
+        "oracle_source": "FrankenLibC C99 wscanf alias empty-format replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=__isoc99_wscanf;mode=hardened;expected=ISOC99_WSCANF_EMPTY_FORMAT_RC_0;actual=ISOC99_WSCANF_EMPTY_FORMAT_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clearerr_eof_cleared_strict",
+      "function": "clearerr",
+      "spec_section": "POSIX clearerr clears EOF indicator",
+      "inputs": {
+        "symbol": "clearerr",
+        "scenario": "controlled_tmpfile_eof_clear_without_fd_or_path_capture",
+        "expected": "CLEARERR_EOF_CLEARED",
+        "oracle_source": "FrankenLibC clearerr EOF replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=clearerr;mode=strict;expected=CLEARERR_EOF_CLEARED;actual=CLEARERR_EOF_CLEARED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clearerr_eof_cleared_hardened",
+      "function": "clearerr",
+      "spec_section": "POSIX clearerr clears EOF indicator",
+      "inputs": {
+        "symbol": "clearerr",
+        "scenario": "controlled_tmpfile_eof_clear_without_fd_or_path_capture",
+        "expected": "CLEARERR_EOF_CLEARED",
+        "oracle_source": "FrankenLibC clearerr EOF replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=clearerr;mode=hardened;expected=CLEARERR_EOF_CLEARED;actual=CLEARERR_EOF_CLEARED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clearerr_unlocked_eof_cleared_strict",
+      "function": "clearerr_unlocked",
+      "spec_section": "GNU clearerr_unlocked clears EOF indicator",
+      "inputs": {
+        "symbol": "clearerr_unlocked",
+        "scenario": "controlled_tmpfile_unlocked_eof_clear_without_fd_or_path_capture",
+        "expected": "CLEARERR_UNLOCKED_EOF_CLEARED",
+        "oracle_source": "FrankenLibC clearerr_unlocked EOF replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=clearerr_unlocked;mode=strict;expected=CLEARERR_UNLOCKED_EOF_CLEARED;actual=CLEARERR_UNLOCKED_EOF_CLEARED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clearerr_unlocked_eof_cleared_hardened",
+      "function": "clearerr_unlocked",
+      "spec_section": "GNU clearerr_unlocked clears EOF indicator",
+      "inputs": {
+        "symbol": "clearerr_unlocked",
+        "scenario": "controlled_tmpfile_unlocked_eof_clear_without_fd_or_path_capture",
+        "expected": "CLEARERR_UNLOCKED_EOF_CLEARED",
+        "oracle_source": "FrankenLibC clearerr_unlocked EOF replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=clearerr_unlocked;mode=hardened;expected=CLEARERR_UNLOCKED_EOF_CLEARED;actual=CLEARERR_UNLOCKED_EOF_CLEARED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fcloseall_flush_only_strict",
+      "function": "fcloseall",
+      "spec_section": "GNU fcloseall flush-only compatibility class",
+      "inputs": {
+        "symbol": "fcloseall",
+        "scenario": "flush_all_without_stdout_capture",
+        "expected": "FCLOSEALL_RC_0_FLUSH_ONLY",
+        "oracle_source": "FrankenLibC fcloseall flush-only replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fcloseall;mode=strict;expected=FCLOSEALL_RC_0_FLUSH_ONLY;actual=FCLOSEALL_RC_0_FLUSH_ONLY;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fcloseall_flush_only_hardened",
+      "function": "fcloseall",
+      "spec_section": "GNU fcloseall flush-only compatibility class",
+      "inputs": {
+        "symbol": "fcloseall",
+        "scenario": "flush_all_without_stdout_capture",
+        "expected": "FCLOSEALL_RC_0_FLUSH_ONLY",
+        "oracle_source": "FrankenLibC fcloseall flush-only replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fcloseall;mode=hardened;expected=FCLOSEALL_RC_0_FLUSH_ONLY;actual=FCLOSEALL_RC_0_FLUSH_ONLY;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fdopen_stream_created_strict",
+      "function": "fdopen",
+      "spec_section": "POSIX fdopen associates stream with existing descriptor",
+      "inputs": {
+        "symbol": "fdopen",
+        "scenario": "controlled_pipe_read_end_stream_creation_without_fd_capture",
+        "expected": "FDOPEN_STREAM_CREATED",
+        "oracle_source": "FrankenLibC fdopen pipe replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fdopen;mode=strict;expected=FDOPEN_STREAM_CREATED;actual=FDOPEN_STREAM_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fdopen_stream_created_hardened",
+      "function": "fdopen",
+      "spec_section": "POSIX fdopen associates stream with existing descriptor",
+      "inputs": {
+        "symbol": "fdopen",
+        "scenario": "controlled_pipe_read_end_stream_creation_without_fd_capture",
+        "expected": "FDOPEN_STREAM_CREATED",
+        "oracle_source": "FrankenLibC fdopen pipe replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fdopen;mode=hardened;expected=FDOPEN_STREAM_CREATED;actual=FDOPEN_STREAM_CREATED;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "feof_unlocked_eof_set_strict",
+      "function": "feof_unlocked",
+      "spec_section": "GNU feof_unlocked reports EOF indicator",
+      "inputs": {
+        "symbol": "feof_unlocked",
+        "scenario": "controlled_tmpfile_unlocked_eof_status_without_fd_or_path_capture",
+        "expected": "FEOF_UNLOCKED_EOF_SET",
+        "oracle_source": "FrankenLibC feof_unlocked EOF replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=feof_unlocked;mode=strict;expected=FEOF_UNLOCKED_EOF_SET;actual=FEOF_UNLOCKED_EOF_SET;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "feof_unlocked_eof_set_hardened",
+      "function": "feof_unlocked",
+      "spec_section": "GNU feof_unlocked reports EOF indicator",
+      "inputs": {
+        "symbol": "feof_unlocked",
+        "scenario": "controlled_tmpfile_unlocked_eof_status_without_fd_or_path_capture",
+        "expected": "FEOF_UNLOCKED_EOF_SET",
+        "oracle_source": "FrankenLibC feof_unlocked EOF replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=feof_unlocked;mode=hardened;expected=FEOF_UNLOCKED_EOF_SET;actual=FEOF_UNLOCKED_EOF_SET;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ferror_unlocked_clear_strict",
+      "function": "ferror_unlocked",
+      "spec_section": "GNU ferror_unlocked reports clear error indicator",
+      "inputs": {
+        "symbol": "ferror_unlocked",
+        "scenario": "controlled_tmpfile_unlocked_error_status_without_fd_or_path_capture",
+        "expected": "FERROR_UNLOCKED_CLEAR",
+        "oracle_source": "FrankenLibC ferror_unlocked status replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=ferror_unlocked;mode=strict;expected=FERROR_UNLOCKED_CLEAR;actual=FERROR_UNLOCKED_CLEAR;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ferror_unlocked_clear_hardened",
+      "function": "ferror_unlocked",
+      "spec_section": "GNU ferror_unlocked reports clear error indicator",
+      "inputs": {
+        "symbol": "ferror_unlocked",
+        "scenario": "controlled_tmpfile_unlocked_error_status_without_fd_or_path_capture",
+        "expected": "FERROR_UNLOCKED_CLEAR",
+        "oracle_source": "FrankenLibC ferror_unlocked status replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=ferror_unlocked;mode=hardened;expected=FERROR_UNLOCKED_CLEAR;actual=FERROR_UNLOCKED_CLEAR;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fflush_unlocked_flush_strict",
+      "function": "fflush_unlocked",
+      "spec_section": "GNU fflush_unlocked flushes stream",
+      "inputs": {
+        "symbol": "fflush_unlocked",
+        "scenario": "controlled_tmpfile_unlocked_flush_without_fd_or_path_capture",
+        "expected": "FFLUSH_UNLOCKED_RC_0",
+        "oracle_source": "FrankenLibC fflush_unlocked flush replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fflush_unlocked;mode=strict;expected=FFLUSH_UNLOCKED_RC_0;actual=FFLUSH_UNLOCKED_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fflush_unlocked_flush_hardened",
+      "function": "fflush_unlocked",
+      "spec_section": "GNU fflush_unlocked flushes stream",
+      "inputs": {
+        "symbol": "fflush_unlocked",
+        "scenario": "controlled_tmpfile_unlocked_flush_without_fd_or_path_capture",
+        "expected": "FFLUSH_UNLOCKED_RC_0",
+        "oracle_source": "FrankenLibC fflush_unlocked flush replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=fflush_unlocked;mode=hardened;expected=FFLUSH_UNLOCKED_RC_0;actual=FFLUSH_UNLOCKED_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

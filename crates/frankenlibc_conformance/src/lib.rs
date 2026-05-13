@@ -707,7 +707,11 @@ pub fn execute_fixture_case(
         | "_IO_peekc_locked" | "_IO_putc" | "_IO_puts" | "_IO_seekoff" | "_IO_seekpos"
         | "_IO_sgetn" | "__isoc23_fscanf" | "__isoc23_scanf" | "__isoc23_sscanf"
         | "__isoc23_vfscanf" | "__isoc23_vscanf" | "__isoc23_vsscanf" | "__isoc99_fscanf"
-        | "__isoc99_scanf" => execute_stdio_libio_symbols_case(function, inputs, mode),
+        | "__isoc99_scanf" | "__isoc99_sscanf" | "__isoc99_vfscanf" | "__isoc99_vscanf"
+        | "__isoc99_vsscanf" | "__isoc99_wscanf" | "clearerr" | "clearerr_unlocked"
+        | "fcloseall" | "fdopen" | "feof_unlocked" | "ferror_unlocked" | "fflush_unlocked" => {
+            execute_stdio_libio_symbols_case(function, inputs, mode)
+        }
         "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
         "compute_relocation" => execute_compute_relocation_case(inputs, mode),
         "elf_hash" => execute_elf_hash_case(inputs, mode),
@@ -16932,7 +16936,135 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             let rc = unsafe { frankenlibc_abi::stdio_abi::__isoc99_scanf(fmt.as_ptr()) };
             Ok(format!("ISOC99_SCANF_EMPTY_RC_{rc}"))
         }
+        "__isoc99_sscanf" => {
+            let input = CString::new("99").map_err(|_| "scanf input has NUL".to_string())?;
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let mut value: c_int = -99;
+            let rc = unsafe {
+                frankenlibc_abi::stdio_abi::__isoc99_sscanf(
+                    input.as_ptr(),
+                    fmt.as_ptr(),
+                    &mut value as *mut c_int,
+                )
+            };
+            Ok(format!("ISOC99_SSCANF_RC_{rc}_VALUE_{value}"))
+        }
+        "__isoc99_vfscanf" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"103")?;
+            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let mut value: c_int = -99;
+            let mut destinations = [&mut value as *mut c_int as *mut c_void];
+            let rc = with_scanf_destination_va_list(&mut destinations, |ap| unsafe {
+                frankenlibc_abi::stdio_abi::__isoc99_vfscanf(stream, fmt.as_ptr(), ap)
+            });
+            Ok(format!("ISOC99_VFSCANF_RC_{rc}_VALUE_{value}"))
+        }),
+        "__isoc99_vscanf" => {
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let mut value: c_int = -99;
+            let mut destinations = [&mut value as *mut c_int as *mut c_void];
+            let rc = with_scanf_destination_va_list(&mut destinations, |ap| unsafe {
+                frankenlibc_abi::stdio_abi::__isoc99_vscanf(fmt.as_ptr(), ap)
+            });
+            Ok(format!("ISOC99_VSCANF_EMPTY_RC_{rc}_VALUE_{value}"))
+        }
+        "__isoc99_vsscanf" => {
+            let input = CString::new("101").map_err(|_| "scanf input has NUL".to_string())?;
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let mut value: c_int = -99;
+            let mut destinations = [&mut value as *mut c_int as *mut c_void];
+            let rc = with_scanf_destination_va_list(&mut destinations, |ap| unsafe {
+                frankenlibc_abi::stdio_abi::__isoc99_vsscanf(input.as_ptr(), fmt.as_ptr(), ap)
+            });
+            Ok(format!("ISOC99_VSSCANF_RC_{rc}_VALUE_{value}"))
+        }
+        "__isoc99_wscanf" => {
+            let fmt = [0i32];
+            let rc = unsafe { frankenlibc_abi::isoc_abi::__isoc99_wscanf(fmt.as_ptr()) };
+            Ok(format!("ISOC99_WSCANF_EMPTY_FORMAT_RC_{rc}"))
+        }
+        "clearerr" => stdio_libio_tmpfile(|stream| {
+            stdio_libio_induce_eof(stream)?;
+            let before = unsafe { frankenlibc_abi::stdio_abi::feof(stream) };
+            unsafe { frankenlibc_abi::stdio_abi::clearerr(stream) };
+            let after = unsafe { frankenlibc_abi::stdio_abi::feof(stream) };
+            if before != 0 && after == 0 {
+                Ok(String::from("CLEARERR_EOF_CLEARED"))
+            } else {
+                Ok(format!("CLEARERR_BEFORE_{before}_AFTER_{after}"))
+            }
+        }),
+        "clearerr_unlocked" => stdio_libio_tmpfile(|stream| {
+            stdio_libio_induce_eof(stream)?;
+            let before = unsafe { frankenlibc_abi::stdio_abi::feof(stream) };
+            unsafe { frankenlibc_abi::stdio_abi::clearerr_unlocked(stream) };
+            let after = unsafe { frankenlibc_abi::stdio_abi::feof(stream) };
+            if before != 0 && after == 0 {
+                Ok(String::from("CLEARERR_UNLOCKED_EOF_CLEARED"))
+            } else {
+                Ok(format!("CLEARERR_UNLOCKED_BEFORE_{before}_AFTER_{after}"))
+            }
+        }),
+        "fcloseall" => {
+            let rc = frankenlibc_abi::stdio_abi::fcloseall();
+            Ok(format!("FCLOSEALL_RC_{rc}_FLUSH_ONLY"))
+        }
+        "fdopen" => {
+            let mut fds = [-1, -1];
+            let rc = unsafe { frankenlibc_abi::io_abi::pipe(fds.as_mut_ptr()) };
+            if rc != 0 {
+                return Ok(format!("FDOPEN_PIPE_RC_{rc}"));
+            }
+            let mode = CString::new("r").map_err(|_| "fdopen mode has NUL".to_string())?;
+            let stream = unsafe { frankenlibc_abi::stdio_abi::fdopen(fds[0], mode.as_ptr()) };
+            if stream.is_null() {
+                let _ = unsafe { frankenlibc_abi::unistd_abi::close(fds[0]) };
+                let _ = unsafe { frankenlibc_abi::unistd_abi::close(fds[1]) };
+                Ok(String::from("FDOPEN_NULL"))
+            } else {
+                let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
+                let _ = unsafe { frankenlibc_abi::unistd_abi::close(fds[1]) };
+                Ok(String::from("FDOPEN_STREAM_CREATED"))
+            }
+        }
+        "feof_unlocked" => stdio_libio_tmpfile(|stream| {
+            stdio_libio_induce_eof(stream)?;
+            let eof = unsafe { frankenlibc_abi::stdio_abi::feof_unlocked(stream) };
+            if eof != 0 {
+                Ok(String::from("FEOF_UNLOCKED_EOF_SET"))
+            } else {
+                Ok(String::from("FEOF_UNLOCKED_EOF_CLEAR"))
+            }
+        }),
+        "ferror_unlocked" => stdio_libio_tmpfile(|stream| {
+            let err = unsafe { frankenlibc_abi::stdio_abi::ferror_unlocked(stream) };
+            if err == 0 {
+                Ok(String::from("FERROR_UNLOCKED_CLEAR"))
+            } else {
+                Ok(format!("FERROR_UNLOCKED_SET_{err}"))
+            }
+        }),
+        "fflush_unlocked" => stdio_libio_tmpfile(|stream| {
+            write_controlled_stream_bytes(stream, b"flush")?;
+            let rc = unsafe { frankenlibc_abi::stdio_abi::fflush_unlocked(stream) };
+            Ok(format!("FFLUSH_UNLOCKED_RC_{rc}"))
+        }),
         other => Err(format!("unsupported stdio/libio fixture: {other}")),
+    }
+}
+
+fn stdio_libio_induce_eof(stream: *mut c_void) -> Result<(), String> {
+    write_controlled_stream_bytes(stream, b"x")?;
+    unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+    let first = unsafe { frankenlibc_abi::stdio_abi::fgetc(stream) };
+    let second = unsafe { frankenlibc_abi::stdio_abi::fgetc(stream) };
+    if first == i32::from(b'x') && second == libc::EOF {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to induce EOF: first={first}, second={second}"
+        ))
     }
 }
 
