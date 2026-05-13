@@ -141,13 +141,13 @@ pub fn validate_environment_fingerprint(
         return Err(EnvFingerprintError::InvalidFormat);
     }
     let cpus_str = &cpus_segment[..cpus_segment.len() - 3];
-    if os.is_empty() {
+    if os.trim().is_empty() {
         return Err(EnvFingerprintError::EmptyComponent("os"));
     }
-    if arch.is_empty() {
+    if arch.trim().is_empty() {
         return Err(EnvFingerprintError::EmptyComponent("arch"));
     }
-    if cpus_str.is_empty() {
+    if cpus_str.trim().is_empty() {
         return Err(EnvFingerprintError::EmptyComponent("cpus"));
     }
     let cpus: u32 = cpus_str
@@ -156,7 +156,7 @@ pub fn validate_environment_fingerprint(
     // Everything after the third segment is kernel_release (which can
     // contain `-`, e.g. `6.1.0-25-amd64`).
     let kernel_release = parts[3..].join("-");
-    if kernel_release.is_empty() {
+    if kernel_release.trim().is_empty() {
         return Err(EnvFingerprintError::EmptyComponent("kernel_release"));
     }
     Ok(EnvironmentFingerprintComponents {
@@ -228,6 +228,26 @@ mod tests {
             validate_environment_fingerprint("linux-x86_64-64cpu-"),
             Err(EnvFingerprintError::InvalidFormat)
                 | Err(EnvFingerprintError::EmptyComponent("kernel_release"))
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_whitespace_only_components() {
+        assert!(matches!(
+            validate_environment_fingerprint(" -x86_64-64cpu-6.1"),
+            Err(EnvFingerprintError::EmptyComponent("os"))
+        ));
+        assert!(matches!(
+            validate_environment_fingerprint("linux- -64cpu-6.1"),
+            Err(EnvFingerprintError::EmptyComponent("arch"))
+        ));
+        assert!(matches!(
+            validate_environment_fingerprint("linux-x86_64- cpu-6.1"),
+            Err(EnvFingerprintError::EmptyComponent("cpus"))
+        ));
+        assert!(matches!(
+            validate_environment_fingerprint("linux-x86_64-64cpu- "),
+            Err(EnvFingerprintError::EmptyComponent("kernel_release"))
         ));
     }
 
