@@ -16,8 +16,12 @@ unsafe extern "C" {
     fn tan(x: f64) -> f64;
     fn asin(x: f64) -> f64;
     fn acos(x: f64) -> f64;
+    fn acosh(x: f64) -> f64;
     fn atan(x: f64) -> f64;
     fn atan2(y: f64, x: f64) -> f64;
+    fn acosf(x: f32) -> f32;
+    fn acoshf(x: f32) -> f32;
+    fn asinf(x: f32) -> f32;
     fn exp(x: f64) -> f64;
     fn log(x: f64) -> f64;
     fn log10(x: f64) -> f64;
@@ -884,6 +888,15 @@ pub fn execute_fixture_case(
         "__fpclassifyf" | "__signbitf" | "__isinff" | "__isnanf" | "__finitef" | "finitef" => {
             execute_math_classification_f32_case(function, inputs, mode)
         }
+        "_LIB_VERSION" => execute_math_lib_version_case(inputs, mode),
+        "__acos_finite" | "__acosh_finite" | "__asin_finite" => {
+            execute_math_finite_alias_f64_case(function, inputs, mode)
+        }
+        "__acosf_finite" | "__acoshf_finite" | "__asinf_finite" => {
+            execute_math_finite_alias_f32_case(function, inputs, mode)
+        }
+        "__acosl_finite" | "__acoshl_finite" | "__acosf128_finite" | "__acoshf128_finite"
+        | "__asinf128_finite" => execute_math_finite_alias_mapped_f64_case(function, inputs, mode),
         // inet
         "htons" => execute_inet_byteorder16_case("htons", inputs, mode),
         "ntohs" => execute_inet_byteorder16_case("ntohs", inputs, mode),
@@ -12332,6 +12345,179 @@ fn execute_math_classification_f32_case(
     })
 }
 
+fn classify_math_finite_alias_f64(value: f64) -> String {
+    if value.is_nan() {
+        "DOMAIN_NAN".to_string()
+    } else if value.is_infinite() {
+        if value.is_sign_negative() {
+            "INFINITE_NEGATIVE".to_string()
+        } else {
+            "INFINITE_POSITIVE".to_string()
+        }
+    } else if value == 0.0 {
+        if value.is_sign_negative() {
+            "FINITE_NEGATIVE_ZERO".to_string()
+        } else {
+            "FINITE_POSITIVE_ZERO".to_string()
+        }
+    } else if value.is_sign_negative() {
+        "FINITE_NEGATIVE".to_string()
+    } else {
+        "FINITE_POSITIVE".to_string()
+    }
+}
+
+fn classify_math_finite_alias_f32(value: f32) -> String {
+    classify_math_finite_alias_f64(value as f64)
+}
+
+fn math_lib_version_label(value: c_int) -> String {
+    format!("LIB_VERSION_{value}")
+}
+
+fn run_host_math_finite_alias_f64(func: &str, x: f64) -> Result<f64, String> {
+    // SAFETY: Standard libm unary functions accept every finite, infinite, or NaN f64.
+    let value = unsafe {
+        match func {
+            "__acos_finite" => acos(x),
+            "__acosh_finite" => acosh(x),
+            "__asin_finite" => asin(x),
+            _ => return Err(format!("unsupported f64 finite alias: {func}")),
+        }
+    };
+    Ok(value)
+}
+
+fn run_impl_math_finite_alias_f64(func: &str, x: f64) -> Result<f64, String> {
+    // SAFETY: FrankenLibC finite aliases accept every finite, infinite, or NaN f64.
+    let value = unsafe {
+        match func {
+            "__acos_finite" => frankenlibc_abi::math_abi::__acos_finite(x),
+            "__acosh_finite" => frankenlibc_abi::math_abi::__acosh_finite(x),
+            "__asin_finite" => frankenlibc_abi::math_abi::__asin_finite(x),
+            _ => return Err(format!("unsupported f64 finite alias: {func}")),
+        }
+    };
+    Ok(value)
+}
+
+fn run_host_math_finite_alias_f32(func: &str, x: f32) -> Result<f32, String> {
+    // SAFETY: Standard libm unary functions accept every finite, infinite, or NaN f32.
+    let value = unsafe {
+        match func {
+            "__acosf_finite" => acosf(x),
+            "__acoshf_finite" => acoshf(x),
+            "__asinf_finite" => asinf(x),
+            _ => return Err(format!("unsupported f32 finite alias: {func}")),
+        }
+    };
+    Ok(value)
+}
+
+fn run_impl_math_finite_alias_f32(func: &str, x: f32) -> Result<f32, String> {
+    // SAFETY: FrankenLibC finite aliases accept every finite, infinite, or NaN f32.
+    let value = unsafe {
+        match func {
+            "__acosf_finite" => frankenlibc_abi::math_abi::__acosf_finite(x),
+            "__acoshf_finite" => frankenlibc_abi::math_abi::__acoshf_finite(x),
+            "__asinf_finite" => frankenlibc_abi::math_abi::__asinf_finite(x),
+            _ => return Err(format!("unsupported f32 finite alias: {func}")),
+        }
+    };
+    Ok(value)
+}
+
+fn run_impl_math_finite_alias_mapped_f64(func: &str, x: f64) -> Result<f64, String> {
+    // SAFETY: FrankenLibC intentionally maps long-double/f128 finite aliases to f64.
+    let value = unsafe {
+        match func {
+            "__acosl_finite" => frankenlibc_abi::math_abi::__acosl_finite(x),
+            "__acoshl_finite" => frankenlibc_abi::math_abi::__acoshl_finite(x),
+            "__acosf128_finite" => frankenlibc_abi::math_abi::__acosf128_finite(x),
+            "__acoshf128_finite" => frankenlibc_abi::math_abi::__acoshf128_finite(x),
+            "__asinf128_finite" => frankenlibc_abi::math_abi::__asinf128_finite(x),
+            _ => return Err(format!("unsupported mapped finite alias: {func}")),
+        }
+    };
+    Ok(value)
+}
+
+fn execute_math_lib_version_case(
+    _inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let impl_output = math_lib_version_label(frankenlibc_abi::math_abi::_LIB_VERSION);
+    Ok(DifferentialExecution {
+        host_output: "SKIP".to_string(),
+        impl_output,
+        host_parity: true,
+        note: Some(
+            "_LIB_VERSION is a versioned libm data symbol; fixture records FrankenLibC value only"
+                .to_string(),
+        ),
+    })
+}
+
+fn execute_math_finite_alias_f64_case(
+    func: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let x = parse_f64(inputs, "x")?;
+    let impl_output = classify_math_finite_alias_f64(run_impl_math_finite_alias_f64(func, x)?);
+    let host_output = classify_math_finite_alias_f64(run_host_math_finite_alias_f64(func, x)?);
+
+    Ok(DifferentialExecution {
+        host_parity: host_output == impl_output,
+        host_output,
+        impl_output,
+        note: None,
+    })
+}
+
+fn execute_math_finite_alias_f32_case(
+    func: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let x = parse_f32(inputs, "x")?;
+    let impl_output = classify_math_finite_alias_f32(run_impl_math_finite_alias_f32(func, x)?);
+    let host_output = classify_math_finite_alias_f32(run_host_math_finite_alias_f32(func, x)?);
+
+    Ok(DifferentialExecution {
+        host_parity: host_output == impl_output,
+        host_output,
+        impl_output,
+        note: None,
+    })
+}
+
+fn execute_math_finite_alias_mapped_f64_case(
+    func: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let x = parse_f64(inputs, "x")?;
+    let impl_output =
+        classify_math_finite_alias_f64(run_impl_math_finite_alias_mapped_f64(func, x)?);
+    let note = if func.contains("f128") {
+        "f128 finite alias is fixture-covered as FrankenLibC's documented f64 mapping"
+    } else {
+        "long-double finite alias is fixture-covered as FrankenLibC's documented f64 mapping"
+    };
+
+    Ok(DifferentialExecution {
+        host_output: "SKIP".to_string(),
+        impl_output,
+        host_parity: true,
+        note: Some(note.to_string()),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // inet executors
 // ---------------------------------------------------------------------------
@@ -23390,6 +23576,48 @@ mod tests {
                     case.name, case.expected_output, result.impl_output
                 );
             }
+        }
+    }
+
+    #[test]
+    fn math_finite_special_wave02_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/math_finite_special_wave02.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("math finite/special wave02 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
         }
     }
 

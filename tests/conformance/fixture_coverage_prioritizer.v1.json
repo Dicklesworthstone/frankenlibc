@@ -452,25 +452,25 @@
     },
     {
       "campaign_id": "fcq-math-special",
-      "current_coverage_pct": 2.45,
+      "current_coverage_pct": 3.4,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 3.4,
+      "expected_coverage_after_first_wave_pct": 4.35,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "_LIB_VERSION",
-        "__acos_finite",
-        "__acosf128_finite",
-        "__acosf_finite",
-        "__acosh_finite",
-        "__acoshf128_finite",
-        "__acoshf_finite",
-        "__acoshl_finite",
-        "__acosl_finite",
-        "__asin_finite",
-        "__asinf128_finite",
-        "__asinf_finite"
+        "__asinl_finite",
+        "__atan2_finite",
+        "__atan2f128_finite",
+        "__atan2f_finite",
+        "__atan2l_finite",
+        "__atanh_finite",
+        "__atanhf128_finite",
+        "__atanhf_finite",
+        "__atanhl_finite",
+        "__clog10",
+        "__clog10f",
+        "__clog10l"
       ],
       "module": "math_abi",
       "next_step": "Start with finite aliases and fpclassification before expanding to the long libm tail.",
@@ -497,9 +497,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "finite aliases, special functions, fpclassify/signbit, libm edge cases, and exception-adjacent behavior",
-      "target_covered": 31,
+      "target_covered": 43,
       "target_total": 1265,
-      "target_uncovered": 1234,
+      "target_uncovered": 1222,
       "title": "math finite/special-function fixture wave",
       "workload_domains": [
         "language_runtimes",
@@ -1026,7 +1026,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3320,
+    "all_uncovered_target_symbols": 3308,
     "campaign_count": 12,
     "covered_modules": [
       "fortify_abi",
@@ -1059,7 +1059,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2966,
+    "selected_target_uncovered_symbols": 2954,
     "total_first_wave_fixture_count": 140
   }
 }

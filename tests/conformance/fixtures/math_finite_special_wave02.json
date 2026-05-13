@@ -1,0 +1,336 @@
+{
+  "version": "v1",
+  "family": "math_finite_special_wave02",
+  "captured_at": "2026-05-13T14:43:00Z",
+  "description": "Math finite/special fixture wave-02 classifies _LIB_VERSION and finite-alias outputs without recording fenv state, raw errno storage, host long-double ABI values, f128 ABI values, addresses, timestamps, stderr, or process-global counters.",
+  "spec_reference": "C11 7.12 math functions and glibc finite-alias compatibility for _LIB_VERSION, __acos_finite, __acosf128_finite, __acosf_finite, __acosh_finite, __acoshf128_finite, __acoshf_finite, __acoshl_finite, __acosl_finite, __asin_finite, __asinf128_finite, __asinf_finite",
+  "campaign": {
+    "bead": "bd-r5k32.11",
+    "campaign_id": "fcq-math-special",
+    "wave_id": "wave-02-math-finite-special",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim",
+    "first_wave_symbols": [
+      "_LIB_VERSION",
+      "__acos_finite",
+      "__acosf128_finite",
+      "__acosf_finite",
+      "__acosh_finite",
+      "__acoshf128_finite",
+      "__acoshf_finite",
+      "__acoshl_finite",
+      "__acosl_finite",
+      "__asin_finite",
+      "__asinf128_finite",
+      "__asinf_finite"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
+  "cases": [
+    {
+      "name": "lib_version_posix_strict",
+      "function": "_LIB_VERSION",
+      "spec_section": "glibc matherr compatibility _LIB_VERSION data symbol",
+      "inputs": {
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "LIB_VERSION_0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Records FrankenLibC's data-symbol value without binding the host versioned libm data symbol."
+    },
+    {
+      "name": "lib_version_posix_hardened",
+      "function": "_LIB_VERSION",
+      "spec_section": "glibc matherr compatibility _LIB_VERSION data symbol",
+      "inputs": {
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "LIB_VERSION_0",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "Records FrankenLibC's data-symbol value without binding the host versioned libm data symbol."
+    },
+    {
+      "name": "acos_finite_domain_strict",
+      "function": "__acos_finite",
+      "spec_section": "C11 7.12.4.1 acos finite-alias domain bucket",
+      "inputs": {
+        "x": 2.0,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "DOMAIN_NAN",
+      "expected_errno": 33,
+      "mode": "strict",
+      "note": "Domain bucket: finite input outside [-1, 1]."
+    },
+    {
+      "name": "acos_finite_domain_hardened",
+      "function": "__acos_finite",
+      "spec_section": "C11 7.12.4.1 acos finite-alias domain bucket",
+      "inputs": {
+        "x": 2.0,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "DOMAIN_NAN",
+      "expected_errno": 33,
+      "mode": "hardened",
+      "note": "Domain bucket: finite input outside [-1, 1]."
+    },
+    {
+      "name": "acosf128_finite_mapped_positive_strict",
+      "function": "__acosf128_finite",
+      "spec_section": "glibc __float128 finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_POSITIVE",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "No host __float128 ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "acosf128_finite_mapped_positive_hardened",
+      "function": "__acosf128_finite",
+      "spec_section": "glibc __float128 finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_POSITIVE",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "No host __float128 ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "acosf_finite_positive_strict",
+      "function": "__acosf_finite",
+      "spec_section": "C11 7.12.4.1 acosf finite-alias positive bucket",
+      "inputs": {
+        "x": 0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_POSITIVE",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "acosf_finite_positive_hardened",
+      "function": "__acosf_finite",
+      "spec_section": "C11 7.12.4.1 acosf finite-alias positive bucket",
+      "inputs": {
+        "x": 0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_POSITIVE",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "acosh_finite_domain_strict",
+      "function": "__acosh_finite",
+      "spec_section": "C11 7.12.5.1 acosh finite-alias domain bucket",
+      "inputs": {
+        "x": 0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "DOMAIN_NAN",
+      "expected_errno": 33,
+      "mode": "strict",
+      "note": "Domain bucket: finite input below 1."
+    },
+    {
+      "name": "acosh_finite_domain_hardened",
+      "function": "__acosh_finite",
+      "spec_section": "C11 7.12.5.1 acosh finite-alias domain bucket",
+      "inputs": {
+        "x": 0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "DOMAIN_NAN",
+      "expected_errno": 33,
+      "mode": "hardened",
+      "note": "Domain bucket: finite input below 1."
+    },
+    {
+      "name": "acoshf128_finite_mapped_zero_strict",
+      "function": "__acoshf128_finite",
+      "spec_section": "glibc __float128 finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 1.0,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_POSITIVE_ZERO",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "No host __float128 ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "acoshf128_finite_mapped_zero_hardened",
+      "function": "__acoshf128_finite",
+      "spec_section": "glibc __float128 finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 1.0,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_POSITIVE_ZERO",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "No host __float128 ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "acoshf_finite_positive_strict",
+      "function": "__acoshf_finite",
+      "spec_section": "C11 7.12.5.1 acoshf finite-alias positive bucket",
+      "inputs": {
+        "x": 2.0,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_POSITIVE",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "acoshf_finite_positive_hardened",
+      "function": "__acoshf_finite",
+      "spec_section": "C11 7.12.5.1 acoshf finite-alias positive bucket",
+      "inputs": {
+        "x": 2.0,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_POSITIVE",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "acoshl_finite_mapped_domain_strict",
+      "function": "__acoshl_finite",
+      "spec_section": "long-double acosh finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "DOMAIN_NAN",
+      "expected_errno": 33,
+      "mode": "strict",
+      "note": "No host long-double ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "acoshl_finite_mapped_domain_hardened",
+      "function": "__acoshl_finite",
+      "spec_section": "long-double acosh finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "DOMAIN_NAN",
+      "expected_errno": 33,
+      "mode": "hardened",
+      "note": "No host long-double ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "acosl_finite_mapped_positive_strict",
+      "function": "__acosl_finite",
+      "spec_section": "long-double acos finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_POSITIVE",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "No host long-double ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "acosl_finite_mapped_positive_hardened",
+      "function": "__acosl_finite",
+      "spec_section": "long-double acos finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_POSITIVE",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "No host long-double ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "asin_finite_domain_strict",
+      "function": "__asin_finite",
+      "spec_section": "C11 7.12.4.2 asin finite-alias domain bucket",
+      "inputs": {
+        "x": 2.0,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "DOMAIN_NAN",
+      "expected_errno": 33,
+      "mode": "strict",
+      "note": "Domain bucket: finite input outside [-1, 1]."
+    },
+    {
+      "name": "asin_finite_domain_hardened",
+      "function": "__asin_finite",
+      "spec_section": "C11 7.12.4.2 asin finite-alias domain bucket",
+      "inputs": {
+        "x": 2.0,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "DOMAIN_NAN",
+      "expected_errno": 33,
+      "mode": "hardened",
+      "note": "Domain bucket: finite input outside [-1, 1]."
+    },
+    {
+      "name": "asinf128_finite_mapped_negative_strict",
+      "function": "__asinf128_finite",
+      "spec_section": "glibc __float128 finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": -0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_NEGATIVE",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "No host __float128 ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "asinf128_finite_mapped_negative_hardened",
+      "function": "__asinf128_finite",
+      "spec_section": "glibc __float128 finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": -0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_NEGATIVE",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "No host __float128 ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "asinf_finite_negative_strict",
+      "function": "__asinf_finite",
+      "spec_section": "C11 7.12.4.2 asinf finite-alias negative bucket",
+      "inputs": {
+        "x": -0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_NEGATIVE",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "asinf_finite_negative_hardened",
+      "function": "__asinf_finite",
+      "spec_section": "C11 7.12.4.2 asinf finite-alias negative bucket",
+      "inputs": {
+        "x": -0.5,
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "FINITE_NEGATIVE",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

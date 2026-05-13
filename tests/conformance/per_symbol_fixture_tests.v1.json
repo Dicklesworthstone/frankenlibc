@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-13T14:32:58Z",
-  "report_hash": "77b1db5f2c7f988e",
+  "generated_at": "2026-05-13T14:54:09Z",
+  "report_hash": "2d1eeeb4c112eef7",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 797,
-    "symbols_without_fixtures": 3322,
-    "fixture_coverage_pct": 19.3,
-    "implemented_coverage_pct": 18.9,
-    "total_fixture_files": 94,
-    "total_cases": 2040,
+    "symbols_with_fixtures": 809,
+    "symbols_without_fixtures": 3310,
+    "fixture_coverage_pct": 19.6,
+    "implemented_coverage_pct": 19.2,
+    "total_fixture_files": 95,
+    "total_cases": 2064,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 494,
-    "symbols_with_errno_checks": 794,
-    "total_quality_issues": 3541,
-    "uncovered_action_count": 3322
+    "symbols_with_edge_cases": 506,
+    "symbols_with_errno_checks": 806,
+    "total_quality_issues": 3529,
+    "uncovered_action_count": 3310
   },
   "fixture_file_analyses": [
     {
@@ -176,6 +176,14 @@
       "valid": true,
       "total_cases": 10,
       "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "math_finite_special_wave02.json",
+      "family": "math_finite_special_wave02",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
       "issues": []
     },
     {
@@ -3022,15 +3030,20 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "zero_cost",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__abort_msg",
@@ -3052,120 +3065,168 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__acosf128_finite",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__acosf_finite",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__acosh_finite",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__acoshf128_finite",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__acoshf_finite",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__acoshl_finite",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__acosl_finite",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__adjtimex",
@@ -3277,45 +3338,63 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__asinf128_finite",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__asinf_finite",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_finite_special_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "__asinl_finite",
@@ -66696,72 +66775,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "_LIB_VERSION",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "__abort_msg",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__acos_finite",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__acosf128_finite",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__acosf_finite",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__acosh_finite",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__acoshf128_finite",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__acoshf_finite",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__acoshl_finite",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__acosl_finite",
-      "status": "Implemented",
-      "module": "math_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -66783,27 +66799,6 @@
       "symbol": "__arch_prctl",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__asin_finite",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__asinf128_finite",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__asinf_finite",
-      "status": "Implemented",
-      "module": "math_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
