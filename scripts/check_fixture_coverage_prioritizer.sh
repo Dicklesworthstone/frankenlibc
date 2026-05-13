@@ -152,11 +152,31 @@ COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE03 = [
     "aio_read64",
     "aio_return",
 ]
+COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE04 = [
+    "aio_return64",
+    "aio_suspend",
+    "aio_suspend64",
+    "aio_write",
+    "aio_write64",
+    "alarm",
+    "arc4random",
+    "arc4random_buf",
+    "arc4random_uniform",
+    "argp_error",
+    "argp_failure",
+    "argp_help",
+]
 COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE03_FIXTURE = Path(
     "tests/conformance/fixtures/unistd_process_filesystem_wave03.json"
 )
 COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE03_HARNESS = Path(
     "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave03_conformance_test.rs"
+)
+COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE04_FIXTURE = Path(
+    "tests/conformance/fixtures/unistd_process_filesystem_wave04.json"
+)
+COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE04_HARNESS = Path(
+    "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave04_conformance_test.rs"
 )
 COMPLETED_STDIO_LIBIO_FIRST_WAVE = [
     "_IO_2_1_stderr_",
@@ -499,6 +519,83 @@ else:
         errors.append("fcq-unistd-process-filesystem current_coverage_pct did not advance to at least 9.57")
 
 checks["completed_unistd_wave03_guard"] = "pass" if completed_unistd_wave03_ok else "fail"
+
+completed_unistd_wave04_ok = True
+wave04_fixture_path = root / COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE04_FIXTURE
+wave04_harness_path = root / COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE04_HARNESS
+wave04_fixture = load_json(wave04_fixture_path) if wave04_fixture_path.exists() else None
+if not wave04_fixture_path.exists():
+    completed_unistd_wave04_ok = False
+    errors.append(f"completed unistd wave-04 fixture missing: {COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE04_FIXTURE}")
+if not wave04_harness_path.exists():
+    completed_unistd_wave04_ok = False
+    errors.append(f"completed unistd wave-04 harness missing: {COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE04_HARNESS}")
+if wave04_harness_path.exists():
+    wave04_harness_text = wave04_harness_path.read_text(encoding="utf-8")
+    for needle in [
+        "unistd_process_filesystem_wave04_covers_first_wave_in_both_modes",
+        "unistd_process_filesystem_wave04_executes_via_isolated_harness",
+        "forbid_ambient_random_values_alarm_state_argp_streams_or_aio_fd_metadata",
+        "failure_signature",
+    ]:
+        if needle not in wave04_harness_text:
+            completed_unistd_wave04_ok = False
+            errors.append(f"completed unistd wave-04 harness missing needle: {needle}")
+
+if isinstance(wave04_fixture, dict):
+    campaign = wave04_fixture.get("campaign", {})
+    declared = campaign.get("first_wave_symbols", [])
+    if declared != COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE04:
+        completed_unistd_wave04_ok = False
+        errors.append("completed unistd wave-04 fixture symbols drifted")
+    if campaign.get("wave_id") != "wave-04-unistd-process-filesystem-aio-random-argp":
+        completed_unistd_wave04_ok = False
+        errors.append("completed unistd wave-04 fixture wave_id drifted")
+    cases = wave04_fixture.get("cases", [])
+    symbols_in_cases = {case.get("function") for case in cases if isinstance(case, dict)}
+    missing_fixture_symbols = sorted(set(COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE04) - set(symbols_in_cases))
+    if missing_fixture_symbols:
+        completed_unistd_wave04_ok = False
+        errors.append("completed unistd wave-04 fixture is missing cases for: " + ", ".join(missing_fixture_symbols))
+
+for symbol in COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE04:
+    row = symbols_by_module.get("unistd_abi", {}).get(symbol)
+    if not row:
+        completed_unistd_wave04_ok = False
+        errors.append(f"completed unistd wave-04 symbol missing from per-symbol report: {symbol}")
+        continue
+    if not row.get("has_fixtures"):
+        completed_unistd_wave04_ok = False
+        errors.append(f"completed unistd wave-04 symbol lacks fixture accounting: {symbol}")
+    if row.get("case_count", 0) < 2:
+        completed_unistd_wave04_ok = False
+        errors.append(f"completed unistd wave-04 symbol lacks strict+hardened cases: {symbol}")
+    if "unistd_process_filesystem_wave04.json" not in row.get("fixture_files", []):
+        completed_unistd_wave04_ok = False
+        errors.append(f"completed unistd wave-04 symbol lacks fixture file backlink: {symbol}")
+    if sorted(row.get("modes_tested", [])) != ["hardened", "strict"]:
+        completed_unistd_wave04_ok = False
+        errors.append(f"completed unistd wave-04 symbol lacks strict+hardened mode accounting: {symbol}")
+
+if not unistd_campaign:
+    completed_unistd_wave04_ok = False
+    errors.append("fcq-unistd-process-filesystem campaign missing after wave-04 completion")
+else:
+    stale_symbols = sorted(set(COMPLETED_UNISTD_PROCESS_FILESYSTEM_WAVE04) & set(unistd_campaign.get("first_wave_symbols", [])))
+    if stale_symbols:
+        completed_unistd_wave04_ok = False
+        errors.append("completed unistd wave-04 symbols still appear in next first-wave claim: " + ", ".join(stale_symbols))
+    if unistd_campaign.get("target_covered", 0) < 83:
+        completed_unistd_wave04_ok = False
+        errors.append("fcq-unistd-process-filesystem target_covered did not advance to at least 83")
+    if unistd_campaign.get("target_uncovered", 10**9) > 659:
+        completed_unistd_wave04_ok = False
+        errors.append("fcq-unistd-process-filesystem target_uncovered did not shrink to at most 659")
+    if float(unistd_campaign.get("current_coverage_pct", 0.0)) < 11.19:
+        completed_unistd_wave04_ok = False
+        errors.append("fcq-unistd-process-filesystem current_coverage_pct did not advance to at least 11.19")
+
+checks["completed_unistd_wave04_guard"] = "pass" if completed_unistd_wave04_ok else "fail"
 
 completed_stdio_ok = True
 stdio_fixture_path = root / COMPLETED_STDIO_LIBIO_FIXTURE

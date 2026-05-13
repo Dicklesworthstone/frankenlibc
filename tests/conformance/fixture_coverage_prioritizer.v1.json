@@ -3,26 +3,26 @@
   "campaigns": [
     {
       "campaign_id": "fcq-unistd-process-filesystem",
-      "current_coverage_pct": 9.57,
+      "current_coverage_pct": 11.19,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 11.19,
+      "expected_coverage_after_first_wave_pct": 12.8,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "aio_return64",
-        "aio_suspend",
-        "aio_suspend64",
-        "aio_write",
-        "aio_write64",
-        "alarm",
-        "arc4random",
-        "arc4random_buf",
-        "arc4random_uniform",
-        "argp_error",
-        "argp_failure",
-        "argp_help"
+        "argp_parse",
+        "argp_state_help",
+        "argp_usage",
+        "bind_textdomain_codeset",
+        "brk",
+        "bsd_signal",
+        "c8rtomb",
+        "canonicalize_file_name",
+        "capget",
+        "capset",
+        "chdir",
+        "chmod"
       ],
       "module": "unistd_abi",
       "next_step": "Add strict/hardened fixtures for process, stat-family, and exit-path symbols before broad syscall tail work.",
@@ -46,9 +46,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "process control, filesystem metadata, cwd, exec, exit, and low-level unistd wrappers",
-      "target_covered": 71,
+      "target_covered": 83,
       "target_total": 742,
-      "target_uncovered": 671,
+      "target_uncovered": 659,
       "title": "unistd/process/filesystem syscall fixture wave",
       "workload_domains": [
         "shell_coreutils",
@@ -1257,7 +1257,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3640,
+    "all_uncovered_target_symbols": 3628,
     "campaign_count": 17,
     "covered_modules": [
       "fortify_abi",
@@ -1295,7 +1295,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 3258,
+    "selected_target_uncovered_symbols": 3246,
     "total_first_wave_fixture_count": 194
   }
 }
