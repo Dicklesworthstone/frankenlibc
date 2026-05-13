@@ -228,7 +228,10 @@ def artifact_map(contract: dict[str, Any]) -> dict[str, dict[str, Any]]:
             add_error("malformed_contract", f"source artifact {artifact_id} path must be non-empty")
             continue
         result[artifact_id] = obj
-        if not resolve(path).exists():
+        # RCH validation syncs code/test artifacts, but may omit tracker archives.
+        # The tracker binding is still required in the contract; existence is
+        # enforced for all non-tracker source artifacts.
+        if obj.get("kind") != "tracker" and not resolve(path).exists():
             add_error("missing_source_artifact", f"source artifact {artifact_id} missing path {path}")
     missing = sorted(REQUIRED_ARTIFACT_IDS - set(result))
     if missing:
