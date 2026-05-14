@@ -46,12 +46,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,8 +132,8 @@ fn grp_ops_fixture_exists() {
 }
 
 #[test]
-fn grp_ops_fixture_valid_schema() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "grp_ops");
@@ -152,6 +152,7 @@ fn grp_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,14 +160,15 @@ fn grp_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn grp_ops_covers_getgrnam() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_covers_getgrnam() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("getgrnam")).count() >= 2,
         "getgrnam needs at least 2 test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,14 +176,15 @@ fn grp_ops_covers_getgrnam() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn grp_ops_covers_getgrgid() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_covers_getgrgid() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("getgrgid")).count() >= 2,
         "getgrgid needs at least 2 test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -189,8 +192,8 @@ fn grp_ops_covers_getgrgid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn grp_ops_covers_enumeration() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_covers_enumeration() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -199,6 +202,7 @@ fn grp_ops_covers_enumeration() {
             .any(|name| name.contains("setgrent") || name.contains("endgrent")),
         "Missing test coverage for setgrent/endgrent"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -206,8 +210,8 @@ fn grp_ops_covers_enumeration() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn grp_ops_error_codes_valid() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
 
     // grp functions typically return NULL without setting errno for "not found"
     let valid_errno_values = [0];
@@ -220,6 +224,7 @@ fn grp_ops_error_codes_valid() {
             case.expected_errno,
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -227,17 +232,18 @@ fn grp_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn grp_ops_modes_valid() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -245,14 +251,15 @@ fn grp_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn grp_ops_covers_both_modes() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
 
     assert!(has_strict, "grp_ops must have strict mode test cases");
     assert!(has_hardened, "grp_ops must have hardened mode test cases");
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -260,8 +267,8 @@ fn grp_ops_covers_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn grp_ops_case_count_stable() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 8;
 
@@ -273,6 +280,7 @@ fn grp_ops_case_count_stable() {
     );
 
     eprintln!("grp_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -280,14 +288,15 @@ fn grp_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn grp_ops_covers_error_paths() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|n| n.contains("nonexistent")),
         "grp_ops must test nonexistent group handling"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -295,8 +304,8 @@ fn grp_ops_covers_error_paths() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn grp_ops_covers_root_group() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_covers_root_group() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -305,6 +314,7 @@ fn grp_ops_covers_root_group() {
             .any(|n| n.contains("root") || n.contains("zero")),
         "grp_ops must test root group (GID 0) lookup"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,8 +322,8 @@ fn grp_ops_covers_root_group() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn grp_ops_has_posix_references() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -323,17 +333,18 @@ fn grp_ops_has_posix_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn grp_ops_fixture_executes_via_harness() {
-    let fixture = load_fixture("grp_ops");
+fn grp_ops_fixture_executes_via_harness() -> Result<(), String> {
+    let fixture = load_fixture("grp_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -341,13 +352,13 @@ fn grp_ops_fixture_executes_via_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "grp_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -360,4 +371,6 @@ fn grp_ops_fixture_executes_via_harness() {
             );
         }
     }
+
+    Ok(())
 }
