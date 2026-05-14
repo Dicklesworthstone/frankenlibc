@@ -46,12 +46,12 @@ struct FixtureCase {
     notes: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,8 +132,8 @@ fn pthread_thread_fixture_exists() {
 }
 
 #[test]
-fn pthread_thread_fixture_valid_schema() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "pthread/thread");
@@ -152,6 +152,8 @@ fn pthread_thread_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,8 +161,8 @@ fn pthread_thread_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_thread_covers_create() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_covers_create() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["pthread_create_basic", "pthread_create_multiple"];
@@ -172,11 +174,13 @@ fn pthread_thread_covers_create() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_thread_covers_join() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_covers_join() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = [
@@ -192,11 +196,13 @@ fn pthread_thread_covers_join() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_thread_covers_detach() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_covers_detach() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = [
@@ -212,11 +218,13 @@ fn pthread_thread_covers_detach() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_thread_covers_self() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_covers_self() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["pthread_self"];
@@ -228,11 +236,13 @@ fn pthread_thread_covers_self() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_thread_covers_equal() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_covers_equal() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["pthread_equal_same", "pthread_equal_different"];
@@ -244,6 +254,8 @@ fn pthread_thread_covers_equal() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -251,8 +263,8 @@ fn pthread_thread_covers_equal() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_thread_error_codes_valid() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
 
     // Valid POSIX/Linux error codes for pthread thread functions
     let valid_errno_values = [
@@ -271,6 +283,8 @@ fn pthread_thread_error_codes_valid() {
             valid_errno_values
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -278,8 +292,8 @@ fn pthread_thread_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_thread_function_distribution() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_function_distribution() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
 
     let mut create_count = 0;
     let mut join_count = 0;
@@ -294,7 +308,7 @@ fn pthread_thread_function_distribution() {
             "pthread_detach" => detach_count += 1,
             "pthread_self" => self_count += 1,
             "pthread_equal" => equal_count += 1,
-            f => panic!("Unexpected function in fixture: {}", f),
+            function => return Err(format!("unexpected function in fixture: {function}")),
         }
     }
 
@@ -329,6 +343,8 @@ fn pthread_thread_function_distribution() {
         "pthread_thread coverage: create={}, join={}, detach={}, self={}, equal={}",
         create_count, join_count, detach_count, self_count, equal_count
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -336,17 +352,19 @@ fn pthread_thread_function_distribution() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_thread_modes_valid() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -354,8 +372,8 @@ fn pthread_thread_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_thread_case_count_stable() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
 
     // This test ensures we don't accidentally remove test cases
     // Update this count when intentionally adding/removing cases
@@ -373,6 +391,8 @@ fn pthread_thread_case_count_stable() {
         "pthread_thread fixture has {} test cases",
         fixture.cases.len()
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -380,8 +400,8 @@ fn pthread_thread_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_thread_has_posix_references() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
 
     for case in &fixture.cases {
         assert!(
@@ -391,6 +411,8 @@ fn pthread_thread_has_posix_references() {
             case.spec_section
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -398,8 +420,8 @@ fn pthread_thread_has_posix_references() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_thread_covers_deadlock_detection() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_covers_deadlock_detection() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // Thread must detect joining itself (deadlock)
@@ -407,18 +429,20 @@ fn pthread_thread_covers_deadlock_detection() {
         case_names.iter().any(|name| name.contains("join_self")),
         "Missing critical edge case: pthread_join self-join deadlock detection"
     );
+
+    Ok(())
 }
 
 #[test]
-fn pthread_thread_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("pthread_thread");
+fn pthread_thread_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("pthread_thread")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_ref()
             .cloned()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -426,13 +450,13 @@ fn pthread_thread_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "pthread_thread case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity,
                 "pthread_thread case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -445,4 +469,6 @@ fn pthread_thread_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+
+    Ok(())
 }
