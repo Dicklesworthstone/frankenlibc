@@ -2562,36 +2562,24 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 24,
+      "covered_symbols": 36,
       "milestone_beads": [],
       "module": "rpc_abi",
       "recommended_bead": null,
       "severity": "high",
-      "severity_score": 13502,
+      "severity_score": 12302,
       "status_breakdown": {
         "Implemented": 159
       },
-      "target_coverage_pct": 15.09,
-      "target_covered": 24,
+      "target_coverage_pct": 22.64,
+      "target_covered": 36,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
       "target_total": 159,
-      "target_uncovered": 135,
+      "target_uncovered": 123,
       "target_uncovered_symbols": [
-        "clnt_sperror",
-        "clntraw_create",
-        "clnttcp_create",
-        "clntudp_bufcreate",
-        "clntudp_create",
-        "clntunix_create",
-        "des_setparity",
-        "ecb_crypt",
-        "get_myaddress",
-        "getnetname",
-        "getpublickey",
-        "getrpcport",
         "getsecretkey",
         "host2netname",
         "key_decryptsession",
@@ -2718,7 +2706,7 @@
       ],
       "total_symbols": 159,
       "track": "rpc",
-      "uncovered_symbols": 135,
+      "uncovered_symbols": 123,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -4052,9 +4040,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 2678,
-    "fixture_json_files": 122,
-    "fixture_json_unique_functions": 1129,
+    "fixture_json_cases": 2702,
+    "fixture_json_files": 123,
+    "fixture_json_unique_functions": 1141,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4075,7 +4063,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 1131
+    "unique_fixture_functions_total": 1143
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -6591,20 +6579,8 @@
       "module": "rpc_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_uncovered_count": 135,
+      "target_uncovered_count": 123,
       "target_uncovered_symbols": [
-        "clnt_sperror",
-        "clntraw_create",
-        "clnttcp_create",
-        "clntudp_bufcreate",
-        "clntudp_create",
-        "clntunix_create",
-        "des_setparity",
-        "ecb_crypt",
-        "get_myaddress",
-        "getnetname",
-        "getpublickey",
-        "getrpcport",
         "getsecretkey",
         "host2netname",
         "key_decryptsession",
@@ -7373,10 +7349,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 26.1,
-      "covered": 967,
+      "coverage_pct": 26.42,
+      "covered": 979,
       "total": 3705,
-      "uncovered": 2738
+      "uncovered": 2726
     },
     "RawSyscall": {
       "coverage_pct": 35.51,
@@ -7386,18 +7362,18 @@
     }
   },
   "summary": {
-    "coverage_pct": 27.05,
-    "covered_exported_symbols": 1114,
-    "target_coverage_pct": 27.05,
-    "target_covered_symbols": 1114,
+    "coverage_pct": 27.34,
+    "covered_exported_symbols": 1126,
+    "target_coverage_pct": 27.34,
+    "target_covered_symbols": 1126,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3005,
+    "target_uncovered_symbols": 2993,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3005,
+    "uncovered_exported_symbols": 2993,
     "uncovered_target_families": 1,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 20
@@ -46649,13 +46625,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -46663,13 +46648,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -46677,13 +46671,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -46691,13 +46694,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -46705,13 +46717,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -46719,13 +46740,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -46733,13 +46763,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -46747,13 +46786,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -46761,13 +46809,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -46775,13 +46832,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -46789,13 +46855,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -46803,13 +46878,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "rpc/legacy-network"
+      ],
+      "fixture_files": [
+        "rpc_legacy_network_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -77388,21 +77472,9 @@
       "module": "rpc_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 15.09,
-      "target_uncovered_count": 135,
+      "target_coverage_pct": 22.64,
+      "target_uncovered_count": 123,
       "target_uncovered_symbols": [
-        "clnt_sperror",
-        "clntraw_create",
-        "clnttcp_create",
-        "clntudp_bufcreate",
-        "clntudp_create",
-        "clntunix_create",
-        "des_setparity",
-        "ecb_crypt",
-        "get_myaddress",
-        "getnetname",
-        "getpublickey",
-        "getrpcport",
         "getsecretkey",
         "host2netname",
         "key_decryptsession",

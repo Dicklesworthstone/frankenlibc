@@ -723,7 +723,19 @@ pub fn execute_fixture_case(
         | "clnt_perrno"
         | "clnt_perror"
         | "clnt_spcreateerror"
-        | "clnt_sperrno" => execute_rpc_legacy_network_case(function, inputs, mode),
+        | "clnt_sperrno"
+        | "clnt_sperror"
+        | "clntraw_create"
+        | "clnttcp_create"
+        | "clntudp_bufcreate"
+        | "clntudp_create"
+        | "clntunix_create"
+        | "des_setparity"
+        | "ecb_crypt"
+        | "get_myaddress"
+        | "getnetname"
+        | "getpublickey"
+        | "getrpcport" => execute_rpc_legacy_network_case(function, inputs, mode),
         "_Exit"
         | "_Fork"
         | "__cxa_atexit"
@@ -2277,8 +2289,205 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
                 rpc_legacy_network_cstr_class(ptr)
             ))
         }
+        "clnt_sperror" => {
+            let prefix = CString::new("franken").map_err(|err| err.to_string())?;
+            // SAFETY: null client plus valid prefix exercises the deterministic
+            // safe-default string path without dereferencing a client handle.
+            let ptr = unsafe {
+                frankenlibc_abi::rpc_abi::clnt_sperror(core::ptr::null_mut(), prefix.as_ptr())
+            };
+            Ok(format!(
+                "RETURN_CSTR_CLASS={}",
+                rpc_legacy_network_cstr_class(ptr)
+            ))
+        }
+        "clntraw_create" => {
+            // SAFETY: the safe-default client constructor ignores program/version.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::clntraw_create(0, 0) };
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "clnttcp_create" => {
+            let mut addr = rpc_legacy_network_loopback_sockaddr();
+            let mut sock = -1 as c_int;
+            // SAFETY: local sockaddr and sock slot are valid; the safe-default
+            // constructor returns NULL without opening a socket.
+            let ptr = unsafe {
+                frankenlibc_abi::rpc_abi::clnttcp_create(
+                    (&mut addr as *mut libc::sockaddr_in).cast(),
+                    0,
+                    0,
+                    &mut sock,
+                    0,
+                    0,
+                )
+            };
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "clntudp_bufcreate" => {
+            let mut addr = rpc_legacy_network_loopback_sockaddr();
+            let wait = frankenlibc_abi::rpc_abi::Timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            };
+            let mut sock = -1 as c_int;
+            // SAFETY: local sockaddr and sock slot are valid; the safe-default
+            // constructor returns NULL without querying portmapper or network state.
+            let ptr = unsafe {
+                frankenlibc_abi::rpc_abi::clntudp_bufcreate(
+                    (&mut addr as *mut libc::sockaddr_in).cast(),
+                    0,
+                    0,
+                    wait,
+                    &mut sock,
+                    0,
+                    0,
+                )
+            };
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "clntudp_create" => {
+            let mut addr = rpc_legacy_network_loopback_sockaddr();
+            let wait = frankenlibc_abi::rpc_abi::Timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            };
+            let mut sock = -1 as c_int;
+            // SAFETY: local sockaddr and sock slot are valid; the safe-default
+            // constructor returns NULL without querying portmapper or network state.
+            let ptr = unsafe {
+                frankenlibc_abi::rpc_abi::clntudp_create(
+                    (&mut addr as *mut libc::sockaddr_in).cast(),
+                    0,
+                    0,
+                    wait,
+                    &mut sock,
+                )
+            };
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "clntunix_create" => {
+            let mut sock = -1 as c_int;
+            // SAFETY: null address selects the deterministic safe-default path
+            // and avoids touching the filesystem or opening a UNIX socket.
+            let ptr = unsafe {
+                frankenlibc_abi::rpc_abi::clntunix_create(
+                    core::ptr::null_mut(),
+                    0,
+                    0,
+                    &mut sock,
+                    0,
+                    0,
+                )
+            };
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "des_setparity" => {
+            let mut key = *b"Franken!";
+            let before = key;
+            // SAFETY: key references a valid eight-byte DES key buffer; the ABI
+            // no-ops because DES support is intentionally unavailable.
+            unsafe { frankenlibc_abi::rpc_abi::des_setparity(key.as_mut_ptr().cast()) };
+            Ok(format!("KEY_UNCHANGED={}", bool01(key == before)))
+        }
+        "ecb_crypt" => {
+            let mut key = [0 as c_char; 8];
+            let mut buf = [0 as c_char; 8];
+            // SAFETY: local fixed-size buffers are valid; ABI returns DES unavailable.
+            let rc = unsafe {
+                frankenlibc_abi::rpc_abi::ecb_crypt(
+                    key.as_mut_ptr(),
+                    buf.as_mut_ptr(),
+                    buf.len() as c_uint,
+                    0,
+                )
+            };
+            Ok(format!("RETURN={rc}"))
+        }
+        "get_myaddress" => {
+            let mut addr = rpc_legacy_network_zero_sockaddr();
+            // SAFETY: addr points to local sockaddr_in storage.
+            unsafe {
+                frankenlibc_abi::rpc_abi::get_myaddress(
+                    (&mut addr as *mut libc::sockaddr_in).cast(),
+                );
+            }
+            Ok(format!(
+                "SOCKADDR_LOOPBACK_DEFAULT={}",
+                bool01(rpc_legacy_network_is_loopback_sockaddr(&addr))
+            ))
+        }
+        "getnetname" => {
+            let mut name = [0 as c_char; 256];
+            // SAFETY: name points to a MAXNETNAMELEN+1-sized local buffer.
+            let rc = unsafe { frankenlibc_abi::rpc_abi::getnetname(name.as_mut_ptr()) };
+            Ok(format!(
+                "RETURN={rc}_CSTR_CLASS={}",
+                rpc_legacy_network_netname_class(name.as_ptr())
+            ))
+        }
+        "getpublickey" => {
+            let netname = CString::new("unix.0@localhost").map_err(|err| err.to_string())?;
+            let mut publickey = [0x7f as c_char; 256];
+            let before = publickey;
+            // SAFETY: both pointers reference valid local C-compatible buffers.
+            let rc = unsafe {
+                frankenlibc_abi::rpc_abi::getpublickey(netname.as_ptr(), publickey.as_mut_ptr())
+            };
+            Ok(format!(
+                "RETURN={rc}_BUFFER_UNCHANGED={}",
+                bool01(publickey == before)
+            ))
+        }
+        "getrpcport" => {
+            let host = CString::new("localhost").map_err(|err| err.to_string())?;
+            // SAFETY: valid host string; ABI returns deterministic unsupported port.
+            let rc = unsafe { frankenlibc_abi::rpc_abi::getrpcport(host.as_ptr(), 0, 0, 0) };
+            Ok(format!("RETURN={rc}"))
+        }
         other => Err(format!("unsupported RPC legacy fixture symbol: {other}")),
     }
+}
+
+fn rpc_legacy_network_zero_sockaddr() -> libc::sockaddr_in {
+    libc::sockaddr_in {
+        sin_family: 0,
+        sin_port: 0,
+        sin_addr: libc::in_addr { s_addr: 0 },
+        sin_zero: [0; 8],
+    }
+}
+
+fn rpc_legacy_network_loopback_sockaddr() -> libc::sockaddr_in {
+    libc::sockaddr_in {
+        sin_family: libc::AF_INET as u16,
+        sin_port: 0,
+        sin_addr: libc::in_addr {
+            s_addr: u32::to_be(0x7f000001),
+        },
+        sin_zero: [0; 8],
+    }
+}
+
+fn rpc_legacy_network_is_loopback_sockaddr(addr: &libc::sockaddr_in) -> bool {
+    addr.sin_family == libc::AF_INET as u16
+        && addr.sin_port == 0
+        && addr.sin_addr.s_addr == u32::to_be(0x7f000001)
+        && addr.sin_zero.iter().all(|byte| *byte == 0)
 }
 
 fn rpc_legacy_network_reset_errno() {
@@ -2358,6 +2567,19 @@ fn rpc_legacy_network_cstr_class(ptr: *mut c_char) -> &'static str {
         "Success" => "SUCCESS",
         "franken: Success" => "PREFIX_SUCCESS",
         _ => "OTHER",
+    }
+}
+
+fn rpc_legacy_network_netname_class(ptr: *const c_char) -> &'static str {
+    if ptr.is_null() {
+        return "NULL";
+    }
+    // SAFETY: caller passes a local buffer that getnetname NUL-terminates on success.
+    let value = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
+    if value.starts_with("unix.") && value.ends_with("@localhost") {
+        "UNIX_LOCALHOST"
+    } else {
+        "OTHER"
     }
 }
 
@@ -30933,6 +31155,48 @@ mod tests {
             include_str!("../../../tests/conformance/fixtures/rpc_legacy_network_wave02.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("rpc/legacy network wave02 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn rpc_legacy_network_wave03_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/rpc_legacy_network_wave03.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("rpc/legacy network wave03 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

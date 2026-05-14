@@ -1,0 +1,473 @@
+{
+  "version": "v1",
+  "family": "rpc/legacy-network",
+  "captured_at": "2026-05-14T02:05:00Z",
+  "description": "Deterministic third-wave fixtures for legacy Sun RPC compatibility symbols. The cases bind FrankenLibC's safe-default client constructor, diagnostic string, DES-unavailable, loopback address, netname classification, publickey failure, and unsupported portmapper behavior without network access, privileged port binding, host resolver state, filesystem sockets, ambient UID logging, or raw stderr text in structured logs.",
+  "spec_reference": "glibc Sun RPC compatibility surface; FrankenLibC rpc_abi deterministic safe-default contract for clnt_sperror, client constructor handles, DES helpers, get_myaddress, getnetname, getpublickey, and getrpcport",
+  "campaign": {
+    "bead": "bd-gmbqy.11",
+    "campaign_id": "fcq-rpc-legacy-network",
+    "wave_id": "wave-03-rpc-legacy-network-client-des-identity-port",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "first_wave_symbols": [
+      "clnt_sperror",
+      "clntraw_create",
+      "clnttcp_create",
+      "clntudp_bufcreate",
+      "clntudp_create",
+      "clntunix_create",
+      "des_setparity",
+      "ecb_crypt",
+      "get_myaddress",
+      "getnetname",
+      "getpublickey",
+      "getrpcport"
+    ],
+    "network_access": "forbidden",
+    "privileged_port_binding": "forbidden",
+    "host_resolver_state": "not_consulted",
+    "diagnostic_output": "local_classification_only",
+    "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected_class",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "clnt_sperror_safe_default_string_strict",
+      "function": "clnt_sperror",
+      "spec_section": "glibc Sun RPC client diagnostic string compatibility",
+      "inputs": {
+        "symbol": "clnt_sperror",
+        "expected_class": "safe-default-null-string",
+        "strict_behavior": "returns NULL because client diagnostic rendering is unsupported without a native CLIENT handle",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "client diagnostic strings would otherwise depend on opaque RPC client state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; ambient host RPC client state is not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_sperror;mode=strict;expected_class=safe-default-null-string;actual=RETURN_CSTR_CLASS=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clnt_sperror_safe_default_string_hardened",
+      "function": "clnt_sperror",
+      "spec_section": "glibc Sun RPC client diagnostic string compatibility",
+      "inputs": {
+        "symbol": "clnt_sperror",
+        "expected_class": "safe-default-null-string",
+        "strict_behavior": "returns NULL because client diagnostic rendering is unsupported without a native CLIENT handle",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "client diagnostic strings would otherwise depend on opaque RPC client state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; ambient host RPC client state is not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnt_sperror;mode=hardened;expected_class=safe-default-null-string;actual=RETURN_CSTR_CLASS=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clntraw_create_safe_default_client_strict",
+      "function": "clntraw_create",
+      "spec_section": "glibc Sun RPC raw client creation compatibility",
+      "inputs": {
+        "symbol": "clntraw_create",
+        "expected_class": "safe-default-null-client",
+        "strict_behavior": "returns NULL because raw client creation is unsupported",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "raw client creation requires unsupported legacy RPC runtime state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; ambient host RPC state is not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clntraw_create;mode=strict;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clntraw_create_safe_default_client_hardened",
+      "function": "clntraw_create",
+      "spec_section": "glibc Sun RPC raw client creation compatibility",
+      "inputs": {
+        "symbol": "clntraw_create",
+        "expected_class": "safe-default-null-client",
+        "strict_behavior": "returns NULL because raw client creation is unsupported",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "raw client creation requires unsupported legacy RPC runtime state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; ambient host RPC state is not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clntraw_create;mode=hardened;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clnttcp_create_safe_default_client_strict",
+      "function": "clnttcp_create",
+      "spec_section": "glibc Sun RPC TCP client creation compatibility",
+      "inputs": {
+        "symbol": "clnttcp_create",
+        "expected_class": "safe-default-null-client",
+        "strict_behavior": "returns NULL without opening sockets or querying portmapper state",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "TCP client construction would otherwise depend on network and portmapper state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; no socket or host resolver access is allowed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnttcp_create;mode=strict;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clnttcp_create_safe_default_client_hardened",
+      "function": "clnttcp_create",
+      "spec_section": "glibc Sun RPC TCP client creation compatibility",
+      "inputs": {
+        "symbol": "clnttcp_create",
+        "expected_class": "safe-default-null-client",
+        "strict_behavior": "returns NULL without opening sockets or querying portmapper state",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "TCP client construction would otherwise depend on network and portmapper state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; no socket or host resolver access is allowed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clnttcp_create;mode=hardened;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clntudp_bufcreate_safe_default_client_strict",
+      "function": "clntudp_bufcreate",
+      "spec_section": "glibc Sun RPC UDP buffered client creation compatibility",
+      "inputs": {
+        "symbol": "clntudp_bufcreate",
+        "expected_class": "safe-default-null-client",
+        "strict_behavior": "returns NULL without opening sockets or querying portmapper state",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "UDP buffered client construction would otherwise depend on network and portmapper state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; no socket or host resolver access is allowed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clntudp_bufcreate;mode=strict;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clntudp_bufcreate_safe_default_client_hardened",
+      "function": "clntudp_bufcreate",
+      "spec_section": "glibc Sun RPC UDP buffered client creation compatibility",
+      "inputs": {
+        "symbol": "clntudp_bufcreate",
+        "expected_class": "safe-default-null-client",
+        "strict_behavior": "returns NULL without opening sockets or querying portmapper state",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "UDP buffered client construction would otherwise depend on network and portmapper state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; no socket or host resolver access is allowed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clntudp_bufcreate;mode=hardened;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clntudp_create_safe_default_client_strict",
+      "function": "clntudp_create",
+      "spec_section": "glibc Sun RPC UDP client creation compatibility",
+      "inputs": {
+        "symbol": "clntudp_create",
+        "expected_class": "safe-default-null-client",
+        "strict_behavior": "returns NULL without opening sockets or querying portmapper state",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "UDP client construction would otherwise depend on network and portmapper state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; no socket or host resolver access is allowed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clntudp_create;mode=strict;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clntudp_create_safe_default_client_hardened",
+      "function": "clntudp_create",
+      "spec_section": "glibc Sun RPC UDP client creation compatibility",
+      "inputs": {
+        "symbol": "clntudp_create",
+        "expected_class": "safe-default-null-client",
+        "strict_behavior": "returns NULL without opening sockets or querying portmapper state",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "UDP client construction would otherwise depend on network and portmapper state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; no socket or host resolver access is allowed",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clntudp_create;mode=hardened;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clntunix_create_safe_default_client_strict",
+      "function": "clntunix_create",
+      "spec_section": "glibc Sun RPC UNIX-domain client creation compatibility",
+      "inputs": {
+        "symbol": "clntunix_create",
+        "expected_class": "safe-default-null-client",
+        "strict_behavior": "returns NULL without opening filesystem sockets",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "UNIX-domain client construction would otherwise depend on local filesystem socket state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; filesystem socket state is not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clntunix_create;mode=strict;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "clntunix_create_safe_default_client_hardened",
+      "function": "clntunix_create",
+      "spec_section": "glibc Sun RPC UNIX-domain client creation compatibility",
+      "inputs": {
+        "symbol": "clntunix_create",
+        "expected_class": "safe-default-null-client",
+        "strict_behavior": "returns NULL without opening filesystem sockets",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "UNIX-domain client construction would otherwise depend on local filesystem socket state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; filesystem socket state is not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=clntunix_create;mode=hardened;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "des_setparity_des_unavailable_noop_strict",
+      "function": "des_setparity",
+      "spec_section": "glibc DES parity helper compatibility",
+      "inputs": {
+        "symbol": "des_setparity",
+        "expected_class": "deterministic-des-noop",
+        "strict_behavior": "leaves the key unchanged because DES support is intentionally unavailable",
+        "hardened_behavior": "same deterministic no-op result; no repair path",
+        "safe_default_rationale": "DES is deprecated and unsupported, so parity mutation is not meaningful",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; DES hardware and host crypto state are not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=des_setparity;mode=strict;expected_class=deterministic-des-noop;actual=KEY_UNCHANGED=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "des_setparity_des_unavailable_noop_hardened",
+      "function": "des_setparity",
+      "spec_section": "glibc DES parity helper compatibility",
+      "inputs": {
+        "symbol": "des_setparity",
+        "expected_class": "deterministic-des-noop",
+        "strict_behavior": "leaves the key unchanged because DES support is intentionally unavailable",
+        "hardened_behavior": "same deterministic no-op result; no repair path",
+        "safe_default_rationale": "DES is deprecated and unsupported, so parity mutation is not meaningful",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; DES hardware and host crypto state are not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=des_setparity;mode=hardened;expected_class=deterministic-des-noop;actual=KEY_UNCHANGED=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ecb_crypt_des_unavailable_strict",
+      "function": "ecb_crypt",
+      "spec_section": "glibc DES ECB compatibility",
+      "inputs": {
+        "symbol": "ecb_crypt",
+        "expected_class": "deterministic-des-unavailable",
+        "strict_behavior": "returns DESERR_NOHWDEVICE because DES support is intentionally unavailable",
+        "hardened_behavior": "same deterministic DESERR_NOHWDEVICE result; no repair path",
+        "safe_default_rationale": "DES hardware is unavailable and deprecated, so the API fails closed",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; DES hardware and host crypto state are not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=ecb_crypt;mode=strict;expected_class=deterministic-des-unavailable;actual=RETURN=4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ecb_crypt_des_unavailable_hardened",
+      "function": "ecb_crypt",
+      "spec_section": "glibc DES ECB compatibility",
+      "inputs": {
+        "symbol": "ecb_crypt",
+        "expected_class": "deterministic-des-unavailable",
+        "strict_behavior": "returns DESERR_NOHWDEVICE because DES support is intentionally unavailable",
+        "hardened_behavior": "same deterministic DESERR_NOHWDEVICE result; no repair path",
+        "safe_default_rationale": "DES hardware is unavailable and deprecated, so the API fails closed",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; DES hardware and host crypto state are not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=ecb_crypt;mode=hardened;expected_class=deterministic-des-unavailable;actual=RETURN=4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "get_myaddress_loopback_safe_default_strict",
+      "function": "get_myaddress",
+      "spec_section": "glibc Sun RPC local address compatibility",
+      "inputs": {
+        "symbol": "get_myaddress",
+        "expected_class": "safe-default-loopback-sockaddr",
+        "strict_behavior": "fills sockaddr_in with loopback and zero port without enumerating interfaces",
+        "hardened_behavior": "same deterministic loopback result; no repair path",
+        "safe_default_rationale": "real interface enumeration would make fixtures depend on host network state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; host interface state is not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=get_myaddress;mode=strict;expected_class=safe-default-loopback-sockaddr;actual=SOCKADDR_LOOPBACK_DEFAULT=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "get_myaddress_loopback_safe_default_hardened",
+      "function": "get_myaddress",
+      "spec_section": "glibc Sun RPC local address compatibility",
+      "inputs": {
+        "symbol": "get_myaddress",
+        "expected_class": "safe-default-loopback-sockaddr",
+        "strict_behavior": "fills sockaddr_in with loopback and zero port without enumerating interfaces",
+        "hardened_behavior": "same deterministic loopback result; no repair path",
+        "safe_default_rationale": "real interface enumeration would make fixtures depend on host network state",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; host interface state is not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=get_myaddress;mode=hardened;expected_class=safe-default-loopback-sockaddr;actual=SOCKADDR_LOOPBACK_DEFAULT=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getnetname_local_classification_strict",
+      "function": "getnetname",
+      "spec_section": "glibc Sun RPC network identity compatibility",
+      "inputs": {
+        "symbol": "getnetname",
+        "expected_class": "safe-default-local-netname",
+        "strict_behavior": "returns a local UNIX-style netname but logs only the structural class",
+        "hardened_behavior": "same deterministic structural class; no repair path",
+        "safe_default_rationale": "the concrete effective uid is process-local and must not enter canonical fixture output",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local classification; host UID value is not logged",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=getnetname;mode=strict;expected_class=safe-default-local-netname;actual=RETURN=1_CSTR_CLASS=UNIX_LOCALHOST;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getnetname_local_classification_hardened",
+      "function": "getnetname",
+      "spec_section": "glibc Sun RPC network identity compatibility",
+      "inputs": {
+        "symbol": "getnetname",
+        "expected_class": "safe-default-local-netname",
+        "strict_behavior": "returns a local UNIX-style netname but logs only the structural class",
+        "hardened_behavior": "same deterministic structural class; no repair path",
+        "safe_default_rationale": "the concrete effective uid is process-local and must not enter canonical fixture output",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local classification; host UID value is not logged",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=getnetname;mode=hardened;expected_class=safe-default-local-netname;actual=RETURN=1_CSTR_CLASS=UNIX_LOCALHOST;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getpublickey_unsupported_publickey_strict",
+      "function": "getpublickey",
+      "spec_section": "glibc Sun RPC publickey database compatibility",
+      "inputs": {
+        "symbol": "getpublickey",
+        "expected_class": "unsupported-publickey-database",
+        "strict_behavior": "returns 0 and leaves the caller buffer unchanged because publickey database lookup is unsupported",
+        "hardened_behavior": "same deterministic failure result; no repair path",
+        "safe_default_rationale": "publickey database lookups would otherwise depend on host NSS/RPC configuration",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; host publickey database state is not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=getpublickey;mode=strict;expected_class=unsupported-publickey-database;actual=RETURN=0_BUFFER_UNCHANGED=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getpublickey_unsupported_publickey_hardened",
+      "function": "getpublickey",
+      "spec_section": "glibc Sun RPC publickey database compatibility",
+      "inputs": {
+        "symbol": "getpublickey",
+        "expected_class": "unsupported-publickey-database",
+        "strict_behavior": "returns 0 and leaves the caller buffer unchanged because publickey database lookup is unsupported",
+        "hardened_behavior": "same deterministic failure result; no repair path",
+        "safe_default_rationale": "publickey database lookups would otherwise depend on host NSS/RPC configuration",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; host publickey database state is not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=getpublickey;mode=hardened;expected_class=unsupported-publickey-database;actual=RETURN=0_BUFFER_UNCHANGED=1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "getrpcport_unsupported_portmapper_strict",
+      "function": "getrpcport",
+      "spec_section": "glibc Sun RPC portmapper compatibility",
+      "inputs": {
+        "symbol": "getrpcport",
+        "expected_class": "unsupported-portmapper-lookup",
+        "strict_behavior": "returns 0 because native portmapper lookups are unsupported",
+        "hardened_behavior": "same deterministic not-found result; no repair path",
+        "safe_default_rationale": "portmapper lookups would otherwise perform ambient network RPC",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; portmapper and host resolver state are not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=getrpcport;mode=strict;expected_class=unsupported-portmapper-lookup;actual=RETURN=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "getrpcport_unsupported_portmapper_hardened",
+      "function": "getrpcport",
+      "spec_section": "glibc Sun RPC portmapper compatibility",
+      "inputs": {
+        "symbol": "getrpcport",
+        "expected_class": "unsupported-portmapper-lookup",
+        "strict_behavior": "returns 0 because native portmapper lookups are unsupported",
+        "hardened_behavior": "same deterministic not-found result; no repair path",
+        "safe_default_rationale": "portmapper lookups would otherwise perform ambient network RPC",
+        "oracle_kind": "native_safe_default",
+        "divergence_policy": "intentional local contract; portmapper and host resolver state are not consulted",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=getrpcport;mode=hardened;expected_class=unsupported-portmapper-lookup;actual=RETURN=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
