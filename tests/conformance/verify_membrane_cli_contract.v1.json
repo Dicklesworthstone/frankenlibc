@@ -1,0 +1,100 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "verify-membrane-cli-contract",
+  "bead": "bd-ofe1b",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "9b1290a4",
+  "purpose": "Pin the harness binary 'verify-membrane' subcommand which exposes the healing-oracle harness pipeline. The subcommand runs HealingOracleSuite::canonical() through build_healing_oracle_report() at each requested SafetyLevel mode and writes a deterministic HealingOracleReport JSON to --output plus a paired JSONL trace log to --log. The --fail-on-mismatch flag promotes any failing oracle case into a non-zero exit so this can gate CI.",
+  "subcommand_name": "verify-membrane",
+  "binary_target": "harness",
+  "required_flags": [],
+  "optional_flags": [
+    "--mode",
+    "--output",
+    "--log",
+    "--campaign",
+    "--fail-on-mismatch"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::healing_oracle::HealingOracleMode::from_str_loose",
+    "frankenlibc_harness::healing_oracle::HealingOracleSuite::canonical",
+    "frankenlibc_harness::healing_oracle::build_healing_oracle_report"
+  ],
+  "io_pattern": "json_report_file_plus_jsonl_log_file",
+  "output_file_contract": {
+    "format": "json",
+    "required_top_level_fields": [
+      "schema_version",
+      "bead",
+      "generated_at_utc",
+      "campaign",
+      "mode",
+      "summary",
+      "cases"
+    ],
+    "summary_fields": [
+      "total_cases",
+      "passed",
+      "failed",
+      "detected",
+      "repaired",
+      "posix_valid",
+      "evidence_logged",
+      "pass_rate_percent"
+    ],
+    "case_row_fields": [
+      "trace_id",
+      "case_id",
+      "api_family",
+      "symbol",
+      "mode",
+      "condition",
+      "expected_action",
+      "observed_action",
+      "detected",
+      "repaired",
+      "posix_valid",
+      "evidence_logged",
+      "status"
+    ]
+  },
+  "mode_enum": [
+    "strict",
+    "hardened",
+    "both"
+  ],
+  "default_mode": "both",
+  "default_output_path": "target/conformance/healing_oracle.current.v1.json",
+  "default_log_path": "target/conformance/healing_oracle.log.jsonl",
+  "default_campaign": "healing_oracle",
+  "policy": {
+    "must_write_json_report_file": true,
+    "must_write_jsonl_log_file": true,
+    "report_mode_field_reflects_cli_mode": true,
+    "report_campaign_field_reflects_cli_campaign": true,
+    "summary_total_cases_equals_rows_length_per_active_mode": true,
+    "mode_both_runs_strict_and_hardened_passes": true,
+    "fail_on_mismatch_promotes_any_case_failure_to_nonzero_exit": true,
+    "default_invocation_succeeds_with_zero_failed_cases": true,
+    "unknown_mode_rejected_with_nonzero_exit": true,
+    "deterministic_given_same_mode_campaign": true,
+    "all_cases_pass_under_canonical_suite": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_output_file",
+    "missing_required_log_file",
+    "schema_version_drift",
+    "mode_field_mismatch",
+    "campaign_field_mismatch",
+    "summary_total_cases_mismatch",
+    "fail_on_mismatch_swallowed_failure",
+    "unknown_mode_accepted",
+    "determinism_drift_certified"
+  ],
+  "summary": {
+    "bead": "bd-ofe1b",
+    "subcommand": "verify-membrane",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
