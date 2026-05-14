@@ -28,13 +28,23 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "failure_signature",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    workspace_root
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "workspace root has no repository parent: {}",
+                workspace_root.display()
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,12 +102,12 @@ struct DifferentialExecution {
     note: Option<String>,
 }
 
-fn load_fixture() -> FixtureFile {
-    let path = repo_root().join("tests/conformance/fixtures/rpc_legacy_network.json");
+fn load_fixture() -> Result<FixtureFile, String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/rpc_legacy_network.json");
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -152,11 +162,11 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn rpc_legacy_network_fixture_exists_and_names_campaign() {
-    let path = repo_root().join("tests/conformance/fixtures/rpc_legacy_network.json");
+fn rpc_legacy_network_fixture_exists_and_names_campaign() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/rpc_legacy_network.json");
     assert!(path.exists(), "rpc_legacy_network.json fixture must exist");
 
-    let fixture = load_fixture();
+    let fixture = load_fixture()?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "rpc/legacy-network");
     assert_eq!(fixture.campaign.bead, "bd-mu4lw.1");
@@ -170,11 +180,12 @@ fn rpc_legacy_network_fixture_exists_and_names_campaign() {
         fixture.description.contains("without network access"),
         "fixture description must forbid ambient network dependence"
     );
+    Ok(())
 }
 
 #[test]
-fn rpc_legacy_network_fixture_covers_first_wave_symbols_in_both_modes() {
-    let fixture = load_fixture();
+fn rpc_legacy_network_fixture_covers_first_wave_symbols_in_both_modes() -> Result<(), String> {
+    let fixture = load_fixture()?;
     let expected: BTreeSet<_> = FIRST_WAVE_SYMBOLS.iter().copied().collect();
     let declared: BTreeSet<_> = fixture
         .campaign
@@ -195,18 +206,19 @@ fn rpc_legacy_network_fixture_covers_first_wave_symbols_in_both_modes() {
     for symbol in FIRST_WAVE_SYMBOLS {
         let modes = modes_by_symbol
             .get(symbol)
-            .unwrap_or_else(|| panic!("missing fixture cases for {symbol}"));
+            .ok_or_else(|| format!("missing fixture cases for {symbol}"))?;
         assert!(modes.contains("strict"), "missing strict case for {symbol}");
         assert!(
             modes.contains("hardened"),
             "missing hardened case for {symbol}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn rpc_legacy_network_cases_bind_expected_behavior_and_log_fields() {
-    let fixture = load_fixture();
+fn rpc_legacy_network_cases_bind_expected_behavior_and_log_fields() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert_eq!(
         fixture.structured_log_fields, REQUIRED_LOG_FIELDS,
         "structured log field contract drifted"
@@ -226,7 +238,7 @@ fn rpc_legacy_network_cases_bind_expected_behavior_and_log_fields() {
         let inputs = case
             .inputs
             .as_object()
-            .unwrap_or_else(|| panic!("case {} inputs must be an object", case.name));
+            .ok_or_else(|| format!("case {} inputs must be an object", case.name))?;
         for field in [
             "symbol",
             "expected_class",
@@ -260,20 +272,21 @@ fn rpc_legacy_network_cases_bind_expected_behavior_and_log_fields() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn rpc_legacy_network_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture();
+fn rpc_legacy_network_fixture_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture()?;
 
     for case in &fixture.cases {
-        let result = execute_case_via_harness(&case.function, &case.inputs, &case.mode)
-            .unwrap_or_else(|err| {
-                panic!(
+        let result =
+            execute_case_via_harness(&case.function, &case.inputs, &case.mode).map_err(|err| {
+                format!(
                     "rpc_legacy_network case {} ({}) failed via harness: {err}",
                     case.name, case.mode
                 )
-            });
+            })?;
         assert!(
             result.host_parity,
             "case {} lost deterministic fixture parity: host_output={}",
@@ -294,4 +307,5 @@ fn rpc_legacy_network_fixture_executes_via_isolated_harness() {
             case.name
         );
     }
+    Ok(())
 }
