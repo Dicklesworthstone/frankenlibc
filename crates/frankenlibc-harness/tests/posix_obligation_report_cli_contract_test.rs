@@ -163,7 +163,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "must_keep_artifact_refs_repo_relative",
         "must_keep_obligations_sorted",
     ] {
-        require(json_bool(policy, key)?, key)?;
+        require(json_bool(policy, key)?, format!("{key} must be true"))?;
     }
     Ok(())
 }
