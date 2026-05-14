@@ -1,0 +1,67 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "traceability-cli-contract",
+  "bead": "bd-2tq.4",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "1b542c9ab292ba34c11d56d01f5b7364445a7438",
+  "purpose": "Pin the harness binary `traceability` subcommand that transforms the bd-2tq.4 POSIX obligation report inputs into paired markdown and JSON TraceabilityMatrix artifacts. The command must read support_matrix.json, fixture JSON, conformance_matrix.v1.json, and c_fixture_spec.json; build PosixObligationMatrixReport; convert it with TraceabilityMatrix::from_posix_obligation_report; create output parent directories; write markdown and pretty JSON; keep artifact references repo-relative; and fail closed for missing required inputs.",
+  "subcommand_name": "traceability",
+  "binary_target": "harness",
+  "required_flags": [
+    "--output-md",
+    "--output-json"
+  ],
+  "default_inputs": {
+    "support_matrix": "support_matrix.json",
+    "fixture": "tests/conformance/fixtures",
+    "conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+    "c_fixture_spec": "tests/conformance/c_fixture_spec.json"
+  },
+  "io_pattern": "support_matrix_plus_fixture_catalog_plus_conformance_matrix_plus_c_fixture_spec_to_markdown_and_json_traceability_matrix",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::report::PosixObligationMatrixReport::from_paths",
+    "frankenlibc_harness::traceability::TraceabilityMatrix::from_posix_obligation_report",
+    "frankenlibc_harness::traceability::TraceabilityMatrix::to_markdown",
+    "frankenlibc_harness::traceability::TraceabilityMatrix::to_json"
+  ],
+  "output_contract": {
+    "markdown_heading": "# Traceability Matrix",
+    "json_top_level_entries_field": "entries",
+    "required_entry_fields": [
+      "test_id",
+      "symbol",
+      "spec_section",
+      "category",
+      "description",
+      "coverage_state",
+      "artifact_refs"
+    ]
+  },
+  "policy": {
+    "must_create_parent_directories_for_both_outputs": true,
+    "must_write_markdown_traceability_matrix": true,
+    "must_write_pretty_json_traceability_matrix": true,
+    "must_preserve_bd_2tq_4_source_report_bead": true,
+    "must_reject_missing_support_matrix_with_nonzero_exit": true,
+    "must_reject_unreadable_fixture_dir_with_nonzero_exit": true,
+    "must_reject_invalid_conformance_matrix_with_nonzero_exit": true,
+    "must_reject_missing_c_fixture_spec_with_nonzero_exit": true,
+    "must_keep_artifact_refs_repo_relative": true,
+    "must_emit_non_empty_entries_for_canonical_inputs": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_markdown_output_accepted",
+    "missing_json_output_accepted",
+    "empty_traceability_entries",
+    "absolute_artifact_ref",
+    "missing_required_input_accepted",
+    "wrong_source_obligation_bead",
+    "traceability_command_unpinned"
+  ],
+  "summary": {
+    "bead": "bd-2tq.4",
+    "subcommand": "traceability",
+    "report_only": true,
+    "claim_status": "code_only_pending_tracker_closeout"
+  }
+}
