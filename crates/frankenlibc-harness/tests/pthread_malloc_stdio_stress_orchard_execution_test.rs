@@ -442,10 +442,7 @@ fn runner_passes_and_emits_current_smoke_and_normal_jsonl_evidence() -> TestResu
         let entry: Value = serde_json::from_str(line)
             .map_err(|_err| test_error("structured log row should parse"))?;
         for field_name in REQUIRED_LOG_FIELDS {
-            ensure(
-                entry.get(*field_name).is_some(),
-                "structured log row missing required field",
-            )?;
+            field(&entry, field_name, "structured log row")?;
         }
         let scenario = required_scenario_label(string_field(&entry, "scenario_id", "entry")?)?;
         let mode = required_mode_label(string_field(&entry, "runtime_mode", "entry")?)?;
