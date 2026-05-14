@@ -499,21 +499,46 @@ pub fn parse_proc_net_if_inet6_has_ipv6(content: &[u8]) -> bool {
         let mut fields = line
             .split(|&b| b == b' ' || b == b'\t')
             .filter(|field| !field.is_empty());
-        let Some(_addr) = fields.next() else {
+        let Some(addr) = fields.next() else {
             continue;
         };
-        let _ifindex = fields.next();
-        let _prefix_len = fields.next();
-        let _scope = fields.next();
-        let _flags = fields.next();
+        let Some(ifindex) = fields.next() else {
+            continue;
+        };
+        let Some(prefix_len) = fields.next() else {
+            continue;
+        };
+        let Some(scope) = fields.next() else {
+            continue;
+        };
+        let Some(flags) = fields.next() else {
+            continue;
+        };
         let Some(iface) = fields.next() else {
             continue;
         };
+        if fields.next().is_some()
+            || !is_ascii_hex_exact_len(addr, 32)
+            || !is_ascii_hex_nonempty(ifindex)
+            || !is_ascii_hex_nonempty(prefix_len)
+            || !is_ascii_hex_nonempty(scope)
+            || !is_ascii_hex_nonempty(flags)
+        {
+            continue;
+        }
         if iface != b"lo" {
             return true;
         }
     }
     false
+}
+
+fn is_ascii_hex_exact_len(field: &[u8], len: usize) -> bool {
+    field.len() == len && is_ascii_hex_nonempty(field)
+}
+
+fn is_ascii_hex_nonempty(field: &[u8]) -> bool {
+    !field.is_empty() && field.iter().all(u8::is_ascii_hexdigit)
 }
 
 /// Derive `AI_ADDRCONFIG` state from Linux procfs snapshots.
@@ -1004,6 +1029,21 @@ mod tests {
 
         let non_loopback = b"fe800000000000000000000000000001 02 40 20 80   eth0\n";
         assert!(parse_proc_net_if_inet6_has_ipv6(non_loopback));
+    }
+
+    #[test]
+    fn parse_proc_net_if_inet6_rejects_malformed_rows() {
+        for row in [
+            b"fe80000000000000000000000000001 02 40 20 80 eth0\n".as_slice(),
+            b"fe80000000000000000000000000000z 02 40 20 80 eth0\n",
+            b"fe800000000000000000000000000001 +02 40 20 80 eth0\n",
+            b"fe800000000000000000000000000001 02 -40 20 80 eth0\n",
+            b"fe800000000000000000000000000001 02 40 +20 80 eth0\n",
+            b"fe800000000000000000000000000001 02 40 20 -80 eth0\n",
+            b"fe800000000000000000000000000001 02 40 20 80 eth0 extra\n",
+        ] {
+            assert!(!parse_proc_net_if_inet6_has_ipv6(row));
+        }
     }
 
     #[test]

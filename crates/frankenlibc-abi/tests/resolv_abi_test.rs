@@ -876,6 +876,29 @@ fn getaddrinfo_ai_addrconfig_ignores_signed_ipv4_route_flags() {
 }
 
 #[test]
+fn getaddrinfo_ai_addrconfig_ignores_malformed_ipv6_addrconfig_rows() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"2001:db8::10 v6-only\n"),
+        None,
+        Some(b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nlo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n"),
+        Some(b"fe80000000000000000000000000000z 02 40 20 80 eth0\n"),
+        |_| {
+            let node = CString::new("v6-only").unwrap();
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, libc::EAI_NONAME);
+            assert!(res.is_null());
+        },
+    );
+}
+
+#[test]
 fn getaddrinfo_ai_addrconfig_numeric_ipv6_bypasses_filter() {
     with_resolver_backends_and_addrconfig(
         None,
