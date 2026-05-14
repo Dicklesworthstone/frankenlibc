@@ -715,6 +715,43 @@ fn getaddrinfo_numeric_service_matches_glibc_wrapping() {
 }
 
 #[test]
+fn getaddrinfo_ai_numericserv_rejects_service_names() {
+    with_resolver_backends(None, Some(b"http 80/tcp\n"), |_| {
+        let cases = [
+            ("80", 0, Some(80)),
+            ("http", libc::EAI_NONAME, None),
+            ("80 ", libc::EAI_NONAME, None),
+            ("2147483648", libc::EAI_SERVICE, None),
+            ("-1", libc::EAI_SERVICE, None),
+        ];
+
+        for (service_text, expected_rc, expected_port) in cases {
+            let node = CString::new("127.0.0.1").unwrap();
+            let service = CString::new(service_text).unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            hints.ai_flags = libc::AI_NUMERICSERV;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, expected_rc, "service {service_text:?}");
+
+            if let Some(port) = expected_port {
+                assert!(!res.is_null());
+                let sin = unsafe { &*((*res).ai_addr as *const libc::sockaddr_in) };
+                assert_eq!(u16::from_be(sin.sin_port), port);
+                unsafe { resolv_abi::freeaddrinfo(res) };
+            } else {
+                assert!(res.is_null());
+            }
+        }
+    });
+}
+
+#[test]
 fn getaddrinfo_numeric_ipv6_resolves() {
     let node = CString::new("::1").unwrap();
     let service = CString::new("443").unwrap();

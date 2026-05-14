@@ -428,17 +428,38 @@ fn lookup_service_port(service: &[u8], hints: Option<&libc::addrinfo>) -> Option
     frankenlibc_core::resolv::lookup_service(&content, service, service_protocol_filter(hints))
 }
 
-fn parse_numeric_service_port(text: &str) -> Option<u16> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NumericService {
+    Port(u16),
+    InvalidNumeric,
+    NotNumeric,
+}
+
+fn parse_numeric_service_port(text: &str) -> NumericService {
     // glibc parses numeric services through a signed-long path, then
     // rejects values whose 32-bit signed result is negative. The final
     // sockaddr port still uses the low 16 bits.
     let text = text.trim_start_matches(|c: char| c.is_ascii_whitespace());
-    let value = text.parse::<i64>().ok()?;
+    let bytes = text.as_bytes();
+    let Some(first) = bytes.first().copied() else {
+        return NumericService::NotNumeric;
+    };
+    let digits_start = if first == b'+' || first == b'-' { 1 } else { 0 };
+    if bytes.get(digits_start).is_none_or(|b| !b.is_ascii_digit()) {
+        return NumericService::NotNumeric;
+    }
+    if !bytes[digits_start..].iter().all(u8::is_ascii_digit) {
+        return NumericService::NotNumeric;
+    }
+
+    let Ok(value) = text.parse::<i64>() else {
+        return NumericService::InvalidNumeric;
+    };
     let narrowed = value as i32;
     if narrowed < 0 {
-        return None;
+        return NumericService::InvalidNumeric;
     }
-    Some(narrowed as u16)
+    NumericService::Port(narrowed as u16)
 }
 
 fn parse_port(
@@ -450,10 +471,18 @@ fn parse_port(
         return Ok(0);
     };
 
-    if let Ok(text) = service.to_str()
-        && let Some(port) = parse_numeric_service_port(text)
-    {
-        return Ok(port);
+    if let Ok(text) = service.to_str() {
+        match parse_numeric_service_port(text) {
+            NumericService::Port(port) => return Ok(port),
+            NumericService::InvalidNumeric => return Err(libc::EAI_SERVICE),
+            NumericService::NotNumeric => {}
+        }
+    } else if hints.is_some_and(|h| h.ai_flags & libc::AI_NUMERICSERV != 0) {
+        return Err(libc::EAI_NONAME);
+    }
+
+    if hints.is_some_and(|h| h.ai_flags & libc::AI_NUMERICSERV != 0) {
+        return Err(libc::EAI_NONAME);
     }
 
     if let Some(port) = lookup_service_port(service.to_bytes(), hints) {
