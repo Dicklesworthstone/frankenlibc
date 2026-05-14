@@ -130,13 +130,25 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "env_override_var_honored_in_detect_mode",
-        "validate_mode_fails_closed_on_malformed_input_without_panicking",
-        "detect_mode_record_source_must_be_detected",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "env_override_var_honored_in_detect_mode",
+            "env_override_var_honored_in_detect_mode must be true",
+        ),
+        (
+            "validate_mode_fails_closed_on_malformed_input_without_panicking",
+            "validate_mode_fails_closed_on_malformed_input_without_panicking must be true",
+        ),
+        (
+            "detect_mode_record_source_must_be_detected",
+            "detect_mode_record_source_must_be_detected must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
