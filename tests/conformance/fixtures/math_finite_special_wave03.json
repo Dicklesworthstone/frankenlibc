@@ -1,0 +1,382 @@
+{
+  "version": "v1",
+  "family": "math_finite_special_wave03",
+  "captured_at": "2026-05-14T00:00:00Z",
+  "description": "Math finite/special fixture wave-03 classifies atan/asin finite aliases and complex base-10 logarithm outputs with structured logs, without recording fenv state, raw errno storage, host long-double ABI values, f128 ABI values, host complex ABI return registers, addresses, timestamps, stderr, or process-global counters.",
+  "spec_reference": "C11 7.12 math functions and glibc finite-alias compatibility for __asinl_finite, __atan2_finite, __atan2f128_finite, __atan2f_finite, __atan2l_finite, __atanh_finite, __atanhf128_finite, __atanhf_finite, __atanhl_finite, __clog10, __clog10f, __clog10l",
+  "campaign": {
+    "bead": "bd-gmbqy.8",
+    "campaign_id": "fcq-math-special",
+    "wave_id": "wave-03-math-finite-special",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim",
+    "first_wave_symbols": [
+      "__asinl_finite",
+      "__atan2_finite",
+      "__atan2f128_finite",
+      "__atan2f_finite",
+      "__atan2l_finite",
+      "__atanh_finite",
+      "__atanhf128_finite",
+      "__atanhf_finite",
+      "__atanhl_finite",
+      "__clog10",
+      "__clog10f",
+      "__clog10l"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "asinl_finite_mapped_positive_strict",
+      "function": "__asinl_finite",
+      "spec_section": "long-double asin finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 0.5,
+        "expected": "FINITE_POSITIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__asinl_finite;mode=strict;expected=FINITE_POSITIVE;actual=FINITE_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "No host long-double ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "asinl_finite_mapped_positive_hardened",
+      "function": "__asinl_finite",
+      "spec_section": "long-double asin finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 0.5,
+        "expected": "FINITE_POSITIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__asinl_finite;mode=hardened;expected=FINITE_POSITIVE;actual=FINITE_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "No host long-double ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "atan2_finite_quadrant_one_strict",
+      "function": "__atan2_finite",
+      "spec_section": "C11 7.12.4.4 atan2 finite-alias quadrant-I bucket",
+      "inputs": {
+        "y": 1.0,
+        "x": 1.0,
+        "expected": "FINITE_POSITIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atan2_finite;mode=strict;expected=FINITE_POSITIVE;actual=FINITE_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "atan2_finite_quadrant_one_hardened",
+      "function": "__atan2_finite",
+      "spec_section": "C11 7.12.4.4 atan2 finite-alias quadrant-I bucket",
+      "inputs": {
+        "y": 1.0,
+        "x": 1.0,
+        "expected": "FINITE_POSITIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atan2_finite;mode=hardened;expected=FINITE_POSITIVE;actual=FINITE_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "atan2f128_finite_mapped_quadrant_two_strict",
+      "function": "__atan2f128_finite",
+      "spec_section": "glibc __float128 atan2 finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "y": 1.0,
+        "x": -1.0,
+        "expected": "FINITE_POSITIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atan2f128_finite;mode=strict;expected=FINITE_POSITIVE;actual=FINITE_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "No host __float128 ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "atan2f128_finite_mapped_quadrant_two_hardened",
+      "function": "__atan2f128_finite",
+      "spec_section": "glibc __float128 atan2 finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "y": 1.0,
+        "x": -1.0,
+        "expected": "FINITE_POSITIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atan2f128_finite;mode=hardened;expected=FINITE_POSITIVE;actual=FINITE_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "No host __float128 ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "atan2f_finite_quadrant_four_strict",
+      "function": "__atan2f_finite",
+      "spec_section": "C11 7.12.4.4 atan2f finite-alias quadrant-IV bucket",
+      "inputs": {
+        "y": -1.0,
+        "x": 1.0,
+        "expected": "FINITE_NEGATIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atan2f_finite;mode=strict;expected=FINITE_NEGATIVE;actual=FINITE_NEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "atan2f_finite_quadrant_four_hardened",
+      "function": "__atan2f_finite",
+      "spec_section": "C11 7.12.4.4 atan2f finite-alias quadrant-IV bucket",
+      "inputs": {
+        "y": -1.0,
+        "x": 1.0,
+        "expected": "FINITE_NEGATIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atan2f_finite;mode=hardened;expected=FINITE_NEGATIVE;actual=FINITE_NEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "atan2l_finite_mapped_quadrant_three_strict",
+      "function": "__atan2l_finite",
+      "spec_section": "long-double atan2 finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "y": -1.0,
+        "x": -1.0,
+        "expected": "FINITE_NEGATIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atan2l_finite;mode=strict;expected=FINITE_NEGATIVE;actual=FINITE_NEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "No host long-double ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "atan2l_finite_mapped_quadrant_three_hardened",
+      "function": "__atan2l_finite",
+      "spec_section": "long-double atan2 finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "y": -1.0,
+        "x": -1.0,
+        "expected": "FINITE_NEGATIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atan2l_finite;mode=hardened;expected=FINITE_NEGATIVE;actual=FINITE_NEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "No host long-double ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "atanh_finite_domain_strict",
+      "function": "__atanh_finite",
+      "spec_section": "C11 7.12.5.3 atanh finite-alias domain bucket",
+      "inputs": {
+        "x": 2.0,
+        "expected": "DOMAIN_NAN",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atanh_finite;mode=strict;expected=DOMAIN_NAN;actual=DOMAIN_NAN;failure_signature=none",
+      "expected_errno": 33,
+      "mode": "strict",
+      "note": "Domain bucket: finite input outside (-1, 1)."
+    },
+    {
+      "name": "atanh_finite_domain_hardened",
+      "function": "__atanh_finite",
+      "spec_section": "C11 7.12.5.3 atanh finite-alias domain bucket",
+      "inputs": {
+        "x": 2.0,
+        "expected": "DOMAIN_NAN",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atanh_finite;mode=hardened;expected=DOMAIN_NAN;actual=DOMAIN_NAN;failure_signature=none",
+      "expected_errno": 33,
+      "mode": "hardened",
+      "note": "Domain bucket: finite input outside (-1, 1)."
+    },
+    {
+      "name": "atanhf128_finite_mapped_positive_strict",
+      "function": "__atanhf128_finite",
+      "spec_section": "glibc __float128 atanh finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 0.5,
+        "expected": "FINITE_POSITIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atanhf128_finite;mode=strict;expected=FINITE_POSITIVE;actual=FINITE_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "No host __float128 ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "atanhf128_finite_mapped_positive_hardened",
+      "function": "__atanhf128_finite",
+      "spec_section": "glibc __float128 atanh finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 0.5,
+        "expected": "FINITE_POSITIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atanhf128_finite;mode=hardened;expected=FINITE_POSITIVE;actual=FINITE_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "No host __float128 ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "atanhf_finite_negative_strict",
+      "function": "__atanhf_finite",
+      "spec_section": "C11 7.12.5.3 atanhf finite-alias negative bucket",
+      "inputs": {
+        "x": -0.5,
+        "expected": "FINITE_NEGATIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atanhf_finite;mode=strict;expected=FINITE_NEGATIVE;actual=FINITE_NEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "atanhf_finite_negative_hardened",
+      "function": "__atanhf_finite",
+      "spec_section": "C11 7.12.5.3 atanhf finite-alias negative bucket",
+      "inputs": {
+        "x": -0.5,
+        "expected": "FINITE_NEGATIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atanhf_finite;mode=hardened;expected=FINITE_NEGATIVE;actual=FINITE_NEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "atanhl_finite_mapped_domain_strict",
+      "function": "__atanhl_finite",
+      "spec_section": "long-double atanh finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 2.0,
+        "expected": "DOMAIN_NAN",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atanhl_finite;mode=strict;expected=DOMAIN_NAN;actual=DOMAIN_NAN;failure_signature=none",
+      "expected_errno": 33,
+      "mode": "strict",
+      "note": "No host long-double ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "atanhl_finite_mapped_domain_hardened",
+      "function": "__atanhl_finite",
+      "spec_section": "long-double atanh finite alias, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "x": 2.0,
+        "expected": "DOMAIN_NAN",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__atanhl_finite;mode=hardened;expected=DOMAIN_NAN;actual=DOMAIN_NAN;failure_signature=none",
+      "expected_errno": 33,
+      "mode": "hardened",
+      "note": "No host long-double ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "clog10_positive_real_strict",
+      "function": "__clog10",
+      "spec_section": "C11 complex base-10 logarithm positive real axis class",
+      "inputs": {
+        "re": 10.0,
+        "im": 0.0,
+        "expected": "COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE_ZERO",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__clog10;mode=strict;expected=COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE_ZERO;actual=COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE_ZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "No host complex ABI claim; this fixture covers deterministic output class only."
+    },
+    {
+      "name": "clog10_positive_real_hardened",
+      "function": "__clog10",
+      "spec_section": "C11 complex base-10 logarithm positive real axis class",
+      "inputs": {
+        "re": 10.0,
+        "im": 0.0,
+        "expected": "COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE_ZERO",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__clog10;mode=hardened;expected=COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE_ZERO;actual=COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE_ZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "No host complex ABI claim; this fixture covers deterministic output class only."
+    },
+    {
+      "name": "clog10f_quadrant_one_strict",
+      "function": "__clog10f",
+      "spec_section": "C11 complex float base-10 logarithm quadrant-I class",
+      "inputs": {
+        "re": 1.0,
+        "im": 1.0,
+        "expected": "COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__clog10f;mode=strict;expected=COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE;actual=COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "No host complex ABI claim; this fixture covers deterministic output class only."
+    },
+    {
+      "name": "clog10f_quadrant_one_hardened",
+      "function": "__clog10f",
+      "spec_section": "C11 complex float base-10 logarithm quadrant-I class",
+      "inputs": {
+        "re": 1.0,
+        "im": 1.0,
+        "expected": "COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__clog10f;mode=hardened;expected=COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE;actual=COMPLEX_FINITE_REAL_POSITIVE_IM_POSITIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "No host complex ABI claim; this fixture covers deterministic output class only."
+    },
+    {
+      "name": "clog10l_quadrant_four_mapped_strict",
+      "function": "__clog10l",
+      "spec_section": "long-double complex base-10 logarithm quadrant-IV class, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "re": 0.1,
+        "im": -1.0,
+        "expected": "COMPLEX_FINITE_REAL_POSITIVE_IM_NEGATIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__clog10l;mode=strict;expected=COMPLEX_FINITE_REAL_POSITIVE_IM_NEGATIVE;actual=COMPLEX_FINITE_REAL_POSITIVE_IM_NEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "No host long-double complex ABI claim; this fixture covers the documented f64 mapping."
+    },
+    {
+      "name": "clog10l_quadrant_four_mapped_hardened",
+      "function": "__clog10l",
+      "spec_section": "long-double complex base-10 logarithm quadrant-IV class, covered as FrankenLibC f64-mapped compatibility",
+      "inputs": {
+        "re": 0.1,
+        "im": -1.0,
+        "expected": "COMPLEX_FINITE_REAL_POSITIVE_IM_NEGATIVE",
+        "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
+      },
+      "expected_output": "symbol=__clog10l;mode=hardened;expected=COMPLEX_FINITE_REAL_POSITIVE_IM_NEGATIVE;actual=COMPLEX_FINITE_REAL_POSITIVE_IM_NEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "No host long-double complex ABI claim; this fixture covers the documented f64 mapping."
+    }
+  ]
+}

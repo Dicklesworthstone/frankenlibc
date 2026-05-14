@@ -23,6 +23,9 @@ unsafe extern "C" {
     fn acoshf(x: f32) -> f32;
     fn asinf(x: f32) -> f32;
     fn exp(x: f64) -> f64;
+    fn atanh(x: f64) -> f64;
+    fn atanhf(x: f32) -> f32;
+    fn atan2f(y: f32, x: f32) -> f32;
     fn log(x: f64) -> f64;
     fn log10(x: f64) -> f64;
     fn pow(x: f64, y: f64) -> f64;
@@ -963,6 +966,11 @@ pub fn execute_fixture_case(
         }
         "__acosl_finite" | "__acoshl_finite" | "__acosf128_finite" | "__acoshf128_finite"
         | "__asinf128_finite" => execute_math_finite_alias_mapped_f64_case(function, inputs, mode),
+        "__asinl_finite" | "__atan2_finite" | "__atan2f128_finite" | "__atan2f_finite"
+        | "__atan2l_finite" | "__atanh_finite" | "__atanhf128_finite" | "__atanhf_finite"
+        | "__atanhl_finite" | "__clog10" | "__clog10f" | "__clog10l" => {
+            execute_math_finite_special_wave03_case(function, inputs, mode)
+        }
         // inet
         "htons" => execute_inet_byteorder16_case("htons", inputs, mode),
         "ntohs" => execute_inet_byteorder16_case("ntohs", inputs, mode),
@@ -13126,6 +13134,249 @@ fn execute_math_finite_alias_mapped_f64_case(
         host_parity: true,
         note: Some(note.to_string()),
     })
+}
+
+fn execute_math_finite_special_wave03_case(
+    func: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let expected = parse_string(inputs, "expected")?;
+    let (actual, host_actual, note) = math_finite_special_wave03_classes(func, inputs)?;
+    let impl_output = math_finite_special_wave03_log(func, mode, &expected, &actual);
+    let host_output = host_actual
+        .as_deref()
+        .map(|host| math_finite_special_wave03_log(func, mode, &expected, host))
+        .unwrap_or_else(|| String::from("SKIP"));
+    let host_parity = host_actual.as_deref().is_none_or(|host| host == actual);
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note,
+    })
+}
+
+fn math_finite_special_wave03_log(
+    symbol: &str,
+    mode: &str,
+    expected: &str,
+    actual: &str,
+) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn math_finite_special_wave03_classes(
+    func: &str,
+    inputs: &serde_json::Value,
+) -> Result<(String, Option<String>, Option<String>), String> {
+    match func {
+        "__atanh_finite" => {
+            let x = parse_f64(inputs, "x")?;
+            // SAFETY: finite alias and libm atanh take the fixture value by value.
+            let actual = classify_math_finite_alias_f64(unsafe {
+                frankenlibc_abi::math_abi::__atanh_finite(x)
+            });
+            // SAFETY: host libm atanh takes the fixture value by value.
+            let host_actual = classify_math_finite_alias_f64(unsafe { atanh(x) });
+            Ok((actual, Some(host_actual), None))
+        }
+        "__atan2_finite" => {
+            let (y, x) = parse_math_wave03_xy_f64(inputs)?;
+            // SAFETY: finite alias and libm atan2 take fixture values by value.
+            let actual = classify_math_finite_alias_f64(unsafe {
+                frankenlibc_abi::math_abi::__atan2_finite(y, x)
+            });
+            // SAFETY: host libm atan2 takes fixture values by value.
+            let host_actual = classify_math_finite_alias_f64(unsafe { atan2(y, x) });
+            Ok((actual, Some(host_actual), None))
+        }
+        "__atanhf_finite" => {
+            let x = parse_f32(inputs, "x")?;
+            // SAFETY: finite alias and libm atanhf take the fixture value by value.
+            let actual = classify_math_finite_alias_f32(unsafe {
+                frankenlibc_abi::math_abi::__atanhf_finite(x)
+            });
+            // SAFETY: host libm atanhf takes the fixture value by value.
+            let host_actual = classify_math_finite_alias_f32(unsafe { atanhf(x) });
+            Ok((actual, Some(host_actual), None))
+        }
+        "__atan2f_finite" => {
+            let (y, x) = parse_math_wave03_xy_f32(inputs)?;
+            // SAFETY: finite alias and libm atan2f take fixture values by value.
+            let actual = classify_math_finite_alias_f32(unsafe {
+                frankenlibc_abi::math_abi::__atan2f_finite(y, x)
+            });
+            // SAFETY: host libm atan2f takes fixture values by value.
+            let host_actual = classify_math_finite_alias_f32(unsafe { atan2f(y, x) });
+            Ok((actual, Some(host_actual), None))
+        }
+        "__asinl_finite" | "__atanhf128_finite" | "__atanhl_finite" => {
+            let x = parse_f64(inputs, "x")?;
+            // SAFETY: mapped long-double/f128 finite aliases take the fixture
+            // value by value and are covered as FrankenLibC f64 mappings.
+            let actual = classify_math_finite_alias_f64(unsafe {
+                match func {
+                    "__asinl_finite" => frankenlibc_abi::math_abi::__asinl_finite(x),
+                    "__atanhf128_finite" => frankenlibc_abi::math_abi::__atanhf128_finite(x),
+                    "__atanhl_finite" => frankenlibc_abi::math_abi::__atanhl_finite(x),
+                    _ => unreachable!(),
+                }
+            });
+            let note = if func.contains("f128") {
+                "f128 finite alias is fixture-covered as FrankenLibC's documented f64 mapping"
+            } else {
+                "long-double finite alias is fixture-covered as FrankenLibC's documented f64 mapping"
+            };
+            Ok((actual, None, Some(note.to_string())))
+        }
+        "__atan2f128_finite" | "__atan2l_finite" => {
+            let (y, x) = parse_math_wave03_xy_f64(inputs)?;
+            // SAFETY: mapped long-double/f128 binary finite aliases take
+            // fixture values by value and are covered as FrankenLibC f64 mappings.
+            let actual = classify_math_finite_alias_f64(unsafe {
+                match func {
+                    "__atan2f128_finite" => frankenlibc_abi::math_abi::__atan2f128_finite(y, x),
+                    "__atan2l_finite" => frankenlibc_abi::math_abi::__atan2l_finite(y, x),
+                    _ => unreachable!(),
+                }
+            });
+            let note = if func.contains("f128") {
+                "f128 binary finite alias is fixture-covered as FrankenLibC's documented f64 mapping"
+            } else {
+                "long-double binary finite alias is fixture-covered as FrankenLibC's documented f64 mapping"
+            };
+            Ok((actual, None, Some(note.to_string())))
+        }
+        "__clog10" => {
+            let (re, im) = parse_math_wave03_complex_f64(inputs)?;
+            // SAFETY: CDoubleComplex is built from fixture scalar values and
+            // passed by value to the ABI function.
+            let actual = math_finite_special_wave03_complex_class(unsafe {
+                frankenlibc_abi::math_abi::__clog10(frankenlibc_abi::math_abi::CDoubleComplex {
+                    re,
+                    im,
+                })
+            });
+            Ok((
+                actual,
+                None,
+                Some(String::from(
+                    "complex base-10 log class is fixture-covered without claiming host complex ABI parity",
+                )),
+            ))
+        }
+        "__clog10f" => {
+            let (re, im) = parse_math_wave03_complex_f32(inputs)?;
+            // SAFETY: CFloatComplex is built from fixture scalar values and
+            // passed by value to the ABI function.
+            let actual = math_finite_special_wave03_complex_class_f32(unsafe {
+                frankenlibc_abi::math_abi::__clog10f(frankenlibc_abi::math_abi::CFloatComplex {
+                    re,
+                    im,
+                })
+            });
+            Ok((
+                actual,
+                None,
+                Some(String::from(
+                    "complex base-10 log class is fixture-covered without claiming host complex ABI parity",
+                )),
+            ))
+        }
+        "__clog10l" => {
+            let (re, im) = parse_math_wave03_complex_f64(inputs)?;
+            // SAFETY: CLongDoubleComplex is built from fixture scalar values
+            // and passed by value to the ABI function.
+            let actual = math_finite_special_wave03_complex_class_long_double(unsafe {
+                frankenlibc_abi::math_abi::__clog10l(
+                    frankenlibc_abi::math_abi::CLongDoubleComplex { re, im },
+                )
+            });
+            Ok((
+                actual,
+                None,
+                Some(String::from(
+                    "long-double complex base-10 log class is fixture-covered as FrankenLibC's documented f64 mapping",
+                )),
+            ))
+        }
+        _ => Err(format!(
+            "unsupported math finite/special wave03 symbol: {func}"
+        )),
+    }
+}
+
+fn parse_math_wave03_xy_f64(inputs: &serde_json::Value) -> Result<(f64, f64), String> {
+    Ok((parse_f64(inputs, "y")?, parse_f64(inputs, "x")?))
+}
+
+fn parse_math_wave03_xy_f32(inputs: &serde_json::Value) -> Result<(f32, f32), String> {
+    Ok((parse_f32(inputs, "y")?, parse_f32(inputs, "x")?))
+}
+
+fn parse_math_wave03_complex_f64(inputs: &serde_json::Value) -> Result<(f64, f64), String> {
+    Ok((parse_f64(inputs, "re")?, parse_f64(inputs, "im")?))
+}
+
+fn parse_math_wave03_complex_f32(inputs: &serde_json::Value) -> Result<(f32, f32), String> {
+    Ok((parse_f32(inputs, "re")?, parse_f32(inputs, "im")?))
+}
+
+fn math_finite_special_wave03_complex_class(
+    value: frankenlibc_abi::math_abi::CDoubleComplex,
+) -> String {
+    format!(
+        "COMPLEX_FINITE_{}_{}",
+        math_finite_special_wave03_component_class("REAL", value.re),
+        math_finite_special_wave03_component_class("IM", value.im)
+    )
+}
+
+fn math_finite_special_wave03_complex_class_f32(
+    value: frankenlibc_abi::math_abi::CFloatComplex,
+) -> String {
+    format!(
+        "COMPLEX_FINITE_{}_{}",
+        math_finite_special_wave03_component_class("REAL", value.re as f64),
+        math_finite_special_wave03_component_class("IM", value.im as f64)
+    )
+}
+
+fn math_finite_special_wave03_complex_class_long_double(
+    value: frankenlibc_abi::math_abi::CLongDoubleComplex,
+) -> String {
+    format!(
+        "COMPLEX_FINITE_{}_{}",
+        math_finite_special_wave03_component_class("REAL", value.re),
+        math_finite_special_wave03_component_class("IM", value.im)
+    )
+}
+
+fn math_finite_special_wave03_component_class(label: &str, value: f64) -> String {
+    if !value.is_finite() {
+        return format!("{label}_NONFINITE");
+    }
+    if value == 0.0 {
+        if value.is_sign_negative() {
+            format!("{label}_NEGATIVE_ZERO")
+        } else {
+            format!("{label}_POSITIVE_ZERO")
+        }
+    } else if value.is_sign_negative() {
+        format!("{label}_NEGATIVE")
+    } else {
+        format!("{label}_POSITIVE")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -29220,6 +29471,48 @@ mod tests {
             include_str!("../../../tests/conformance/fixtures/math_finite_special_wave02.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("math finite/special wave02 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn math_finite_special_wave03_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/math_finite_special_wave03.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("math finite/special wave03 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
