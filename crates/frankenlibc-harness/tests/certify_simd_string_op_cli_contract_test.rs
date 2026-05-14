@@ -120,18 +120,45 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_inputs_into_output_record",
-        "deterministic_given_inputs",
-        "scalar_self_witness_certifies_equivalent",
-        "memcpy_with_overlap_rejected_via_pin_parity_witness",
-        "memcpy_without_overlap_certifies_equivalent_for_supported_isas",
-        "strlen_does_not_require_dst_or_overlap_inputs",
-        "isa_label_and_architecture_fields_pin_dispatch_family",
-        "rejection_records_emit_nonempty_rationale_string",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "policy.must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_inputs_into_output_record",
+            "policy.echoes_inputs_into_output_record must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "policy.deterministic_given_inputs must be true",
+        ),
+        (
+            "scalar_self_witness_certifies_equivalent",
+            "policy.scalar_self_witness_certifies_equivalent must be true",
+        ),
+        (
+            "memcpy_with_overlap_rejected_via_pin_parity_witness",
+            "policy.memcpy_with_overlap_rejected_via_pin_parity_witness must be true",
+        ),
+        (
+            "memcpy_without_overlap_certifies_equivalent_for_supported_isas",
+            "policy.memcpy_without_overlap_certifies_equivalent_for_supported_isas must be true",
+        ),
+        (
+            "strlen_does_not_require_dst_or_overlap_inputs",
+            "policy.strlen_does_not_require_dst_or_overlap_inputs must be true",
+        ),
+        (
+            "isa_label_and_architecture_fields_pin_dispatch_family",
+            "policy.isa_label_and_architecture_fields_pin_dispatch_family must be true",
+        ),
+        (
+            "rejection_records_emit_nonempty_rationale_string",
+            "policy.rejection_records_emit_nonempty_rationale_string must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -211,11 +238,9 @@ fn cli_scalar_self_witness_certifies_equivalent() -> TestResult {
         &output,
     )?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         json_string(&parsed, "kind")? == "simd_string_certificate",
         "kind",
@@ -253,11 +278,9 @@ fn cli_memcpy_avx2_overlap_rejected() -> TestResult {
         &output,
     )?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         !json_bool(&parsed, "equivalent")?,
         "memcpy overlap must be rejected",
@@ -291,11 +314,9 @@ fn cli_memcpy_avx2_without_overlap_certifies_equivalent() -> TestResult {
         &output,
     )?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         json_bool(&parsed, "equivalent")?,
         "memcpy avx2 disjoint regions must be equivalent",
@@ -329,11 +350,9 @@ fn cli_strlen_omits_dst_and_overlap() -> TestResult {
         &output,
     )?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         json_string(&parsed, "operation")? == "strlen",
         "operation must echo strlen",
@@ -350,13 +369,49 @@ fn cli_isa_label_and_architecture_pin_dispatch_family() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    for (isa, want_arch, want_lane) in [
-        ("scalar", "portable", 1u64),
-        ("sse4.2", "x86_64", 16),
-        ("avx2", "x86_64", 32),
-        ("neon", "aarch64", 16),
+    for (isa, want_arch, want_lane, stem, failure, arch_msg, lane_msg, candidate_msg) in [
+        (
+            "scalar",
+            "portable",
+            1u64,
+            "isa_scalar",
+            "scalar ISA command failed",
+            "scalar architecture must be portable",
+            "scalar lane_bytes must be 1",
+            "candidate_isa must echo scalar",
+        ),
+        (
+            "sse4.2",
+            "x86_64",
+            16,
+            "isa_sse42",
+            "sse4.2 ISA command failed",
+            "sse4.2 architecture must be x86_64",
+            "sse4.2 lane_bytes must be 16",
+            "candidate_isa must echo sse4.2",
+        ),
+        (
+            "avx2",
+            "x86_64",
+            32,
+            "isa_avx2",
+            "avx2 ISA command failed",
+            "avx2 architecture must be x86_64",
+            "avx2 lane_bytes must be 32",
+            "candidate_isa must echo avx2",
+        ),
+        (
+            "neon",
+            "aarch64",
+            16,
+            "isa_neon",
+            "neon ISA command failed",
+            "neon architecture must be aarch64",
+            "neon lane_bytes must be 16",
+            "candidate_isa must echo neon",
+        ),
     ] {
-        let output = unique_tmp(&format!("isa_{}", isa.replace('.', "")))?;
+        let output = unique_tmp(stem)?;
         let out = run_cli(
             &bin,
             "memcmp",
@@ -368,26 +423,12 @@ fn cli_isa_label_and_architecture_pin_dispatch_family() -> TestResult {
             &output,
         )?;
         if !out.status.success() {
-            let _ = std::fs::remove_file(&output);
-            return Err(format!(
-                "isa={isa} stderr={}",
-                String::from_utf8_lossy(&out.stderr)
-            ));
+            return Err(failure.into());
         }
         let parsed = read_record(&output)?;
-        let _ = std::fs::remove_file(&output);
-        require(
-            json_string(&parsed, "architecture")? == want_arch,
-            format!("isa={isa} arch must be {want_arch}"),
-        )?;
-        require(
-            json_u64(&parsed, "lane_bytes")? == want_lane,
-            format!("isa={isa} lane_bytes must be {want_lane}"),
-        )?;
-        require(
-            json_string(&parsed, "candidate_isa")? == isa,
-            format!("candidate_isa must echo {isa}"),
-        )?;
+        require(json_string(&parsed, "architecture")? == want_arch, arch_msg)?;
+        require(json_u64(&parsed, "lane_bytes")? == want_lane, lane_msg)?;
+        require(json_string(&parsed, "candidate_isa")? == isa, candidate_msg)?;
     }
     Ok(())
 }
@@ -426,8 +467,6 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
     )?;
     let pa = read_record(&a)?;
     let pb = read_record(&b)?;
-    let _ = std::fs::remove_file(&a);
-    let _ = std::fs::remove_file(&b);
     require(pa == pb, "same inputs must produce identical output")
 }
 
@@ -453,7 +492,6 @@ fn cli_echoes_inputs_into_record() -> TestResult {
         format!("stderr={}", String::from_utf8_lossy(&out.stderr)),
     )?;
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         json_string(&parsed, "operation")? == "memcmp",
         "operation must echo",
