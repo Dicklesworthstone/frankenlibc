@@ -158,15 +158,33 @@ fn manifest_policy_pins_case_runner_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_remain_registered_even_though_hidden",
-        "must_accept_case_inputs_from_stdin",
-        "must_emit_success_envelope_for_supported_fixture",
-        "must_emit_error_envelope_for_unsupported_fixture",
-        "must_record_startup_mode_evidence",
-        "invalid_stdin_must_fail_closed_without_json_envelope",
+    for (field, message) in [
+        (
+            "must_remain_registered_even_though_hidden",
+            "must_remain_registered_even_though_hidden must be true",
+        ),
+        (
+            "must_accept_case_inputs_from_stdin",
+            "must_accept_case_inputs_from_stdin must be true",
+        ),
+        (
+            "must_emit_success_envelope_for_supported_fixture",
+            "must_emit_success_envelope_for_supported_fixture must be true",
+        ),
+        (
+            "must_emit_error_envelope_for_unsupported_fixture",
+            "must_emit_error_envelope_for_unsupported_fixture must be true",
+        ),
+        (
+            "must_record_startup_mode_evidence",
+            "must_record_startup_mode_evidence must be true",
+        ),
+        (
+            "invalid_stdin_must_fail_closed_without_json_envelope",
+            "invalid_stdin_must_fail_closed_without_json_envelope must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
 
     let output = m
@@ -176,17 +194,23 @@ fn manifest_policy_pins_case_runner_invariants() -> TestResult {
         .iter()
         .filter_map(Value::as_str)
         .collect();
-    for field in [
-        "kind",
-        "run",
-        "startup_runtime_mode",
-        "startup_frankenlibc_mode",
-        "startup_mode_matches",
+    for (field, message) in [
+        ("kind", "success_required_fields missing kind"),
+        ("run", "success_required_fields missing run"),
+        (
+            "startup_runtime_mode",
+            "success_required_fields missing startup_runtime_mode",
+        ),
+        (
+            "startup_frankenlibc_mode",
+            "success_required_fields missing startup_frankenlibc_mode",
+        ),
+        (
+            "startup_mode_matches",
+            "success_required_fields missing startup_mode_matches",
+        ),
     ] {
-        require(
-            success_fields.contains(&field),
-            format!("success_required_fields missing {field}"),
-        )?;
+        require(success_fields.contains(&field), message)?;
     }
     require(
         output.get("startup_mode_evidence").is_some(),
