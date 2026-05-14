@@ -58,12 +58,12 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -124,8 +124,8 @@ fn mntent_ops_fixture_exists() {
 }
 
 #[test]
-fn mntent_ops_fixture_valid_schema() {
-    let fixture = load_fixture("mntent_ops");
+fn mntent_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("mntent_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "mntent");
@@ -152,11 +152,13 @@ fn mntent_ops_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn mntent_ops_covers_getmntent_r() {
-    let fixture = load_fixture("mntent_ops");
+fn mntent_ops_covers_getmntent_r() -> Result<(), String> {
+    let fixture = load_fixture("mntent_ops")?;
     assert!(
         fixture
             .cases
@@ -166,11 +168,13 @@ fn mntent_ops_covers_getmntent_r() {
             >= 3,
         "getmntent_r needs basic, defaulted, and skipped-comment coverage"
     );
+
+    Ok(())
 }
 
 #[test]
-fn mntent_ops_covers_hasmntopt() {
-    let fixture = load_fixture("mntent_ops");
+fn mntent_ops_covers_hasmntopt() -> Result<(), String> {
+    let fixture = load_fixture("mntent_ops")?;
     assert!(
         fixture
             .cases
@@ -180,11 +184,13 @@ fn mntent_ops_covers_hasmntopt() {
             >= 3,
         "hasmntopt needs whole-token, substring, and key=value coverage"
     );
+
+    Ok(())
 }
 
 #[test]
-fn mntent_ops_covers_parser_and_token_boundaries() {
-    let fixture = load_fixture("mntent_ops");
+fn mntent_ops_covers_parser_and_token_boundaries() -> Result<(), String> {
+    let fixture = load_fixture("mntent_ops")?;
     let case_names: Vec<&str> = fixture
         .cases
         .iter()
@@ -205,11 +211,13 @@ fn mntent_ops_covers_parser_and_token_boundaries() {
         case_names.iter().any(|name| name.contains("substring")),
         "mntent_ops must cover hasmntopt substring rejection"
     );
+
+    Ok(())
 }
 
 #[test]
-fn mntent_ops_error_codes_valid() {
-    let fixture = load_fixture("mntent_ops");
+fn mntent_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("mntent_ops")?;
 
     for case in &fixture.cases {
         assert_eq!(
@@ -218,25 +226,29 @@ fn mntent_ops_error_codes_valid() {
             case.name, case.expected_errno
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn mntent_ops_modes_valid() {
-    let fixture = load_fixture("mntent_ops");
+fn mntent_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("mntent_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn mntent_ops_case_count_stable() {
-    let fixture = load_fixture("mntent_ops");
+fn mntent_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("mntent_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 6;
 
@@ -246,17 +258,19 @@ fn mntent_ops_case_count_stable() {
         fixture.cases.len(),
         EXPECTED_MIN_CASES
     );
+
+    Ok(())
 }
 
 #[test]
-fn mntent_ops_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture("mntent_ops");
+fn mntent_ops_fixture_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture("mntent_ops")?;
 
     for case in fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -264,13 +278,13 @@ fn mntent_ops_fixture_executes_via_isolated_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute through harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -283,4 +297,6 @@ fn mntent_ops_fixture_executes_via_isolated_harness() {
             );
         }
     }
+
+    Ok(())
 }
