@@ -36,6 +36,26 @@ fn require(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
+fn read_record(out_path: &Path) -> TestResult<Value> {
+    let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
+}
+
 fn json_string<'a>(value: &'a Value, field: &str) -> TestResult<&'a str> {
     value
         .get(field)
@@ -120,7 +140,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "r_repair_at_or_above_slack_decode_when_k_source_positive",
         "echoes_inputs_into_output_record",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -171,20 +191,12 @@ fn cli_zero_k_source_yields_zero_r_repair_and_loss_fraction() -> TestResult {
     let output = unique_tmp("zero")?;
     let out = run_cli(&bin, "0", "10", &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "derive-repair-math failed: stderr={}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 1,
-        format!("expected exactly 1 JSONL record; got {}", lines.len()),
-    )?;
-    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         json_string(&parsed, "kind")? == "repair_math",
         "kind must be repair_math",
@@ -212,15 +224,12 @@ fn cli_baseline_k_source_100_overhead_10_matches_known_math() -> TestResult {
     let output = unique_tmp("baseline")?;
     let out = run_cli(&bin, "100", "10", &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "derive-repair-math failed: stderr={}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     // R = max(slack_decode=2, ceil(100*10/100)=10) = 10.
     require(
         json_u64(&parsed, "r_repair")? == 10,
@@ -256,15 +265,12 @@ fn cli_loss_fraction_clamped_at_ppm_cap_for_high_overhead() -> TestResult {
     // a value above the ppm cap.
     let out = run_cli(&bin, "1", "65535", &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "derive-repair-math failed: stderr={}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         json_u64(&parsed, "loss_fraction_max_ppm")? <= 1_000_000,
         format!(
@@ -284,15 +290,12 @@ fn cli_r_repair_at_or_above_slack_decode_for_positive_k_source() -> TestResult {
     // overhead=0 with k_source>0 must still yield r_repair>=slack_decode (=2).
     let out = run_cli(&bin, "50", "0", &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "derive-repair-math failed: stderr={}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         json_u64(&parsed, "r_repair")? >= json_u64(&parsed, "slack_decode")?,
         "r_repair must not fall below slack_decode for k_source>0",
