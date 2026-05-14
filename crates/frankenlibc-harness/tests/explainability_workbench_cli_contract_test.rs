@@ -218,16 +218,37 @@ fn manifest_policy_pins_cli_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_register_explainability_workbench_subcommand",
-        "must_accept_log_only_input",
-        "must_join_artifact_index_by_decision_id",
-        "must_filter_by_scenario_id",
-        "must_write_output_when_output_path_is_supplied",
-        "must_preserve_tooling_contract_in_json_output",
-        "unknown_format_must_fail_closed_without_panic",
+    for (field, message) in [
+        (
+            "must_register_explainability_workbench_subcommand",
+            "must_register_explainability_workbench_subcommand must be true",
+        ),
+        (
+            "must_accept_log_only_input",
+            "must_accept_log_only_input must be true",
+        ),
+        (
+            "must_join_artifact_index_by_decision_id",
+            "must_join_artifact_index_by_decision_id must be true",
+        ),
+        (
+            "must_filter_by_scenario_id",
+            "must_filter_by_scenario_id must be true",
+        ),
+        (
+            "must_write_output_when_output_path_is_supplied",
+            "must_write_output_when_output_path_is_supplied must be true",
+        ),
+        (
+            "must_preserve_tooling_contract_in_json_output",
+            "must_preserve_tooling_contract_in_json_output must be true",
+        ),
+        (
+            "unknown_format_must_fail_closed_without_panic",
+            "unknown_format_must_fail_closed_without_panic must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     let output = m
         .get("output_contract")
@@ -251,21 +272,38 @@ fn harness_source_registers_explainability_workbench_subcommand() -> TestResult 
         src.contains("ExplainabilityWorkbench {"),
         "harness.rs must declare ExplainabilityWorkbench Command variant",
     )?;
-    for field in [
-        "log",
-        "artifact_index",
-        "trace_id",
-        "scenario_id",
-        "format",
-        "output",
-        "ansi",
-        "width",
+    for (anchor, message) in [
+        ("        log", "ExplainabilityWorkbench missing field `log`"),
+        (
+            "        artifact_index",
+            "ExplainabilityWorkbench missing field `artifact_index`",
+        ),
+        (
+            "        trace_id",
+            "ExplainabilityWorkbench missing field `trace_id`",
+        ),
+        (
+            "        scenario_id",
+            "ExplainabilityWorkbench missing field `scenario_id`",
+        ),
+        (
+            "        format",
+            "ExplainabilityWorkbench missing field `format`",
+        ),
+        (
+            "        output",
+            "ExplainabilityWorkbench missing field `output`",
+        ),
+        (
+            "        ansi",
+            "ExplainabilityWorkbench missing field `ansi`",
+        ),
+        (
+            "        width",
+            "ExplainabilityWorkbench missing field `width`",
+        ),
     ] {
-        let anchor = format!("        {field}");
-        require(
-            src.contains(&anchor),
-            format!("ExplainabilityWorkbench missing field `{field}`"),
-        )?;
+        require(src.contains(anchor), message)?;
     }
     require(
         src.contains("explainability_workbench::build_report"),
@@ -317,12 +355,10 @@ fn cli_writes_json_report_with_joined_artifact_links() -> TestResult {
 
     let report = load_json(&output_path)?;
     require(
-        report["bead"].as_str() == Some("bd-26xb.4"),
+        json_string(&report, "bead")? == "bd-26xb.4",
         "report must preserve the workbench bead id",
     )?;
-    let scenarios = report["scenarios"]
-        .as_array()
-        .ok_or_else(|| "scenarios must be array".to_string())?;
+    let scenarios = json_array(&report, "scenarios")?;
     require(
         scenarios.len() == 1,
         format!(
@@ -330,25 +366,39 @@ fn cli_writes_json_report_with_joined_artifact_links() -> TestResult {
             scenarios.len()
         ),
     )?;
-    let scenario = &scenarios[0];
+    let scenario = scenarios
+        .first()
+        .ok_or_else(|| "scenario-id filter must keep one scenario".to_string())?;
     require(
-        scenario["scenario_id"].as_str() == Some("demo"),
+        json_string(scenario, "scenario_id")? == "demo",
         "scenario_id filter must keep demo",
     )?;
+    let mode_divergence = json_array(scenario, "mode_divergence")?;
+    let first_divergence = mode_divergence
+        .first()
+        .ok_or_else(|| "mode_divergence must contain a row".to_string())?;
+    let differing_fields = json_array(first_divergence, "differing_fields")?;
+    let first_differing_field = differing_fields
+        .first()
+        .and_then(Value::as_str)
+        .ok_or_else(|| "differing_fields must contain a string".to_string())?;
     require(
-        scenario["mode_divergence"][0]["differing_fields"][0].as_str() == Some("outcome"),
+        first_differing_field == "outcome",
         "strict/hardened outcome divergence must be reported",
     )?;
     require(
-        scenario["artifact_links"]
-            .as_array()
-            .ok_or_else(|| "artifact_links must be array".to_string())?
+        json_array(scenario, "artifact_links")?
             .iter()
-            .any(|artifact| artifact["path"].as_str() == Some("reports/root-cause.json")),
+            .any(|artifact| {
+                artifact.get("path").and_then(Value::as_str) == Some("reports/root-cause.json")
+            }),
         "artifact index must join by decision_id",
     )?;
+    let tooling_contract = report
+        .get("tooling_contract")
+        .ok_or_else(|| "missing tooling_contract".to_string())?;
     require(
-        report["tooling_contract"]["default_enables_asupersync_tooling"].as_bool() == Some(true),
+        json_bool(tooling_contract, "default_enables_asupersync_tooling")?,
         "json output must preserve tooling_contract",
     )
 }
