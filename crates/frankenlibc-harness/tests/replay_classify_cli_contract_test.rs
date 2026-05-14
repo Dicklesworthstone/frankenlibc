@@ -1,7 +1,7 @@
 //! Conformance gate for the harness binary `replay-classify`
 //! subcommand (bd-tzx36).
 
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -90,6 +90,32 @@ fn write_file(path: &Path, contents: &str) -> TestResult {
         .map_err(|e| format!("write {path:?}: {e}"))
 }
 
+fn write_jsonl_value(path: &Path, value: &Value) -> TestResult {
+    let file = std::fs::File::create(path).map_err(|e| format!("create {path:?}: {e}"))?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer(&mut writer, value)
+        .map_err(|e| format!("serialize jsonl value to {path:?}: {e}"))?;
+    writer
+        .write_all(b"\n")
+        .map_err(|e| format!("terminate jsonl value in {path:?}: {e}"))
+}
+
+fn read_jsonl_records(path: &Path) -> TestResult<Vec<Value>> {
+    let body = std::fs::read_to_string(path).map_err(|e| format!("read jsonl {path:?}: {e}"))?;
+    body.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).map_err(|e| format!("parse jsonl {path:?}: {e}")))
+        .collect()
+}
+
+fn read_single_jsonl_record(path: &Path) -> TestResult<Value> {
+    let mut records = read_jsonl_records(path)?;
+    require(records.len() == 1, "expected exactly 1 JSONL record")?;
+    records
+        .pop()
+        .ok_or_else(|| "expected one JSONL record".to_string())
+}
+
 fn well_formed_record() -> Value {
     serde_json::json!({
         "schema_version": "v1",
@@ -105,6 +131,21 @@ fn well_formed_record() -> Value {
         ],
         "source_commit": "1".repeat(40),
     })
+}
+
+fn expected_outputs(record: &Value) -> TestResult<Value> {
+    record
+        .get("expected_outputs")
+        .cloned()
+        .ok_or_else(|| "well-formed replay record must include expected_outputs".to_string())
+}
+
+fn remove_object_field(record: &mut Value, field: &str) -> TestResult {
+    record
+        .as_object_mut()
+        .ok_or_else(|| "well-formed replay record must be an object".to_string())?
+        .remove(field);
+    Ok(())
 }
 
 #[test]
@@ -130,15 +171,33 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "fail_closed_when_input_record_missing_required_field",
-        "fail_closed_when_observed_missing_observed_outputs",
-        "outcome_must_be_one_of_enum",
-        "tool_failure_when_asupersync_unavailable",
-        "code_failure_signature_must_be_non_empty",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "fail_closed_when_input_record_missing_required_field",
+            "fail_closed_when_input_record_missing_required_field must be true",
+        ),
+        (
+            "fail_closed_when_observed_missing_observed_outputs",
+            "fail_closed_when_observed_missing_observed_outputs must be true",
+        ),
+        (
+            "outcome_must_be_one_of_enum",
+            "outcome_must_be_one_of_enum must be true",
+        ),
+        (
+            "tool_failure_when_asupersync_unavailable",
+            "tool_failure_when_asupersync_unavailable must be true",
+        ),
+        (
+            "code_failure_signature_must_be_non_empty",
+            "code_failure_signature_must_be_non_empty must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -196,30 +255,20 @@ fn cli_pass_when_observed_matches_expected_and_lab_available() -> TestResult {
     let observed = unique_tmp("pass_observed")?;
     let output = unique_tmp("pass_output")?;
     let rec = well_formed_record();
-    write_file(&input, &format!("{rec}\n"))?;
-    let observed_outputs = rec.get("expected_outputs").cloned().unwrap();
+    write_jsonl_value(&input, &rec)?;
+    let observed_outputs = expected_outputs(&rec)?;
     let observed_json = serde_json::json!({ "observed_outputs": observed_outputs });
-    write_file(&observed, &format!("{observed_json}\n"))?;
+    write_jsonl_value(&observed, &observed_json)?;
 
     let out = run_cli(&bin, &input, &observed, &output, Some("1"))?;
-    let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&observed);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "replay-classify failed: status={:?} stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 1,
-        format!("expected exactly 1 JSONL record; got {}", lines.len()),
-    )?;
-    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_single_jsonl_record(&output)?;
     require(
         json_string(&parsed, "kind")? == "replay_outcome",
         "kind must be replay_outcome",
@@ -248,25 +297,20 @@ fn cli_tool_failure_when_lab_unavailable() -> TestResult {
     let observed = unique_tmp("tool_observed")?;
     let output = unique_tmp("tool_output")?;
     let rec = well_formed_record();
-    write_file(&input, &format!("{rec}\n"))?;
+    write_jsonl_value(&input, &rec)?;
     let empty: Vec<&str> = Vec::new();
     let observed_json = serde_json::json!({ "observed_outputs": empty });
-    write_file(&observed, &format!("{observed_json}\n"))?;
+    write_jsonl_value(&observed, &observed_json)?;
 
     let out = run_cli(&bin, &input, &observed, &output, Some("0"))?;
-    let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&observed);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "replay-classify failed: status={:?} stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_single_jsonl_record(&output)?;
     require(
         json_string(&parsed, "outcome")? == "tool_failure",
         "override_var=0 must force tool_failure regardless of observed outputs",
@@ -291,26 +335,21 @@ fn cli_code_failure_when_observed_diverges_and_lab_available() -> TestResult {
     let observed = unique_tmp("code_observed")?;
     let output = unique_tmp("code_output")?;
     let rec = well_formed_record();
-    write_file(&input, &format!("{rec}\n"))?;
+    write_jsonl_value(&input, &rec)?;
     // Drop the only expected output and add an unexpected one.
     let observed_json =
         serde_json::json!({ "observed_outputs": ["target/conformance/unexpected.jsonl"] });
-    write_file(&observed, &format!("{observed_json}\n"))?;
+    write_jsonl_value(&observed, &observed_json)?;
 
     let out = run_cli(&bin, &input, &observed, &output, Some("1"))?;
-    let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&observed);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "replay-classify failed: status={:?} stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_single_jsonl_record(&output)?;
     require(
         json_string(&parsed, "outcome")? == "code_failure",
         "divergent observed outputs + lab available must yield code_failure",
@@ -331,16 +370,13 @@ fn cli_fails_closed_on_input_record_missing_required_field() -> TestResult {
     let observed = unique_tmp("bad_observed")?;
     let output = unique_tmp("bad_output")?;
     let mut rec = well_formed_record();
-    rec.as_object_mut().unwrap().remove("trace_class");
-    write_file(&input, &format!("{rec}\n"))?;
+    remove_object_field(&mut rec, "trace_class")?;
+    write_jsonl_value(&input, &rec)?;
     let empty: Vec<&str> = Vec::new();
     let observed_json = serde_json::json!({ "observed_outputs": empty });
-    write_file(&observed, &format!("{observed_json}\n"))?;
+    write_jsonl_value(&observed, &observed_json)?;
 
     let out = run_cli(&bin, &input, &observed, &output, Some("1"))?;
-    let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&observed);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "replay-classify must exit non-zero when input record is missing a required field",
@@ -360,13 +396,11 @@ fn cli_fails_closed_when_observed_missing_observed_outputs() -> TestResult {
     let input = unique_tmp("ok_record")?;
     let observed = unique_tmp("missing_observed")?;
     let output = unique_tmp("missing_output")?;
-    write_file(&input, &format!("{}\n", well_formed_record()))?;
+    let rec = well_formed_record();
+    write_jsonl_value(&input, &rec)?;
     write_file(&observed, "{\"unrelated\": 1}\n")?;
 
     let out = run_cli(&bin, &input, &observed, &output, Some("1"))?;
-    let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&observed);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "replay-classify must exit non-zero when --observed is missing observed_outputs",
