@@ -44,6 +44,22 @@ fn require(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
+fn require_command_field_anchor(source: &str, command: &str, anchor: &str) -> TestResult {
+    if source.contains(anchor) {
+        Ok(())
+    } else {
+        Err(format!("{command} missing field anchor `{anchor}`"))
+    }
+}
+
+fn require_record_field(record: &Value, record_label: &str, field: &str) -> TestResult {
+    if record.get(field).is_some() {
+        Ok(())
+    } else {
+        Err(format!("{record_label} missing required field `{field}`"))
+    }
+}
+
 fn json_string<'a>(value: &'a Value, field: &str) -> TestResult<&'a str> {
     value
         .get(field)
@@ -159,10 +175,7 @@ fn harness_source_registers_live_measurement_subcommand_with_documented_flags() 
         "        output",
         "        environment_fingerprint",
     ] {
-        require(
-            src.contains(anchor),
-            "LiveMeasurement variant missing field",
-        )?;
+        require_command_field_anchor(&src, "LiveMeasurement", anchor)?;
     }
     require(
         src.contains("run_live_measurement_pair_with_p99_delta")
@@ -279,17 +292,14 @@ fn cli_emits_three_jsonl_records_in_documented_order() -> TestResult {
         .iter()
         .filter_map(Value::as_str)
     {
-        require(record0.get(f).is_some(), "row 0 missing required field")?;
-        require(record1.get(f).is_some(), "row 1 missing required field")?;
+        require_record_field(record0, "row 0", f)?;
+        require_record_field(record1, "row 1", f)?;
     }
     for f in json_array(contract, "delta_required_fields")?
         .iter()
         .filter_map(Value::as_str)
     {
-        require(
-            record2.get(f).is_some(),
-            "delta record missing required field",
-        )?;
+        require_record_field(record2, "delta record", f)?;
     }
 
     // The --environment-fingerprint flag must propagate through to
