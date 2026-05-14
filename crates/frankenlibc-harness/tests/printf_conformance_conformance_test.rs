@@ -9,13 +9,23 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    workspace_root
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "workspace root has no repository parent: {}",
+                workspace_root.display()
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,23 +64,24 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[test]
-fn printf_conformance_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/printf_conformance.json");
+fn printf_conformance_fixture_exists() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/printf_conformance.json");
     assert!(path.exists(), "printf_conformance.json fixture must exist");
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_fixture_valid_schema() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "printf_conformance");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -78,11 +89,12 @@ fn printf_conformance_fixture_valid_schema() {
         assert!(!case.name.is_empty(), "Case name must not be empty");
         assert!(!case.function.is_empty(), "Function must not be empty");
     }
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_integer_specifiers() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_integer_specifiers() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("_d_")),
@@ -104,11 +116,12 @@ fn printf_conformance_covers_integer_specifiers() {
         case_names.iter().any(|n| n.contains("_x_")),
         "Missing %x tests"
     );
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_float_specifiers() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_float_specifiers() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("_f_")),
@@ -122,11 +135,12 @@ fn printf_conformance_covers_float_specifiers() {
         case_names.iter().any(|n| n.contains("_g_")),
         "Missing %g tests"
     );
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_string_specifiers() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_string_specifiers() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("_s_")),
@@ -136,11 +150,12 @@ fn printf_conformance_covers_string_specifiers() {
         case_names.iter().any(|n| n.contains("_c_")),
         "Missing %c tests"
     );
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_flags() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_flags() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("left")),
@@ -162,11 +177,12 @@ fn printf_conformance_covers_flags() {
         case_names.iter().any(|n| n.contains("alt")),
         "Missing alternate (#) flag tests"
     );
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_length_modifiers() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_length_modifiers() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("hh_")),
@@ -184,22 +200,24 @@ fn printf_conformance_covers_length_modifiers() {
         case_names.iter().any(|n| n.contains("ll_")),
         "Missing ll length tests"
     );
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_snprintf() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_snprintf() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let snprintf_cases = fixture
         .cases
         .iter()
         .filter(|c| c.function == "snprintf")
         .count();
     assert!(snprintf_cases >= 2, "snprintf needs at least 2 test cases");
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_modes_valid() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     for case in &fixture.cases {
         assert!(
             case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
@@ -208,11 +226,12 @@ fn printf_conformance_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_case_count_stable() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     assert!(
         fixture.cases.len() >= 50,
         "printf_conformance fixture has {} cases, expected at least 50",
@@ -222,11 +241,12 @@ fn printf_conformance_case_count_stable() {
         "printf_conformance fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_has_spec_references() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("C11") || case.spec_section.contains("POSIX"),
@@ -235,11 +255,12 @@ fn printf_conformance_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_special_values() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_special_values() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("inf")),
@@ -249,6 +270,7 @@ fn printf_conformance_covers_special_values() {
         case_names.iter().any(|n| n.contains("nan")),
         "Missing NaN tests"
     );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -276,8 +298,8 @@ fn host_output_is_nan(value: &str) -> bool {
 }
 
 #[test]
-fn printf_conformance_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let mut executed = 0usize;
     let mut skipped = 0usize;
 
@@ -299,12 +321,12 @@ fn printf_conformance_fixture_cases_match_execute_fixture_case() {
 
         for mode in modes {
             let result =
-                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
-                    panic!(
+                execute_fixture_case(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -323,6 +345,7 @@ fn printf_conformance_fixture_cases_match_execute_fixture_case() {
     eprintln!(
         "printf_conformance in-process: executed={executed} skipped={skipped} (skipped cases use expected_output_bytes/pattern)"
     );
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -393,8 +416,8 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn printf_long_double_host_oracle_gap_is_explicit_in_process() -> Result<(), &'static str> {
-    let fixture = load_fixture("printf_conformance");
+fn printf_long_double_host_oracle_gap_is_explicit_in_process() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let mut seen = Vec::new();
 
     for case in &fixture.cases {
@@ -404,9 +427,9 @@ fn printf_long_double_host_oracle_gap_is_explicit_in_process() -> Result<(), &'s
         let expected_output = case
             .expected_output
             .as_deref()
-            .ok_or("long-double printf fixture missing expected_output")?;
+            .ok_or_else(|| String::from("long-double printf fixture missing expected_output"))?;
         let result = execute_fixture_case(&case.function, &case.inputs, "strict")
-            .map_err(|_| "long-double printf fixture failed in process")?;
+            .map_err(|err| format!("long-double printf fixture failed in process: {err}"))?;
         assert_eq!(
             result.impl_output, expected_output,
             "FrankenLibC long-double fixture output mismatch for {}",
@@ -436,8 +459,8 @@ fn printf_long_double_host_oracle_gap_is_explicit_in_process() -> Result<(), &'s
 }
 
 #[test]
-fn printf_long_double_host_oracle_gap_is_explicit_via_harness_matrix() -> Result<(), &'static str> {
-    let fixture = load_fixture("printf_conformance");
+fn printf_long_double_host_oracle_gap_is_explicit_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let mut seen = Vec::new();
 
     for case in &fixture.cases {
@@ -447,9 +470,9 @@ fn printf_long_double_host_oracle_gap_is_explicit_via_harness_matrix() -> Result
         let expected_output = case
             .expected_output
             .as_deref()
-            .ok_or("long-double printf fixture missing expected_output")?;
+            .ok_or_else(|| String::from("long-double printf fixture missing expected_output"))?;
         let result = execute_case_via_harness(&case.function, &case.inputs, "strict")
-            .map_err(|_| "long-double printf fixture failed via harness")?;
+            .map_err(|err| format!("long-double printf fixture failed via harness: {err}"))?;
         assert!(
             !result.host_parity,
             "host long-double oracle gap should remain explicit via harness for {}",
@@ -475,8 +498,8 @@ fn printf_long_double_host_oracle_gap_is_explicit_via_harness_matrix() -> Result
 }
 
 #[test]
-fn printf_conformance_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let mut executed = 0usize;
     let mut skipped = 0usize;
 
@@ -497,13 +520,13 @@ fn printf_conformance_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "printf_conformance case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity || result.host_output == "UB",
                 "printf_conformance case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -520,4 +543,5 @@ fn printf_conformance_fixture_executes_with_host_parity_via_harness_matrix() {
         }
     }
     eprintln!("printf_conformance harness-matrix: executed={executed} skipped={skipped}");
+    Ok(())
 }
