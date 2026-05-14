@@ -64,12 +64,12 @@ struct DifferentialExecution {
     note: Option<String>,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -134,8 +134,8 @@ fn locale_ops_fixture_exists() {
 }
 
 #[test]
-fn locale_ops_fixture_valid_schema() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "locale_ops");
@@ -162,6 +162,8 @@ fn locale_ops_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -169,8 +171,8 @@ fn locale_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn locale_ops_covers_setlocale() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_covers_setlocale() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -181,6 +183,8 @@ fn locale_ops_covers_setlocale() {
             >= 3,
         "setlocale needs at least 3 test cases"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -188,14 +192,16 @@ fn locale_ops_covers_setlocale() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn locale_ops_covers_localeconv() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_covers_localeconv() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("localeconv")),
         "Missing test coverage for localeconv"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -203,8 +209,8 @@ fn locale_ops_covers_localeconv() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn locale_ops_covers_nl_langinfo() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_covers_nl_langinfo() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -215,6 +221,8 @@ fn locale_ops_covers_nl_langinfo() {
             >= 2,
         "nl_langinfo needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,8 +230,8 @@ fn locale_ops_covers_nl_langinfo() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn locale_ops_covers_posix_2008_functions() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_covers_posix_2008_functions() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["newlocale", "uselocale", "duplocale", "freelocale"];
@@ -235,6 +243,8 @@ fn locale_ops_covers_posix_2008_functions() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,8 +252,8 @@ fn locale_ops_covers_posix_2008_functions() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn locale_ops_error_codes_valid() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
 
     // locale functions typically don't set errno, or use EINVAL
     let valid_errno_values = [
@@ -260,6 +270,8 @@ fn locale_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,17 +279,19 @@ fn locale_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn locale_ops_modes_valid() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -285,8 +299,8 @@ fn locale_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn locale_ops_covers_both_modes() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
@@ -296,6 +310,8 @@ fn locale_ops_covers_both_modes() {
         has_hardened,
         "locale_ops must have hardened mode test cases"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -303,8 +319,8 @@ fn locale_ops_covers_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn locale_ops_case_count_stable() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 15;
 
@@ -316,6 +332,8 @@ fn locale_ops_case_count_stable() {
     );
 
     eprintln!("locale_ops fixture has {} test cases", fixture.cases.len());
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -323,8 +341,8 @@ fn locale_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn locale_ops_covers_hardened_fallbacks() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_covers_hardened_fallbacks() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // Hardened mode should test unsupported/unknown locale fallbacks
@@ -334,6 +352,8 @@ fn locale_ops_covers_hardened_fallbacks() {
             .any(|n| n.contains("unsupported") || n.contains("unknown")),
         "locale_ops must test unsupported locale fallbacks in hardened mode"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -341,8 +361,8 @@ fn locale_ops_covers_hardened_fallbacks() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn locale_ops_has_spec_references() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -352,11 +372,13 @@ fn locale_ops_has_spec_references() {
             case.spec_section
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn locale_ops_fixture_executes_mode_specific_contracts() {
-    let fixture = load_fixture("locale_ops");
+fn locale_ops_fixture_executes_mode_specific_contracts() -> Result<(), String> {
+    let fixture = load_fixture("locale_ops")?;
 
     for mode in ["strict", "hardened"] {
         let expected_cases = fixture
@@ -381,17 +403,17 @@ fn locale_ops_fixture_executes_mode_specific_contracts() {
         );
 
         for case in cases {
-            let execution = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let execution =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "{mode} case {} failed to execute through harness subprocess: {}",
                         case.name, err
                     )
-                });
+                })?;
             let expected_output = case
                 .expected_output
                 .as_deref()
-                .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+                .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
             assert_eq!(
                 execution.impl_output, expected_output,
                 "{mode} case {} returned unexpected impl output (host={}, note={:?})",
@@ -442,4 +464,6 @@ fn locale_ops_fixture_executes_mode_specific_contracts() {
             }
         }
     }
+
+    Ok(())
 }
