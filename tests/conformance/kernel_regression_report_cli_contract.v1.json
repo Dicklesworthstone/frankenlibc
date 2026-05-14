@@ -1,0 +1,56 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "kernel-regression-report-cli-contract",
+  "bead": "bd-hmkxe",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "24d62c6d",
+  "purpose": "Pin the harness binary 'kernel-regression-report' subcommand. The subcommand orchestrates two subprocess invocations of 'kernel-regression-mode' (one with FRANKENLIBC_MODE=strict, one with FRANKENLIBC_MODE=hardened), parses their JSON KernelModeMetrics records, and aggregates into a KernelRegressionReport. Without --output it prints the rendered markdown to stdout; with --output <path>, writes markdown to <path> and JSON to <path>.json sibling. Sister of bd-borw4 (kernel-regression-mode).",
+  "subcommand_name": "kernel-regression-report",
+  "binary_target": "harness",
+  "required_flags": [],
+  "optional_flags": [
+    "--output",
+    "--seed",
+    "--steps",
+    "--warmup-iters",
+    "--samples",
+    "--iters",
+    "--trend-stride"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::kernel_regression_report::render_regression_markdown",
+    "frankenlibc_harness::kernel_regression_report::KernelRegressionReport"
+  ],
+  "orchestrator_pattern": "spawns_two_subprocesses_one_per_safety_level",
+  "io_pattern": "markdown_to_stdout_or_paired_md_plus_json_to_output_path",
+  "default_seed_hex": "0xDEAD_BEEF",
+  "default_steps": 256,
+  "default_warmup_iters": 10000,
+  "default_samples": 25,
+  "default_iters": 50000,
+  "default_trend_stride": 32,
+  "policy": {
+    "without_output_flag_renders_markdown_to_stdout": true,
+    "with_output_flag_writes_markdown_to_output_path": true,
+    "with_output_flag_writes_json_sibling_at_output_path_with_json_extension": true,
+    "spawns_two_subprocesses_strict_and_hardened": true,
+    "report_contains_strict_and_hardened_metrics_blocks": true,
+    "json_sibling_includes_both_modes_with_their_safety_levels": true,
+    "deterministic_seed_steps_microbench_iters_roundtrip_to_each_mode_block": true,
+    "negative_steps_or_zero_steps_handled_via_kernel_regression_mode_validation": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_strict_block",
+    "missing_hardened_block",
+    "json_sibling_not_written_when_output_supplied",
+    "stdout_silent_when_output_omitted",
+    "mode_metrics_safety_level_drift",
+    "seed_drift_between_cli_and_mode_subprocess"
+  ],
+  "summary": {
+    "bead": "bd-hmkxe",
+    "subcommand": "kernel-regression-report",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
