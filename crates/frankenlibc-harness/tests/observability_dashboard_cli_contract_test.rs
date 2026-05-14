@@ -145,20 +145,53 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
     let policy = m.get("policy").ok_or("missing policy")?;
-    for key in [
-        "must_write_summary_json_at_output_path",
-        "must_write_prometheus_exposition_at_prometheus_output_path",
-        "must_write_statsd_lines_at_statsd_output_path",
-        "must_write_grafana_dashboard_at_grafana_output_path",
-        "must_write_alert_rules_yaml_at_alerts_output_path",
-        "summary_records_total_rows_count",
-        "summary_records_invalid_rows_count",
-        "accepts_multiple_input_files_via_repeated_flag",
-        "default_output_paths_when_overrides_omitted",
-        "nonexistent_input_path_rejected_with_nonzero_exit",
-        "missing_required_input_flag_rejected_with_nonzero_exit",
+    for (field, message) in [
+        (
+            "must_write_summary_json_at_output_path",
+            "must_write_summary_json_at_output_path must be true",
+        ),
+        (
+            "must_write_prometheus_exposition_at_prometheus_output_path",
+            "must_write_prometheus_exposition_at_prometheus_output_path must be true",
+        ),
+        (
+            "must_write_statsd_lines_at_statsd_output_path",
+            "must_write_statsd_lines_at_statsd_output_path must be true",
+        ),
+        (
+            "must_write_grafana_dashboard_at_grafana_output_path",
+            "must_write_grafana_dashboard_at_grafana_output_path must be true",
+        ),
+        (
+            "must_write_alert_rules_yaml_at_alerts_output_path",
+            "must_write_alert_rules_yaml_at_alerts_output_path must be true",
+        ),
+        (
+            "summary_records_total_rows_count",
+            "summary_records_total_rows_count must be true",
+        ),
+        (
+            "summary_records_invalid_rows_count",
+            "summary_records_invalid_rows_count must be true",
+        ),
+        (
+            "accepts_multiple_input_files_via_repeated_flag",
+            "accepts_multiple_input_files_via_repeated_flag must be true",
+        ),
+        (
+            "default_output_paths_when_overrides_omitted",
+            "default_output_paths_when_overrides_omitted must be true",
+        ),
+        (
+            "nonexistent_input_path_rejected_with_nonzero_exit",
+            "nonexistent_input_path_rejected_with_nonzero_exit must be true",
+        ),
+        (
+            "missing_required_input_flag_rejected_with_nonzero_exit",
+            "missing_required_input_flag_rejected_with_nonzero_exit must be true",
+        ),
     ] {
-        require(json_bool(policy, key)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
