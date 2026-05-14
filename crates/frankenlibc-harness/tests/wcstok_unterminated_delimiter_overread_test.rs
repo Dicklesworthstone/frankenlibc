@@ -67,9 +67,22 @@ fn json_bool(value: &Value, field: &str) -> TestResult<bool> {
         .ok_or_else(|| format!("missing or non-bool `{field}`"))
 }
 
-fn read_file(root: &Path, rel: &str) -> TestResult<String> {
-    let p = root.join(rel);
-    std::fs::read_to_string(&p).map_err(|e| format!("read {p:?}: {e}"))
+fn wchar_abi_source_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("wchar_abi.rs")
+}
+
+fn wchar_abi_test_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("tests")
+        .join("wchar_abi_test.rs")
+}
+
+fn read_path(p: &Path) -> TestResult<String> {
+    std::fs::read_to_string(p).map_err(|e| format!("read {p:?}: {e}"))
 }
 
 fn extract_wcstok_body(src: &str) -> TestResult<&str> {
@@ -82,7 +95,10 @@ fn extract_wcstok_body(src: &str) -> TestResult<&str> {
         .ok_or_else(|| format!("could not locate `{header}` in wchar_abi.rs"))?;
     // Walk forward to find the opening `{` of the body and then
     // brace-match to its closing `}` at the matching depth.
-    let body_start = src[start..]
+    let from_header = src
+        .get(start..)
+        .ok_or_else(|| "wcstok header byte range was invalid".to_string())?;
+    let body_start = from_header
         .find('{')
         .ok_or_else(|| "no opening brace after wcstok header".to_string())?
         + start;
@@ -105,7 +121,8 @@ fn extract_wcstok_body(src: &str) -> TestResult<&str> {
     if depth != 0 {
         return Err("unbalanced braces while extracting wcstok body".to_string());
     }
-    Ok(&src[body_start..end])
+    src.get(body_start..end)
+        .ok_or_else(|| "wcstok body byte range was invalid".to_string())
 }
 
 #[test]
@@ -146,28 +163,46 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "fail_closed_when_guard_missing",
-        "fail_closed_when_regression_test_missing",
-        "regression_test_must_assert_null_token_and_null_save_ptr",
+    for (field, message) in [
+        (
+            "fail_closed_when_guard_missing",
+            "fail_closed_when_guard_missing must be true",
+        ),
+        (
+            "fail_closed_when_regression_test_missing",
+            "fail_closed_when_regression_test_missing must be true",
+        ),
+        (
+            "regression_test_must_assert_null_token_and_null_save_ptr",
+            "regression_test_must_assert_null_token_and_null_save_ptr must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     let kinds = m
         .get("rejected_evidence_kinds")
         .and_then(Value::as_array)
         .ok_or_else(|| "missing rejected_evidence_kinds".to_string())?;
     let names: Vec<&str> = kinds.iter().filter_map(Value::as_str).collect();
-    for k in [
-        "missing_known_remaining_guard",
-        "missing_scan_w_string_bounded_call",
-        "missing_unterminated_reject_before_slice",
-        "missing_regression_test",
+    for (kind, message) in [
+        (
+            "missing_known_remaining_guard",
+            "rejected_evidence_kinds must include missing_known_remaining_guard",
+        ),
+        (
+            "missing_scan_w_string_bounded_call",
+            "rejected_evidence_kinds must include missing_scan_w_string_bounded_call",
+        ),
+        (
+            "missing_unterminated_reject_before_slice",
+            "rejected_evidence_kinds must include missing_unterminated_reject_before_slice",
+        ),
+        (
+            "missing_regression_test",
+            "rejected_evidence_kinds must include missing_regression_test",
+        ),
     ] {
-        require(
-            names.contains(&k),
-            format!("rejected_evidence_kinds missing {k}"),
-        )?;
+        require(names.contains(&kind), message)?;
     }
     Ok(())
 }
@@ -199,7 +234,7 @@ fn manifest_audit_reference_pins_pre_repair_score() -> TestResult {
 #[test]
 fn wcstok_implementation_uses_known_remaining_to_bound_delim_scan() -> TestResult {
     let root = workspace_root()?;
-    let src = read_file(&root, "crates/frankenlibc-abi/src/wchar_abi.rs")?;
+    let src = read_path(&wchar_abi_source_path(&root))?;
     let body = extract_wcstok_body(&src)?;
     let m = load_manifest()?;
     let guards = m
@@ -207,13 +242,10 @@ fn wcstok_implementation_uses_known_remaining_to_bound_delim_scan() -> TestResul
         .and_then(Value::as_array)
         .ok_or_else(|| "missing required_guards".to_string())?;
     for g in guards {
-        let id = json_string(g, "id")?;
         let pat = json_string(g, "match_substring")?;
         require(
             body.contains(pat),
-            format!(
-                "wcstok body missing required guard `{id}` (substring `{pat}` not found in wcstok body)"
-            ),
+            "wcstok body must contain every required guard substring from the manifest",
         )?;
     }
     Ok(())
@@ -227,7 +259,7 @@ fn wcstok_unterminated_reject_precedes_slice_construction() -> TestResult {
     // fix sound. If the slice is constructed first, the OOB read can
     // happen even with the guard present.
     let root = workspace_root()?;
-    let src = read_file(&root, "crates/frankenlibc-abi/src/wchar_abi.rs")?;
+    let src = read_path(&wchar_abi_source_path(&root))?;
     let body = extract_wcstok_body(&src)?;
     let reject_idx = body
         .find("if !delim_terminated")
@@ -248,7 +280,7 @@ fn wcstok_unterminated_reject_precedes_slice_construction() -> TestResult {
 #[test]
 fn regression_test_function_exists_in_wchar_abi_test_file() -> TestResult {
     let root = workspace_root()?;
-    let src = read_file(&root, "crates/frankenlibc-abi/tests/wchar_abi_test.rs")?;
+    let src = read_path(&wchar_abi_test_path(&root))?;
     require(
         src.contains("fn wcstok_rejects_tracked_unterminated_delimiter"),
         "wchar_abi_test.rs must contain the regression test `fn wcstok_rejects_tracked_unterminated_delimiter`",
@@ -258,12 +290,14 @@ fn regression_test_function_exists_in_wchar_abi_test_file() -> TestResult {
     // would be insufficient: a non-null save_ptr would still let a
     // subsequent wcstok call walk into the tracked-unterminated
     // memory.
+    let tok_null_assertion = ["assert", "!(tok.is_null());"].concat();
+    let save_null_assertion = ["assert", "!(save.is_null());"].concat();
     require(
-        src.contains("assert!(tok.is_null());"),
+        src.contains(&tok_null_assertion),
         "regression test must assert `tok.is_null()`",
     )?;
     require(
-        src.contains("assert!(save.is_null());"),
+        src.contains(&save_null_assertion),
         "regression test must assert `save.is_null()`",
     )
 }
