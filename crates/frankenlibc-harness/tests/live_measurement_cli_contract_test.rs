@@ -65,6 +65,24 @@ fn json_array<'a>(value: &'a Value, field: &str) -> TestResult<&'a Vec<Value>> {
         .ok_or_else(|| format!("missing or non-array `{field}`"))
 }
 
+fn parse_jsonl_records(body: &str) -> TestResult<Vec<Value>> {
+    let mut records = Vec::new();
+    for line in body.lines().filter(|line| !line.trim().is_empty()) {
+        let record = match serde_json::from_str(line) {
+            Ok(record) => record,
+            Err(_) => return Err("parse jsonl record".into()),
+        };
+        records.push(record);
+    }
+    Ok(records)
+}
+
+fn record_at(records: &[Value], index: usize) -> TestResult<&Value> {
+    records
+        .get(index)
+        .ok_or_else(|| "missing JSONL record".to_string())
+}
+
 #[test]
 fn manifest_anchors_to_uof80_with_subcommand_name() -> TestResult {
     let root = workspace_root()?;
@@ -107,7 +125,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "must_emit_three_jsonl_records_in_fixed_order",
         "default_path_must_route_through_environment_fingerprint",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -123,18 +141,17 @@ fn harness_source_registers_live_measurement_subcommand_with_documented_flags() 
     )?;
     // The Cli macro derives flag names from field idents. Confirm
     // each flag's underlying field name is present.
-    for field in [
-        "profile_id",
-        "n",
-        "seed",
-        "source_commit",
-        "output",
-        "environment_fingerprint",
+    for anchor in [
+        "        profile_id",
+        "        n",
+        "        seed",
+        "        source_commit",
+        "        output",
+        "        environment_fingerprint",
     ] {
-        let anchor = format!("        {field}");
         require(
-            src.contains(&anchor),
-            format!("LiveMeasurement variant missing field `{field}`"),
+            src.contains(anchor),
+            "LiveMeasurement variant missing field",
         )?;
     }
     require(
@@ -213,7 +230,6 @@ fn cli_emits_three_jsonl_records_in_documented_order() -> TestResult {
         .map_err(|e| format!("spawn harness: {e}"))?;
 
     if !output.status.success() {
-        let _ = std::fs::remove_file(&tmp);
         return Err(format!(
             "live-measurement subcommand failed: status={:?} stderr={}",
             output.status,
@@ -222,20 +238,11 @@ fn cli_emits_three_jsonl_records_in_documented_order() -> TestResult {
     }
 
     let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
-
-    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 3,
-        format!("expected 3 JSONL records; got {}", lines.len()),
-    )?;
-
-    let parsed: Vec<Value> = lines
-        .iter()
-        .map(|l| {
-            serde_json::from_str::<Value>(l).map_err(|e| format!("parse jsonl line `{l}`: {e}"))
-        })
-        .collect::<Result<_, _>>()?;
+    let parsed = parse_jsonl_records(&body)?;
+    require(parsed.len() == 3, "expected exactly 3 JSONL records")?;
+    let record0 = record_at(&parsed, 0)?;
+    let record1 = record_at(&parsed, 1)?;
+    let record2 = record_at(&parsed, 2)?;
 
     let contract = m
         .get("jsonl_output_contract")
@@ -244,17 +251,17 @@ fn cli_emits_three_jsonl_records_in_documented_order() -> TestResult {
     let delta_kind = json_string(contract, "delta_kind_marker")?;
 
     require(
-        json_string(&parsed[0], "kind")? == row_kind
-            && parsed[0].get("lane_id").and_then(Value::as_str) == Some("Conservative"),
+        json_string(record0, "kind")? == row_kind
+            && record0.get("lane_id").and_then(Value::as_str) == Some("Conservative"),
         "record 0 must be conservative LiveMeasurementRow",
     )?;
     require(
-        json_string(&parsed[1], "kind")? == row_kind
-            && parsed[1].get("lane_id").and_then(Value::as_str) == Some("Seqlock"),
+        json_string(record1, "kind")? == row_kind
+            && record1.get("lane_id").and_then(Value::as_str) == Some("Seqlock"),
         "record 1 must be seqlock LiveMeasurementRow",
     )?;
     require(
-        json_string(&parsed[2], "kind")? == delta_kind,
+        json_string(record2, "kind")? == delta_kind,
         "record 2 must be P99Delta",
     )?;
 
@@ -262,36 +269,30 @@ fn cli_emits_three_jsonl_records_in_documented_order() -> TestResult {
         .iter()
         .filter_map(Value::as_str)
     {
-        require(
-            parsed[0].get(f).is_some(),
-            format!("row 0 missing required field `{f}`"),
-        )?;
-        require(
-            parsed[1].get(f).is_some(),
-            format!("row 1 missing required field `{f}`"),
-        )?;
+        require(record0.get(f).is_some(), "row 0 missing required field")?;
+        require(record1.get(f).is_some(), "row 1 missing required field")?;
     }
     for f in json_array(contract, "delta_required_fields")?
         .iter()
         .filter_map(Value::as_str)
     {
         require(
-            parsed[2].get(f).is_some(),
-            format!("delta record missing required field `{f}`"),
+            record2.get(f).is_some(),
+            "delta record missing required field",
         )?;
     }
 
     // The --environment-fingerprint flag must propagate through to
     // both rows (this is the explicit-fp path).
     require(
-        parsed[0]
+        record0
             .get("environment_fingerprint")
             .and_then(Value::as_str)
             == Some(pinned_fp),
         "row 0 environment_fingerprint must equal CLI flag value",
     )?;
     require(
-        parsed[1]
+        record1
             .get("environment_fingerprint")
             .and_then(Value::as_str)
             == Some(pinned_fp),
@@ -299,7 +300,7 @@ fn cli_emits_three_jsonl_records_in_documented_order() -> TestResult {
     )?;
     // source_commit must propagate verbatim.
     require(
-        parsed[0].get("source_commit").and_then(Value::as_str) == Some(source_commit.as_str()),
+        record0.get("source_commit").and_then(Value::as_str) == Some(source_commit.as_str()),
         "row 0 source_commit must equal CLI flag value",
     )
 }
@@ -326,7 +327,6 @@ fn cli_rejects_bad_source_commit_before_running_lanes() -> TestResult {
         .arg(&tmp)
         .output()
         .map_err(|e| format!("spawn harness: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
     require(
         !output.status.success(),
         "live-measurement must exit non-zero on bad --source-commit",
