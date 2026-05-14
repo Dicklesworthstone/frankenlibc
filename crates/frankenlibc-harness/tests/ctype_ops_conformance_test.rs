@@ -62,12 +62,12 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -132,8 +132,8 @@ fn ctype_ops_fixture_exists() {
 }
 
 #[test]
-fn ctype_ops_fixture_valid_schema() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "ctype");
@@ -160,6 +160,8 @@ fn ctype_ops_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,41 +169,47 @@ fn ctype_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn ctype_ops_covers_isalpha() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_covers_isalpha() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("isalpha")).count() >= 3,
         "isalpha needs at least 3 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn ctype_ops_covers_isdigit() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_covers_isdigit() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("isdigit")).count() >= 2,
         "isdigit needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn ctype_ops_covers_isalnum() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_covers_isalnum() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("isalnum")).count() >= 2,
         "isalnum needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn ctype_ops_covers_case_functions() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_covers_case_functions() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["isupper", "islower"];
@@ -213,11 +221,13 @@ fn ctype_ops_covers_case_functions() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn ctype_ops_covers_isspace() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_covers_isspace() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // Should test multiple whitespace chars: space, tab, newline
@@ -225,39 +235,47 @@ fn ctype_ops_covers_isspace() {
         case_names.iter().filter(|n| n.contains("isspace")).count() >= 3,
         "isspace needs at least 3 test cases (space, tab, newline)"
     );
+
+    Ok(())
 }
 
 #[test]
-fn ctype_ops_covers_isprint() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_covers_isprint() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("isprint")).count() >= 3,
         "isprint needs at least 3 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn ctype_ops_covers_ispunct() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_covers_ispunct() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("ispunct")).count() >= 2,
         "ispunct needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn ctype_ops_covers_isxdigit() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_covers_isxdigit() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("isxdigit")).count() >= 3,
         "isxdigit needs at least 3 test cases"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -265,25 +283,29 @@ fn ctype_ops_covers_isxdigit() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn ctype_ops_covers_tolower() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_covers_tolower() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("tolower")).count() >= 3,
         "tolower needs at least 3 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn ctype_ops_covers_toupper() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_covers_toupper() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("toupper")).count() >= 3,
         "toupper needs at least 3 test cases"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -291,8 +313,8 @@ fn ctype_ops_covers_toupper() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn ctype_ops_error_codes_valid() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
 
     // ctype functions don't set errno
     let valid_errno_values = [0];
@@ -305,6 +327,8 @@ fn ctype_ops_error_codes_valid() {
             case.expected_errno,
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,8 +336,8 @@ fn ctype_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn ctype_ops_function_distribution() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_function_distribution() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
 
     let mut classification_count = 0;
     let mut conversion_count = 0;
@@ -325,7 +349,7 @@ fn ctype_ops_function_distribution() {
                 classification_count += 1
             }
             "tolower" | "toupper" => conversion_count += 1,
-            f => panic!("Unexpected function in fixture: {}", f),
+            function => return Err(format!("unexpected function in fixture: {function}")),
         }
     }
 
@@ -344,6 +368,8 @@ fn ctype_ops_function_distribution() {
         "ctype_ops coverage: classification={}, conversion={}",
         classification_count, conversion_count
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -351,8 +377,8 @@ fn ctype_ops_function_distribution() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn ctype_ops_modes_valid() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -362,6 +388,8 @@ fn ctype_ops_modes_valid() {
             case.mode
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -369,8 +397,8 @@ fn ctype_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn ctype_ops_case_count_stable() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 30;
 
@@ -382,6 +410,8 @@ fn ctype_ops_case_count_stable() {
     );
 
     eprintln!("ctype_ops fixture has {} test cases", fixture.cases.len());
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -389,8 +419,8 @@ fn ctype_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn ctype_ops_has_posix_references() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -400,6 +430,8 @@ fn ctype_ops_has_posix_references() {
             case.spec_section
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -407,8 +439,8 @@ fn ctype_ops_has_posix_references() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn ctype_ops_covers_boundary_values() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_covers_boundary_values() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
 
     // Check that we test boundary characters
     let inputs: Vec<i64> = fixture
@@ -431,54 +463,19 @@ fn ctype_ops_covers_boundary_values() {
         inputs.contains(&97) && inputs.contains(&122),
         "Must test lowercase boundaries (a=97, z=122)"
     );
+
+    Ok(())
 }
 
 #[test]
-fn ctype_ops_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture("ctype_ops");
+fn ctype_ops_fixture_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
 
     for case in fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
-        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
-            &["strict", "hardened"]
-        } else {
-            &[case.mode.as_str()]
-        };
-
-        for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "fixture case {} ({mode}) failed to execute through harness: {err}",
-                        case.name
-                    )
-                });
-            assert_eq!(
-                result.impl_output, expected_output,
-                "fixture expected_output mismatch for {} ({mode})",
-                case.name
-            );
-            assert!(
-                result.host_parity,
-                "executor reported parity failure for {} ({mode})",
-                case.name
-            );
-        }
-    }
-}
-
-#[test]
-fn ctype_ops_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("ctype_ops");
-
-    for case in &fixture.cases {
-        let expected_output = case
-            .expected_output
-            .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -487,12 +484,12 @@ fn ctype_ops_fixture_cases_match_execute_fixture_case() {
 
         for mode in modes {
             let result =
-                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
-                    panic!(
-                        "fixture case {} ({mode}) failed to execute: {err}",
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
+                        "fixture case {} ({mode}) failed to execute through harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -505,4 +502,45 @@ fn ctype_ops_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+
+    Ok(())
+}
+
+#[test]
+fn ctype_ops_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("ctype_ops")?;
+
+    for case in &fixture.cases {
+        let expected_output = case
+            .expected_output
+            .as_deref()
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result =
+                execute_fixture_case(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
+                        "fixture case {} ({mode}) failed to execute: {err}",
+                        case.name
+                    )
+                })?;
+            assert_eq!(
+                result.impl_output, expected_output,
+                "fixture expected_output mismatch for {} ({mode})",
+                case.name
+            );
+            assert!(
+                result.host_parity,
+                "executor reported parity failure for {} ({mode})",
+                case.name
+            );
+        }
+    }
+
+    Ok(())
 }
