@@ -1,0 +1,51 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "runtime-math-cpomdp-feasibility-proofs-cli-contract",
+  "bead": "bd-v9enr",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "4c5cad54",
+  "purpose": "Pin the harness binary 'runtime-math-cpomdp-feasibility-proofs' subcommand which exposes frankenlibc_harness::runtime_math_cpomdp_feasibility_proofs::run_and_write as a CLI. Validates CPOMDP (constrained partially observable Markov decision process) safety feasibility for the repair-policy abstraction. Writes 4 outputs: structured JSONL log, JSON report, CPOMDP feasibility artifact, and CPOMDP epsilon-sensitivity artifact. Exits non-zero on any feasibility check failure.",
+  "subcommand_name": "runtime-math-cpomdp-feasibility-proofs",
+  "binary_target": "harness",
+  "required_flags": [],
+  "optional_flags": [
+    "--workspace-root",
+    "--log",
+    "--report",
+    "--feasibility-artifact",
+    "--sensitivity-artifact"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::runtime_math_cpomdp_feasibility_proofs::run_and_write"
+  ],
+  "io_pattern": "jsonl_log_plus_json_report_plus_two_json_artifacts",
+  "default_workspace_root": ".",
+  "default_log_path": "target/conformance/runtime_math_cpomdp_feasibility_proofs.log.jsonl",
+  "default_report_path": "target/conformance/runtime_math_cpomdp_feasibility_proofs.report.json",
+  "default_feasibility_artifact_path": "target/conformance/cpomdp_feasibility.json",
+  "default_sensitivity_artifact_path": "target/conformance/cpomdp_sensitivity.json",
+  "policy": {
+    "must_write_jsonl_log_file_at_log_path": true,
+    "must_write_json_report_file_at_report_path": true,
+    "must_write_feasibility_artifact_at_feasibility_artifact_path": true,
+    "must_write_sensitivity_artifact_at_sensitivity_artifact_path": true,
+    "creates_parent_directories_for_all_four_output_paths_if_missing": true,
+    "exits_nonzero_when_summary_failed_nonzero": true,
+    "exits_zero_when_summary_failed_count_is_zero": true,
+    "report_contains_summary_with_checks_count": true,
+    "uses_workspace_root_for_source_paths": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_log_file",
+    "missing_report_file",
+    "missing_feasibility_artifact",
+    "missing_sensitivity_artifact",
+    "summary_failed_silently_passed"
+  ],
+  "summary": {
+    "bead": "bd-v9enr",
+    "subcommand": "runtime-math-cpomdp-feasibility-proofs",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
