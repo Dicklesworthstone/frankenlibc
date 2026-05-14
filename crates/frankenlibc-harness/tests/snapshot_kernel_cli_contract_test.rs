@@ -143,23 +143,53 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
     let policy = m.get("policy").ok_or("missing policy")?;
-    for key in [
-        "must_write_one_output_file_at_output_path",
-        "no_stdout_jsonl_records_emitted",
-        "mode_strict_emits_strict_only",
-        "mode_hardened_emits_hardened_only",
-        "mode_both_emits_both_blocks",
-        "deterministic_given_same_seed_steps_mode",
-        "no_timestamps_in_fixture",
-        "stable_ordering_across_runs",
-        "scenario_families_count_is_seven",
-        "version_field_is_v1",
-        "unknown_mode_rejected_with_nonzero_exit",
+    for (key, message) in [
+        (
+            "must_write_one_output_file_at_output_path",
+            "policy.must_write_one_output_file_at_output_path must be true (manifest pin)",
+        ),
+        (
+            "no_stdout_jsonl_records_emitted",
+            "policy.no_stdout_jsonl_records_emitted must be true (manifest pin)",
+        ),
+        (
+            "mode_strict_emits_strict_only",
+            "policy.mode_strict_emits_strict_only must be true (manifest pin)",
+        ),
+        (
+            "mode_hardened_emits_hardened_only",
+            "policy.mode_hardened_emits_hardened_only must be true (manifest pin)",
+        ),
+        (
+            "mode_both_emits_both_blocks",
+            "policy.mode_both_emits_both_blocks must be true (manifest pin)",
+        ),
+        (
+            "deterministic_given_same_seed_steps_mode",
+            "policy.deterministic_given_same_seed_steps_mode must be true (manifest pin)",
+        ),
+        (
+            "no_timestamps_in_fixture",
+            "policy.no_timestamps_in_fixture must be true (manifest pin)",
+        ),
+        (
+            "stable_ordering_across_runs",
+            "policy.stable_ordering_across_runs must be true (manifest pin)",
+        ),
+        (
+            "scenario_families_count_is_seven",
+            "policy.scenario_families_count_is_seven must be true (manifest pin)",
+        ),
+        (
+            "version_field_is_v1",
+            "policy.version_field_is_v1 must be true (manifest pin)",
+        ),
+        (
+            "unknown_mode_rejected_with_nonzero_exit",
+            "policy.unknown_mode_rejected_with_nonzero_exit must be true (manifest pin)",
+        ),
     ] {
-        require(
-            json_bool(policy, key)?,
-            format!("policy.{key} must be true (manifest pin)"),
-        )?;
+        require(json_bool(policy, key)?, message)?;
     }
     Ok(())
 }
@@ -225,7 +255,6 @@ fn cli_mode_both_emits_both_blocks() -> TestResult {
     )?;
     require(fixture.get("strict").is_some(), "strict block missing")?;
     require(fixture.get("hardened").is_some(), "hardened block missing")?;
-    let _ = std::fs::remove_file(&out);
     Ok(())
 }
 
@@ -245,7 +274,6 @@ fn cli_mode_strict_emits_strict_only() -> TestResult {
         fixture.get("hardened").is_none() || fixture.get("hardened") == Some(&Value::Null),
         "hardened block must be omitted in strict mode",
     )?;
-    let _ = std::fs::remove_file(&out);
     Ok(())
 }
 
@@ -265,7 +293,6 @@ fn cli_mode_hardened_emits_hardened_only() -> TestResult {
         fixture.get("strict").is_none() || fixture.get("strict") == Some(&Value::Null),
         "strict block must be omitted in hardened mode",
     )?;
-    let _ = std::fs::remove_file(&out);
     Ok(())
 }
 
@@ -309,7 +336,6 @@ fn cli_scenario_id_and_families_match_manifest() -> TestResult {
         format!("families order mismatch: actual={actual:?} expected={expected:?}"),
     )?;
     require(actual.len() == 7, "families must have exactly 7 entries")?;
-    let _ = std::fs::remove_file(&out);
     Ok(())
 }
 
@@ -328,8 +354,6 @@ fn cli_deterministic_for_same_seed_steps_mode() -> TestResult {
         body_a == body_b,
         "fixture bytes must match for same seed+steps+mode",
     )?;
-    let _ = std::fs::remove_file(&out_a);
-    let _ = std::fs::remove_file(&out_b);
     Ok(())
 }
 
@@ -353,6 +377,5 @@ fn cli_unknown_mode_rejected_with_nonzero_exit() -> TestResult {
         !result.status.success(),
         "harness must exit non-zero on unknown mode",
     )?;
-    let _ = std::fs::remove_file(&out);
     Ok(())
 }
