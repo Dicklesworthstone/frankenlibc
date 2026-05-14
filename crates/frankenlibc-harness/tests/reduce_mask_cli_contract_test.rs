@@ -126,17 +126,41 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_inputs_into_output_record",
-        "deterministic_given_inputs",
-        "identity_with_empty_rule_table",
-        "drops_redundant_atom_a_or_b_to_a",
-        "canonical_root_cause_c0_and_c3_to_c3",
-        "canonical_full_support_reduces_to_disjoint_class_union",
-        "step_limit_exceeded_preserves_input_mask_and_flags_error",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_inputs_into_output_record",
+            "echoes_inputs_into_output_record must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "identity_with_empty_rule_table",
+            "identity_with_empty_rule_table must be true",
+        ),
+        (
+            "drops_redundant_atom_a_or_b_to_a",
+            "drops_redundant_atom_a_or_b_to_a must be true",
+        ),
+        (
+            "canonical_root_cause_c0_and_c3_to_c3",
+            "canonical_root_cause_c0_and_c3_to_c3 must be true",
+        ),
+        (
+            "canonical_full_support_reduces_to_disjoint_class_union",
+            "canonical_full_support_reduces_to_disjoint_class_union must be true",
+        ),
+        (
+            "step_limit_exceeded_preserves_input_mask_and_flags_error",
+            "step_limit_exceeded_preserves_input_mask_and_flags_error must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -212,7 +236,7 @@ fn run_and_parse(
     let output = unique_tmp(label, "jsonl")?;
     let out = run_cli(bin, mask, &rules_path, step_limit, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("reduce-mask CLI invocation must succeed".into());
     }
     read_record(&output)
 }
