@@ -1,0 +1,80 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "kernel-regression-mode-cli-contract",
+  "bead": "bd-borw4",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "0e6758bc",
+  "purpose": "Pin the harness binary 'kernel-regression-mode' subcommand which exposes frankenlibc_harness::kernel_regression_report::collect_mode_metrics as a CLI. The subcommand exists as a separate process boundary because FRANKENLIBC_MODE is process-immutable; collect_mode_metrics enforces that the cached SafetyLevel at process start matches the --mode flag. The parent 'kernel-regression-report' command spawns one of these per mode (strict + hardened) and aggregates them. Emits single pretty JSON KernelModeMetrics record to stdout (microbench latency stats, action/risk/family diagnostics, snapshot key, pareto trend).",
+  "subcommand_name": "kernel-regression-mode",
+  "binary_target": "harness",
+  "required_flags": [
+    "--mode"
+  ],
+  "optional_flags": [
+    "--seed",
+    "--steps",
+    "--warmup-iters",
+    "--samples",
+    "--iters",
+    "--trend-stride"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::kernel_regression_report::collect_mode_metrics",
+    "frankenlibc_harness::kernel_regression_report::ModeRunConfig",
+    "frankenlibc_harness::kernel_regression_report::MicrobenchConfig"
+  ],
+  "io_pattern": "stdout_one_pretty_json_record_no_output_file_flag",
+  "stdout_output_contract": {
+    "format": "pretty_json",
+    "record_kind": "kernel_mode_metrics",
+    "required_top_level_fields": [
+      "mode",
+      "seed",
+      "steps",
+      "bench",
+      "actions",
+      "risk",
+      "family_diagnostics",
+      "snapshot",
+      "pareto_trend",
+      "notes"
+    ]
+  },
+  "mode_enum": [
+    "strict",
+    "hardened"
+  ],
+  "default_seed_hex": "0xDEAD_BEEF",
+  "default_steps": 256,
+  "default_warmup_iters": 10000,
+  "default_samples": 25,
+  "env_contract": {
+    "frankenlibc_mode_env_var_must_match_cli_mode": true,
+    "rationale": "SafetyLevel is process-immutable: cached at process start from FRANKENLIBC_MODE. collect_mode_metrics enforces parity between the cached level and the expected --mode parameter."
+  },
+  "policy": {
+    "must_emit_exactly_one_pretty_json_record_to_stdout": true,
+    "no_output_file_flag": true,
+    "mode_field_in_record_reflects_cli_mode": true,
+    "seed_field_in_record_reflects_cli_seed": true,
+    "steps_field_in_record_reflects_cli_steps": true,
+    "frankenlibc_mode_env_var_mismatch_rejected_with_nonzero_exit": true,
+    "unknown_mode_rejected_with_nonzero_exit": true,
+    "missing_required_mode_flag_rejected_with_nonzero_exit": true,
+    "deterministic_given_same_seed_steps_microbench_iters": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_mode_flag",
+    "unknown_mode_accepted",
+    "stdout_record_is_not_json",
+    "mode_field_drift",
+    "seed_field_drift",
+    "frankenlibc_mode_env_var_mismatch_silently_accepted"
+  ],
+  "summary": {
+    "bead": "bd-borw4",
+    "subcommand": "kernel-regression-mode",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
