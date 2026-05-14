@@ -57,6 +57,12 @@ fn json_u64(value: &Value, field: &str) -> TestResult<u64> {
         .ok_or_else(|| format!("missing or non-u64 `{field}`"))
 }
 
+fn expected_cost_u64(value: &Value) -> TestResult<u64> {
+    value
+        .as_u64()
+        .ok_or_else(|| "expected_costs_ns entry must be u64".to_string())
+}
+
 fn cargo_target_dir_for_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_TARGET_DIR") {
         PathBuf::from(p)
@@ -129,7 +135,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "persistence_is_highest_cost_probe",
         "unknown_probe_name_is_rejected_with_nonzero_exit",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -166,18 +172,31 @@ fn run_cli(bin: &Path, probe: &str, output: &Path) -> TestResult<std::process::O
 
 fn read_record(out_path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
 fn run_and_parse(bin: &Path, probe: &str, label: &str) -> TestResult<Value> {
     let output = unique_tmp(label)?;
     let out = run_cli(bin, probe, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     Ok(parsed)
 }
 
@@ -198,23 +217,18 @@ fn cli_all_seventeen_probes_emit_finite_costs() -> TestResult {
         format!("expected 17 probes, got {}", table.len()),
     )?;
     for (probe, want_cost) in table {
-        let want = want_cost
-            .as_u64()
-            .ok_or_else(|| format!("expected_costs_ns.{probe} must be u64"))?;
-        let parsed = run_and_parse(&bin, probe, &format!("probe_{probe}"))?;
+        let want = expected_cost_u64(want_cost)?;
+        let parsed = run_and_parse(&bin, probe, "probe")?;
         require(
             json_string(&parsed, "kind")? == "probe_cost_ns",
             "kind must be probe_cost_ns",
         )?;
         require(
             json_string(&parsed, "probe")? == probe,
-            format!("probe must echo {probe}"),
+            "probe must echo input name",
         )?;
         let got = json_u64(&parsed, "cost_ns")?;
-        require(
-            got == want,
-            format!("probe={probe}: cost_ns table drift: want={want} got={got}"),
-        )?;
+        require(got == want, "cost_ns table drift")?;
     }
     Ok(())
 }
@@ -248,11 +262,11 @@ fn cli_loss_minimizer_is_lowest_cost() -> TestResult {
         "coupling",
     ];
     for o in other_probes {
-        let p = run_and_parse(&bin, o, &format!("vs_{o}"))?;
+        let p = run_and_parse(&bin, o, "loss_vs")?;
         let c = json_u64(&p, "cost_ns")?;
         require(
             c >= cost,
-            format!("loss-minimizer (cost={cost}) must be <= {o} (cost={c})"),
+            "loss-minimizer must be less than or equal to comparison probe cost",
         )?;
     }
     Ok(())
@@ -289,11 +303,11 @@ fn cli_persistence_is_highest_cost() -> TestResult {
         "coupling",
     ];
     for o in other_probes {
-        let p = run_and_parse(&bin, o, &format!("vs_{o}"))?;
+        let p = run_and_parse(&bin, o, "highest_vs")?;
         let c = json_u64(&p, "cost_ns")?;
         require(
             c <= cost,
-            format!("persistence (cost={cost}) must be >= {o} (cost={c})"),
+            "persistence must be greater than or equal to comparison probe cost",
         )?;
     }
     Ok(())
@@ -307,7 +321,6 @@ fn cli_unknown_probe_is_rejected_with_nonzero_exit() -> TestResult {
     };
     let output = unique_tmp("unknown")?;
     let out = run_cli(&bin, "totally-not-a-real-probe", &output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         format!(
