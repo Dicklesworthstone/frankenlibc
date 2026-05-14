@@ -121,18 +121,34 @@ fn manifest_anchors_to_2t33m_with_subcommand_name() -> TestResult {
 fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
-    let policy = m
-        .get("policy")
-        .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "ok_true_iff_errors_array_is_empty",
-        "exit_non_zero_when_ok_false",
-        "empty_jsonl_must_pass",
-        "supports_current_schema_version",
-        "io_failure_to_open_input_must_be_reported",
+    let policy = m.get("policy").ok_or("missing policy")?;
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "ok_true_iff_errors_array_is_empty",
+            "ok_true_iff_errors_array_is_empty must be true",
+        ),
+        (
+            "exit_non_zero_when_ok_false",
+            "exit_non_zero_when_ok_false must be true",
+        ),
+        (
+            "empty_jsonl_must_pass",
+            "empty_jsonl_must_pass must be true",
+        ),
+        (
+            "supports_current_schema_version",
+            "supports_current_schema_version must be true",
+        ),
+        (
+            "io_failure_to_open_input_must_be_reported",
+            "io_failure_to_open_input_must_be_reported must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
