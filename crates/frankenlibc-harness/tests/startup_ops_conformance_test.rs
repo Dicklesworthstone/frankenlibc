@@ -45,12 +45,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,8 +127,8 @@ fn startup_ops_fixture_exists() {
 }
 
 #[test]
-fn startup_ops_fixture_valid_schema() {
-    let fixture = load_fixture("startup_ops");
+fn startup_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("startup_ops")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "startup_ops");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -141,31 +141,34 @@ fn startup_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn startup_ops_covers_phase0() {
-    let fixture = load_fixture("startup_ops");
+fn startup_ops_covers_phase0() -> Result<(), String> {
+    let fixture = load_fixture("startup_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("phase0")).count() >= 2,
         "__frankenlibc_startup_phase0 needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn startup_ops_covers_snapshot() {
-    let fixture = load_fixture("startup_ops");
+fn startup_ops_covers_snapshot() -> Result<(), String> {
+    let fixture = load_fixture("startup_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("snapshot")).count() >= 2,
         "__frankenlibc_startup_snapshot needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn startup_ops_covers_libc_start_main() {
-    let fixture = load_fixture("startup_ops");
+fn startup_ops_covers_libc_start_main() -> Result<(), String> {
+    let fixture = load_fixture("startup_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -175,11 +178,12 @@ fn startup_ops_covers_libc_start_main() {
             >= 2,
         "__libc_start_main needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn startup_ops_covers_error_paths() {
-    let fixture = load_fixture("startup_ops");
+fn startup_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("startup_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -187,24 +191,26 @@ fn startup_ops_covers_error_paths() {
             .any(|n| n.contains("rejects") || n.contains("deny")),
         "startup_ops must test rejection/deny paths"
     );
+    Ok(())
 }
 
 #[test]
-fn startup_ops_modes_valid() {
-    let fixture = load_fixture("startup_ops");
+fn startup_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("startup_ops")?;
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn startup_ops_covers_both_modes() {
-    let fixture = load_fixture("startup_ops");
+fn startup_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("startup_ops")?;
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
     assert!(has_strict, "startup_ops must have strict mode test cases");
@@ -212,22 +218,24 @@ fn startup_ops_covers_both_modes() {
         has_hardened,
         "startup_ops must have hardened mode test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn startup_ops_case_count_stable() {
-    let fixture = load_fixture("startup_ops");
+fn startup_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("startup_ops")?;
     assert!(
         fixture.cases.len() >= 10,
         "startup_ops fixture has {} cases, expected at least 10",
         fixture.cases.len()
     );
     eprintln!("startup_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 #[test]
-fn startup_ops_has_spec_references() {
-    let fixture = load_fixture("startup_ops");
+fn startup_ops_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("startup_ops")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("FrankenLibC")
@@ -238,11 +246,12 @@ fn startup_ops_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn startup_ops_error_codes_valid() {
-    let fixture = load_fixture("startup_ops");
+fn startup_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("startup_ops")?;
 
     // Valid error codes for startup operations
     let valid_errno_values = [
@@ -260,11 +269,12 @@ fn startup_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 #[test]
-fn startup_ops_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("startup_ops");
+fn startup_ops_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("startup_ops")?;
 
     for case in &fixture.cases {
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
@@ -274,17 +284,16 @@ fn startup_ops_fixture_cases_match_execute_fixture_case() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "startup_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
-            let expected = case
-                .expected_output
-                .as_deref()
-                .expect("startup_ops cases must have expected_output");
+                })?;
+            let expected = case.expected_output.as_deref().ok_or_else(|| {
+                format!("startup_ops case {} is missing expected_output", case.name)
+            })?;
             assert_eq!(
                 result.impl_output, expected,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -300,4 +309,5 @@ fn startup_ops_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+    Ok(())
 }
