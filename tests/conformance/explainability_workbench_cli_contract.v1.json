@@ -1,0 +1,78 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "explainability-workbench-cli-contract",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "05525803215ab18fe4b836c67998413cf26c6980",
+  "purpose": "Pin the harness binary `explainability-workbench` subcommand that joins structured log rows with optional artifact-index metadata and renders an operator-facing explainability report.",
+  "subcommand_name": "explainability-workbench",
+  "binary_target": "harness",
+  "required_flags": [
+    "--log"
+  ],
+  "optional_flags": [
+    "--artifact-index",
+    "--trace-id",
+    "--scenario-id",
+    "--format",
+    "--output",
+    "--ansi",
+    "--width"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::explainability_workbench::build_report",
+    "frankenlibc_harness::explainability_workbench::render_plain",
+    "frankenlibc_harness::explainability_workbench::render_ftui"
+  ],
+  "input_contract": {
+    "structured_log_schema": "structured_log::LogEntry JSONL",
+    "artifact_index_schema": "structured_log::ArtifactIndex JSON",
+    "filters": [
+      "trace_id",
+      "scenario_id"
+    ]
+  },
+  "output_contract": {
+    "supported_formats": [
+      "json",
+      "plain",
+      "ftui"
+    ],
+    "default_format": "json",
+    "json_required_fields": [
+      "bead",
+      "scenarios",
+      "tooling_contract"
+    ],
+    "scenario_required_fields": [
+      "scenario_id",
+      "mode_divergence",
+      "artifact_links"
+    ],
+    "plain_output_must_include": [
+      "Scenario",
+      "Mode divergence"
+    ],
+    "unknown_format_fails_closed": true
+  },
+  "policy": {
+    "must_register_explainability_workbench_subcommand": true,
+    "must_accept_log_only_input": true,
+    "must_join_artifact_index_by_decision_id": true,
+    "must_filter_by_scenario_id": true,
+    "must_write_output_when_output_path_is_supplied": true,
+    "must_preserve_tooling_contract_in_json_output": true,
+    "unknown_format_must_fail_closed_without_panic": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_log_flag",
+    "missing_subcommand_registration",
+    "missing_joined_artifacts",
+    "missing_tooling_contract",
+    "accepts_unknown_format"
+  ],
+  "summary": {
+    "subcommand": "explainability-workbench",
+    "report_only": true,
+    "claim_status": "cli-contract"
+  }
+}
