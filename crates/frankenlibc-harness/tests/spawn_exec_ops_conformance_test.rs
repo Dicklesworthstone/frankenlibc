@@ -46,12 +46,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,8 +141,8 @@ fn spawn_exec_ops_fixture_exists() {
 }
 
 #[test]
-fn spawn_exec_ops_fixture_valid_schema() {
-    let fixture = load_fixture("spawn_exec_ops");
+fn spawn_exec_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("spawn_exec_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "spawn_exec_ops");
@@ -161,6 +161,8 @@ fn spawn_exec_ops_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,8 +170,8 @@ fn spawn_exec_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn spawn_exec_ops_covers_posix_spawn() {
-    let fixture = load_fixture("spawn_exec_ops");
+fn spawn_exec_ops_covers_posix_spawn() -> Result<(), String> {
+    let fixture = load_fixture("spawn_exec_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -180,6 +182,8 @@ fn spawn_exec_ops_covers_posix_spawn() {
             >= 2,
         "posix_spawn needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,14 +191,16 @@ fn spawn_exec_ops_covers_posix_spawn() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn spawn_exec_ops_covers_execve() {
-    let fixture = load_fixture("spawn_exec_ops");
+fn spawn_exec_ops_covers_execve() -> Result<(), String> {
+    let fixture = load_fixture("spawn_exec_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("execve")),
         "Missing test coverage for execve"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -202,14 +208,16 @@ fn spawn_exec_ops_covers_execve() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn spawn_exec_ops_covers_system() {
-    let fixture = load_fixture("spawn_exec_ops");
+fn spawn_exec_ops_covers_system() -> Result<(), String> {
+    let fixture = load_fixture("spawn_exec_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("system")),
         "Missing test coverage for system()"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -217,8 +225,8 @@ fn spawn_exec_ops_covers_system() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn spawn_exec_ops_error_codes_valid() {
-    let fixture = load_fixture("spawn_exec_ops");
+fn spawn_exec_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("spawn_exec_ops")?;
 
     // Valid POSIX/Linux error codes for spawn/exec functions
     let valid_errno_values = [
@@ -237,6 +245,8 @@ fn spawn_exec_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -244,17 +254,19 @@ fn spawn_exec_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn spawn_exec_ops_modes_valid() {
-    let fixture = load_fixture("spawn_exec_ops");
+fn spawn_exec_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("spawn_exec_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -262,8 +274,8 @@ fn spawn_exec_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn spawn_exec_ops_covers_both_modes() {
-    let fixture = load_fixture("spawn_exec_ops");
+fn spawn_exec_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("spawn_exec_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
@@ -276,6 +288,8 @@ fn spawn_exec_ops_covers_both_modes() {
         has_hardened,
         "spawn_exec_ops must have hardened mode test cases"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -283,8 +297,8 @@ fn spawn_exec_ops_covers_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn spawn_exec_ops_case_count_stable() {
-    let fixture = load_fixture("spawn_exec_ops");
+fn spawn_exec_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("spawn_exec_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 5;
 
@@ -299,6 +313,8 @@ fn spawn_exec_ops_case_count_stable() {
         "spawn_exec_ops fixture has {} test cases",
         fixture.cases.len()
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -306,8 +322,8 @@ fn spawn_exec_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn spawn_exec_ops_covers_error_paths() {
-    let fixture = load_fixture("spawn_exec_ops");
+fn spawn_exec_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("spawn_exec_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // Should test ENOENT (nonexistent) and EACCES errors
@@ -317,6 +333,8 @@ fn spawn_exec_ops_covers_error_paths() {
             .any(|n| n.contains("nonexistent") || n.contains("eacces")),
         "spawn_exec_ops must test error paths (ENOENT, EACCES)"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -324,8 +342,8 @@ fn spawn_exec_ops_covers_error_paths() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn spawn_exec_ops_has_spec_references() {
-    let fixture = load_fixture("spawn_exec_ops");
+fn spawn_exec_ops_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("spawn_exec_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -335,18 +353,20 @@ fn spawn_exec_ops_has_spec_references() {
             case.spec_section
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn spawn_exec_ops_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("spawn_exec_ops");
+fn spawn_exec_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("spawn_exec_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_ref()
             .map(expected_output_text)
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -354,13 +374,13 @@ fn spawn_exec_ops_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "spawn_exec_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             if case.function == "system" {
                 assert_ne!(
                     result.host_output, "SKIP",
@@ -380,4 +400,6 @@ fn spawn_exec_ops_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+
+    Ok(())
 }
