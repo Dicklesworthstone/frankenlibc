@@ -832,6 +832,25 @@ enum Command {
     /// Convert a sparse-recovery boolean support vector over the six latent
     /// causes into a compact Grobner canonical class id via
     /// `frankenlibc_membrane::grobner::canonical_class_from_support`.
+    /// Compute deterministic SHA-256 over a D x D Gram matrix plus
+    /// monomial_degree + barrier_budget_milli via
+    /// `frankenlibc_membrane::runtime_math::sos_barrier::compute_certificate_hash`.
+    /// D inferred from the outer JSON array length; supports D in 2..=8.
+    ComputeCertificateHash {
+        /// Path to JSON 2D array of i64 values forming the D x D Gram matrix.
+        #[arg(long)]
+        gram_matrix: PathBuf,
+        /// Monomial degree (u32) of the SOS quadratic form.
+        #[arg(long)]
+        monomial_degree: u32,
+        /// Barrier budget in milli-units (i64). Use --barrier-budget-milli=<N>
+        /// for negative values.
+        #[arg(long)]
+        barrier_budget_milli: i64,
+        /// Output JSONL path: one certificate_hash record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Generate ALL repair payloads for an epoch via
     /// `frankenlibc_membrane::runtime_math::evidence::generate_repair_payloads_v1`.
     /// Iterates esi from k_source..k_source+R-1 where R =
@@ -3312,6 +3331,113 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&output, body)?;
             eprintln!(
                 "recommend-healing-for-canonical-class: class_id={class_id} ({class_label}) -> action={action_label}"
+            );
+        }
+        Command::ComputeCertificateHash {
+            gram_matrix,
+            monomial_degree,
+            barrier_budget_milli,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::sos_barrier::compute_certificate_hash;
+            let body = std::fs::read_to_string(&gram_matrix)
+                .map_err(|e| format!("read {}: {e}", gram_matrix.display()))?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(&body).map_err(|e| format!("parse: {e}"))?;
+            let outer = parsed
+                .as_array()
+                .ok_or_else(|| "gram_matrix root must be a JSON array".to_string())?;
+            let dim = outer.len();
+            if !(2..=8).contains(&dim) {
+                return Err(format!(
+                    "unsupported gram_matrix dim {dim}; supported D in 2..=8"
+                )
+                .into());
+            }
+            let mut flat: Vec<i64> = Vec::with_capacity(dim * dim);
+            for (i, row) in outer.iter().enumerate() {
+                let row_arr = row.as_array().ok_or_else(|| {
+                    format!("gram_matrix row {i} must be a JSON array")
+                })?;
+                if row_arr.len() != dim {
+                    return Err(format!(
+                        "gram_matrix row {i} has length {}, expected {dim}",
+                        row_arr.len()
+                    )
+                    .into());
+                }
+                for (j, cell) in row_arr.iter().enumerate() {
+                    let v = cell.as_i64().ok_or_else(|| {
+                        format!("gram_matrix[{i}][{j}] must be an i64 integer")
+                    })?;
+                    flat.push(v);
+                }
+            }
+            fn to_matrix<const D: usize>(flat: &[i64]) -> [[i64; D]; D] {
+                let mut out = [[0i64; D]; D];
+                for i in 0..D {
+                    for j in 0..D {
+                        out[i][j] = flat[i * D + j];
+                    }
+                }
+                out
+            }
+            let digest: [u8; 32] = match dim {
+                2 => compute_certificate_hash::<2>(
+                    &to_matrix::<2>(&flat),
+                    monomial_degree,
+                    barrier_budget_milli,
+                ),
+                3 => compute_certificate_hash::<3>(
+                    &to_matrix::<3>(&flat),
+                    monomial_degree,
+                    barrier_budget_milli,
+                ),
+                4 => compute_certificate_hash::<4>(
+                    &to_matrix::<4>(&flat),
+                    monomial_degree,
+                    barrier_budget_milli,
+                ),
+                5 => compute_certificate_hash::<5>(
+                    &to_matrix::<5>(&flat),
+                    monomial_degree,
+                    barrier_budget_milli,
+                ),
+                6 => compute_certificate_hash::<6>(
+                    &to_matrix::<6>(&flat),
+                    monomial_degree,
+                    barrier_budget_milli,
+                ),
+                7 => compute_certificate_hash::<7>(
+                    &to_matrix::<7>(&flat),
+                    monomial_degree,
+                    barrier_budget_milli,
+                ),
+                8 => compute_certificate_hash::<8>(
+                    &to_matrix::<8>(&flat),
+                    monomial_degree,
+                    barrier_budget_milli,
+                ),
+                _ => unreachable!("dim already bounds-checked"),
+            };
+            let hash_hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "certificate_hash",
+                "dim": dim,
+                "monomial_degree": monomial_degree,
+                "barrier_budget_milli": barrier_budget_milli,
+                "hash_hex": hash_hex,
+            });
+            let mut out_body = line.to_string();
+            out_body.push('\n');
+            std::fs::write(&output, out_body)?;
+            eprintln!(
+                "compute-certificate-hash: dim={dim} monomial_degree={monomial_degree} budget_milli={barrier_budget_milli} -> hash={hash_hex}"
             );
         }
         Command::GenerateRepairPayloads {

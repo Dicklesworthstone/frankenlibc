@@ -1,0 +1,61 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "compute-certificate-hash-cli-contract",
+  "bead": "bd-ohq9t",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "abe3d593",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::sos_barrier::compute_certificate_hash<const D>(gram_matrix, monomial_degree, barrier_budget_milli) -> [u8; 32] as a standalone CLI. The lib API computes a deterministic SHA-256 over a D x D i64 Gram matrix plus monomial_degree (u32) and barrier_budget_milli (i64) — used to bind SOS barrier certificates to their offline-synthesized matrices. Accepts the matrix as a JSON 2D array; D is inferred from outer array length; harness dispatches across const D in {2,3,4,5,6,7,8}. Previously reachable only from Rust callers; the CLI bridge lets CI verify certificate hash binding without compiling.",
+  "subcommand_name": "compute-certificate-hash",
+  "binary_target": "harness",
+  "required_flags": [
+    "--gram-matrix",
+    "--monomial-degree",
+    "--barrier-budget-milli",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::runtime_math::sos_barrier::compute_certificate_hash",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "certificate_hash",
+    "required_fields": [
+      "kind",
+      "dim",
+      "monomial_degree",
+      "barrier_budget_milli",
+      "hash_hex"
+    ]
+  },
+  "expected_d4_anchor": {
+    "gram_matrix": [[1,2,3,4],[5,6,7,8],[9,10,11,12],[13,14,15,16]],
+    "monomial_degree": 2,
+    "barrier_budget_milli": 1000,
+    "expected_hash_hex": "73f1ed83c9e6b1c1c7f4026a5ef4b07a39fce44df65cc7f9598c826a2edc4253"
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "echoes_inputs_into_output_record": true,
+    "deterministic_given_inputs": true,
+    "hash_hex_is_64_lowercase_hex_chars": true,
+    "different_gram_matrix_yields_different_hash": true,
+    "different_monomial_degree_yields_different_hash": true,
+    "different_barrier_budget_yields_different_hash": true,
+    "supported_dims_2_through_8_succeed": true,
+    "unsupported_dim_is_rejected": true,
+    "non_square_matrix_is_rejected": true,
+    "d4_anchor_hash_matches_expected": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "hash_drift_from_d4_anchor",
+    "unsupported_dim_certified",
+    "non_square_matrix_certified"
+  ],
+  "summary": {
+    "bead": "bd-ohq9t",
+    "subcommand": "compute-certificate-hash",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
