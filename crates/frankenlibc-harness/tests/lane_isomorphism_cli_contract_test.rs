@@ -144,16 +144,37 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "outcomes_identical_must_be_true_for_well_formed_inputs",
-        "conservative_outcome_length_must_equal_writes_times_reads_per_phase",
-        "seqlock_outcome_length_must_equal_writes_times_reads_per_phase",
-        "fail_closed_on_empty_writes",
-        "fail_closed_on_zero_reads_per_phase",
-        "writes_array_in_output_must_echo_parsed_input",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "outcomes_identical_must_be_true_for_well_formed_inputs",
+            "outcomes_identical_must_be_true_for_well_formed_inputs must be true",
+        ),
+        (
+            "conservative_outcome_length_must_equal_writes_times_reads_per_phase",
+            "conservative_outcome_length_must_equal_writes_times_reads_per_phase must be true",
+        ),
+        (
+            "seqlock_outcome_length_must_equal_writes_times_reads_per_phase",
+            "seqlock_outcome_length_must_equal_writes_times_reads_per_phase must be true",
+        ),
+        (
+            "fail_closed_on_empty_writes",
+            "fail_closed_on_empty_writes must be true",
+        ),
+        (
+            "fail_closed_on_zero_reads_per_phase",
+            "fail_closed_on_zero_reads_per_phase must be true",
+        ),
+        (
+            "writes_array_in_output_must_echo_parsed_input",
+            "writes_array_in_output_must_echo_parsed_input must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
