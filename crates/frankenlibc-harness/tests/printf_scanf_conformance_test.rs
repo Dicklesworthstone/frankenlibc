@@ -6,13 +6,15 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crate_dir = manifest_dir
         .parent()
-        .unwrap()
+        .ok_or_else(|| format!("{} has no parent directory", manifest_dir.display()))?;
+    let workspace_dir = crate_dir
         .parent()
-        .unwrap()
-        .to_path_buf()
+        .ok_or_else(|| format!("{} has no parent directory", crate_dir.display()))?;
+    Ok(workspace_dir.to_path_buf())
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,12 +52,12 @@ struct FixtureCase {
     mode: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,14 +65,15 @@ fn load_fixture(name: &str) -> FixtureFile {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn printf_conformance_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/printf_conformance.json");
+fn printf_conformance_fixture_exists() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/printf_conformance.json");
     assert!(path.exists(), "printf_conformance.json fixture must exist");
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_fixture_valid_schema() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "printf_conformance");
@@ -99,11 +102,12 @@ fn printf_conformance_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_all_specifiers() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_all_specifiers() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
 
     // Map specifiers to their expected test name patterns
     let specifier_patterns = [
@@ -132,11 +136,12 @@ fn printf_conformance_covers_all_specifiers() {
         let found = case_names.iter().any(|name| name.contains(pattern));
         assert!(found, "Missing test coverage for %{spec} specifier");
     }
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_flags() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_flags() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // Check for flag coverage
@@ -155,11 +160,12 @@ fn printf_conformance_covers_flags() {
             desc
         );
     }
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_width_precision() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_width_precision() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -174,11 +180,12 @@ fn printf_conformance_covers_width_precision() {
         case_names.iter().any(|name| name.contains("star")),
         "Missing * (dynamic width/precision) test coverage"
     );
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_length_modifiers() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_length_modifiers() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let lengths = [
@@ -198,11 +205,12 @@ fn printf_conformance_covers_length_modifiers() {
             desc
         );
     }
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_special_values() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_special_values() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -213,11 +221,12 @@ fn printf_conformance_covers_special_values() {
         case_names.iter().any(|name| name.contains("nan")),
         "Missing NaN test coverage"
     );
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_posix_extensions() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_posix_extensions() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // POSIX positional arguments (n$)
@@ -225,11 +234,12 @@ fn printf_conformance_covers_posix_extensions() {
         case_names.iter().any(|name| name.contains("positional")),
         "Missing POSIX positional arguments test coverage"
     );
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_covers_edge_cases() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_covers_edge_cases() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // Edge cases that should be covered
@@ -247,6 +257,7 @@ fn printf_conformance_covers_edge_cases() {
             .any(|name| name.contains("negative_zero") || name.contains("neg_zero")),
         "Missing negative zero test coverage"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,14 +265,15 @@ fn printf_conformance_covers_edge_cases() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn scanf_conformance_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/scanf_conformance.json");
+fn scanf_conformance_fixture_exists() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/scanf_conformance.json");
     assert!(path.exists(), "scanf_conformance.json fixture must exist");
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_fixture_valid_schema() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "scanf_conformance");
@@ -280,11 +292,12 @@ fn scanf_conformance_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_all_specifiers() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_all_specifiers() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
 
     let specifiers = ["d", "i", "u", "o", "x", "X", "f", "c", "s", "p", "n"];
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
@@ -299,33 +312,36 @@ fn scanf_conformance_covers_all_specifiers() {
             "Missing test coverage for %{spec} specifier in scanf"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_scansets() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_scansets() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("scanset")),
         "Missing scanset %[] test coverage"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_assignment_suppression() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_assignment_suppression() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("suppress")),
         "Missing assignment suppression * test coverage"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_eof_and_errors() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_eof_and_errors() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -338,11 +354,12 @@ fn scanf_conformance_covers_eof_and_errors() {
             .any(|name| name.contains("no_match") || name.contains("mismatch")),
         "Missing conversion failure test coverage"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_length_modifiers() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_length_modifiers() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let lengths = [("hh_", "hh"), ("h_", "h"), ("l_", "l"), ("ll_", "ll")];
@@ -354,6 +371,7 @@ fn scanf_conformance_covers_length_modifiers() {
             desc
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -361,8 +379,8 @@ fn scanf_conformance_covers_length_modifiers() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn printf_fixture_case_count_stable() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_fixture_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     // Freeze the case count to detect accidental deletions
     // Updated 2026-04-14: added banker's rounding, %g, and edge case tests
     assert!(
@@ -370,11 +388,12 @@ fn printf_fixture_case_count_stable() {
         "printf_conformance must have at least 185 cases, found {}",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_fixture_case_count_stable() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_fixture_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     // Freeze the case count to detect accidental deletions
     // Updated 2026-04-14: added hex float and edge case tests
     assert!(
@@ -382,24 +401,27 @@ fn scanf_fixture_case_count_stable() {
         "scanf_conformance must have at least 90 cases, found {}",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn printf_fixture_spec_references_posix() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_fixture_spec_references_posix() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     assert!(
         fixture.spec_reference.contains("POSIX") || fixture.spec_reference.contains("C11"),
         "printf fixture must reference POSIX or C11 spec"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_fixture_spec_references_posix() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_fixture_spec_references_posix() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     assert!(
         fixture.spec_reference.contains("POSIX") || fixture.spec_reference.contains("C11"),
         "scanf fixture must reference POSIX or C11 spec"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -407,23 +429,25 @@ fn scanf_fixture_spec_references_posix() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn printf_fixture_has_strict_mode_cases() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_fixture_has_strict_mode_cases() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let strict_count = fixture.cases.iter().filter(|c| c.mode == "strict").count();
     assert!(
         strict_count > 0,
         "printf fixture must have strict mode cases"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_fixture_has_strict_mode_cases() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_fixture_has_strict_mode_cases() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     let strict_count = fixture.cases.iter().filter(|c| c.mode == "strict").count();
     assert!(
         strict_count > 0,
         "scanf fixture must have strict mode cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -567,8 +591,8 @@ fn run_printf_case(case: &FixtureCase) -> Result<(), String> {
 }
 
 #[test]
-fn printf_conformance_runtime_integer_specifiers() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_runtime_integer_specifiers() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -600,11 +624,12 @@ fn printf_conformance_runtime_integer_specifiers() {
         passed, failed, skipped
     );
     assert_eq!(failed, 0, "{} integer specifier tests failed", failed);
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_runtime_string_specifiers() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_runtime_string_specifiers() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -629,11 +654,12 @@ fn printf_conformance_runtime_string_specifiers() {
         passed, failed, skipped
     );
     assert_eq!(failed, 0, "{} string specifier tests failed", failed);
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_runtime_float_specifiers() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_runtime_float_specifiers() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -674,11 +700,12 @@ fn printf_conformance_runtime_float_specifiers() {
         passed, failed, skipped
     );
     assert_eq!(failed, 0, "{} float specifier tests failed", failed);
+    Ok(())
 }
 
 #[test]
-fn printf_conformance_runtime_flags_and_width() {
-    let fixture = load_fixture("printf_conformance");
+fn printf_conformance_runtime_flags_and_width() -> Result<(), String> {
+    let fixture = load_fixture("printf_conformance")?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -711,6 +738,7 @@ fn printf_conformance_runtime_flags_and_width() {
         passed, failed, skipped
     );
     assert_eq!(failed, 0, "{} flag/width tests failed", failed);
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -830,8 +858,8 @@ fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
 }
 
 #[test]
-fn scanf_overflow_underflow_cases_execute_in_runtime_harness() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_overflow_underflow_cases_execute_in_runtime_harness() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     let mut executed = Vec::new();
 
     for case in fixture
@@ -840,7 +868,7 @@ fn scanf_overflow_underflow_cases_execute_in_runtime_harness() {
         .filter(|case| case.name.contains("_overflow") || case.name.contains("_underflow"))
     {
         run_scanf_case(case)
-            .unwrap_or_else(|err| panic!("{} should execute without stale skip: {err}", case.name));
+            .map_err(|err| format!("{} should execute without stale skip: {err}", case.name))?;
         executed.push(case.name.as_str());
     }
 
@@ -859,11 +887,12 @@ fn scanf_overflow_underflow_cases_execute_in_runtime_harness() {
         ],
         "all overflow/underflow scanf fixtures must run through run_scanf_case"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_runtime_integer_specifiers() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_runtime_integer_specifiers() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -902,11 +931,12 @@ fn scanf_conformance_runtime_integer_specifiers() {
         passed, failed, skipped
     );
     assert_eq!(failed, 0, "{} integer specifier tests failed", failed);
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_runtime_string_specifiers() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_runtime_string_specifiers() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -931,11 +961,12 @@ fn scanf_conformance_runtime_string_specifiers() {
         passed, failed, skipped
     );
     assert_eq!(failed, 0, "{} string specifier tests failed", failed);
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_runtime_float_specifiers() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_runtime_float_specifiers() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -960,11 +991,12 @@ fn scanf_conformance_runtime_float_specifiers() {
         passed, failed, skipped
     );
     assert_eq!(failed, 0, "{} float specifier tests failed", failed);
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_runtime_scansets() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_runtime_scansets() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -989,11 +1021,12 @@ fn scanf_conformance_runtime_scansets() {
         passed, failed, skipped
     );
     assert_eq!(failed, 0, "{} scanset tests failed", failed);
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_runtime_suppression() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_runtime_suppression() -> Result<(), String> {
+    let fixture = load_fixture("scanf_conformance")?;
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -1018,4 +1051,5 @@ fn scanf_conformance_runtime_suppression() {
         passed, failed, skipped
     );
     assert_eq!(failed, 0, "{} suppression tests failed", failed);
+    Ok(())
 }
