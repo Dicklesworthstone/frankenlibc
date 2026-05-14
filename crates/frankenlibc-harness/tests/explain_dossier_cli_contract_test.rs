@@ -115,7 +115,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "fail_closed_on_dossier_error",
         "all_five_evidence_rows_present_when_success",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -173,7 +173,6 @@ fn cli_fails_closed_on_non_sha_expected_commit() -> TestResult {
     let md = ws.join("out.md");
     let jl = ws.join("out.jsonl");
     let out = run_cli(&bin, &ws, "not-a-sha", &md, &jl)?;
-    let _ = std::fs::remove_dir_all(&ws);
     require(
         !out.status.success(),
         "non-sha --expected-commit must cause non-zero exit",
@@ -196,7 +195,6 @@ fn cli_fails_closed_on_missing_evidence_files() -> TestResult {
     // 40-char SHA but no evidence files in workspace.
     let sha = "1".repeat(40);
     let out = run_cli(&bin, &ws, &sha, &md, &jl)?;
-    let _ = std::fs::remove_dir_all(&ws);
     require(
         !out.status.success(),
         "empty workspace must cause non-zero exit",
