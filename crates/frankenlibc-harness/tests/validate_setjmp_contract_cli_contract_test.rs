@@ -36,6 +36,26 @@ fn require(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
+fn read_record(path: &Path) -> TestResult<Value> {
+    let body = std::fs::read_to_string(path).map_err(|e| format!("read jsonl: {e}"))?;
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
+}
+
 fn json_string<'a>(value: &'a Value, field: &str) -> TestResult<&'a str> {
     value
         .get(field)
@@ -117,7 +137,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "intrinsic_errors_must_be_empty_array_when_ok_true",
         "canonical_artifact_must_pass_validate_intrinsic",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -157,21 +177,13 @@ fn cli_passes_on_canonical_artifact() -> TestResult {
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "validate-setjmp-contract failed: status={:?} stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 1,
-        format!("expected exactly 1 JSONL record; got {}", lines.len()),
-    )?;
-    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         json_string(&parsed, "kind")? == "setjmp_contract_validation",
         "kind must be setjmp_contract_validation",
@@ -186,7 +198,7 @@ fn cli_passes_on_canonical_artifact() -> TestResult {
         .ok_or_else(|| "missing intrinsic_errors array".to_string())?;
     require(
         intrinsic_errors.is_empty(),
-        format!("intrinsic_errors must be empty when ok=true; got {intrinsic_errors:?}"),
+        "intrinsic_errors must be empty when ok=true",
     )
 }
 
@@ -207,14 +219,11 @@ fn cli_fails_closed_on_corrupt_json() -> TestResult {
         .arg(&output)
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
-    let _ = std::fs::remove_file(&contract);
     require(
         !out.status.success(),
         "validate-setjmp-contract must exit non-zero on corrupt JSON",
     )?;
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         !json_bool(&parsed, "ok")?,
         "corrupt JSON must produce ok=false",
@@ -276,14 +285,11 @@ fn cli_fails_closed_on_well_formed_json_with_wrong_bead() -> TestResult {
         .arg(&output)
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
-    let _ = std::fs::remove_file(&contract);
     require(
         !out.status.success(),
         "validate-setjmp-contract must exit non-zero when validate_intrinsic returns errors",
     )?;
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         !json_bool(&parsed, "ok")?,
         "intrinsic failure must produce ok=false",
