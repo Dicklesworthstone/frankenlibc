@@ -393,6 +393,59 @@ mod conversion_properties {
 }
 
 // ---------------------------------------------------------------------------
+// System V base-64 conversion properties
+// ---------------------------------------------------------------------------
+
+mod base64_properties {
+    use super::*;
+    use frankenlibc_core::stdlib::base64::{a64l, l64a};
+
+    fn is_a64l_digit(byte: u8) -> bool {
+        matches!(byte, b'.' | b'/' | b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z')
+    }
+
+    proptest! {
+        #![proptest_config(super::property_proptest_config(256))]
+
+        /// l64a encodes exactly the low 32 bits, and a64l decodes that value.
+        #[test]
+        fn prop_l64a_a64l_round_trips_low_32_bits(value in any::<i64>()) {
+            let encoded = l64a(value);
+            let decoded = a64l(&encoded);
+
+            prop_assert!(encoded.len() <= 6);
+            prop_assert_eq!(decoded, (value as u32) as i64);
+        }
+
+        /// a64l stops at the first NUL or non-alphabet byte.
+        #[test]
+        fn prop_a64l_stops_at_terminator_or_invalid_byte(
+            prefix in proptest::collection::vec(
+                prop_oneof![
+                    Just(b'.'),
+                    Just(b'/'),
+                    b'0'..=b'9',
+                    b'A'..=b'Z',
+                    b'a'..=b'z',
+                ],
+                0..6,
+            ),
+            terminator in any::<u8>().prop_filter(
+                "NUL or invalid a64l digit",
+                |byte| *byte == 0 || !is_a64l_digit(*byte),
+            ),
+            suffix in proptest::collection::vec(any::<u8>(), 0..16),
+        ) {
+            let mut input = prefix.clone();
+            input.push(terminator);
+            input.extend_from_slice(&suffix);
+
+            prop_assert_eq!(a64l(&input), a64l(&prefix));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ctype classification properties
 // ---------------------------------------------------------------------------
 
