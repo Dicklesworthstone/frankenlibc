@@ -218,6 +218,21 @@ mod tests {
     }
 
     #[test]
+    fn test_pack_unpack_state_roundtrip() {
+        for seed in [
+            [0x0000u16, 0x0000, 0x0000],
+            [0x330Eu16, 0x0000, 0x0001],
+            [0x1234u16, 0x5678, 0x9ABC],
+            [0xFFFFu16, 0xFFFF, 0xFFFF],
+        ] {
+            let packed = pack_state(&seed);
+            let mut unpacked = [0u16; 3];
+            unpack_state(packed, &mut unpacked);
+            assert_eq!(unpacked, seed, "pack/unpack roundtrip failed for {seed:?}");
+        }
+    }
+
+    #[test]
     fn test_explicit_state_family_shares_transition_step() {
         let _lock = random48_lock();
         srand48(1);
@@ -279,6 +294,26 @@ mod tests {
     }
 
     #[test]
+    fn test_srand48_depends_only_on_low_32_seed_bits() {
+        let _lock = random48_lock();
+
+        for seed in [0i64, 1, 42, i32::MAX as i64, u32::MAX as i64] {
+            srand48(seed);
+            let first = [drand48(), drand48(), drand48()];
+
+            srand48(seed + (1i64 << 32));
+            let with_high_bits = [drand48(), drand48(), drand48()];
+
+            assert_eq!(
+                first, with_high_bits,
+                "srand48 high bits changed sequence for seed {seed}"
+            );
+        }
+
+        srand48(1);
+    }
+
+    #[test]
     fn test_nrand48_range() {
         let mut state = [0u16, 0, 1];
         for _ in 0..100 {
@@ -304,6 +339,28 @@ mod tests {
         let old = seed48(&new_seed);
         // Old state should be non-trivial after advancing.
         assert!(old[0] != 0 || old[1] != 0 || old[2] != 0);
+    }
+
+    #[test]
+    fn test_seed48_can_restore_saved_global_state() {
+        let _lock = random48_lock();
+
+        let seed = [0x1234u16, 0x5678, 0x9ABC];
+        seed48(&seed);
+        let expected_first = drand48();
+        let saved_state = STATE.load(Ordering::Relaxed);
+        let expected_second = drand48();
+
+        let mut saved_words = [0u16; 3];
+        unpack_state(saved_state, &mut saved_words);
+        seed48(&saved_words);
+
+        assert_eq!(drand48(), expected_second);
+
+        seed48(&seed);
+        assert_eq!(drand48(), expected_first);
+
+        srand48(1);
     }
 
     #[test]
