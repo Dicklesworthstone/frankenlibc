@@ -1,0 +1,78 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "decode-evidence-cli-contract",
+  "bead": "bd-d2dpm",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "1ef9b8b4d218c94db09d6f3d89b8b8a8f0ab50cb",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_harness::evidence_decode::decode_evidence_file as a standalone CLI. The library decoder ingests concatenated 256-byte EvidenceSymbolRecord blobs, groups records by epoch, validates payload and chain integrity, optionally filters one epoch id, and renders an explainable DecodeReport. The CLI bridge lets CI and operators decode exported runtime evidence without compiling Rust callers.",
+  "subcommand_name": "decode-evidence",
+  "binary_target": "harness",
+  "required_flags": [
+    "--input"
+  ],
+  "optional_flags": [
+    "--epoch-id",
+    "--format",
+    "--output",
+    "--ansi",
+    "--width"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::evidence_decode::decode_evidence_file",
+    "frankenlibc_harness::evidence_decode_render::render_plain",
+    "frankenlibc_harness::evidence_decode_render::render_ftui"
+  ],
+  "json_output_contract": {
+    "root_required_fields": [
+      "epochs"
+    ],
+    "epoch_required_fields": [
+      "epoch_id",
+      "family",
+      "mode",
+      "seed",
+      "k_source",
+      "r_repair",
+      "records_total",
+      "systematic_records",
+      "repair_records",
+      "structural_errors",
+      "payload_hash_mismatches",
+      "chain_hash_mismatches",
+      "decoded_systematic",
+      "missing_systematic",
+      "status",
+      "notes"
+    ],
+    "status_shape": {
+      "tag_field": "kind",
+      "allowed_values": [
+        "Success",
+        "Partial",
+        "Failed"
+      ]
+    }
+  },
+  "policy": {
+    "valid_systematic_record_must_decode_to_success": true,
+    "epoch_id_filter_must_exclude_non_matching_epochs": true,
+    "empty_input_must_fail_closed": true,
+    "misaligned_input_must_fail_closed": true,
+    "unknown_format_must_fail_closed": true,
+    "json_format_must_emit_pretty_decode_report": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_input_file_accepted",
+    "empty_blob_accepted",
+    "misaligned_blob_accepted",
+    "epoch_filter_returned_extra_epochs",
+    "valid_record_not_success",
+    "wrong_status_shape"
+  ],
+  "summary": {
+    "bead": "bd-d2dpm",
+    "subcommand": "decode-evidence",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
