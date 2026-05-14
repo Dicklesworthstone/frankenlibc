@@ -97,10 +97,7 @@ fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| format!("clock: {e}"))?
         .as_nanos();
-    Ok(std::env::temp_dir().join(format!(
-        "bd_9ws64_{stem}_{}_{ts}.jsonl",
-        std::process::id()
-    )))
+    Ok(std::env::temp_dir().join(format!("bd_9ws64_{stem}_{}_{ts}.jsonl", std::process::id())))
 }
 
 fn run_cli(bin: &Path, unix_days: i64, output: &Path) -> TestResult<std::process::Output> {
@@ -288,7 +285,9 @@ fn cli_month_and_day_stay_in_civil_ranges() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    for unix_days in [-146_097, -36_525, -365, -1, 0, 365, 11_016, 20_586, 24_855, 146_097] {
+    for unix_days in [
+        -146_097, -36_525, -365, -1, 0, 365, 11_016, 20_586, 24_855, 146_097,
+    ] {
         let parsed = run_and_parse(&bin, unix_days, &format!("range_{unix_days}"))?;
         let month = json_u64(&parsed, "month")?;
         let day = json_u64(&parsed, "day")?;

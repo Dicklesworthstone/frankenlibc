@@ -3349,16 +3349,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .ok_or_else(|| "gram_matrix root must be a JSON array".to_string())?;
             let dim = outer.len();
             if !(2..=8).contains(&dim) {
-                return Err(format!(
-                    "unsupported gram_matrix dim {dim}; supported D in 2..=8"
-                )
-                .into());
+                return Err(
+                    format!("unsupported gram_matrix dim {dim}; supported D in 2..=8").into(),
+                );
             }
             let mut flat: Vec<i64> = Vec::with_capacity(dim * dim);
             for (i, row) in outer.iter().enumerate() {
-                let row_arr = row.as_array().ok_or_else(|| {
-                    format!("gram_matrix row {i} must be a JSON array")
-                })?;
+                let row_arr = row
+                    .as_array()
+                    .ok_or_else(|| format!("gram_matrix row {i} must be a JSON array"))?;
                 if row_arr.len() != dim {
                     return Err(format!(
                         "gram_matrix row {i} has length {}, expected {dim}",
@@ -3367,9 +3366,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .into());
                 }
                 for (j, cell) in row_arr.iter().enumerate() {
-                    let v = cell.as_i64().ok_or_else(|| {
-                        format!("gram_matrix[{i}][{j}] must be an i64 integer")
-                    })?;
+                    let v = cell
+                        .as_i64()
+                        .ok_or_else(|| format!("gram_matrix[{i}][{j}] must be an i64 integer"))?;
                     flat.push(v);
                 }
             }
@@ -3462,8 +3461,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if k == 0 {
                 return Err("source_payloads must contain at least one 128-byte symbol".into());
             }
-            let k_u16 = u16::try_from(k)
-                .map_err(|_| format!("k_source={k} exceeds u16::MAX"))?;
+            let k_u16 = u16::try_from(k).map_err(|_| format!("k_source={k} exceeds u16::MAX"))?;
             let mut payloads: Vec<[u8; EVIDENCE_SYMBOL_SIZE_T]> = Vec::with_capacity(k);
             for i in 0..k {
                 let start = i * EVIDENCE_SYMBOL_SIZE_T;
@@ -3532,13 +3530,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if k == 0 {
                 return Err("source_payloads must contain at least one 128-byte symbol".into());
             }
-            let k_u16 = u16::try_from(k)
-                .map_err(|_| format!("k_source={k} exceeds u16::MAX"))?;
+            let k_u16 = u16::try_from(k).map_err(|_| format!("k_source={k} exceeds u16::MAX"))?;
             if repair_esi < k_u16 {
-                return Err(format!(
-                    "repair_esi={repair_esi} must be >= k_source={k_u16}"
-                )
-                .into());
+                return Err(format!("repair_esi={repair_esi} must be >= k_source={k_u16}").into());
             }
             let mut payloads: Vec<[u8; EVIDENCE_SYMBOL_SIZE_T]> = Vec::with_capacity(k);
             for i in 0..k {
