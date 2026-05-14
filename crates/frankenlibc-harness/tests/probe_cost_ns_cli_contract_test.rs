@@ -126,16 +126,37 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_probe_name_into_output_record",
-        "deterministic_given_inputs",
-        "all_seventeen_probes_have_a_finite_cost",
-        "loss_minimizer_is_lowest_cost_probe",
-        "persistence_is_highest_cost_probe",
-        "unknown_probe_name_is_rejected_with_nonzero_exit",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_probe_name_into_output_record",
+            "echoes_probe_name_into_output_record must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "all_seventeen_probes_have_a_finite_cost",
+            "all_seventeen_probes_have_a_finite_cost must be true",
+        ),
+        (
+            "loss_minimizer_is_lowest_cost_probe",
+            "loss_minimizer_is_lowest_cost_probe must be true",
+        ),
+        (
+            "persistence_is_highest_cost_probe",
+            "persistence_is_highest_cost_probe must be true",
+        ),
+        (
+            "unknown_probe_name_is_rejected_with_nonzero_exit",
+            "unknown_probe_name_is_rejected_with_nonzero_exit must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -194,7 +215,7 @@ fn run_and_parse(bin: &Path, probe: &str, label: &str) -> TestResult<Value> {
     let output = unique_tmp(label)?;
     let out = run_cli(bin, probe, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("probe-cost-ns CLI invocation must succeed".into());
     }
     let parsed = read_record(&output)?;
     Ok(parsed)
