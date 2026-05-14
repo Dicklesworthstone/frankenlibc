@@ -124,18 +124,42 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_inputs_into_output_record",
-        "indices_array_length_equals_degree",
-        "degree_zero_when_k_source_zero",
-        "degree_at_or_below_REPAIR_MAX_DEGREE_V1",
-        "degree_at_or_below_k_source_when_positive",
-        "indices_all_below_k_source_when_positive",
-        "indices_all_distinct",
-        "deterministic_given_seed_inputs",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_inputs_into_output_record",
+            "echoes_inputs_into_output_record must be true",
+        ),
+        (
+            "indices_array_length_equals_degree",
+            "indices_array_length_equals_degree must be true",
+        ),
+        (
+            "degree_zero_when_k_source_zero",
+            "degree_zero_when_k_source_zero must be true",
+        ),
+        (
+            "degree_at_or_below_REPAIR_MAX_DEGREE_V1",
+            "degree_at_or_below_REPAIR_MAX_DEGREE_V1 must be true",
+        ),
+        (
+            "degree_at_or_below_k_source_when_positive",
+            "degree_at_or_below_k_source_when_positive must be true",
+        ),
+        (
+            "indices_all_below_k_source_when_positive",
+            "indices_all_below_k_source_when_positive must be true",
+        ),
+        ("indices_all_distinct", "indices_all_distinct must be true"),
+        (
+            "deterministic_given_seed_inputs",
+            "deterministic_given_seed_inputs must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -209,10 +233,7 @@ fn cli_zero_k_source_yields_zero_degree_and_empty_indices() -> TestResult {
     let output = unique_tmp("zero")?;
     let out = run_cli(&bin, 42, 0, 0, &output)?;
     if !out.status.success() {
-        return Err(format!(
-            "derive-repair-schedule failed: stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
+        return Err("derive-repair-schedule CLI invocation must succeed".into());
     }
     let parsed = read_record(&output)?;
     require(
@@ -234,10 +255,7 @@ fn cli_baseline_invariants_hold_for_k_source_16() -> TestResult {
     let output = unique_tmp("k16")?;
     let out = run_cli(&bin, 0xdeadbeef, 16, 7, &output)?;
     if !out.status.success() {
-        return Err(format!(
-            "derive-repair-schedule failed: stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
+        return Err("derive-repair-schedule CLI invocation must succeed".into());
     }
     let parsed = read_record(&output)?;
     require(
