@@ -36,6 +36,32 @@ fn require(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
+fn require_record_field(record: &Value, field: &str) -> TestResult {
+    if record.get(field).is_some() {
+        Ok(())
+    } else {
+        Err(format!("record missing required field `{field}`"))
+    }
+}
+
+fn require_json_bool_field(record: &Value, field: &str) -> TestResult {
+    if record.get(field).and_then(Value::as_bool).is_some() {
+        Ok(())
+    } else {
+        Err(format!("field `{field}` must be a JSON boolean"))
+    }
+}
+
+fn require_true_field(record: &Value, field: &str) -> TestResult {
+    if json_bool(record, field)? {
+        Ok(())
+    } else {
+        Err(format!(
+            "pinned tooling contract field `{field}` must be true"
+        ))
+    }
+}
+
 fn json_string<'a>(value: &'a Value, field: &str) -> TestResult<&'a str> {
     value
         .get(field)
@@ -222,16 +248,13 @@ fn cli_emits_exactly_one_record_with_all_boolean_fields() -> TestResult {
         .iter()
         .filter_map(Value::as_str)
     {
-        require(parsed.get(f).is_some(), "record missing required field")?;
+        require_record_field(&parsed, f)?;
     }
     for f in json_array(contract, "boolean_fields")?
         .iter()
         .filter_map(Value::as_str)
     {
-        require(
-            parsed.get(f).and_then(Value::as_bool).is_some(),
-            "field must be a JSON boolean",
-        )?;
+        require_json_bool_field(&parsed, f)?;
     }
     Ok(())
 }
@@ -268,10 +291,7 @@ fn cli_pins_invariant_truths_for_default_build() -> TestResult {
         "frankentui_feature_present",
         "frankentui_dependency_set_complete",
     ] {
-        require(
-            json_bool(&parsed, f)?,
-            "pinned tooling contract field must be true",
-        )?;
+        require_true_field(&parsed, f)?;
     }
     Ok(())
 }
