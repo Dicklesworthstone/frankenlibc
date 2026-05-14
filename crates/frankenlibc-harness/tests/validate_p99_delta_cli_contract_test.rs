@@ -98,7 +98,11 @@ fn read_single_record(path: &Path) -> TestResult<Value> {
         lines.len() == 1,
         format!("expected exactly 1 JSONL record; got {}", lines.len()),
     )?;
-    serde_json::from_str(lines[0]).map_err(|e| format!("parse output record: {e}"))
+    let line = lines
+        .first()
+        .copied()
+        .ok_or_else(|| "missing output JSONL record".to_string())?;
+    serde_json::from_str(line).map_err(|e| format!("parse output record: {e}"))
 }
 
 fn assert_failure_kind(record: &Value, expected: &str) -> TestResult {
@@ -142,20 +146,53 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "ok_true_iff_error_kind_is_null",
-        "exit_non_zero_when_ok_false",
-        "missing_file_must_fail_closed",
-        "wrong_kind_must_fail_closed",
-        "invalid_bool_must_fail_closed",
-        "invalid_amplification_threshold_must_fail_closed",
-        "insufficient_samples_must_fail_closed",
-        "over_budget_must_fail_closed",
-        "ci_indistinguishable_over_budget_must_fail_closed",
-        "amplification_above_threshold_must_fail_closed",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "ok_true_iff_error_kind_is_null",
+            "ok_true_iff_error_kind_is_null must be true",
+        ),
+        (
+            "exit_non_zero_when_ok_false",
+            "exit_non_zero_when_ok_false must be true",
+        ),
+        (
+            "missing_file_must_fail_closed",
+            "missing_file_must_fail_closed must be true",
+        ),
+        (
+            "wrong_kind_must_fail_closed",
+            "wrong_kind_must_fail_closed must be true",
+        ),
+        (
+            "invalid_bool_must_fail_closed",
+            "invalid_bool_must_fail_closed must be true",
+        ),
+        (
+            "invalid_amplification_threshold_must_fail_closed",
+            "invalid_amplification_threshold_must_fail_closed must be true",
+        ),
+        (
+            "insufficient_samples_must_fail_closed",
+            "insufficient_samples_must_fail_closed must be true",
+        ),
+        (
+            "over_budget_must_fail_closed",
+            "over_budget_must_fail_closed must be true",
+        ),
+        (
+            "ci_indistinguishable_over_budget_must_fail_closed",
+            "ci_indistinguishable_over_budget_must_fail_closed must be true",
+        ),
+        (
+            "amplification_above_threshold_must_fail_closed",
+            "amplification_above_threshold_must_fail_closed must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -169,17 +206,25 @@ fn harness_source_registers_validate_p99_delta_subcommand() -> TestResult {
         src.contains("ValidateP99Delta {"),
         "harness.rs must declare ValidateP99Delta Command variant",
     )?;
-    for field in [
-        "jsonl",
-        "allowed_budget_ns",
-        "amplification_threshold",
-        "output",
+    for (anchor, message) in [
+        (
+            "        jsonl",
+            "ValidateP99Delta variant missing field `jsonl`",
+        ),
+        (
+            "        allowed_budget_ns",
+            "ValidateP99Delta variant missing field `allowed_budget_ns`",
+        ),
+        (
+            "        amplification_threshold",
+            "ValidateP99Delta variant missing field `amplification_threshold`",
+        ),
+        (
+            "        output",
+            "ValidateP99Delta variant missing field `output`",
+        ),
     ] {
-        let anchor = format!("        {field}");
-        require(
-            src.contains(&anchor),
-            format!("ValidateP99Delta variant missing field `{field}`"),
-        )?;
+        require(src.contains(anchor), message)?;
     }
     require(
         src.contains("validate_p99_delta_against_budget"),
@@ -196,16 +241,22 @@ fn manifest_error_enum_covers_validator_variants() -> TestResult {
             .ok_or_else(|| "missing output contract".to_string())?,
         "error_kind_enum",
     )?;
-    for expected in [
-        "over_budget",
-        "amplification_above_threshold",
-        "insufficient_samples",
-        "ci_indistinguishable_but_over_budget",
+    for (expected, message) in [
+        ("over_budget", "error_kind_enum missing over_budget"),
+        (
+            "amplification_above_threshold",
+            "error_kind_enum missing amplification_above_threshold",
+        ),
+        (
+            "insufficient_samples",
+            "error_kind_enum missing insufficient_samples",
+        ),
+        (
+            "ci_indistinguishable_but_over_budget",
+            "error_kind_enum missing ci_indistinguishable_but_over_budget",
+        ),
     ] {
-        require(
-            kinds.iter().any(|v| v.as_str() == Some(expected)),
-            format!("error_kind_enum missing {expected}"),
-        )?;
+        require(kinds.iter().any(|v| v.as_str() == Some(expected)), message)?;
     }
     Ok(())
 }
