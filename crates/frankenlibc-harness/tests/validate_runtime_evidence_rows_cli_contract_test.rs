@@ -57,6 +57,26 @@ fn json_u64(value: &Value, field: &str) -> TestResult<u64> {
         .ok_or_else(|| format!("missing or non-u64 `{field}`"))
 }
 
+fn valid_row_value() -> TestResult<Value> {
+    serde_json::from_str(VALID_ROW).map_err(|e| format!("parse VALID_ROW fixture: {e}"))
+}
+
+fn remove_object_field(value: &mut Value, field: &str) -> TestResult {
+    value
+        .as_object_mut()
+        .ok_or_else(|| "VALID_ROW fixture must be a JSON object".to_string())?
+        .remove(field);
+    Ok(())
+}
+
+fn set_object_field(value: &mut Value, field: &str, replacement: Value) -> TestResult {
+    value
+        .as_object_mut()
+        .ok_or_else(|| "VALID_ROW fixture must be a JSON object".to_string())?
+        .insert(field.to_string(), replacement);
+    Ok(())
+}
+
 fn cargo_target_dir_for_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_TARGET_DIR") {
         PathBuf::from(p)
@@ -127,18 +147,45 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_one_record_per_input_row_plus_summary",
-        "summary_counts_match_per_row_aggregate",
-        "valid_row_certified_with_null_error_kind",
-        "missing_required_field_reports_field_name",
-        "wrong_schema_value_reports_unexpected_value_on_schema",
-        "wrong_type_reports_field_name",
-        "empty_string_reports_field_name",
-        "unparseable_jsonl_row_reports_json_parse_error",
-        "deterministic_given_inputs",
+    for (field, message) in [
+        (
+            "must_emit_one_record_per_input_row_plus_summary",
+            "must_emit_one_record_per_input_row_plus_summary must be true",
+        ),
+        (
+            "summary_counts_match_per_row_aggregate",
+            "summary_counts_match_per_row_aggregate must be true",
+        ),
+        (
+            "valid_row_certified_with_null_error_kind",
+            "valid_row_certified_with_null_error_kind must be true",
+        ),
+        (
+            "missing_required_field_reports_field_name",
+            "missing_required_field_reports_field_name must be true",
+        ),
+        (
+            "wrong_schema_value_reports_unexpected_value_on_schema",
+            "wrong_schema_value_reports_unexpected_value_on_schema must be true",
+        ),
+        (
+            "wrong_type_reports_field_name",
+            "wrong_type_reports_field_name must be true",
+        ),
+        (
+            "empty_string_reports_field_name",
+            "empty_string_reports_field_name must be true",
+        ),
+        (
+            "unparseable_jsonl_row_reports_json_parse_error",
+            "unparseable_jsonl_row_reports_json_parse_error must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -183,6 +230,12 @@ fn read_records(out_path: &Path) -> TestResult<Vec<Value>> {
         .collect()
 }
 
+fn record(records: &[Value], index: usize) -> TestResult<&Value> {
+    records
+        .get(index)
+        .ok_or_else(|| format!("missing output record at index {index}"))
+}
+
 const VALID_ROW: &str = r#"{"schema":"runtime_evidence.decision.v1","schema_version":1,"timestamp":"2026-05-13T00:00:00Z","trace_id":"abc-123","bead_id":"bd-7osqu","event":"runtime_evidence","mode":"strict","runtime_mode":"strict","validation_profile":"Full","decision_path":"membrane::handle","healing_action":"none","denied":false,"latency_ns":12345,"api_family":"file","symbol":"open","context":{"addr_hint_redacted":1024,"requested_bytes":256,"is_write":false,"bloom_negative":false,"contention_hint":0},"source_commit":"deadbeef","artifact_refs":["test"]}"#;
 
 #[test]
@@ -194,33 +247,29 @@ fn cli_valid_row_certified() -> TestResult {
     let jsonl = write_jsonl("valid", &[VALID_ROW])?;
     let output = unique_tmp("valid", "jsonl")?;
     let out = run_cli(&bin, &jsonl, &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let recs = read_records(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(recs.len() == 2, "must emit row record + summary")?;
+    let row = record(&recs, 0)?;
+    let summary = record(&recs, 1)?;
     require(
-        json_bool(&recs[0], "valid")?,
+        json_bool(row, "valid")?,
         "valid row must be certified valid",
     )?;
     require(
-        recs[0]
-            .get("error_kind")
-            .map(Value::is_null)
-            .unwrap_or(false),
+        row.get("error_kind").map(Value::is_null).unwrap_or(false),
         "error_kind must be null on valid",
     )?;
     require(
-        json_string(&recs[1], "kind")? == "evidence_row_validation_summary",
+        json_string(summary, "kind")? == "evidence_row_validation_summary",
         "summary kind",
     )?;
     require(
-        json_u64(&recs[1], "valid")? == 1
-            && json_u64(&recs[1], "invalid")? == 0
-            && json_u64(&recs[1], "total")? == 1,
+        json_u64(summary, "valid")? == 1
+            && json_u64(summary, "invalid")? == 0
+            && json_u64(summary, "total")? == 1,
         "summary counts",
     )
 }
@@ -232,29 +281,27 @@ fn cli_missing_required_field_reports_field() -> TestResult {
         return Ok(());
     };
     // Remove "bead_id" from the valid row to force a missing_required_field error.
-    let mut row: serde_json::Value = serde_json::from_str(VALID_ROW).unwrap();
-    row.as_object_mut().unwrap().remove("bead_id");
+    let mut row = valid_row_value()?;
+    remove_object_field(&mut row, "bead_id")?;
     let body = row.to_string();
     let jsonl = write_jsonl("missing", &[&body])?;
     let output = unique_tmp("missing", "jsonl")?;
     let out = run_cli(&bin, &jsonl, &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let recs = read_records(&output)?;
-    let _ = std::fs::remove_file(&output);
+    let row = record(&recs, 0)?;
     require(
-        !json_bool(&recs[0], "valid")?,
+        !json_bool(row, "valid")?,
         "row missing bead_id must be invalid",
     )?;
     require(
-        json_string(&recs[0], "error_kind")? == "missing_required_field",
+        json_string(row, "error_kind")? == "missing_required_field",
         "error_kind must be missing_required_field",
     )?;
     require(
-        json_string(&recs[0], "error_field")? == "bead_id",
+        json_string(row, "error_field")? == "bead_id",
         "error_field must echo bead_id",
     )
 }
@@ -265,29 +312,31 @@ fn cli_wrong_schema_reports_unexpected_value() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    let mut row: serde_json::Value = serde_json::from_str(VALID_ROW).unwrap();
-    row["schema"] = serde_json::Value::String("wrong.schema.v1".to_string());
+    let mut row = valid_row_value()?;
+    set_object_field(
+        &mut row,
+        "schema",
+        serde_json::Value::String("wrong.schema.v1".to_string()),
+    )?;
     let body = row.to_string();
     let jsonl = write_jsonl("schema", &[&body])?;
     let output = unique_tmp("schema", "jsonl")?;
     let out = run_cli(&bin, &jsonl, &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let recs = read_records(&output)?;
-    let _ = std::fs::remove_file(&output);
+    let row = record(&recs, 0)?;
     require(
-        !json_bool(&recs[0], "valid")?,
+        !json_bool(row, "valid")?,
         "wrong schema row must be invalid",
     )?;
     require(
-        json_string(&recs[0], "error_kind")? == "unexpected_value",
+        json_string(row, "error_kind")? == "unexpected_value",
         "error_kind must be unexpected_value",
     )?;
     require(
-        json_string(&recs[0], "error_field")? == "schema",
+        json_string(row, "error_field")? == "schema",
         "error_field must echo schema",
     )
 }
@@ -298,29 +347,31 @@ fn cli_wrong_type_reports_field() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    let mut row: serde_json::Value = serde_json::from_str(VALID_ROW).unwrap();
-    row["denied"] = serde_json::Value::String("false".to_string());
+    let mut row = valid_row_value()?;
+    set_object_field(
+        &mut row,
+        "denied",
+        serde_json::Value::String("false".to_string()),
+    )?;
     let body = row.to_string();
     let jsonl = write_jsonl("wrong_type", &[&body])?;
     let output = unique_tmp("wrong_type", "jsonl")?;
     let out = run_cli(&bin, &jsonl, &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let recs = read_records(&output)?;
-    let _ = std::fs::remove_file(&output);
+    let row = record(&recs, 0)?;
     require(
-        !json_bool(&recs[0], "valid")?,
+        !json_bool(row, "valid")?,
         "wrong-type denied field must be invalid",
     )?;
     require(
-        json_string(&recs[0], "error_kind")? == "wrong_type",
+        json_string(row, "error_kind")? == "wrong_type",
         "error_kind must be wrong_type",
     )?;
     require(
-        json_string(&recs[0], "error_field")? == "denied",
+        json_string(row, "error_field")? == "denied",
         "error_field must echo denied",
     )
 }
@@ -331,29 +382,31 @@ fn cli_empty_string_reports_field() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    let mut row: serde_json::Value = serde_json::from_str(VALID_ROW).unwrap();
-    row["source_commit"] = serde_json::Value::String(String::new());
+    let mut row = valid_row_value()?;
+    set_object_field(
+        &mut row,
+        "source_commit",
+        serde_json::Value::String(String::new()),
+    )?;
     let body = row.to_string();
     let jsonl = write_jsonl("empty_string", &[&body])?;
     let output = unique_tmp("empty_string", "jsonl")?;
     let out = run_cli(&bin, &jsonl, &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let recs = read_records(&output)?;
-    let _ = std::fs::remove_file(&output);
+    let row = record(&recs, 0)?;
     require(
-        !json_bool(&recs[0], "valid")?,
+        !json_bool(row, "valid")?,
         "empty source_commit must be invalid",
     )?;
     require(
-        json_string(&recs[0], "error_kind")? == "empty_string",
+        json_string(row, "error_kind")? == "empty_string",
         "error_kind must be empty_string",
     )?;
     require(
-        json_string(&recs[0], "error_field")? == "source_commit",
+        json_string(row, "error_field")? == "source_commit",
         "error_field must echo source_commit",
     )
 }
@@ -367,19 +420,14 @@ fn cli_unparseable_row_reports_json_parse_error() -> TestResult {
     let jsonl = write_jsonl("parse", &["not valid json"])?;
     let output = unique_tmp("parse", "jsonl")?;
     let out = run_cli(&bin, &jsonl, &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let recs = read_records(&output)?;
-    let _ = std::fs::remove_file(&output);
+    let row = record(&recs, 0)?;
+    require(!json_bool(row, "valid")?, "unparseable row must be invalid")?;
     require(
-        !json_bool(&recs[0], "valid")?,
-        "unparseable row must be invalid",
-    )?;
-    require(
-        json_string(&recs[0], "error_kind")? == "json_parse_error",
+        json_string(row, "error_kind")? == "json_parse_error",
         "error_kind must be json_parse_error",
     )
 }
@@ -391,10 +439,14 @@ fn cli_summary_counts_match_per_row_aggregate() -> TestResult {
         return Ok(());
     };
     // Mix: 2 valid + 2 invalid + 1 parse error.
-    let mut bad_field: serde_json::Value = serde_json::from_str(VALID_ROW).unwrap();
-    bad_field.as_object_mut().unwrap().remove("bead_id");
-    let mut bad_schema: serde_json::Value = serde_json::from_str(VALID_ROW).unwrap();
-    bad_schema["schema"] = serde_json::Value::String("nope".to_string());
+    let mut bad_field = valid_row_value()?;
+    remove_object_field(&mut bad_field, "bead_id")?;
+    let mut bad_schema = valid_row_value()?;
+    set_object_field(
+        &mut bad_schema,
+        "schema",
+        serde_json::Value::String("nope".to_string()),
+    )?;
     let bad_field_str = bad_field.to_string();
     let bad_schema_str = bad_schema.to_string();
     let lines = [
@@ -407,24 +459,24 @@ fn cli_summary_counts_match_per_row_aggregate() -> TestResult {
     let jsonl = write_jsonl("mixed", &lines)?;
     let output = unique_tmp("mixed", "jsonl")?;
     let out = run_cli(&bin, &jsonl, &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let recs = read_records(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(recs.len() == 6, "must emit 5 row records + 1 summary")?;
     let mut valid = 0u64;
     let mut invalid = 0u64;
-    for r in &recs[..5] {
+    let rows = recs
+        .get(..5)
+        .ok_or_else(|| "missing first five row records".to_string())?;
+    for r in rows {
         if json_bool(r, "valid")? {
             valid += 1;
         } else {
             invalid += 1;
         }
     }
-    let summary = &recs[5];
+    let summary = record(&recs, 5)?;
     require(
         json_string(summary, "kind")? == "evidence_row_validation_summary",
         "summary kind",
@@ -454,15 +506,12 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
     let out_b = unique_tmp("det_b", "jsonl")?;
     let r_a = run_cli(&bin, &jsonl, &out_a)?;
     let r_b = run_cli(&bin, &jsonl, &out_b)?;
-    let _ = std::fs::remove_file(&jsonl);
     require(
         r_a.status.success() && r_b.status.success(),
         "both runs must succeed",
     )?;
     let recs_a = read_records(&out_a)?;
     let recs_b = read_records(&out_b)?;
-    let _ = std::fs::remove_file(&out_a);
-    let _ = std::fs::remove_file(&out_b);
     require(
         recs_a == recs_b,
         "same inputs must produce identical output",
