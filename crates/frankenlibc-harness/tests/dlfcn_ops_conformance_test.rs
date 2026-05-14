@@ -62,12 +62,12 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -132,8 +132,8 @@ fn dlfcn_ops_fixture_exists() {
 }
 
 #[test]
-fn dlfcn_ops_fixture_valid_schema() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "dlfcn_ops");
@@ -160,6 +160,7 @@ fn dlfcn_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,14 +168,15 @@ fn dlfcn_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dlfcn_ops_covers_dlopen() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_covers_dlopen() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("dlopen")).count() >= 2,
         "dlopen needs at least 2 test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,14 +184,15 @@ fn dlfcn_ops_covers_dlopen() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dlfcn_ops_covers_dlsym() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_covers_dlsym() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("dlsym")).count() >= 2,
         "dlsym needs at least 2 test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -197,8 +200,8 @@ fn dlfcn_ops_covers_dlsym() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dlfcn_ops_covers_loader_first_wave_symbols_in_both_modes() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_covers_loader_first_wave_symbols_in_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
     for function in ["dlvsym", "dl_iterate_phdr"] {
         for mode in ["strict", "hardened"] {
             assert!(
@@ -210,6 +213,7 @@ fn dlfcn_ops_covers_loader_first_wave_symbols_in_both_modes() {
             );
         }
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -217,8 +221,8 @@ fn dlfcn_ops_covers_loader_first_wave_symbols_in_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dlfcn_ops_covers_dlclose() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_covers_dlclose() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
 
     assert!(
         fixture
@@ -234,6 +238,7 @@ fn dlfcn_ops_covers_dlclose() {
             .any(|case| case.function == "dlclose" && case.mode == "hardened"),
         "dlfcn_ops must include hardened fixture coverage for dlclose"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -241,14 +246,15 @@ fn dlfcn_ops_covers_dlclose() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dlfcn_ops_covers_dlerror() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_covers_dlerror() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("dlerror")),
         "Missing test coverage for dlerror"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -256,8 +262,8 @@ fn dlfcn_ops_covers_dlerror() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dlfcn_ops_error_codes_valid() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
 
     // dlfcn functions don't set errno, they use dlerror
     let valid_errno_values = [0];
@@ -270,6 +276,7 @@ fn dlfcn_ops_error_codes_valid() {
             case.expected_errno,
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,8 +284,8 @@ fn dlfcn_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dlfcn_ops_modes_valid() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -288,6 +295,7 @@ fn dlfcn_ops_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -295,14 +303,15 @@ fn dlfcn_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dlfcn_ops_covers_both_modes() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
 
     assert!(has_strict, "dlfcn_ops must have strict mode test cases");
     assert!(has_hardened, "dlfcn_ops must have hardened mode test cases");
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -310,8 +319,8 @@ fn dlfcn_ops_covers_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dlfcn_ops_case_count_stable() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 13;
 
@@ -323,6 +332,7 @@ fn dlfcn_ops_case_count_stable() {
     );
 
     eprintln!("dlfcn_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,14 +340,15 @@ fn dlfcn_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dlfcn_ops_covers_error_paths() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|n| n.contains("nonexistent")),
         "dlfcn_ops must test nonexistent library/symbol handling"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -345,8 +356,8 @@ fn dlfcn_ops_covers_error_paths() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn dlfcn_ops_has_posix_references() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -356,17 +367,18 @@ fn dlfcn_ops_has_posix_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn dlfcn_ops_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture("dlfcn_ops");
+fn dlfcn_ops_fixture_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture("dlfcn_ops")?;
 
     for case in fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -374,13 +386,13 @@ fn dlfcn_ops_fixture_executes_via_isolated_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute through harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -393,4 +405,5 @@ fn dlfcn_ops_fixture_executes_via_isolated_harness() {
             );
         }
     }
+    Ok(())
 }
