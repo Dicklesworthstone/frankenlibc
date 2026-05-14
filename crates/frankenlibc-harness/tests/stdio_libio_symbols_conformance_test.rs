@@ -24,13 +24,23 @@ const FIRST_WAVE_SYMBOLS: &[&str] = &[
 
 const REQUIRED_LOG_FIELDS: &[&str] = &["symbol", "mode", "expected", "actual", "failure_signature"];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    workspace_root
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "workspace root has no repository parent: {}",
+                workspace_root.display()
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,12 +95,12 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-fn load_fixture() -> FixtureFile {
-    let path = repo_root().join("tests/conformance/fixtures/stdio_libio_symbols.json");
+fn load_fixture() -> Result<FixtureFile, String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/stdio_libio_symbols.json");
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -145,11 +155,11 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn stdio_libio_symbols_fixture_exists_and_names_campaign() {
-    let path = repo_root().join("tests/conformance/fixtures/stdio_libio_symbols.json");
+fn stdio_libio_symbols_fixture_exists_and_names_campaign() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/stdio_libio_symbols.json");
     assert!(path.exists(), "stdio_libio_symbols.json fixture must exist");
 
-    let fixture = load_fixture();
+    let fixture = load_fixture()?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "stdio_libio_symbols");
     assert_eq!(fixture.campaign.bead, "bd-6cly1.1");
@@ -169,11 +179,12 @@ fn stdio_libio_symbols_fixture_exists_and_names_campaign() {
             .contains("without recording concrete FILE"),
         "fixture description must reject ambient stream metadata capture"
     );
+    Ok(())
 }
 
 #[test]
-fn stdio_libio_symbols_cover_first_wave_in_both_modes() {
-    let fixture = load_fixture();
+fn stdio_libio_symbols_cover_first_wave_in_both_modes() -> Result<(), String> {
+    let fixture = load_fixture()?;
     let expected: BTreeSet<_> = FIRST_WAVE_SYMBOLS.iter().copied().collect();
     let declared: BTreeSet<_> = fixture
         .campaign
@@ -198,18 +209,19 @@ fn stdio_libio_symbols_cover_first_wave_in_both_modes() {
     for symbol in FIRST_WAVE_SYMBOLS {
         let modes = modes_by_symbol
             .get(symbol)
-            .unwrap_or_else(|| panic!("missing fixture cases for {symbol}"));
+            .ok_or_else(|| format!("missing fixture cases for {symbol}"))?;
         assert!(modes.contains("strict"), "missing strict case for {symbol}");
         assert!(
             modes.contains("hardened"),
             "missing hardened case for {symbol}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn stdio_libio_symbols_bind_logs_without_ambient_stream_leaks() {
-    let fixture = load_fixture();
+fn stdio_libio_symbols_bind_logs_without_ambient_stream_leaks() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert_eq!(
         fixture.structured_log_fields, REQUIRED_LOG_FIELDS,
         "structured log field contract drifted"
@@ -229,7 +241,7 @@ fn stdio_libio_symbols_bind_logs_without_ambient_stream_leaks() {
         let inputs = case
             .inputs
             .as_object()
-            .unwrap_or_else(|| panic!("case {} inputs must be an object", case.name));
+            .ok_or_else(|| format!("case {} inputs must be an object", case.name))?;
         for field in [
             "symbol",
             "scenario",
@@ -273,22 +285,24 @@ fn stdio_libio_symbols_bind_logs_without_ambient_stream_leaks() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn stdio_libio_symbols_spec_reference_names_gnu_and_stdio() {
-    let fixture = load_fixture();
+fn stdio_libio_symbols_spec_reference_names_gnu_and_stdio() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert!(
         fixture.spec_reference.contains("GNU libc libio")
             && fixture.spec_reference.contains("C11")
             && fixture.spec_reference.contains("POSIX"),
         "fixture must bind GNU libio compatibility and standard stdio semantics"
     );
+    Ok(())
 }
 
 #[test]
-fn stdio_libio_symbols_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture();
+fn stdio_libio_symbols_fixture_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert!(
         fixture.cases.len() >= FIRST_WAVE_SYMBOLS.len() * 2,
         "fixture should include strict+hardened rows for every first-wave symbol"
@@ -296,7 +310,7 @@ fn stdio_libio_symbols_fixture_executes_via_isolated_harness() {
 
     for case in &fixture.cases {
         let result = execute_case_via_harness(&case.function, &case.inputs, &case.mode)
-            .unwrap_or_else(|err| panic!("case {} failed to execute: {err}", case.name));
+            .map_err(|err| format!("case {} failed to execute: {err}", case.name))?;
         assert_eq!(
             result.impl_output, case.expected_output,
             "case {} output mismatch",
@@ -308,4 +322,5 @@ fn stdio_libio_symbols_fixture_executes_via_isolated_harness() {
             case.name
         );
     }
+    Ok(())
 }
