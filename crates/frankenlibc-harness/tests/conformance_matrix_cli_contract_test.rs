@@ -50,6 +50,13 @@ fn json_bool(value: &Value, field: &str) -> TestResult<bool> {
         .ok_or_else(|| format!("missing or non-bool `{field}`"))
 }
 
+fn json_u64(value: &Value, field: &str) -> TestResult<u64> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("missing or non-u64 `{field}`"))
+}
+
 fn json_array<'a>(value: &'a Value, field: &str) -> TestResult<&'a Vec<Value>> {
     value
         .get(field)
@@ -191,16 +198,37 @@ fn manifest_policy_pins_cli_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_register_conformance_matrix_subcommand",
-        "must_require_fixture_directory",
-        "must_reject_unknown_mode_before_writing_outputs",
-        "must_write_report_and_log_paths",
-        "must_preserve_campaign_and_mode_metadata",
-        "must_emit_structured_conformance_log_rows",
-        "fail_on_mismatch_must_exit_nonzero_after_artifacts",
+    for (field, message) in [
+        (
+            "must_register_conformance_matrix_subcommand",
+            "must_register_conformance_matrix_subcommand must be true",
+        ),
+        (
+            "must_require_fixture_directory",
+            "must_require_fixture_directory must be true",
+        ),
+        (
+            "must_reject_unknown_mode_before_writing_outputs",
+            "must_reject_unknown_mode_before_writing_outputs must be true",
+        ),
+        (
+            "must_write_report_and_log_paths",
+            "must_write_report_and_log_paths must be true",
+        ),
+        (
+            "must_preserve_campaign_and_mode_metadata",
+            "must_preserve_campaign_and_mode_metadata must be true",
+        ),
+        (
+            "must_emit_structured_conformance_log_rows",
+            "must_emit_structured_conformance_log_rows must be true",
+        ),
+        (
+            "fail_on_mismatch_must_exit_nonzero_after_artifacts",
+            "fail_on_mismatch_must_exit_nonzero_after_artifacts must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
 
     let output = m
@@ -210,18 +238,21 @@ fn manifest_policy_pins_cli_invariants() -> TestResult {
         .iter()
         .filter_map(Value::as_str)
         .collect();
-    for field in [
-        "schema_version",
-        "campaign",
-        "mode",
-        "summary",
-        "symbol_matrix",
-        "cases",
+    for (field, message) in [
+        (
+            "schema_version",
+            "matrix_required_fields missing schema_version",
+        ),
+        ("campaign", "matrix_required_fields missing campaign"),
+        ("mode", "matrix_required_fields missing mode"),
+        ("summary", "matrix_required_fields missing summary"),
+        (
+            "symbol_matrix",
+            "matrix_required_fields missing symbol_matrix",
+        ),
+        ("cases", "matrix_required_fields missing cases"),
     ] {
-        require(
-            matrix_fields.contains(&field),
-            format!("matrix_required_fields missing {field}"),
-        )?;
+        require(matrix_fields.contains(&field), message)?;
     }
     require(
         json_bool(output, "writes_report_before_fail_on_mismatch_exit")?,
@@ -259,46 +290,33 @@ fn cli_writes_matrix_report_and_structured_log() -> TestResult {
 
     let report = load_json(&report_path)?;
     require(
-        report.get("schema_version").and_then(Value::as_str) == Some("v1"),
+        json_string(&report, "schema_version")? == "v1",
         "report schema_version",
     )?;
     require(
-        report.get("campaign").and_then(Value::as_str) == Some("cli-contract"),
+        json_string(&report, "campaign")? == "cli-contract",
         "report campaign",
     )?;
+    require(json_string(&report, "mode")? == "strict", "report mode")?;
     require(
-        report.get("mode").and_then(Value::as_str) == Some("strict"),
-        "report mode",
-    )?;
-    require(
-        report.get("total_fixture_sets").and_then(Value::as_u64) == Some(1),
+        json_u64(&report, "total_fixture_sets")? == 1,
         "total_fixture_sets",
     )?;
     let summary = report
         .get("summary")
         .ok_or_else(|| "missing summary".to_string())?;
     require(
-        summary.get("total_cases").and_then(Value::as_u64) == Some(1),
+        json_u64(summary, "total_cases")? == 1,
         "summary.total_cases",
     )?;
-    require(
-        summary.get("passed").and_then(Value::as_u64) == Some(1),
-        "summary.passed",
-    )?;
-    let cases = report
-        .get("cases")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "missing cases".to_string())?;
+    require(json_u64(summary, "passed")? == 1, "summary.passed")?;
+    let cases = json_array(&report, "cases")?;
     require(cases.len() == 1, "strict mode should emit one case")?;
-    let case = &cases[0];
-    require(
-        case.get("symbol").and_then(Value::as_str) == Some("strlen"),
-        "case symbol",
-    )?;
-    require(
-        case.get("status").and_then(Value::as_str) == Some("pass"),
-        "case status",
-    )?;
+    let case = cases
+        .first()
+        .ok_or_else(|| "strict mode should emit one case".to_string())?;
+    require(json_string(case, "symbol")? == "strlen", "case symbol")?;
+    require(json_string(case, "status")? == "pass", "case status")?;
     require(
         case.get("trace_id")
             .and_then(Value::as_str)
@@ -312,17 +330,29 @@ fn cli_writes_matrix_report_and_structured_log() -> TestResult {
         .iter()
         .filter_map(|row| row.get("event").and_then(Value::as_str))
         .collect();
-    for event in [
-        "conformance.runtime_mode_startup",
-        "conformance.fixture_execution",
-        "conformance.shadow_run_divergence",
-        "conformance.fixture_summary",
-        "conformance.benchmark_result",
+    for (event, message) in [
+        (
+            "conformance.runtime_mode_startup",
+            "missing structured log event conformance.runtime_mode_startup",
+        ),
+        (
+            "conformance.fixture_execution",
+            "missing structured log event conformance.fixture_execution",
+        ),
+        (
+            "conformance.shadow_run_divergence",
+            "missing structured log event conformance.shadow_run_divergence",
+        ),
+        (
+            "conformance.fixture_summary",
+            "missing structured log event conformance.fixture_summary",
+        ),
+        (
+            "conformance.benchmark_result",
+            "missing structured log event conformance.benchmark_result",
+        ),
     ] {
-        require(
-            event_names.contains(&event),
-            format!("missing structured log event {event}"),
-        )?;
+        require(event_names.contains(&event), message)?;
     }
     let case_row = rows
         .iter()
@@ -330,18 +360,15 @@ fn cli_writes_matrix_report_and_structured_log() -> TestResult {
             row.get("event").and_then(Value::as_str) == Some("conformance.fixture_execution")
         })
         .ok_or_else(|| "missing fixture_execution row".to_string())?;
-    for field in [
-        "trace_id",
-        "mode",
-        "api_family",
-        "symbol",
-        "outcome",
-        "artifact_refs",
+    for (field, message) in [
+        ("trace_id", "case log missing trace_id"),
+        ("mode", "case log missing mode"),
+        ("api_family", "case log missing api_family"),
+        ("symbol", "case log missing symbol"),
+        ("outcome", "case log missing outcome"),
+        ("artifact_refs", "case log missing artifact_refs"),
     ] {
-        require(
-            case_row.get(field).is_some(),
-            format!("case log missing {field}"),
-        )?;
+        require(case_row.get(field).is_some(), message)?;
     }
     Ok(())
 }
