@@ -47,12 +47,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,8 +66,8 @@ fn resource_ops_fixture_exists() {
 }
 
 #[test]
-fn resource_ops_fixture_valid_schema() {
-    let fixture = load_fixture("resource_ops");
+fn resource_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("resource_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "resource_ops");
@@ -86,6 +86,7 @@ fn resource_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,8 +94,8 @@ fn resource_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn resource_ops_covers_getrlimit() {
-    let fixture = load_fixture("resource_ops");
+fn resource_ops_covers_getrlimit() -> Result<(), String> {
+    let fixture = load_fixture("resource_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -105,11 +106,12 @@ fn resource_ops_covers_getrlimit() {
             >= 2,
         "getrlimit needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn resource_ops_covers_resources() {
-    let fixture = load_fixture("resource_ops");
+fn resource_ops_covers_resources() -> Result<(), String> {
+    let fixture = load_fixture("resource_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // Should test multiple resource types
@@ -122,6 +124,7 @@ fn resource_ops_covers_resources() {
             pattern
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,8 +132,8 @@ fn resource_ops_covers_resources() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn resource_ops_error_codes_valid() {
-    let fixture = load_fixture("resource_ops");
+fn resource_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("resource_ops")?;
 
     // Valid POSIX/Linux error codes for resource functions
     let valid_errno_values = [
@@ -149,6 +152,7 @@ fn resource_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,17 +160,18 @@ fn resource_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn resource_ops_modes_valid() {
-    let fixture = load_fixture("resource_ops");
+fn resource_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("resource_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,8 +179,8 @@ fn resource_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn resource_ops_covers_both_modes() {
-    let fixture = load_fixture("resource_ops");
+fn resource_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("resource_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
@@ -185,6 +190,7 @@ fn resource_ops_covers_both_modes() {
         has_hardened,
         "resource_ops must have hardened mode test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,8 +198,8 @@ fn resource_ops_covers_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn resource_ops_case_count_stable() {
-    let fixture = load_fixture("resource_ops");
+fn resource_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("resource_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 4;
 
@@ -208,6 +214,7 @@ fn resource_ops_case_count_stable() {
         "resource_ops fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -215,14 +222,15 @@ fn resource_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn resource_ops_covers_error_paths() {
-    let fixture = load_fixture("resource_ops");
+fn resource_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("resource_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|n| n.contains("invalid")),
         "resource_ops must test invalid resource handling"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,8 +238,8 @@ fn resource_ops_covers_error_paths() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn resource_ops_has_posix_references() {
-    let fixture = load_fixture("resource_ops");
+fn resource_ops_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("resource_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -241,17 +249,18 @@ fn resource_ops_has_posix_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn resource_ops_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("resource_ops");
+fn resource_ops_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("resource_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -260,12 +269,12 @@ fn resource_ops_fixture_cases_match_execute_fixture_case() {
 
         for mode in modes {
             let result =
-                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
-                    panic!(
+                execute_fixture_case(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -278,6 +287,7 @@ fn resource_ops_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -357,14 +367,14 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn resource_ops_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("resource_ops");
+fn resource_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("resource_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -372,13 +382,13 @@ fn resource_ops_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "resource_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity,
                 "resource_ops case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -391,4 +401,5 @@ fn resource_ops_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+    Ok(())
 }
