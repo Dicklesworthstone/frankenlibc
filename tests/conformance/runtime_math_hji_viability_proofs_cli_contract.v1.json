@@ -1,0 +1,43 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "runtime-math-hji-viability-proofs-cli-contract",
+  "bead": "bd-dgznw",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "2710a95d",
+  "purpose": "Pin the harness binary 'runtime-math-hji-viability-proofs' subcommand which exposes frankenlibc_harness::runtime_math_hji_viability_proofs::run_and_write as a CLI. Validates Hamilton-Jacobi-Isaacs viability proofs for the runtime_math kernel, writes structured JSONL log + JSON report, exits non-zero on any check failure.",
+  "subcommand_name": "runtime-math-hji-viability-proofs",
+  "binary_target": "harness",
+  "required_flags": [],
+  "optional_flags": [
+    "--workspace-root",
+    "--log",
+    "--report"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::runtime_math_hji_viability_proofs::run_and_write"
+  ],
+  "io_pattern": "jsonl_log_plus_json_report_no_stdout_jsonl",
+  "default_workspace_root": ".",
+  "default_log_path": "target/conformance/runtime_math_hji_viability_proofs.log.jsonl",
+  "default_report_path": "target/conformance/runtime_math_hji_viability_proofs.report.json",
+  "policy": {
+    "must_write_jsonl_log_file_at_log_path": true,
+    "must_write_json_report_file_at_report_path": true,
+    "creates_parent_directories_for_log_and_report_paths_if_missing": true,
+    "exits_nonzero_when_summary_failed_nonzero": true,
+    "exits_zero_when_summary_failed_count_is_zero": true,
+    "report_contains_summary_with_checks_count": true,
+    "uses_workspace_root_for_source_paths": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_log_file",
+    "missing_report_file",
+    "summary_failed_silently_passed"
+  ],
+  "summary": {
+    "bead": "bd-dgznw",
+    "subcommand": "runtime-math-hji-viability-proofs",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
