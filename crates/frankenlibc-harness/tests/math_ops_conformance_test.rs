@@ -46,12 +46,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,8 +154,8 @@ fn math_ops_fixture_exists() {
 }
 
 #[test]
-fn math_ops_fixture_valid_schema() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "math");
@@ -174,6 +174,7 @@ fn math_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,8 +182,8 @@ fn math_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn math_ops_covers_trig_basic() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_covers_trig_basic() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["sin", "cos", "tan"];
@@ -194,11 +195,12 @@ fn math_ops_covers_trig_basic() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn math_ops_covers_inverse_trig() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_covers_inverse_trig() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["asin", "acos", "atan"];
@@ -210,6 +212,7 @@ fn math_ops_covers_inverse_trig() {
             pattern
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -217,8 +220,8 @@ fn math_ops_covers_inverse_trig() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn math_ops_covers_exp_log() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_covers_exp_log() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["exp", "log"];
@@ -230,22 +233,24 @@ fn math_ops_covers_exp_log() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn math_ops_covers_pow() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_covers_pow() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("pow")).count() >= 2,
         "pow needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn math_ops_covers_finite_domain_error_bucket() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_covers_finite_domain_error_bucket() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let required = [
@@ -279,11 +284,12 @@ fn math_ops_covers_finite_domain_error_bucket() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn math_ops_covers_classification_helper_pilot() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_covers_classification_helper_pilot() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
     let required = [
         ("fpclassify_nan", "__fpclassify", "0"),
         ("fpclassifyf_infinite", "__fpclassifyf", "1"),
@@ -304,12 +310,13 @@ fn math_ops_covers_classification_helper_pilot() {
             .cases
             .iter()
             .find(|case| case.name == name)
-            .unwrap_or_else(|| panic!("Missing math classification fixture case: {name}"));
+            .ok_or_else(|| format!("missing math classification fixture case: {name}"))?;
         assert_eq!(case.function, function);
         assert_eq!(case.expected_output.as_deref(), Some(expected_output));
         assert_eq!(case.expected_errno, 0);
         assert_eq!(case.mode, "both");
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -317,8 +324,8 @@ fn math_ops_covers_classification_helper_pilot() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn math_ops_covers_rounding() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_covers_rounding() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["floor", "ceil", "round"];
@@ -330,6 +337,7 @@ fn math_ops_covers_rounding() {
             pattern
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -337,25 +345,27 @@ fn math_ops_covers_rounding() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn math_ops_covers_fabs() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_covers_fabs() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("fabs")).count() >= 2,
         "fabs needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn math_ops_covers_gamma() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_covers_gamma() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("gamma")),
         "Missing test coverage for gamma functions"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -363,8 +373,8 @@ fn math_ops_covers_gamma() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn math_ops_error_codes_valid() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
 
     // Valid POSIX/Linux error codes for math functions
     let valid_errno_values = [
@@ -382,6 +392,7 @@ fn math_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -389,17 +400,18 @@ fn math_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn math_ops_modes_valid() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -407,8 +419,8 @@ fn math_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn math_ops_case_count_stable() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 30;
 
@@ -420,6 +432,7 @@ fn math_ops_case_count_stable() {
     );
 
     eprintln!("math_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -427,8 +440,8 @@ fn math_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn math_ops_function_distribution() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_function_distribution() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
 
     let mut trig_count = 0;
     let mut exp_log_count = 0;
@@ -464,6 +477,7 @@ fn math_ops_function_distribution() {
         "math_ops coverage: trig={}, exp_log={}, rounding={}",
         trig_count, exp_log_count, rounding_count
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -471,8 +485,8 @@ fn math_ops_function_distribution() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn math_ops_has_spec_references() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -482,17 +496,18 @@ fn math_ops_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn math_ops_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("math_ops");
+fn math_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("math_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -500,13 +515,13 @@ fn math_ops_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "math_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 math_output_matches_expected(expected_output, &result.impl_output),
                 "fixture expected_output mismatch for {} ({mode}): expected {} got {}",
@@ -521,4 +536,6 @@ fn math_ops_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+
+    Ok(())
 }
