@@ -114,7 +114,7 @@ fn manifest_anchors_to_vd6rg_with_subcommand_name() -> TestResult {
     for w in want {
         require(
             funcs.iter().any(|v| v.as_str() == Some(w)),
-            format!("missing {w}"),
+            "manifest must name every underlying memory-pressure helper",
         )?;
     }
     Ok(())
@@ -138,7 +138,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "composed_ppm_clamped_to_unit_ppm_max",
         "all_zero_pressure_with_floor_depth_yields_zero_composed",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -190,19 +190,31 @@ fn run_cli(
 
 fn read_record(out_path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
 fn run_and_parse(bin: &Path, depth: u32, score: u64, raw: u64, label: &str) -> TestResult<Value> {
     let output = unique_tmp(label)?;
     let out = run_cli(bin, depth, score, raw, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
-    let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
-    Ok(parsed)
+    read_record(&output)
 }
 
 #[test]
@@ -263,12 +275,18 @@ fn cli_depth_ppm_monotone_nondecreasing() -> TestResult {
         return Ok(());
     };
     let mut prev: u64 = 0;
-    for &d in &[64u32, 1024, 8192, 32768, 65_536] {
-        let parsed = run_and_parse(&bin, d, 0, 0, &format!("mono_{d}"))?;
+    for (label, d) in [
+        ("mono_floor", 64u32),
+        ("mono_low", 1024),
+        ("mono_mid", 8192),
+        ("mono_high", 32768),
+        ("mono_ceiling", 65_536),
+    ] {
+        let parsed = run_and_parse(&bin, d, 0, 0, label)?;
         let p = json_u64(&parsed, "depth_arena_utilization_ppm")?;
         require(
             p >= prev,
-            format!("depth_ppm must be nondecreasing: depth={d} prev={prev} got={p}"),
+            "depth_ppm must be nondecreasing across increasing depths",
         )?;
         prev = p;
     }
@@ -281,30 +299,23 @@ fn cli_composed_at_or_above_depth_ppm_and_clamped_to_unit_ppm() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    for (i, (depth, score, raw)) in [
-        (1024u32, 10_000u64, 12_000u64),
-        (60_000, 90_000, 99_999),
-        (8_192, 50_000, 100_000),
-        (32_768, 0, 100_000),
-        (65_536, 100_000, 100_000),
-    ]
-    .iter()
-    .enumerate()
-    {
-        let parsed = run_and_parse(&bin, *depth, *score, *raw, &format!("comp_{i}"))?;
+    for (label, depth, score, raw) in [
+        ("comp_low", 1024u32, 10_000u64, 12_000u64),
+        ("comp_high", 60_000, 90_000, 99_999),
+        ("comp_surge", 8_192, 50_000, 100_000),
+        ("comp_raw_only", 32_768, 0, 100_000),
+        ("comp_ceiling", 65_536, 100_000, 100_000),
+    ] {
+        let parsed = run_and_parse(&bin, depth, score, raw, label)?;
         let depth_ppm = json_u64(&parsed, "depth_arena_utilization_ppm")?;
         let composed = json_u64(&parsed, "composed_pressure_ppm")?;
         require(
             composed >= depth_ppm,
-            format!(
-                "case {i} (d={depth},s={score},r={raw}): composed={composed} must be >= depth_ppm={depth_ppm}"
-            ),
+            "composed pressure must be >= depth pressure for every sample",
         )?;
         require(
             composed <= 1_000_000,
-            format!(
-                "case {i} (d={depth},s={score},r={raw}): composed={composed} must be <= 1_000_000"
-            ),
+            "composed pressure must be clamped to <= 1_000_000",
         )?;
     }
     Ok(())
