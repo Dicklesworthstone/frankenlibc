@@ -45,12 +45,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,8 +140,8 @@ fn regex_glob_ops_fixture_exists() {
 }
 
 #[test]
-fn regex_glob_ops_fixture_valid_schema() {
-    let fixture = load_fixture("regex_glob_ops");
+fn regex_glob_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("regex_glob_ops")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "regex_glob_ops");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -149,61 +149,67 @@ fn regex_glob_ops_fixture_valid_schema() {
         assert!(!case.name.is_empty(), "Case name must not be empty");
         assert!(!case.function.is_empty(), "Function must not be empty");
     }
+    Ok(())
 }
 
 #[test]
-fn regex_glob_ops_covers_regcomp() {
-    let fixture = load_fixture("regex_glob_ops");
+fn regex_glob_ops_covers_regcomp() -> Result<(), String> {
+    let fixture = load_fixture("regex_glob_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("regcomp")),
         "Missing test coverage for regcomp"
     );
+    Ok(())
 }
 
 #[test]
-fn regex_glob_ops_covers_regexec() {
-    let fixture = load_fixture("regex_glob_ops");
+fn regex_glob_ops_covers_regexec() -> Result<(), String> {
+    let fixture = load_fixture("regex_glob_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("regexec")).count() >= 2,
         "regexec needs at least 2 test cases (match and nomatch)"
     );
+    Ok(())
 }
 
 #[test]
-fn regex_glob_ops_covers_fnmatch() {
-    let fixture = load_fixture("regex_glob_ops");
+fn regex_glob_ops_covers_fnmatch() -> Result<(), String> {
+    let fixture = load_fixture("regex_glob_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("fnmatch")).count() >= 2,
         "fnmatch needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn regex_glob_ops_covers_glob() {
-    let fixture = load_fixture("regex_glob_ops");
+fn regex_glob_ops_covers_glob() -> Result<(), String> {
+    let fixture = load_fixture("regex_glob_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("glob")),
         "Missing test coverage for glob"
     );
+    Ok(())
 }
 
 #[test]
-fn regex_glob_ops_covers_wordexp() {
-    let fixture = load_fixture("regex_glob_ops");
+fn regex_glob_ops_covers_wordexp() -> Result<(), String> {
+    let fixture = load_fixture("regex_glob_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("wordexp")).count() >= 3,
         "wordexp needs at least 3 host-parity cases"
     );
+    Ok(())
 }
 
 #[test]
-fn regex_glob_ops_modes_valid() {
-    let fixture = load_fixture("regex_glob_ops");
+fn regex_glob_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("regex_glob_ops")?;
     for case in &fixture.cases {
         assert!(
             case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
@@ -212,11 +218,12 @@ fn regex_glob_ops_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn regex_glob_ops_covers_both_modes() {
-    let fixture = load_fixture("regex_glob_ops");
+fn regex_glob_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("regex_glob_ops")?;
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
     assert!(
@@ -227,11 +234,12 @@ fn regex_glob_ops_covers_both_modes() {
         has_hardened,
         "regex_glob_ops must have hardened mode test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn regex_glob_ops_case_count_stable() {
-    let fixture = load_fixture("regex_glob_ops");
+fn regex_glob_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("regex_glob_ops")?;
     assert!(
         fixture.cases.len() >= 9,
         "regex_glob_ops fixture has {} cases, expected at least 9",
@@ -241,11 +249,12 @@ fn regex_glob_ops_case_count_stable() {
         "regex_glob_ops fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn regex_glob_ops_fixture_executes_with_host_parity_in_both_modes() {
-    let fixture = load_fixture("regex_glob_ops");
+fn regex_glob_ops_fixture_executes_with_host_parity_in_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("regex_glob_ops")?;
 
     for mode in ["strict", "hardened"] {
         for case in fixture
@@ -253,17 +262,17 @@ fn regex_glob_ops_fixture_executes_with_host_parity_in_both_modes() {
             .iter()
             .filter(|case| mode_matches(mode, &case.mode))
         {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "regex_glob_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             let expected = expected_output_text(
                 case.expected_output
                     .as_ref()
-                    .expect("regex_glob_ops cases must have expected_output"),
+                    .ok_or_else(|| format!("case {} missing expected_output", case.name))?,
             );
             assert_eq!(
                 result.impl_output, expected,
@@ -277,4 +286,5 @@ fn regex_glob_ops_fixture_executes_with_host_parity_in_both_modes() {
             );
         }
     }
+    Ok(())
 }
