@@ -29,6 +29,23 @@ fn load_json(path: &Path) -> TestResult<Value> {
     serde_json::from_str(&content).map_err(|err| format!("parse {path:?}: {err}"))
 }
 
+fn read_jsonl_record(path: &Path) -> TestResult<Value> {
+    let body = std::fs::read_to_string(path).map_err(|err| format!("read {path:?}: {err}"))?;
+    let mut records = Vec::new();
+    for line in body.lines().filter(|line| !line.trim().is_empty()) {
+        let record = match serde_json::from_str(line) {
+            Ok(record) => record,
+            Err(_) => return Err("parse JSONL record".into()),
+        };
+        records.push(record);
+    }
+    require(records.len() == 1, "expected exactly 1 JSONL record")?;
+    records
+        .into_iter()
+        .next()
+        .ok_or_else(|| "missing JSONL record".to_string())
+}
+
 fn require(condition: bool, message: impl Into<String>) -> TestResult {
     if condition {
         Ok(())
@@ -114,7 +131,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "fail_closed_when_cap_not_supported",
         "must_emit_exactly_one_jsonl_record",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -128,12 +145,14 @@ fn harness_source_registers_evidence_ring_stress_subcommand() -> TestResult {
         src.contains("EvidenceRingStress {"),
         "harness.rs must declare EvidenceRingStress Command variant",
     )?;
-    for field in ["seed", "multiple", "cap", "source_commit", "output"] {
-        let anchor = format!("        {field}");
-        require(
-            src.contains(&anchor),
-            format!("EvidenceRingStress missing field `{field}`"),
-        )?;
+    for anchor in [
+        "        seed",
+        "        multiple",
+        "        cap",
+        "        source_commit",
+        "        output",
+    ] {
+        require(src.contains(anchor), "EvidenceRingStress missing field")?;
     }
     require(
         src.contains("run_real_ring_stress::<32>")
@@ -173,28 +192,17 @@ fn cli_emits_one_jsonl_record_validating_against_lib_const() -> TestResult {
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
     if !output.status.success() {
-        let _ = std::fs::remove_file(&tmp);
         return Err(format!(
             "evidence-ring-stress failed: status={:?} stderr={}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
-    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 1,
-        format!("expected exactly 1 JSONL record; got {}", lines.len()),
-    )?;
-    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse jsonl: {e}"))?;
+    let parsed = read_jsonl_record(&tmp)?;
     // The emitted record must carry every field the lib lists as
     // required — the runtime validator double-checks the same set.
     for f in REAL_RING_REPORT_REQUIRED_FIELDS {
-        require(
-            parsed.get(*f).is_some(),
-            format!("record missing required field `{f}`"),
-        )?;
+        require(parsed.get(*f).is_some(), "record missing required field")?;
     }
     require(
         parsed.get("source_commit").and_then(Value::as_str) == Some(source_commit.as_str()),
@@ -211,10 +219,7 @@ fn cli_emits_one_jsonl_record_validating_against_lib_const() -> TestResult {
     if let (Some(cap_n), Some(mul_n), Some(tot)) = (cap_v, mult_v, total_v) {
         require(
             tot == cap_n.saturating_mul(mul_n),
-            format!(
-                "total_pushed={tot} must equal ring_capacity*multiple={}",
-                cap_n.saturating_mul(mul_n)
-            ),
+            "total_pushed must equal ring_capacity*multiple",
         )?;
     }
     require(
@@ -244,7 +249,6 @@ fn cli_rejects_unsupported_cap_with_helpful_error() -> TestResult {
         .arg(&tmp)
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
     require(
         !output.status.success(),
         "evidence-ring-stress must exit non-zero on unsupported --cap",
@@ -279,7 +283,6 @@ fn cli_rejects_bad_multiple_below_two() -> TestResult {
         .arg(&tmp)
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
     require(
         !output.status.success(),
         "evidence-ring-stress must exit non-zero on --multiple < 2",
