@@ -44,12 +44,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,8 +126,8 @@ fn membrane_mode_split_fixture_exists() {
 }
 
 #[test]
-fn membrane_mode_split_fixture_valid_schema() {
-    let fixture = load_fixture("membrane_mode_split");
+fn membrane_mode_split_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("membrane_mode_split")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "membrane/mode-split");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -135,31 +135,34 @@ fn membrane_mode_split_fixture_valid_schema() {
         assert!(!case.name.is_empty(), "Case name must not be empty");
         assert!(!case.function.is_empty(), "Function must not be empty");
     }
+    Ok(())
 }
 
 #[test]
-fn membrane_mode_split_covers_memcpy() {
-    let fixture = load_fixture("membrane_mode_split");
+fn membrane_mode_split_covers_memcpy() -> Result<(), String> {
+    let fixture = load_fixture("membrane_mode_split")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("memcpy")).count() >= 2,
         "memcpy needs at least 2 test cases (strict and hardened)"
     );
+    Ok(())
 }
 
 #[test]
-fn membrane_mode_split_covers_strlen() {
-    let fixture = load_fixture("membrane_mode_split");
+fn membrane_mode_split_covers_strlen() -> Result<(), String> {
+    let fixture = load_fixture("membrane_mode_split")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("strlen")).count() >= 2,
         "strlen needs at least 2 test cases (strict and hardened)"
     );
+    Ok(())
 }
 
 #[test]
-fn membrane_mode_split_has_strict_ub_cases() {
-    let fixture = load_fixture("membrane_mode_split");
+fn membrane_mode_split_has_strict_ub_cases() -> Result<(), String> {
+    let fixture = load_fixture("membrane_mode_split")?;
     let ub_cases = fixture
         .cases
         .iter()
@@ -169,11 +172,12 @@ fn membrane_mode_split_has_strict_ub_cases() {
         ub_cases >= 1,
         "strict mode needs at least 1 UB case for overflow scenarios"
     );
+    Ok(())
 }
 
 #[test]
-fn membrane_mode_split_has_hardened_safe_cases() {
-    let fixture = load_fixture("membrane_mode_split");
+fn membrane_mode_split_has_hardened_safe_cases() -> Result<(), String> {
+    let fixture = load_fixture("membrane_mode_split")?;
     let hardened_safe = fixture
         .cases
         .iter()
@@ -183,24 +187,26 @@ fn membrane_mode_split_has_hardened_safe_cases() {
         hardened_safe >= 1,
         "hardened mode needs at least 1 safe clamped case"
     );
+    Ok(())
 }
 
 #[test]
-fn membrane_mode_split_modes_valid() {
-    let fixture = load_fixture("membrane_mode_split");
+fn membrane_mode_split_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("membrane_mode_split")?;
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn membrane_mode_split_case_count_stable() {
-    let fixture = load_fixture("membrane_mode_split");
+fn membrane_mode_split_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("membrane_mode_split")?;
     assert!(
         fixture.cases.len() >= 4,
         "membrane_mode_split fixture has {} cases, expected at least 4",
@@ -210,11 +216,12 @@ fn membrane_mode_split_case_count_stable() {
         "membrane_mode_split fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn membrane_mode_split_has_spec_references() {
-    let fixture = load_fixture("membrane_mode_split");
+fn membrane_mode_split_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("membrane_mode_split")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("TSM"),
@@ -223,17 +230,19 @@ fn membrane_mode_split_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn membrane_mode_split_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("membrane_mode_split");
+fn membrane_mode_split_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String>
+{
+    let fixture = load_fixture("membrane_mode_split")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
-            .clone()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .as_deref()
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -241,13 +250,13 @@ fn membrane_mode_split_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "membrane_mode_split case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity || result.host_output == "UB",
                 "membrane_mode_split case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -262,4 +271,5 @@ fn membrane_mode_split_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+    Ok(())
 }
