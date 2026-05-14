@@ -51,6 +51,13 @@ fn parse_hex_u64(field: &str) -> Option<u64> {
     u64::from_str_radix(field, 16).ok()
 }
 
+fn parse_decimal_u64(field: &str) -> Option<u64> {
+    if field.is_empty() || !field.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    field.parse::<u64>().ok()
+}
+
 /// Parse one `/proc/self/maps` line.
 ///
 /// Returns `None` if any of the five mandatory fields is missing or
@@ -76,7 +83,7 @@ pub fn parse_maps_line(line: &str) -> Option<MapsEntry<'_>> {
     let start = parse_hex_usize(&range[..dash])?;
     let end = parse_hex_usize(&range[dash + 1..])?;
     let offset = parse_hex_u64(offset_s)?;
-    let inode = inode_s.parse::<u64>().ok()?;
+    let inode = parse_decimal_u64(inode_s)?;
 
     Some(MapsEntry {
         start,
@@ -191,6 +198,12 @@ mod tests {
         assert!(parse_maps_line("400000-+401000 r--p 0 00:00 0").is_none());
         assert!(parse_maps_line("-400000-401000 r--p 0 00:00 0").is_none());
         assert!(parse_maps_line("400000-401000 r--p +0 00:00 0").is_none());
+    }
+
+    #[test]
+    fn parse_rejects_signed_inode() {
+        assert!(parse_maps_line("400000-401000 r--p 0 00:00 +0").is_none());
+        assert!(parse_maps_line("400000-401000 r--p 0 00:00 +123 /bin/cat").is_none());
     }
 
     #[test]
