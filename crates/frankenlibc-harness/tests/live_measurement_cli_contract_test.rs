@@ -116,16 +116,26 @@ fn manifest_anchors_to_uof80_with_subcommand_name() -> TestResult {
 fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
-    let policy = m
-        .get("policy")
-        .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "fail_closed_when_source_commit_is_not_40_char_sha",
-        "fail_closed_when_underlying_bridge_errors",
-        "must_emit_three_jsonl_records_in_fixed_order",
-        "default_path_must_route_through_environment_fingerprint",
+    let policy = m.get("policy").ok_or("missing policy")?;
+    for (field, message) in [
+        (
+            "fail_closed_when_source_commit_is_not_40_char_sha",
+            "fail_closed_when_source_commit_is_not_40_char_sha must be true",
+        ),
+        (
+            "fail_closed_when_underlying_bridge_errors",
+            "fail_closed_when_underlying_bridge_errors must be true",
+        ),
+        (
+            "must_emit_three_jsonl_records_in_fixed_order",
+            "must_emit_three_jsonl_records_in_fixed_order must be true",
+        ),
+        (
+            "default_path_must_route_through_environment_fingerprint",
+            "default_path_must_route_through_environment_fingerprint must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
