@@ -907,16 +907,39 @@ unsafe fn build_addrinfo_v4(
     ip: Ipv4Addr,
     profile: AddrinfoProfile,
     hints: Option<&libc::addrinfo>,
+    canonname: Option<&CStr>,
 ) -> *mut libc::addrinfo {
     let flags = hints.map(|h| h.ai_flags).unwrap_or(0);
+    let canonname_bytes = canonname.map(CStr::to_bytes_with_nul);
+    let Some(layout_size) =
+        size_of::<ContiguousAddrinfoV4>().checked_add(canonname_bytes.map_or(0, <[u8]>::len))
+    else {
+        return ptr::null_mut();
+    };
+    let Ok(layout) =
+        std::alloc::Layout::from_size_align(layout_size, align_of::<ContiguousAddrinfoV4>())
+    else {
+        return ptr::null_mut();
+    };
 
     // Allocate contiguously so freeaddrinfo can use a single free().
-    let layout = std::alloc::Layout::new::<ContiguousAddrinfoV4>();
+    // SAFETY: malloc_abi::malloc accepts a byte count and returns owned storage
+    // suitable for libc-compatible layout initialization below.
     let ptr = unsafe { crate::malloc_abi::malloc(layout.size()) };
     if ptr.is_null() {
         return ptr::null_mut();
     }
     let block = ptr.cast::<ContiguousAddrinfoV4>();
+    let canonname_ptr = canonname_bytes.map(|bytes| {
+        // SAFETY: the allocation size is struct size plus bytes.len(), so the
+        // byte range immediately after the struct is within the owned block.
+        let dst =
+            unsafe { ptr.cast::<u8>().add(size_of::<ContiguousAddrinfoV4>()) }.cast::<c_char>();
+        // SAFETY: source is a valid CStr byte slice including NUL, destination
+        // points to a non-overlapping tail region in the just-allocated block.
+        unsafe { ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), dst, bytes.len()) };
+        dst
+    });
 
     // Initialize sockaddr_in.
     let sockaddr_ptr = unsafe { ptr::addr_of_mut!((*block).sockaddr) };
@@ -949,7 +972,7 @@ unsafe fn build_addrinfo_v4(
                 ai_protocol: profile.protocol,
                 ai_addrlen: size_of::<libc::sockaddr_in>() as libc::socklen_t,
                 ai_addr: sockaddr_ptr.cast::<libc::sockaddr>(),
-                ai_canonname: ptr::null_mut(),
+                ai_canonname: canonname_ptr.unwrap_or(ptr::null_mut()),
                 ai_next: ptr::null_mut(),
             },
         );
@@ -971,16 +994,39 @@ unsafe fn build_addrinfo_v6(
     ip: Ipv6Addr,
     profile: AddrinfoProfile,
     hints: Option<&libc::addrinfo>,
+    canonname: Option<&CStr>,
 ) -> *mut libc::addrinfo {
     let flags = hints.map(|h| h.ai_flags).unwrap_or(0);
+    let canonname_bytes = canonname.map(CStr::to_bytes_with_nul);
+    let Some(layout_size) =
+        size_of::<ContiguousAddrinfoV6>().checked_add(canonname_bytes.map_or(0, <[u8]>::len))
+    else {
+        return ptr::null_mut();
+    };
+    let Ok(layout) =
+        std::alloc::Layout::from_size_align(layout_size, align_of::<ContiguousAddrinfoV6>())
+    else {
+        return ptr::null_mut();
+    };
 
     // Allocate contiguously so freeaddrinfo can use a single free().
-    let layout = std::alloc::Layout::new::<ContiguousAddrinfoV6>();
+    // SAFETY: malloc_abi::malloc accepts a byte count and returns owned storage
+    // suitable for libc-compatible layout initialization below.
     let ptr = unsafe { crate::malloc_abi::malloc(layout.size()) };
     if ptr.is_null() {
         return ptr::null_mut();
     }
     let block = ptr.cast::<ContiguousAddrinfoV6>();
+    let canonname_ptr = canonname_bytes.map(|bytes| {
+        // SAFETY: the allocation size is struct size plus bytes.len(), so the
+        // byte range immediately after the struct is within the owned block.
+        let dst =
+            unsafe { ptr.cast::<u8>().add(size_of::<ContiguousAddrinfoV6>()) }.cast::<c_char>();
+        // SAFETY: source is a valid CStr byte slice including NUL, destination
+        // points to a non-overlapping tail region in the just-allocated block.
+        unsafe { ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), dst, bytes.len()) };
+        dst
+    });
 
     // Initialize sockaddr_in6.
     let sockaddr_ptr = unsafe { ptr::addr_of_mut!((*block).sockaddr) };
@@ -1011,7 +1057,7 @@ unsafe fn build_addrinfo_v6(
                 ai_protocol: profile.protocol,
                 ai_addrlen: size_of::<libc::sockaddr_in6>() as libc::socklen_t,
                 ai_addr: sockaddr_ptr.cast::<libc::sockaddr>(),
-                ai_canonname: ptr::null_mut(),
+                ai_canonname: canonname_ptr.unwrap_or(ptr::null_mut()),
                 ai_next: ptr::null_mut(),
             },
         );
@@ -1024,9 +1070,10 @@ fn push_addrinfo_v4_nodes(
     ip: Ipv4Addr,
     profiles: &[AddrinfoProfile],
     hints: Option<&libc::addrinfo>,
+    canonname: Option<&CStr>,
 ) {
     for &profile in profiles {
-        nodes.push(unsafe { build_addrinfo_v4(ip, profile, hints) });
+        nodes.push(unsafe { build_addrinfo_v4(ip, profile, hints, canonname) });
     }
 }
 
@@ -1035,9 +1082,10 @@ fn push_addrinfo_v6_nodes(
     ip: Ipv6Addr,
     profiles: &[AddrinfoProfile],
     hints: Option<&libc::addrinfo>,
+    canonname: Option<&CStr>,
 ) {
     for &profile in profiles {
-        nodes.push(unsafe { build_addrinfo_v6(ip, profile, hints) });
+        nodes.push(unsafe { build_addrinfo_v6(ip, profile, hints, canonname) });
     }
 }
 
@@ -1460,6 +1508,11 @@ pub unsafe extern "C" fn getaddrinfo(
         return libc::EAI_BADFLAGS;
     }
     let host_text = node_cstr.and_then(|c| c.to_str().ok());
+    let canonname = if (flags & libc::AI_CANONNAME) != 0 {
+        node_cstr
+    } else {
+        None
+    };
 
     let mut nodes = Vec::new();
     let mut addrconfig_filter_eligible = host_text.is_none();
@@ -1471,7 +1524,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 numeric_host = true;
                 match family {
                     libc::AF_UNSPEC | libc::AF_INET => {
-                        push_addrinfo_v4_nodes(&mut nodes, v4, &profiles, hints_ref);
+                        push_addrinfo_v4_nodes(&mut nodes, v4, &profiles, hints_ref, canonname);
                     }
                     libc::AF_INET6 => {
                         record_resolver_stage_outcome(
@@ -1498,7 +1551,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 numeric_host = true;
                 match family {
                     libc::AF_UNSPEC | libc::AF_INET6 => {
-                        push_addrinfo_v6_nodes(&mut nodes, v6, &profiles, hints_ref);
+                        push_addrinfo_v6_nodes(&mut nodes, v6, &profiles, hints_ref, canonname);
                     }
                     libc::AF_INET => {
                         record_resolver_stage_outcome(
@@ -1541,11 +1594,11 @@ pub unsafe extern "C" fn getaddrinfo(
                         if (family == libc::AF_UNSPEC || family == libc::AF_INET)
                             && let Ok(v4) = c_text.parse::<Ipv4Addr>()
                         {
-                            push_addrinfo_v4_nodes(&mut nodes, v4, &profiles, hints_ref);
+                            push_addrinfo_v4_nodes(&mut nodes, v4, &profiles, hints_ref, canonname);
                         } else if (family == libc::AF_UNSPEC || family == libc::AF_INET6)
                             && let Ok(v6) = c_text.parse::<Ipv6Addr>()
                         {
-                            push_addrinfo_v6_nodes(&mut nodes, v6, &profiles, hints_ref);
+                            push_addrinfo_v6_nodes(&mut nodes, v6, &profiles, hints_ref, canonname);
                         }
                     }
                 }
@@ -1561,12 +1614,12 @@ pub unsafe extern "C" fn getaddrinfo(
 
                 for v4 in &dns_result.ipv4 {
                     if family == libc::AF_UNSPEC || family == libc::AF_INET {
-                        push_addrinfo_v4_nodes(&mut nodes, *v4, &profiles, hints_ref);
+                        push_addrinfo_v4_nodes(&mut nodes, *v4, &profiles, hints_ref, canonname);
                     }
                 }
                 for v6 in &dns_result.ipv6 {
                     if family == libc::AF_UNSPEC || family == libc::AF_INET6 {
-                        push_addrinfo_v6_nodes(&mut nodes, *v6, &profiles, hints_ref);
+                        push_addrinfo_v6_nodes(&mut nodes, *v6, &profiles, hints_ref, canonname);
                     }
                 }
 
@@ -1578,6 +1631,7 @@ pub unsafe extern "C" fn getaddrinfo(
                             Ipv4Addr::LOCALHOST,
                             &profiles,
                             hints_ref,
+                            canonname,
                         );
                     } else {
                         record_resolver_stage_outcome(
@@ -1601,7 +1655,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 } else {
                     Ipv6Addr::LOCALHOST
                 };
-                push_addrinfo_v6_nodes(&mut nodes, addr, &profiles, hints_ref);
+                push_addrinfo_v6_nodes(&mut nodes, addr, &profiles, hints_ref, canonname);
             }
             libc::AF_INET => {
                 let addr = if (flags & libc::AI_PASSIVE) != 0 {
@@ -1609,7 +1663,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 } else {
                     Ipv4Addr::LOCALHOST
                 };
-                push_addrinfo_v4_nodes(&mut nodes, addr, &profiles, hints_ref);
+                push_addrinfo_v4_nodes(&mut nodes, addr, &profiles, hints_ref, canonname);
             }
             libc::AF_UNSPEC => {
                 let passive = (flags & libc::AI_PASSIVE) != 0;
@@ -1624,11 +1678,11 @@ pub unsafe extern "C" fn getaddrinfo(
                     Ipv6Addr::LOCALHOST
                 };
                 if passive {
-                    push_addrinfo_v4_nodes(&mut nodes, v4_addr, &profiles, hints_ref);
-                    push_addrinfo_v6_nodes(&mut nodes, v6_addr, &profiles, hints_ref);
+                    push_addrinfo_v4_nodes(&mut nodes, v4_addr, &profiles, hints_ref, canonname);
+                    push_addrinfo_v6_nodes(&mut nodes, v6_addr, &profiles, hints_ref, canonname);
                 } else {
-                    push_addrinfo_v6_nodes(&mut nodes, v6_addr, &profiles, hints_ref);
-                    push_addrinfo_v4_nodes(&mut nodes, v4_addr, &profiles, hints_ref);
+                    push_addrinfo_v6_nodes(&mut nodes, v6_addr, &profiles, hints_ref, canonname);
+                    push_addrinfo_v4_nodes(&mut nodes, v4_addr, &profiles, hints_ref, canonname);
                 }
             }
             _ => {
@@ -1692,6 +1746,14 @@ pub unsafe extern "C" fn getaddrinfo(
         return libc::EAI_MEMORY;
     }
 
+    if canonname.is_some() {
+        for node in nodes.iter().skip(1) {
+            // SAFETY: null nodes were rejected above; these records are owned
+            // addrinfo nodes that have not yet been returned to the caller.
+            unsafe { (**node).ai_canonname = ptr::null_mut() };
+        }
+    }
+
     // Chain the nodes together.
     for i in 0..nodes.len().saturating_sub(1) {
         unsafe { (*nodes[i]).ai_next = nodes[i + 1] };
@@ -1749,11 +1811,9 @@ pub unsafe extern "C" fn freeaddrinfo(res: *mut libc::addrinfo) {
 
         let canon = unsafe { (*cur).ai_canonname };
         if !canon.is_null() {
-            // Note: glibc contiguous allocations sometimes place canonname in the same block.
-            // If it is NOT in the same block, we would leak it. However, our getaddrinfo
-            // currently always leaves it null. If we were to populate it, we'd place it
-            // contiguously as well, or use a known layout to free it.
-            // We leave canonname un-freed as glibc freeaddrinfo natively frees only `cur`.
+            // Canonical names created by this resolver are embedded in the
+            // same allocation as the addrinfo node, so freeing `cur` releases
+            // the string too.
         }
 
         // SAFETY: node ownership belongs to caller of freeaddrinfo.

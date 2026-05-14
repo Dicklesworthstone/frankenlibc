@@ -169,6 +169,25 @@ unsafe fn collect_addrinfo_profiles(mut node: *mut libc::addrinfo) -> Vec<(c_int
     profiles
 }
 
+unsafe fn collect_addrinfo_canonname(mut node: *mut libc::addrinfo) -> Vec<Option<Vec<u8>>> {
+    let mut names = Vec::new();
+    while !node.is_null() {
+        // SAFETY: caller provides a valid addrinfo chain returned by getaddrinfo.
+        let ai = unsafe { &*node };
+        names.push(if ai.ai_canonname.is_null() {
+            None
+        } else {
+            Some(
+                unsafe { CStr::from_ptr(ai.ai_canonname) }
+                    .to_bytes()
+                    .to_vec(),
+            )
+        });
+        node = ai.ai_next;
+    }
+    names
+}
+
 fn services_alias_fixture() -> Option<(CString, CString, u16)> {
     let content = std::fs::read("/etc/services").ok()?;
     let entry = content
@@ -935,6 +954,57 @@ fn getaddrinfo_null_node_ai_canonname_returns_badflags() {
     let rc = unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
     assert_eq!(rc, libc::EAI_BADFLAGS);
     assert!(res.is_null());
+}
+
+#[test]
+fn getaddrinfo_non_null_ai_canonname_sets_first_result_only() {
+    let node = CString::new("127.0.0.1").unwrap();
+    let service = CString::new("80").unwrap();
+    let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+    hints.ai_family = libc::AF_UNSPEC;
+    hints.ai_flags = libc::AI_CANONNAME;
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res) };
+    assert_eq!(rc, 0);
+    assert!(!res.is_null());
+
+    let names = unsafe { collect_addrinfo_canonname(res) };
+    assert_eq!(
+        names,
+        vec![Some(b"127.0.0.1".to_vec()), None, None],
+        "AI_CANONNAME should populate only the first addrinfo"
+    );
+
+    unsafe { resolv_abi::freeaddrinfo(res) };
+}
+
+#[test]
+fn getaddrinfo_hosts_backend_ai_canonname_preserves_query_name() {
+    with_resolver_backends(
+        Some(b"203.0.113.10 fixture-host fixture-alias\n"),
+        None,
+        |_| {
+            let node = CString::new("FIXTURE-ALIAS").unwrap();
+            let service = CString::new("80").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            hints.ai_flags = libc::AI_CANONNAME;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+
+            let names = unsafe { collect_addrinfo_canonname(res) };
+            assert_eq!(names, vec![Some(b"FIXTURE-ALIAS".to_vec())]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
 }
 
 #[test]
