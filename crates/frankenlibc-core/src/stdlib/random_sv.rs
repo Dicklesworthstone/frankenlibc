@@ -219,11 +219,51 @@ mod tests {
     }
 
     #[test]
+    fn initstate_same_seed_serializes_same_state() {
+        let _guard = test_global_random_lock();
+        let mut first = vec![0u8; STATE_SIZE * 4];
+        let mut second = vec![0u8; STATE_SIZE * 4];
+
+        let _ = initstate(12345, &mut first);
+        let _ = initstate(12345, &mut second);
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn setstate_replays_saved_seed_sequence_after_intervening_state() {
+        let _guard = test_global_random_lock();
+        let mut saved = vec![0u8; STATE_SIZE * 4];
+        let _ = initstate(2026, &mut saved);
+        let expected: Vec<i64> = (0..8).map(|_| random()).collect();
+
+        srandom(99);
+        let _: Vec<i64> = (0..8).map(|_| random()).collect();
+
+        let _ = setstate(&saved);
+        let replayed: Vec<i64> = (0..8).map(|_| random()).collect();
+        assert_eq!(replayed, expected);
+    }
+
+    #[test]
     fn test_initstate_too_small_buf() {
         let _guard = test_global_random_lock();
         let mut buf = [0u8; 4]; // too small
         let token = initstate(1, &mut buf);
         assert_eq!(token, 0);
+    }
+
+    #[test]
+    fn setstate_too_small_buffer_preserves_current_state() {
+        let _guard = test_global_random_lock();
+        srandom(321);
+        let expected = random();
+
+        srandom(321);
+        let tiny = [0u8; 4];
+        let token = setstate(&tiny);
+        assert_eq!(token, 0);
+        assert_eq!(random(), expected);
     }
 
     #[test]
