@@ -1,0 +1,71 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "capture-cli-contract",
+  "bead": "pending-tracker-capture-cli-contract",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "6d01eaf299a017ff35c8fbb8e2e2238cd5b00d12",
+  "purpose": "Pin the harness binary `capture` subcommand that refreshes fixture templates from host-glibc observations before later verification. The command must read fixture JSON templates, filter by family or filename stem, create the output directory, refresh strict and mode=both cases from host capture, preserve hardened-only cases, write refreshed fixture JSON with the original filename, emit deterministic summary diagnostics, surface unsupported-case warnings, and fail closed when no valid templates match.",
+  "subcommand_name": "capture",
+  "binary_target": "harness",
+  "required_flags": [
+    "--input",
+    "--output",
+    "--family"
+  ],
+  "io_pattern": "fixture_template_directory_to_refreshed_fixture_directory",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::capture::capture_family_fixtures",
+    "frankenlibc_harness::FixtureSet::from_file",
+    "frankenlibc_harness::FixtureSet::to_json",
+    "frankenlibc_fixture_exec::execute_fixture_case"
+  ],
+  "output_contract": {
+    "format": "fixture_set_json",
+    "filename_rule": "preserve_input_fixture_filename",
+    "required_fixture_fields": [
+      "version",
+      "family",
+      "captured_at",
+      "cases"
+    ],
+    "required_case_fields": [
+      "name",
+      "function",
+      "spec_section",
+      "inputs",
+      "expected_output",
+      "expected_errno",
+      "mode"
+    ],
+    "stderr_summary": "Capture complete: refreshed_cases=<n>, skipped_cases=<n>, warnings=<n>"
+  },
+  "policy": {
+    "must_create_output_directory": true,
+    "must_sort_input_json_paths": true,
+    "must_filter_by_family_or_file_stem": true,
+    "must_skip_malformed_fixture_json": true,
+    "must_refresh_strict_cases_from_host_output": true,
+    "must_refresh_mode_both_cases_from_host_output": true,
+    "must_preserve_hardened_only_expected_output": true,
+    "must_report_unsupported_cases_as_skipped_warnings": true,
+    "must_fail_closed_when_no_templates_match": true,
+    "must_preserve_original_fixture_filename": true
+  },
+  "rejected_evidence_kinds": [
+    "capture_command_unpinned",
+    "missing_output_directory_creation",
+    "hardened_only_case_refreshed",
+    "strict_case_left_stale",
+    "mode_both_case_left_stale",
+    "unsupported_case_silently_dropped",
+    "missing_warning_summary",
+    "no_matching_templates_accepted",
+    "output_filename_changed"
+  ],
+  "summary": {
+    "bead": "pending-tracker-capture-cli-contract",
+    "subcommand": "capture",
+    "report_only": true,
+    "claim_status": "code_only_pending_tracker_closeout"
+  }
+}
