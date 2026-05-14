@@ -117,15 +117,33 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_inputs_into_output_record",
-        "safe_iff_headroom_at_or_above_zero",
-        "deterministic_given_inputs",
-        "all_zero_inputs_certified_safe",
-        "owner_conflict_with_max_telemetry_violates_certificate",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_inputs_into_output_record",
+            "echoes_inputs_into_output_record must be true",
+        ),
+        (
+            "safe_iff_headroom_at_or_above_zero",
+            "safe_iff_headroom_at_or_above_zero must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "all_zero_inputs_certified_safe",
+            "all_zero_inputs_certified_safe must be true",
+        ),
+        (
+            "owner_conflict_with_max_telemetry_violates_certificate",
+            "owner_conflict_with_max_telemetry_violates_certificate must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -250,31 +268,23 @@ fn cli_safe_flag_matches_headroom_sign() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    for (i, (t, w, conflict, skew, lag)) in [
-        (1u32, 1u32, false, 0u32, 0u32),
-        (100, 5, false, 50_000, 100_000),
-        (1000, 50, true, 500_000, 500_000),
-        (4, 4, true, 999_999, 999_999),
-    ]
-    .iter()
-    .enumerate()
-    {
-        let output = unique_tmp(&format!("sign_{i}"))?;
-        let out = run_cli(&bin, *t, *w, *conflict, *skew, *lag, &output)?;
+    for (label, t, w, conflict, skew, lag) in [
+        ("sign_nominal", 1u32, 1u32, false, 0u32, 0u32),
+        ("sign_moderate", 100, 5, false, 50_000, 100_000),
+        ("sign_conflict", 1000, 50, true, 500_000, 500_000),
+        ("sign_boundary", 4, 4, true, 999_999, 999_999),
+    ] {
+        let output = unique_tmp(label)?;
+        let out = run_cli(&bin, t, w, conflict, skew, lag, &output)?;
         if !out.status.success() {
-            return Err(format!(
-                "case {i} stderr={}",
-                String::from_utf8_lossy(&out.stderr)
-            ));
+            return Err("sign-case CLI invocation must succeed".into());
         }
         let parsed = read_record(&output)?;
         let headroom = json_i64(&parsed, "headroom")?;
         let safe = json_bool(&parsed, "safe")?;
         require(
             safe == (headroom >= 0),
-            format!(
-                "case {i} ({t},{w},{conflict},{skew},{lag}): safe={safe} headroom={headroom}; safe iff headroom>=0 broken"
-            ),
+            "safe flag must match headroom sign for every sign-case input",
         )?;
     }
     Ok(())
