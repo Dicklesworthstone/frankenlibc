@@ -61,12 +61,12 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -131,8 +131,8 @@ fn inet_ops_fixture_exists() {
 }
 
 #[test]
-fn inet_ops_fixture_valid_schema() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "inet");
@@ -159,6 +159,8 @@ fn inet_ops_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,47 +168,55 @@ fn inet_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn inet_ops_covers_htons() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_covers_htons() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("htons")).count() >= 2,
         "htons needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn inet_ops_covers_htonl() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_covers_htonl() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("htonl")),
         "Missing test coverage for htonl"
     );
+
+    Ok(())
 }
 
 #[test]
-fn inet_ops_covers_ntohs() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_covers_ntohs() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("ntohs")),
         "Missing test coverage for ntohs"
     );
+
+    Ok(())
 }
 
 #[test]
-fn inet_ops_covers_ntohl() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_covers_ntohl() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("ntohl")),
         "Missing test coverage for ntohl"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,8 +224,8 @@ fn inet_ops_covers_ntohl() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn inet_ops_covers_inet_addr() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_covers_inet_addr() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -226,11 +236,13 @@ fn inet_ops_covers_inet_addr() {
             >= 2,
         "inet_addr needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn inet_ops_covers_inet_pton() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_covers_inet_pton() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -241,17 +253,21 @@ fn inet_ops_covers_inet_pton() {
             >= 2,
         "inet_pton needs at least 2 test cases (v4 and v6)"
     );
+
+    Ok(())
 }
 
 #[test]
-fn inet_ops_covers_inet_ntop() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_covers_inet_ntop() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("inet_ntop")),
         "Missing test coverage for inet_ntop"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -259,8 +275,8 @@ fn inet_ops_covers_inet_ntop() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn inet_ops_covers_ipv4_and_ipv6() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_covers_ipv4_and_ipv6() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -271,6 +287,8 @@ fn inet_ops_covers_ipv4_and_ipv6() {
         case_names.iter().any(|n| n.contains("v6")),
         "inet_ops must test IPv6 addresses"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -278,8 +296,8 @@ fn inet_ops_covers_ipv4_and_ipv6() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn inet_ops_error_codes_valid() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
 
     // inet functions generally don't set errno
     let valid_errno_values = [0];
@@ -292,6 +310,8 @@ fn inet_ops_error_codes_valid() {
             case.expected_errno,
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,17 +319,19 @@ fn inet_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn inet_ops_modes_valid() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -317,8 +339,8 @@ fn inet_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn inet_ops_case_count_stable() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 12;
 
@@ -330,6 +352,8 @@ fn inet_ops_case_count_stable() {
     );
 
     eprintln!("inet_ops fixture has {} test cases", fixture.cases.len());
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -337,14 +361,16 @@ fn inet_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn inet_ops_covers_error_paths() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|n| n.contains("invalid")),
         "inet_ops must test invalid address parsing"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -352,8 +378,8 @@ fn inet_ops_covers_error_paths() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn inet_ops_has_posix_references() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -363,17 +389,19 @@ fn inet_ops_has_posix_references() {
             case.spec_section
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn inet_ops_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture("inet_ops");
+fn inet_ops_fixture_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture("inet_ops")?;
 
     for case in fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -381,13 +409,13 @@ fn inet_ops_fixture_executes_via_isolated_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute through harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -400,4 +428,6 @@ fn inet_ops_fixture_executes_via_isolated_harness() {
             );
         }
     }
+
+    Ok(())
 }
