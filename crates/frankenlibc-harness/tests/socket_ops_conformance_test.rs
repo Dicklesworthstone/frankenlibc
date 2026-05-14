@@ -47,12 +47,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,8 +66,8 @@ fn socket_ops_fixture_exists() {
 }
 
 #[test]
-fn socket_ops_fixture_valid_schema() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "socket_ops");
@@ -86,6 +86,8 @@ fn socket_ops_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,8 +95,8 @@ fn socket_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn socket_ops_covers_socket() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_covers_socket() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["socket_tcp", "socket_udp", "socket_invalid"];
@@ -106,44 +108,52 @@ fn socket_ops_covers_socket() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn socket_ops_covers_bind() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_covers_bind() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("bind")),
         "Missing test coverage for bind"
     );
+
+    Ok(())
 }
 
 #[test]
-fn socket_ops_covers_listen() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_covers_listen() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("listen")),
         "Missing test coverage for listen"
     );
+
+    Ok(())
 }
 
 #[test]
-fn socket_ops_covers_shutdown() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_covers_shutdown() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("shutdown")),
         "Missing test coverage for shutdown"
     );
+
+    Ok(())
 }
 
 #[test]
-fn socket_ops_covers_send_recv_getsockopt() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_covers_send_recv_getsockopt() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
     let functions: Vec<&str> = fixture
         .cases
         .iter()
@@ -156,6 +166,8 @@ fn socket_ops_covers_send_recv_getsockopt() {
             "Missing fixture execution coverage for {function}"
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,8 +175,8 @@ fn socket_ops_covers_send_recv_getsockopt() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn socket_ops_error_codes_valid() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
 
     // Valid POSIX/Linux error codes for socket functions
     let valid_errno_values = [
@@ -184,6 +196,8 @@ fn socket_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -191,17 +205,19 @@ fn socket_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn socket_ops_modes_valid() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -209,8 +225,8 @@ fn socket_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn socket_ops_case_count_stable() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 14;
 
@@ -222,6 +238,8 @@ fn socket_ops_case_count_stable() {
     );
 
     eprintln!("socket_ops fixture has {} test cases", fixture.cases.len());
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,8 +247,8 @@ fn socket_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn socket_ops_covers_both_modes() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
@@ -240,6 +258,8 @@ fn socket_ops_covers_both_modes() {
         has_hardened,
         "socket_ops must have hardened mode test cases"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,8 +267,8 @@ fn socket_ops_covers_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn socket_ops_covers_error_paths() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // Must test invalid fd and invalid domain errors
@@ -256,6 +276,8 @@ fn socket_ops_covers_error_paths() {
         case_names.iter().any(|n| n.contains("invalid")),
         "socket_ops must test error paths (invalid fd/domain)"
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -263,8 +285,8 @@ fn socket_ops_covers_error_paths() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn socket_ops_covers_tcp_and_udp() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_covers_tcp_and_udp() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -275,6 +297,8 @@ fn socket_ops_covers_tcp_and_udp() {
         case_names.iter().any(|n| n.contains("udp")),
         "socket_ops must test UDP sockets"
     );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -290,14 +314,14 @@ fn socket_ops_covers_tcp_and_udp() {
 // the kernel.
 
 #[test]
-fn socket_ops_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -306,12 +330,12 @@ fn socket_ops_fixture_cases_match_execute_fixture_case() {
 
         for mode in modes {
             let result =
-                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
-                    panic!(
+                execute_fixture_case(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "socket_ops case {} ({mode}) failed to execute: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "socket_ops case {} ({mode}) mismatched fixture output",
@@ -324,6 +348,8 @@ fn socket_ops_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -403,14 +429,14 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn socket_ops_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("socket_ops");
+fn socket_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("socket_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -418,13 +444,13 @@ fn socket_ops_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "socket_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity,
                 "socket_ops case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -437,4 +463,6 @@ fn socket_ops_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+
+    Ok(())
 }
