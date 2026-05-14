@@ -148,15 +148,33 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "invariant_violation_count_must_be_zero_for_all_well_formed_inputs",
-        "stable_outcomes_plus_retry_outcomes_must_equal_schedules_explored",
-        "schedules_explored_must_be_positive",
-        "fail_closed_on_write_count_zero",
-        "fail_closed_on_write_count_above_cap",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "invariant_violation_count_must_be_zero_for_all_well_formed_inputs",
+            "invariant_violation_count_must_be_zero_for_all_well_formed_inputs must be true",
+        ),
+        (
+            "stable_outcomes_plus_retry_outcomes_must_equal_schedules_explored",
+            "stable_outcomes_plus_retry_outcomes_must_equal_schedules_explored must be true",
+        ),
+        (
+            "schedules_explored_must_be_positive",
+            "schedules_explored_must_be_positive must be true",
+        ),
+        (
+            "fail_closed_on_write_count_zero",
+            "fail_closed_on_write_count_zero must be true",
+        ),
+        (
+            "fail_closed_on_write_count_above_cap",
+            "fail_closed_on_write_count_above_cap must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
