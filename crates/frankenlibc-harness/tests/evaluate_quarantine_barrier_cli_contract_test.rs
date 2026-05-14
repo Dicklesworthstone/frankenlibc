@@ -122,17 +122,41 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_inputs_into_output_record",
-        "safe_iff_headroom_at_or_above_zero",
-        "deterministic_given_inputs",
-        "moderate_depth_low_adverse_certified_safe",
-        "shallow_high_adverse_violates_certificate",
-        "extreme_adverse_always_violates_regardless_of_depth",
-        "deeper_depth_improves_headroom_under_adverse",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_inputs_into_output_record",
+            "echoes_inputs_into_output_record must be true",
+        ),
+        (
+            "safe_iff_headroom_at_or_above_zero",
+            "safe_iff_headroom_at_or_above_zero must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "moderate_depth_low_adverse_certified_safe",
+            "moderate_depth_low_adverse_certified_safe must be true",
+        ),
+        (
+            "shallow_high_adverse_violates_certificate",
+            "shallow_high_adverse_violates_certificate must be true",
+        ),
+        (
+            "extreme_adverse_always_violates_regardless_of_depth",
+            "extreme_adverse_always_violates_regardless_of_depth must be true",
+        ),
+        (
+            "deeper_depth_improves_headroom_under_adverse",
+            "deeper_depth_improves_headroom_under_adverse must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -301,32 +325,24 @@ fn cli_safe_flag_matches_headroom_sign() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    for (i, (depth, contention, adverse_ppm, lambda)) in [
-        (4096u32, 4u32, 1_000u32, 0i64),
-        (64, 100, 500_000, 50),
-        (65536, 0, 1_000_000, 0),
-        (16384, 10, 100_000, 0),
-        (256, 10, 100_000, -50),
-    ]
-    .iter()
-    .enumerate()
-    {
-        let output = unique_tmp(&format!("sign_{i}"))?;
-        let out = run_cli(&bin, *depth, *contention, *adverse_ppm, *lambda, &output)?;
+    for (label, depth, contention, adverse_ppm, lambda) in [
+        ("sign_moderate_safe", 4096u32, 4u32, 1_000u32, 0i64),
+        ("sign_shallow_adverse", 64, 100, 500_000, 50),
+        ("sign_extreme_adverse", 65536, 0, 1_000_000, 0),
+        ("sign_deep_adverse", 16384, 10, 100_000, 0),
+        ("sign_latency_credit", 256, 10, 100_000, -50),
+    ] {
+        let output = unique_tmp(label)?;
+        let out = run_cli(&bin, depth, contention, adverse_ppm, lambda, &output)?;
         if !out.status.success() {
-            return Err(format!(
-                "case {i} stderr={}",
-                String::from_utf8_lossy(&out.stderr)
-            ));
+            return Err("sign-case CLI invocation must succeed".into());
         }
         let parsed = read_record(&output)?;
         let headroom = json_i64(&parsed, "headroom")?;
         let safe = json_bool(&parsed, "safe")?;
         require(
             safe == (headroom >= 0),
-            format!(
-                "case {i} ({depth},{contention},{adverse_ppm},{lambda}): safe={safe} headroom={headroom}; safe iff headroom>=0 broken"
-            ),
+            "safe flag must match headroom sign for every sign-case input",
         )?;
     }
     Ok(())
