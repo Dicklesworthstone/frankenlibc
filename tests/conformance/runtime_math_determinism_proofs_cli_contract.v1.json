@@ -1,0 +1,84 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "runtime-math-determinism-proofs-cli-contract",
+  "bead": "bd-lb5e3",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "e6551b55",
+  "purpose": "Pin the harness binary 'runtime-math-determinism-proofs' subcommand which exposes frankenlibc_harness::runtime_math_determinism_proofs::run_and_write as a CLI. The subcommand validates deterministic runtime_math decide/observe integration for strict and hardened modes, writes a structured JSONL log plus JSON report, and exits non-zero when any mode fails.",
+  "subcommand_name": "runtime-math-determinism-proofs",
+  "binary_target": "harness",
+  "required_flags": [],
+  "optional_flags": [
+    "--workspace-root",
+    "--log",
+    "--report"
+  ],
+  "default_paths": {
+    "workspace_root": ".",
+    "log": "target/conformance/runtime_math_determinism_proofs.log.jsonl",
+    "report": "target/conformance/runtime_math_determinism_proofs.report.json"
+  },
+  "underlying_lib_functions": [
+    "frankenlibc_harness::runtime_math_determinism_proofs::run_and_write",
+    "frankenlibc_harness::runtime_math_determinism_proofs::RuntimeMathDeterminismProofReport"
+  ],
+  "io_pattern": "structured_jsonl_log_plus_json_report",
+  "runtime_contract": {
+    "modes": [
+      "strict",
+      "hardened"
+    ],
+    "seed_hex": "0xDEAD_BEEF",
+    "steps": 512,
+    "gate_id": "runtime_math_determinism_proofs"
+  },
+  "report_contract": {
+    "format": "pretty_json",
+    "required_top_level_fields": [
+      "schema_version",
+      "bead",
+      "generated_at",
+      "sources",
+      "summary",
+      "modes"
+    ],
+    "summary_fields": [
+      "modes",
+      "passed",
+      "failed"
+    ]
+  },
+  "log_contract": {
+    "format": "jsonl",
+    "required_events": [
+      "runtime_math.determinism.proof_step",
+      "runtime_math.determinism.gram_eigenvalue_check",
+      "runtime_math.determinism.boundary_assumption",
+      "runtime_math.determinism.mode_finish"
+    ]
+  },
+  "policy": {
+    "must_write_structured_jsonl_log_at_log_path": true,
+    "must_write_json_report_at_report_path": true,
+    "uses_workspace_root_for_source_paths": true,
+    "runs_strict_and_hardened_modes": true,
+    "report_summary_failed_zero_on_success": true,
+    "report_summary_modes_equals_two": true,
+    "log_contains_required_determinism_events": true,
+    "nonzero_exit_when_any_mode_fails": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_log_file",
+    "missing_report_file",
+    "missing_strict_mode",
+    "missing_hardened_mode",
+    "missing_required_log_event",
+    "failure_summary_silently_accepted"
+  ],
+  "summary": {
+    "bead": "bd-lb5e3",
+    "subcommand": "runtime-math-determinism-proofs",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
