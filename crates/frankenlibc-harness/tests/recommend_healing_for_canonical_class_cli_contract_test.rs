@@ -132,21 +132,57 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_class_id_into_output_record",
-        "deterministic_given_inputs",
-        "none_class_yields_none_action",
-        "temporal_class_yields_return_safe_default",
-        "congestion_class_yields_clamp_size",
-        "topological_class_yields_upgrade_to_safe_variant",
-        "regime_class_yields_return_safe_default",
-        "numeric_class_yields_clamp_size",
-        "admissibility_class_yields_upgrade_to_safe_variant",
-        "compound_class_yields_return_safe_default",
-        "out_of_range_class_id_falls_through_to_return_safe_default",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_class_id_into_output_record",
+            "echoes_class_id_into_output_record must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "none_class_yields_none_action",
+            "none_class_yields_none_action must be true",
+        ),
+        (
+            "temporal_class_yields_return_safe_default",
+            "temporal_class_yields_return_safe_default must be true",
+        ),
+        (
+            "congestion_class_yields_clamp_size",
+            "congestion_class_yields_clamp_size must be true",
+        ),
+        (
+            "topological_class_yields_upgrade_to_safe_variant",
+            "topological_class_yields_upgrade_to_safe_variant must be true",
+        ),
+        (
+            "regime_class_yields_return_safe_default",
+            "regime_class_yields_return_safe_default must be true",
+        ),
+        (
+            "numeric_class_yields_clamp_size",
+            "numeric_class_yields_clamp_size must be true",
+        ),
+        (
+            "admissibility_class_yields_upgrade_to_safe_variant",
+            "admissibility_class_yields_upgrade_to_safe_variant must be true",
+        ),
+        (
+            "compound_class_yields_return_safe_default",
+            "compound_class_yields_return_safe_default must be true",
+        ),
+        (
+            "out_of_range_class_id_falls_through_to_return_safe_default",
+            "out_of_range_class_id_falls_through_to_return_safe_default must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -206,7 +242,7 @@ fn run_and_parse(bin: &Path, class_id: u8, label: &str) -> TestResult<Value> {
     let output = unique_tmp(label)?;
     let out = run_cli(bin, class_id, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("recommend-healing-for-canonical-class CLI invocation must succeed".into());
     }
     read_record(&output)
 }
