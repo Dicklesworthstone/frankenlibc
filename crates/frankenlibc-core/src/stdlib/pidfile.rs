@@ -179,7 +179,7 @@ mod tests {
             b"-42".as_slice(),
             b"2147483647".as_slice(),
         ] {
-            for suffix in [b'\0', b'\n', b'\t', b' ', b'a', b','] {
+            for suffix in *b"\0\n\t a," {
                 let mut candidate = valid.to_vec();
                 candidate.push(suffix);
                 assert_eq!(parse_decimal_pid(&candidate), None, "{candidate:?}");
