@@ -54,6 +54,22 @@ fn require(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
+fn require_command_field_anchor(source: &str, command: &str, anchor: &str) -> TestResult {
+    if source.contains(anchor) {
+        Ok(())
+    } else {
+        Err(format!("{command} missing field anchor `{anchor}`"))
+    }
+}
+
+fn require_record_field(record: &Value, field: &str) -> TestResult {
+    if record.get(field).is_some() {
+        Ok(())
+    } else {
+        Err(format!("record missing required field `{field}`"))
+    }
+}
+
 fn json_string<'a>(value: &'a Value, field: &str) -> TestResult<&'a str> {
     value
         .get(field)
@@ -164,7 +180,7 @@ fn harness_source_registers_evidence_ring_stress_subcommand() -> TestResult {
         "        source_commit",
         "        output",
     ] {
-        require(src.contains(anchor), "EvidenceRingStress missing field")?;
+        require_command_field_anchor(&src, "EvidenceRingStress", anchor)?;
     }
     require(
         src.contains("run_real_ring_stress::<32>")
@@ -214,7 +230,7 @@ fn cli_emits_one_jsonl_record_validating_against_lib_const() -> TestResult {
     // The emitted record must carry every field the lib lists as
     // required — the runtime validator double-checks the same set.
     for f in REAL_RING_REPORT_REQUIRED_FIELDS {
-        require(parsed.get(*f).is_some(), "record missing required field")?;
+        require_record_field(&parsed, f)?;
     }
     require(
         parsed.get("source_commit").and_then(Value::as_str) == Some(source_commit.as_str()),
