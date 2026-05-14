@@ -49,6 +49,13 @@ fn json_bool(value: &Value, field: &str) -> TestResult<bool> {
         .ok_or_else(|| format!("missing or non-bool `{field}`"))
 }
 
+fn json_u64(value: &Value, field: &str) -> TestResult<u64> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("missing or non-u64 `{field}`"))
+}
+
 fn json_array<'a>(value: &'a Value, field: &str) -> TestResult<&'a Vec<Value>> {
     value
         .get(field)
@@ -266,17 +273,41 @@ fn manifest_policy_pins_cli_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_register_shadow_run_subcommand",
-        "must_require_manifest_path",
-        "must_reject_unknown_mode_before_writing_outputs",
-        "must_write_report_log_markdown_and_artifact_index",
-        "must_preserve_manifest_reference_and_runtime_mode_metadata",
-        "must_emit_structured_shadow_run_log_rows",
-        "fail_on_mismatch_must_exit_nonzero_after_artifacts",
-        "no_syscall_trace_must_disable_strace_dependency",
+    for (field, message) in [
+        (
+            "must_register_shadow_run_subcommand",
+            "must_register_shadow_run_subcommand must be true",
+        ),
+        (
+            "must_require_manifest_path",
+            "must_require_manifest_path must be true",
+        ),
+        (
+            "must_reject_unknown_mode_before_writing_outputs",
+            "must_reject_unknown_mode_before_writing_outputs must be true",
+        ),
+        (
+            "must_write_report_log_markdown_and_artifact_index",
+            "must_write_report_log_markdown_and_artifact_index must be true",
+        ),
+        (
+            "must_preserve_manifest_reference_and_runtime_mode_metadata",
+            "must_preserve_manifest_reference_and_runtime_mode_metadata must be true",
+        ),
+        (
+            "must_emit_structured_shadow_run_log_rows",
+            "must_emit_structured_shadow_run_log_rows must be true",
+        ),
+        (
+            "fail_on_mismatch_must_exit_nonzero_after_artifacts",
+            "fail_on_mismatch_must_exit_nonzero_after_artifacts must be true",
+        ),
+        (
+            "no_syscall_trace_must_disable_strace_dependency",
+            "no_syscall_trace_must_disable_strace_dependency must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
 
     let output = m
@@ -286,11 +317,16 @@ fn manifest_policy_pins_cli_invariants() -> TestResult {
         .iter()
         .filter_map(Value::as_str)
         .collect();
-    for field in ["schema_version", "manifest_id", "summary", "scenarios"] {
-        require(
-            report_fields.contains(&field),
-            format!("report_required_fields missing {field}"),
-        )?;
+    for (field, message) in [
+        (
+            "schema_version",
+            "report_required_fields missing schema_version",
+        ),
+        ("manifest_id", "report_required_fields missing manifest_id"),
+        ("summary", "report_required_fields missing summary"),
+        ("scenarios", "report_required_fields missing scenarios"),
+    ] {
+        require(report_fields.contains(&field), message)?;
     }
     require(
         json_bool(output, "writes_report_before_fail_on_mismatch_exit")?,
@@ -325,50 +361,30 @@ fn cli_writes_report_log_markdown_and_artifact_index() -> TestResult {
 
     let report = load_json(&paths.report)?;
     require(
-        report.get("schema_version").and_then(Value::as_str) == Some("v1"),
+        json_string(&report, "schema_version")? == "v1",
         "report schema_version",
     )?;
     require(
-        report.get("manifest_id").and_then(Value::as_str)
-            == Some("shadow-run-cli-contract-manifest"),
+        json_string(&report, "manifest_id")? == "shadow-run-cli-contract-manifest",
         "manifest_id",
     )?;
-    require(
-        report.get("reference").and_then(Value::as_str) == Some("glibc"),
-        "reference",
-    )?;
+    require(json_string(&report, "reference")? == "glibc", "reference")?;
     let summary = report
         .get("summary")
         .ok_or_else(|| "missing summary".to_string())?;
-    require(
-        summary.get("total_runs").and_then(Value::as_u64) == Some(1),
-        "summary.total_runs",
-    )?;
-    require(
-        summary.get("passed").and_then(Value::as_u64) == Some(1),
-        "summary.passed",
-    )?;
-    let scenarios = report
-        .get("scenarios")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "missing scenarios".to_string())?;
+    require(json_u64(summary, "total_runs")? == 1, "summary.total_runs")?;
+    require(json_u64(summary, "passed")? == 1, "summary.passed")?;
+    let scenarios = json_array(&report, "scenarios")?;
     require(scenarios.len() == 1, "strict mode should emit one scenario")?;
-    let scenario = &scenarios[0];
+    let scenario = scenarios
+        .first()
+        .ok_or_else(|| "strict mode should emit one scenario".to_string())?;
     require(
-        scenario.get("status").and_then(Value::as_str) == Some("pass"),
+        json_string(scenario, "status")? == "pass",
         "scenario status",
     )?;
-    require(
-        scenario.get("mode").and_then(Value::as_str) == Some("strict"),
-        "scenario mode",
-    )?;
-    require(
-        scenario
-            .get("artifact_refs")
-            .and_then(Value::as_array)
-            .is_some(),
-        "artifact_refs",
-    )?;
+    require(json_string(scenario, "mode")? == "strict", "scenario mode")?;
+    let _artifact_refs = json_array(scenario, "artifact_refs")?;
 
     require(paths.markdown_report().exists(), "markdown report missing")?;
     let artifact_index = load_json(&paths.artifact_index)?;
@@ -385,18 +401,15 @@ fn cli_writes_report_log_markdown_and_artifact_index() -> TestResult {
             row.get("event").and_then(Value::as_str) == Some("conformance.shadow_run_match")
         })
         .ok_or_else(|| "missing shadow_run_match row".to_string())?;
-    for field in [
-        "trace_id",
-        "mode",
-        "api_family",
-        "symbol",
-        "outcome",
-        "artifact_refs",
+    for (field, message) in [
+        ("trace_id", "match log missing trace_id"),
+        ("mode", "match log missing mode"),
+        ("api_family", "match log missing api_family"),
+        ("symbol", "match log missing symbol"),
+        ("outcome", "match log missing outcome"),
+        ("artifact_refs", "match log missing artifact_refs"),
     ] {
-        require(
-            match_row.get(field).is_some(),
-            format!("match log missing {field}"),
-        )?;
+        require(match_row.get(field).is_some(), message)?;
     }
     Ok(())
 }
