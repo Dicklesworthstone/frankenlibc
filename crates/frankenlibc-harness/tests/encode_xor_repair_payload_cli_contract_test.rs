@@ -105,15 +105,23 @@ fn make_source_payloads(k: usize) -> Vec<u8> {
     out
 }
 
-fn xor_symbols(srcs: &[u8], indices: &[u16]) -> Vec<u8> {
+fn xor_symbols(srcs: &[u8], indices: &[u16]) -> TestResult<Vec<u8>> {
     let mut out = vec![0u8; SYMBOL_SIZE];
     for &idx in indices {
         let off = (idx as usize) * SYMBOL_SIZE;
-        for j in 0..SYMBOL_SIZE {
-            out[j] ^= srcs[off + j];
+        let end = match off.checked_add(SYMBOL_SIZE) {
+            Some(end) => end,
+            None => return Err("scheduled source offset overflow".into()),
+        };
+        let source = match srcs.get(off..end) {
+            Some(source) => source,
+            None => return Err("scheduled source index must be in bounds".into()),
+        };
+        for (slot, byte) in out.iter_mut().zip(source.iter()) {
+            *slot ^= *byte;
         }
     }
-    out
+    Ok(out)
 }
 
 fn write_bin(stem: &str, body: &[u8]) -> TestResult<PathBuf> {
@@ -127,11 +135,30 @@ fn parse_hex(s: &str) -> TestResult<Vec<u8>> {
         return Err(format!("hex length {} not even", s.len()));
     }
     let mut out = Vec::with_capacity(s.len() / 2);
-    for i in (0..s.len()).step_by(2) {
-        let byte = u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| format!("hex parse: {e}"))?;
-        out.push(byte);
+    for pair in s.as_bytes().chunks_exact(2) {
+        let Some((&hi_byte, &lo_byte)) = pair.first().zip(pair.get(1)) else {
+            return Err("hex pair must contain two bytes".into());
+        };
+        let hi = match hex_nibble(hi_byte) {
+            Some(nibble) => nibble,
+            None => return Err("hex parse failed".into()),
+        };
+        let lo = match hex_nibble(lo_byte) {
+            Some(nibble) => nibble,
+            None => return Err("hex parse failed".into()),
+        };
+        out.push((hi << 4) | lo);
     }
     Ok(out)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[test]
@@ -171,7 +198,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "repair_esi_below_k_source_is_rejected",
         "non_multiple_of_128_input_file_is_rejected",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -219,7 +246,42 @@ fn run_cli(
 
 fn read_record(out_path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
+}
+
+fn schedule_indices(value: &Value) -> TestResult<Vec<u16>> {
+    let values = value
+        .get("schedule_indices")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "missing schedule_indices".to_string())?;
+    let mut out = Vec::with_capacity(values.len());
+    for entry in values {
+        let raw = match entry.as_u64() {
+            Some(raw) => raw,
+            None => return Err("schedule index must be u64".into()),
+        };
+        let idx = match u16::try_from(raw) {
+            Ok(idx) => idx,
+            Err(_) => return Err("schedule index out of u16 range".into()),
+        };
+        out.push(idx);
+    }
+    Ok(out)
 }
 
 #[test]
@@ -232,13 +294,10 @@ fn cli_payload_hex_is_256_lowercase_hex_chars() -> TestResult {
     let srcs_path = write_bin("hex_srcs", &srcs)?;
     let output = unique_tmp("hex", "jsonl")?;
     let out = run_cli(&bin, 42, &srcs_path, 4, &output)?;
-    let _ = std::fs::remove_file(&srcs_path);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     let hex = json_string(&parsed, "payload_hex")?;
     require(
         hex.len() == 256,
@@ -262,27 +321,18 @@ fn cli_single_index_schedule_yields_source_payload_at_index() -> TestResult {
     let srcs_path = write_bin("single_srcs", &srcs)?;
     let output = unique_tmp("single", "jsonl")?;
     let out = run_cli(&bin, 42, &srcs_path, 4, &output)?;
-    let _ = std::fs::remove_file(&srcs_path);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
-    let sched: Vec<u16> = parsed
-        .get("schedule_indices")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "missing schedule_indices".to_string())?
-        .iter()
-        .map(|v| v.as_u64().unwrap_or(0) as u16)
-        .collect();
+    let sched = schedule_indices(&parsed)?;
     require(
         sched.len() == 1,
-        format!("seed=42 must produce single-index schedule; got {sched:?}"),
+        "seed=42 must produce single-index schedule",
     )?;
     let hex = json_string(&parsed, "payload_hex")?;
     let payload = parse_hex(hex)?;
-    let expected = xor_symbols(&srcs, &sched);
+    let expected = xor_symbols(&srcs, &sched)?;
     require(
         payload == expected,
         "single-index schedule: payload must equal source at scheduled index",
@@ -300,27 +350,18 @@ fn cli_multi_index_schedule_yields_xor_of_indices() -> TestResult {
     let srcs_path = write_bin("multi_srcs", &srcs)?;
     let output = unique_tmp("multi", "jsonl")?;
     let out = run_cli(&bin, 1000, &srcs_path, 4, &output)?;
-    let _ = std::fs::remove_file(&srcs_path);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
-    let sched: Vec<u16> = parsed
-        .get("schedule_indices")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "missing schedule_indices".to_string())?
-        .iter()
-        .map(|v| v.as_u64().unwrap_or(0) as u16)
-        .collect();
+    let sched = schedule_indices(&parsed)?;
     require(
         sched.len() >= 2,
-        format!("seed=1000 must produce multi-index schedule; got {sched:?}"),
+        "seed=1000 must produce multi-index schedule",
     )?;
     let hex = json_string(&parsed, "payload_hex")?;
     let payload = parse_hex(hex)?;
-    let expected = xor_symbols(&srcs, &sched);
+    let expected = xor_symbols(&srcs, &sched)?;
     require(
         payload == expected,
         "multi-index schedule: payload must equal XOR of sources at scheduled indices",
@@ -337,8 +378,6 @@ fn cli_repair_esi_below_k_source_is_rejected() -> TestResult {
     let srcs_path = write_bin("reject_srcs", &srcs)?;
     let output = unique_tmp("reject", "jsonl")?;
     let out = run_cli(&bin, 12345, &srcs_path, 2, &output)?;
-    let _ = std::fs::remove_file(&srcs_path);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "repair_esi=2 with k=4 must exit non-zero",
@@ -359,8 +398,6 @@ fn cli_non_multiple_of_128_input_is_rejected() -> TestResult {
     let srcs_path = write_bin("short_srcs", b"short")?;
     let output = unique_tmp("reject_len", "jsonl")?;
     let out = run_cli(&bin, 1, &srcs_path, 1, &output)?;
-    let _ = std::fs::remove_file(&srcs_path);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "non-multiple-of-128 file must exit non-zero",
@@ -382,13 +419,10 @@ fn cli_echoes_inputs_into_record() -> TestResult {
     let srcs_path = write_bin("echo_srcs", &srcs)?;
     let output = unique_tmp("echo", "jsonl")?;
     let out = run_cli(&bin, 9876, &srcs_path, 5, &output)?;
-    let _ = std::fs::remove_file(&srcs_path);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(json_u64(&parsed, "epoch_seed")? == 9876, "epoch_seed echo")?;
     require(json_u64(&parsed, "k_source")? == 4, "k_source echo")?;
     require(json_u64(&parsed, "repair_esi")? == 5, "repair_esi echo")
@@ -406,14 +440,11 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
     let b = unique_tmp("det_b", "jsonl")?;
     let r_a = run_cli(&bin, 12345, &srcs_path, 4, &a)?;
     let r_b = run_cli(&bin, 12345, &srcs_path, 4, &b)?;
-    let _ = std::fs::remove_file(&srcs_path);
     require(
         r_a.status.success() && r_b.status.success(),
         "both runs must succeed",
     )?;
     let pa = read_record(&a)?;
     let pb = read_record(&b)?;
-    let _ = std::fs::remove_file(&a);
-    let _ = std::fs::remove_file(&b);
     require(pa == pb, "same inputs must produce identical output")
 }
