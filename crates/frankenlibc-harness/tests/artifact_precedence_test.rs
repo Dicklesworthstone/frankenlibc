@@ -107,13 +107,12 @@ fn assert_gate_fails_with(output: &Output, signature: &str) -> serde_json::Value
     report
 }
 
-fn artifact_index(manifest: &serde_json::Value, id: &str) -> usize {
+fn artifact_index(manifest: &serde_json::Value, id: &str) -> Option<usize> {
     manifest["artifacts"]
         .as_array()
         .unwrap()
         .iter()
         .position(|artifact| artifact["id"].as_str() == Some(id))
-        .unwrap_or_else(|| panic!("missing artifact {id}"))
 }
 
 #[test]
@@ -228,13 +227,17 @@ fn gate_passes_current_manifest_and_emits_report_and_log() {
 fn missing_authoritative_artifact_fails() {
     let root = workspace_root();
     let mut manifest = load_json(&root.join("tests/conformance/artifact_precedence.v1.json"));
-    let index = artifact_index(&manifest, "oracle_precedence");
+    let index = artifact_index(&manifest, "oracle_precedence")
+        .expect("manifest should contain oracle_precedence artifact");
     manifest["artifacts"][index]["path"] =
         serde_json::json!("tests/conformance/not-a-real-artifact.json");
     let fixture = write_json_fixture("artifact-precedence-missing-artifact", &manifest);
 
     let output = run_gate_with_env(&[("FLC_ARTIFACT_PRECEDENCE_MANIFEST", &fixture)]);
-    let report = assert_gate_fails_with(&output, "missing artifact");
+    let report = assert_gate_fails_with(
+        &output,
+        "oracle_precedence: missing artifact tests/conformance/not-a-real-artifact.json",
+    );
     assert_eq!(report["checks"]["artifact_shape"].as_str(), Some("fail"));
     assert_eq!(
         report["summary"]["missing_artifact_count"].as_u64(),
@@ -246,7 +249,8 @@ fn missing_authoritative_artifact_fails() {
 fn source_commit_mismatch_fails() {
     let root = workspace_root();
     let mut manifest = load_json(&root.join("tests/conformance/artifact_precedence.v1.json"));
-    let index = artifact_index(&manifest, "oracle_precedence");
+    let index = artifact_index(&manifest, "oracle_precedence")
+        .expect("manifest should contain oracle_precedence artifact");
     manifest["artifacts"][index]["source_commit_required"] = serde_json::json!(true);
     manifest["artifacts"][index]["expected_source_commit"] = serde_json::json!("not-the-head");
     let fixture = write_json_fixture("artifact-precedence-source-commit", &manifest);
@@ -260,13 +264,14 @@ fn source_commit_mismatch_fails() {
 fn stale_artifact_timestamp_fails() {
     let root = workspace_root();
     let mut manifest = load_json(&root.join("tests/conformance/artifact_precedence.v1.json"));
-    let index = artifact_index(&manifest, "docs_semantic_claims");
+    let index = artifact_index(&manifest, "docs_semantic_claims")
+        .expect("manifest should contain docs_semantic_claims artifact");
     manifest["artifacts"][index]["minimum_generated_at_utc"] =
         serde_json::json!("2099-01-01T00:00:00Z");
     let fixture = write_json_fixture("artifact-precedence-stale-artifact", &manifest);
 
     let output = run_gate_with_env(&[("FLC_ARTIFACT_PRECEDENCE_MANIFEST", &fixture)]);
-    let report = assert_gate_fails_with(&output, "stale_artifact");
+    let report = assert_gate_fails_with(&output, "docs_semantic_claims: stale_artifact");
     assert_eq!(report["summary"]["stale_artifact_count"].as_u64(), Some(1));
 }
 
@@ -274,8 +279,10 @@ fn stale_artifact_timestamp_fails() {
 fn conflicting_claim_artifacts_fail() {
     let root = workspace_root();
     let mut manifest = load_json(&root.join("tests/conformance/artifact_precedence.v1.json"));
-    let support_matrix = artifact_index(&manifest, "support_matrix");
-    let docs = artifact_index(&manifest, "docs_semantic_claims");
+    let support_matrix = artifact_index(&manifest, "support_matrix")
+        .expect("manifest should contain support_matrix artifact");
+    let docs = artifact_index(&manifest, "docs_semantic_claims")
+        .expect("manifest should contain docs_semantic_claims artifact");
     let docs_rank = manifest["artifacts"][docs]["authority_rank"].clone();
     manifest["artifacts"][support_matrix]["authority_rank"] = docs_rank;
     let fixture = write_json_fixture("artifact-precedence-conflict", &manifest);
@@ -327,7 +334,8 @@ fn readme_rpc_stub_wording_fails_when_support_stub_count_is_zero() {
 fn out_of_order_generated_artifact_fails() {
     let root = workspace_root();
     let mut manifest = load_json(&root.join("tests/conformance/artifact_precedence.v1.json"));
-    let docs = artifact_index(&manifest, "docs_semantic_claims");
+    let docs = artifact_index(&manifest, "docs_semantic_claims")
+        .expect("manifest should contain docs_semantic_claims artifact");
     manifest["artifacts"][docs]["authority_rank"] = serde_json::json!(15);
     let fixture = write_json_fixture("artifact-precedence-out-of-order", &manifest);
 
