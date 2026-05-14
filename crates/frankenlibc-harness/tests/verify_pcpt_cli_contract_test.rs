@@ -110,15 +110,33 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "ok_true_iff_verify_pcpt_succeeds",
-        "exit_non_zero_when_ok_false",
-        "too_short_input_must_fail_closed_with_TooShort_error",
-        "non_magic_bytes_must_fail_closed_with_BadMagic_error",
-        "missing_pcpt_file_must_fail_closed",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "ok_true_iff_verify_pcpt_succeeds",
+            "ok_true_iff_verify_pcpt_succeeds must be true",
+        ),
+        (
+            "exit_non_zero_when_ok_false",
+            "exit_non_zero_when_ok_false must be true",
+        ),
+        (
+            "too_short_input_must_fail_closed_with_TooShort_error",
+            "too_short_input_must_fail_closed_with_TooShort_error must be true",
+        ),
+        (
+            "non_magic_bytes_must_fail_closed_with_BadMagic_error",
+            "non_magic_bytes_must_fail_closed_with_BadMagic_error must be true",
+        ),
+        (
+            "missing_pcpt_file_must_fail_closed",
+            "missing_pcpt_file_must_fail_closed must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
