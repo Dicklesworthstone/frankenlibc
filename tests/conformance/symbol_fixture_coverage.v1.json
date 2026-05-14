@@ -2978,86 +2978,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 24,
-      "milestone_beads": [],
-      "module": "fortify_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 5402,
-      "status_breakdown": {
-        "Implemented": 78
-      },
-      "target_coverage_pct": 30.77,
-      "target_covered": 24,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 78,
-      "target_uncovered": 54,
-      "target_uncovered_symbols": [
-        "__mbsrtowcs_chk",
-        "__mbstowcs_chk",
-        "__memcpy_chk",
-        "__memmove_chk",
-        "__memset_chk",
-        "__open64_2",
-        "__open_2",
-        "__openat64_2",
-        "__openat_2",
-        "__poll_chk",
-        "__ppoll_chk",
-        "__pread64_chk",
-        "__pread_chk",
-        "__printf_chk",
-        "__ptsname_r_chk",
-        "__read_chk",
-        "__readlink_chk",
-        "__readlinkat_chk",
-        "__realpath_chk",
-        "__recv_chk",
-        "__recvfrom_chk",
-        "__snprintf_chk",
-        "__sprintf_chk",
-        "__stpcpy_chk",
-        "__stpncpy_chk",
-        "__strcat_chk",
-        "__strcpy_chk",
-        "__strncat_chk",
-        "__strncpy_chk",
-        "__swprintf_chk",
-        "__syslog_chk",
-        "__ttyname_r_chk",
-        "__vasprintf_chk",
-        "__vdprintf_chk",
-        "__vfprintf_chk",
-        "__vfwprintf_chk",
-        "__vprintf_chk",
-        "__vsnprintf_chk",
-        "__vsprintf_chk",
-        "__vswprintf_chk",
-        "__vsyslog_chk",
-        "__vwprintf_chk",
-        "__wcscat_chk",
-        "__wcscpy_chk",
-        "__wcsncat_chk",
-        "__wcsncpy_chk",
-        "__wcsnrtombs_chk",
-        "__wcsrtombs_chk",
-        "__wcstombs_chk",
-        "__wctomb_chk",
-        "__wmemcpy_chk",
-        "__wmemmove_chk",
-        "__wmemset_chk",
-        "__wprintf_chk"
-      ],
-      "total_symbols": 78,
-      "track": "fortify",
-      "uncovered_symbols": 54,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 87,
       "milestone_beads": [
         "bd-yos",
@@ -3137,6 +3057,74 @@
       "total_symbols": 141,
       "track": "threading",
       "uncovered_symbols": 54,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 36,
+      "milestone_beads": [],
+      "module": "fortify_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "severity_score": 4202,
+      "status_breakdown": {
+        "Implemented": 78
+      },
+      "target_coverage_pct": 46.15,
+      "target_covered": 36,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 78,
+      "target_uncovered": 42,
+      "target_uncovered_symbols": [
+        "__pread_chk",
+        "__printf_chk",
+        "__ptsname_r_chk",
+        "__read_chk",
+        "__readlink_chk",
+        "__readlinkat_chk",
+        "__realpath_chk",
+        "__recv_chk",
+        "__recvfrom_chk",
+        "__snprintf_chk",
+        "__sprintf_chk",
+        "__stpcpy_chk",
+        "__stpncpy_chk",
+        "__strcat_chk",
+        "__strcpy_chk",
+        "__strncat_chk",
+        "__strncpy_chk",
+        "__swprintf_chk",
+        "__syslog_chk",
+        "__ttyname_r_chk",
+        "__vasprintf_chk",
+        "__vdprintf_chk",
+        "__vfprintf_chk",
+        "__vfwprintf_chk",
+        "__vprintf_chk",
+        "__vsnprintf_chk",
+        "__vsprintf_chk",
+        "__vswprintf_chk",
+        "__vsyslog_chk",
+        "__vwprintf_chk",
+        "__wcscat_chk",
+        "__wcscpy_chk",
+        "__wcsncat_chk",
+        "__wcsncpy_chk",
+        "__wcsnrtombs_chk",
+        "__wcsrtombs_chk",
+        "__wcstombs_chk",
+        "__wctomb_chk",
+        "__wmemcpy_chk",
+        "__wmemmove_chk",
+        "__wmemset_chk",
+        "__wprintf_chk"
+      ],
+      "total_symbols": 78,
+      "track": "fortify",
+      "uncovered_symbols": 42,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -4107,9 +4095,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 2572,
-    "fixture_json_files": 117,
-    "fixture_json_unique_functions": 1076,
+    "fixture_json_cases": 2596,
+    "fixture_json_files": 118,
+    "fixture_json_unique_functions": 1088,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4130,7 +4118,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 1078
+    "unique_fixture_functions_total": 1090
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -7016,72 +7004,6 @@
       "workload_ids": []
     },
     {
-      "milestone_beads": [],
-      "module": "fortify_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 54,
-      "target_uncovered_symbols": [
-        "__mbsrtowcs_chk",
-        "__mbstowcs_chk",
-        "__memcpy_chk",
-        "__memmove_chk",
-        "__memset_chk",
-        "__open64_2",
-        "__open_2",
-        "__openat64_2",
-        "__openat_2",
-        "__poll_chk",
-        "__ppoll_chk",
-        "__pread64_chk",
-        "__pread_chk",
-        "__printf_chk",
-        "__ptsname_r_chk",
-        "__read_chk",
-        "__readlink_chk",
-        "__readlinkat_chk",
-        "__realpath_chk",
-        "__recv_chk",
-        "__recvfrom_chk",
-        "__snprintf_chk",
-        "__sprintf_chk",
-        "__stpcpy_chk",
-        "__stpncpy_chk",
-        "__strcat_chk",
-        "__strcpy_chk",
-        "__strncat_chk",
-        "__strncpy_chk",
-        "__swprintf_chk",
-        "__syslog_chk",
-        "__ttyname_r_chk",
-        "__vasprintf_chk",
-        "__vdprintf_chk",
-        "__vfprintf_chk",
-        "__vfwprintf_chk",
-        "__vprintf_chk",
-        "__vsnprintf_chk",
-        "__vsprintf_chk",
-        "__vswprintf_chk",
-        "__vsyslog_chk",
-        "__vwprintf_chk",
-        "__wcscat_chk",
-        "__wcscpy_chk",
-        "__wcsncat_chk",
-        "__wcsncpy_chk",
-        "__wcsnrtombs_chk",
-        "__wcsrtombs_chk",
-        "__wcstombs_chk",
-        "__wctomb_chk",
-        "__wmemcpy_chk",
-        "__wmemmove_chk",
-        "__wmemset_chk",
-        "__wprintf_chk"
-      ],
-      "track": "fortify",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "milestone_beads": [
         "bd-yos",
         "bd-z84"
@@ -7147,6 +7069,60 @@
         "pthread_yield"
       ],
       "track": "threading",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
+      "module": "fortify_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "target_uncovered_count": 42,
+      "target_uncovered_symbols": [
+        "__pread_chk",
+        "__printf_chk",
+        "__ptsname_r_chk",
+        "__read_chk",
+        "__readlink_chk",
+        "__readlinkat_chk",
+        "__realpath_chk",
+        "__recv_chk",
+        "__recvfrom_chk",
+        "__snprintf_chk",
+        "__sprintf_chk",
+        "__stpcpy_chk",
+        "__stpncpy_chk",
+        "__strcat_chk",
+        "__strcpy_chk",
+        "__strncat_chk",
+        "__strncpy_chk",
+        "__swprintf_chk",
+        "__syslog_chk",
+        "__ttyname_r_chk",
+        "__vasprintf_chk",
+        "__vdprintf_chk",
+        "__vfprintf_chk",
+        "__vfwprintf_chk",
+        "__vprintf_chk",
+        "__vsnprintf_chk",
+        "__vsprintf_chk",
+        "__vswprintf_chk",
+        "__vsyslog_chk",
+        "__vwprintf_chk",
+        "__wcscat_chk",
+        "__wcscpy_chk",
+        "__wcsncat_chk",
+        "__wcsncpy_chk",
+        "__wcsnrtombs_chk",
+        "__wcsrtombs_chk",
+        "__wcstombs_chk",
+        "__wctomb_chk",
+        "__wmemcpy_chk",
+        "__wmemmove_chk",
+        "__wmemset_chk",
+        "__wprintf_chk"
+      ],
+      "track": "fortify",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -7505,10 +7481,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 24.91,
-      "covered": 923,
+      "coverage_pct": 25.24,
+      "covered": 935,
       "total": 3705,
-      "uncovered": 2782
+      "uncovered": 2770
     },
     "RawSyscall": {
       "coverage_pct": 33.33,
@@ -7518,18 +7494,18 @@
     }
   },
   "summary": {
-    "coverage_pct": 25.76,
-    "covered_exported_symbols": 1061,
-    "target_coverage_pct": 25.76,
-    "target_covered_symbols": 1061,
+    "coverage_pct": 26.05,
+    "covered_exported_symbols": 1073,
+    "target_coverage_pct": 26.05,
+    "target_covered_symbols": 1073,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3058,
+    "target_uncovered_symbols": 3046,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3058,
+    "uncovered_exported_symbols": 3046,
     "uncovered_target_families": 1,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 22
@@ -10392,13 +10368,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -10406,13 +10391,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -10420,13 +10414,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -10434,13 +10437,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -10448,13 +10460,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -10462,13 +10483,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -10476,13 +10506,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -10490,13 +10529,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -10504,13 +10552,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -10518,13 +10575,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -10532,13 +10598,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -10546,13 +10621,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "fortify/checked-wrapper"
+      ],
+      "fixture_files": [
+        "fortify_checked_wrapper_wave03.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -74917,21 +75001,9 @@
       "module": "fortify_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 30.77,
-      "target_uncovered_count": 54,
+      "target_coverage_pct": 46.15,
+      "target_uncovered_count": 42,
       "target_uncovered_symbols": [
-        "__mbsrtowcs_chk",
-        "__mbstowcs_chk",
-        "__memcpy_chk",
-        "__memmove_chk",
-        "__memset_chk",
-        "__open64_2",
-        "__open_2",
-        "__openat64_2",
-        "__openat_2",
-        "__poll_chk",
-        "__ppoll_chk",
-        "__pread64_chk",
         "__pread_chk",
         "__printf_chk",
         "__ptsname_r_chk",

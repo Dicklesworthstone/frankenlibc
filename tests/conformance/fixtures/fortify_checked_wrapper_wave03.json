@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "fortify/checked-wrapper",
+  "captured_at": "2026-05-14T00:15:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-fortify-bounds wave-03 checked-wrapper, object-size, safe-default, errno/status, abort, memory, open, poll, pread, and multibyte symbols using classified positive and negative behavior without recording raw buffer addresses, FILE pointers, filesystem paths, stdout bytes, stderr bytes, fd numbers, hostnames, domain names, group ids, login names, process ids, or wall-clock timing.",
+  "spec_reference": "GNU _FORTIFY_SOURCE checked-wrapper object-size semantics for __mbsrtowcs_chk, __mbstowcs_chk, __memcpy_chk, __memmove_chk, __memset_chk, __open64_2, __open_2, __openat64_2, __openat_2, __poll_chk, __ppoll_chk, and __pread64_chk",
+  "campaign": {
+    "bead": "bd-gmbqy.6",
+    "campaign_id": "fcq-fortify-bounds",
+    "wave_id": "wave-03-fortify-checked-wrapper-bounds",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture",
+    "first_wave_symbols": [
+      "__mbsrtowcs_chk",
+      "__mbstowcs_chk",
+      "__memcpy_chk",
+      "__memmove_chk",
+      "__memset_chk",
+      "__open64_2",
+      "__open_2",
+      "__openat64_2",
+      "__openat_2",
+      "__poll_chk",
+      "__ppoll_chk",
+      "__pread64_chk"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "__mbsrtowcs_chk_destlen_overflow_aborts_strict",
+      "function": "__mbsrtowcs_chk",
+      "spec_section": "GNU mbsrtowcs checked wrapper aborts before conversion when requested wide bytes exceed object size",
+      "inputs": {
+        "symbol": "__mbsrtowcs_chk",
+        "scenario": "wide_restart_destlen_overflow_aborts_without_pointer_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__mbsrtowcs_chk fork-isolated object-size overflow classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__mbsrtowcs_chk;mode=strict;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__mbsrtowcs_chk_destlen_overflow_aborts_hardened",
+      "function": "__mbsrtowcs_chk",
+      "spec_section": "GNU mbsrtowcs checked wrapper aborts before conversion when requested wide bytes exceed object size",
+      "inputs": {
+        "symbol": "__mbsrtowcs_chk",
+        "scenario": "wide_restart_destlen_overflow_aborts_without_pointer_capture",
+        "expected": "ABORT_SIGNAL_SIGABRT",
+        "oracle_source": "FrankenLibC fortify_abi::__mbsrtowcs_chk fork-isolated object-size overflow classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__mbsrtowcs_chk;mode=hardened;expected=ABORT_SIGNAL_SIGABRT;actual=ABORT_SIGNAL_SIGABRT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__mbstowcs_chk_converts_ascii_strict",
+      "function": "__mbstowcs_chk",
+      "spec_section": "GNU mbstowcs checked wrapper delegates bounded multibyte conversion",
+      "inputs": {
+        "symbol": "__mbstowcs_chk",
+        "scenario": "ascii_source_bounded_conversion_without_pointer_capture",
+        "expected": "MBSTOWCS_ASCII_WRITTEN_3",
+        "oracle_source": "FrankenLibC fortify_abi::__mbstowcs_chk bounded ASCII replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__mbstowcs_chk;mode=strict;expected=MBSTOWCS_ASCII_WRITTEN_3;actual=MBSTOWCS_ASCII_WRITTEN_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__mbstowcs_chk_converts_ascii_hardened",
+      "function": "__mbstowcs_chk",
+      "spec_section": "GNU mbstowcs checked wrapper delegates bounded multibyte conversion",
+      "inputs": {
+        "symbol": "__mbstowcs_chk",
+        "scenario": "ascii_source_bounded_conversion_without_pointer_capture",
+        "expected": "MBSTOWCS_ASCII_WRITTEN_3",
+        "oracle_source": "FrankenLibC fortify_abi::__mbstowcs_chk bounded ASCII replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__mbstowcs_chk;mode=hardened;expected=MBSTOWCS_ASCII_WRITTEN_3;actual=MBSTOWCS_ASCII_WRITTEN_3;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__memcpy_chk_copies_exact_bound_strict",
+      "function": "__memcpy_chk",
+      "spec_section": "GNU memcpy checked wrapper delegates exact object-size copies",
+      "inputs": {
+        "symbol": "__memcpy_chk",
+        "scenario": "exact_bound_copy_without_pointer_capture",
+        "expected": "MEMCPY_COPY_ABCD_OK",
+        "oracle_source": "FrankenLibC fortify_abi::__memcpy_chk exact-bound byte-copy replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__memcpy_chk;mode=strict;expected=MEMCPY_COPY_ABCD_OK;actual=MEMCPY_COPY_ABCD_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__memcpy_chk_copies_exact_bound_hardened",
+      "function": "__memcpy_chk",
+      "spec_section": "GNU memcpy checked wrapper delegates exact object-size copies",
+      "inputs": {
+        "symbol": "__memcpy_chk",
+        "scenario": "exact_bound_copy_without_pointer_capture",
+        "expected": "MEMCPY_COPY_ABCD_OK",
+        "oracle_source": "FrankenLibC fortify_abi::__memcpy_chk exact-bound byte-copy replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__memcpy_chk;mode=hardened;expected=MEMCPY_COPY_ABCD_OK;actual=MEMCPY_COPY_ABCD_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__memmove_chk_moves_overlap_right_strict",
+      "function": "__memmove_chk",
+      "spec_section": "GNU memmove checked wrapper delegates overlapping exact object-size moves",
+      "inputs": {
+        "symbol": "__memmove_chk",
+        "scenario": "overlap_move_right_without_pointer_capture",
+        "expected": "MEMMOVE_OVERLAP_RIGHT_OK",
+        "oracle_source": "FrankenLibC fortify_abi::__memmove_chk overlapping exact-bound replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__memmove_chk;mode=strict;expected=MEMMOVE_OVERLAP_RIGHT_OK;actual=MEMMOVE_OVERLAP_RIGHT_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__memmove_chk_moves_overlap_right_hardened",
+      "function": "__memmove_chk",
+      "spec_section": "GNU memmove checked wrapper delegates overlapping exact object-size moves",
+      "inputs": {
+        "symbol": "__memmove_chk",
+        "scenario": "overlap_move_right_without_pointer_capture",
+        "expected": "MEMMOVE_OVERLAP_RIGHT_OK",
+        "oracle_source": "FrankenLibC fortify_abi::__memmove_chk overlapping exact-bound replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__memmove_chk;mode=hardened;expected=MEMMOVE_OVERLAP_RIGHT_OK;actual=MEMMOVE_OVERLAP_RIGHT_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__memset_chk_fills_exact_bound_strict",
+      "function": "__memset_chk",
+      "spec_section": "GNU memset checked wrapper delegates exact object-size fills",
+      "inputs": {
+        "symbol": "__memset_chk",
+        "scenario": "exact_bound_fill_without_pointer_capture",
+        "expected": "MEMSET_FILL_0X42_6_OK",
+        "oracle_source": "FrankenLibC fortify_abi::__memset_chk exact-bound fill replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__memset_chk;mode=strict;expected=MEMSET_FILL_0X42_6_OK;actual=MEMSET_FILL_0X42_6_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__memset_chk_fills_exact_bound_hardened",
+      "function": "__memset_chk",
+      "spec_section": "GNU memset checked wrapper delegates exact object-size fills",
+      "inputs": {
+        "symbol": "__memset_chk",
+        "scenario": "exact_bound_fill_without_pointer_capture",
+        "expected": "MEMSET_FILL_0X42_6_OK",
+        "oracle_source": "FrankenLibC fortify_abi::__memset_chk exact-bound fill replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__memset_chk;mode=hardened;expected=MEMSET_FILL_0X42_6_OK;actual=MEMSET_FILL_0X42_6_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__open64_2_classifies_readonly_fd_strict",
+      "function": "__open64_2",
+      "spec_section": "GNU open64_2 checked wrapper delegates O_RDONLY open without O_CREAT mode",
+      "inputs": {
+        "symbol": "__open64_2",
+        "scenario": "readonly_null_device_fd_class_without_path_capture",
+        "expected": "OPEN64_2_FD_NONNEGATIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__open64_2 fd-status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__open64_2;mode=strict;expected=OPEN64_2_FD_NONNEGATIVE;actual=OPEN64_2_FD_NONNEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__open64_2_classifies_readonly_fd_hardened",
+      "function": "__open64_2",
+      "spec_section": "GNU open64_2 checked wrapper delegates O_RDONLY open without O_CREAT mode",
+      "inputs": {
+        "symbol": "__open64_2",
+        "scenario": "readonly_null_device_fd_class_without_path_capture",
+        "expected": "OPEN64_2_FD_NONNEGATIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__open64_2 fd-status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__open64_2;mode=hardened;expected=OPEN64_2_FD_NONNEGATIVE;actual=OPEN64_2_FD_NONNEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__open_2_classifies_missing_path_errno_strict",
+      "function": "__open_2",
+      "spec_section": "GNU open_2 checked wrapper reports missing path errno/status without O_CREAT mode",
+      "inputs": {
+        "symbol": "__open_2",
+        "scenario": "missing_path_errno_class_without_path_capture",
+        "expected": "OPEN_2_MISSING_RC_NEG1_ERRNO_ENOENT",
+        "oracle_source": "FrankenLibC fortify_abi::__open_2 errno/status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__open_2;mode=strict;expected=OPEN_2_MISSING_RC_NEG1_ERRNO_ENOENT;actual=OPEN_2_MISSING_RC_NEG1_ERRNO_ENOENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__open_2_classifies_missing_path_errno_hardened",
+      "function": "__open_2",
+      "spec_section": "GNU open_2 checked wrapper reports missing path errno/status without O_CREAT mode",
+      "inputs": {
+        "symbol": "__open_2",
+        "scenario": "missing_path_errno_class_without_path_capture",
+        "expected": "OPEN_2_MISSING_RC_NEG1_ERRNO_ENOENT",
+        "oracle_source": "FrankenLibC fortify_abi::__open_2 errno/status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__open_2;mode=hardened;expected=OPEN_2_MISSING_RC_NEG1_ERRNO_ENOENT;actual=OPEN_2_MISSING_RC_NEG1_ERRNO_ENOENT;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__openat64_2_classifies_readonly_fd_strict",
+      "function": "__openat64_2",
+      "spec_section": "GNU openat64_2 checked wrapper delegates AT_FDCWD O_RDONLY open without O_CREAT mode",
+      "inputs": {
+        "symbol": "__openat64_2",
+        "scenario": "at_fdcwd_readonly_null_device_fd_class_without_path_capture",
+        "expected": "OPENAT64_2_FD_NONNEGATIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__openat64_2 fd-status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__openat64_2;mode=strict;expected=OPENAT64_2_FD_NONNEGATIVE;actual=OPENAT64_2_FD_NONNEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__openat64_2_classifies_readonly_fd_hardened",
+      "function": "__openat64_2",
+      "spec_section": "GNU openat64_2 checked wrapper delegates AT_FDCWD O_RDONLY open without O_CREAT mode",
+      "inputs": {
+        "symbol": "__openat64_2",
+        "scenario": "at_fdcwd_readonly_null_device_fd_class_without_path_capture",
+        "expected": "OPENAT64_2_FD_NONNEGATIVE",
+        "oracle_source": "FrankenLibC fortify_abi::__openat64_2 fd-status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__openat64_2;mode=hardened;expected=OPENAT64_2_FD_NONNEGATIVE;actual=OPENAT64_2_FD_NONNEGATIVE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__openat_2_classifies_bad_dirfd_errno_strict",
+      "function": "__openat_2",
+      "spec_section": "GNU openat_2 checked wrapper reports bad directory fd errno/status without O_CREAT mode",
+      "inputs": {
+        "symbol": "__openat_2",
+        "scenario": "bad_dirfd_errno_class_without_path_capture",
+        "expected": "OPENAT_2_BAD_DIRFD_RC_NEG1_ERRNO_EBADF",
+        "oracle_source": "FrankenLibC fortify_abi::__openat_2 errno/status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__openat_2;mode=strict;expected=OPENAT_2_BAD_DIRFD_RC_NEG1_ERRNO_EBADF;actual=OPENAT_2_BAD_DIRFD_RC_NEG1_ERRNO_EBADF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__openat_2_classifies_bad_dirfd_errno_hardened",
+      "function": "__openat_2",
+      "spec_section": "GNU openat_2 checked wrapper reports bad directory fd errno/status without O_CREAT mode",
+      "inputs": {
+        "symbol": "__openat_2",
+        "scenario": "bad_dirfd_errno_class_without_path_capture",
+        "expected": "OPENAT_2_BAD_DIRFD_RC_NEG1_ERRNO_EBADF",
+        "oracle_source": "FrankenLibC fortify_abi::__openat_2 errno/status classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__openat_2;mode=hardened;expected=OPENAT_2_BAD_DIRFD_RC_NEG1_ERRNO_EBADF;actual=OPENAT_2_BAD_DIRFD_RC_NEG1_ERRNO_EBADF;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__poll_chk_classifies_zero_nfds_safe_default_strict",
+      "function": "__poll_chk",
+      "spec_section": "GNU poll checked wrapper permits zero nfds timeout-safe default polling",
+      "inputs": {
+        "symbol": "__poll_chk",
+        "scenario": "zero_nfds_timeout_safe_default_without_fd_capture",
+        "expected": "POLL_CHK_EMPTY_TIMEOUT_0",
+        "oracle_source": "FrankenLibC fortify_abi::__poll_chk zero-nfds safe-default classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__poll_chk;mode=strict;expected=POLL_CHK_EMPTY_TIMEOUT_0;actual=POLL_CHK_EMPTY_TIMEOUT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__poll_chk_classifies_zero_nfds_safe_default_hardened",
+      "function": "__poll_chk",
+      "spec_section": "GNU poll checked wrapper permits zero nfds timeout-safe default polling",
+      "inputs": {
+        "symbol": "__poll_chk",
+        "scenario": "zero_nfds_timeout_safe_default_without_fd_capture",
+        "expected": "POLL_CHK_EMPTY_TIMEOUT_0",
+        "oracle_source": "FrankenLibC fortify_abi::__poll_chk zero-nfds safe-default classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__poll_chk;mode=hardened;expected=POLL_CHK_EMPTY_TIMEOUT_0;actual=POLL_CHK_EMPTY_TIMEOUT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__ppoll_chk_classifies_zero_nfds_safe_default_strict",
+      "function": "__ppoll_chk",
+      "spec_section": "GNU ppoll checked wrapper permits zero nfds timeout-safe default polling",
+      "inputs": {
+        "symbol": "__ppoll_chk",
+        "scenario": "zero_nfds_timeout_safe_default_without_fd_capture",
+        "expected": "PPOLL_CHK_EMPTY_TIMEOUT_0",
+        "oracle_source": "FrankenLibC fortify_abi::__ppoll_chk zero-nfds safe-default classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__ppoll_chk;mode=strict;expected=PPOLL_CHK_EMPTY_TIMEOUT_0;actual=PPOLL_CHK_EMPTY_TIMEOUT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__ppoll_chk_classifies_zero_nfds_safe_default_hardened",
+      "function": "__ppoll_chk",
+      "spec_section": "GNU ppoll checked wrapper permits zero nfds timeout-safe default polling",
+      "inputs": {
+        "symbol": "__ppoll_chk",
+        "scenario": "zero_nfds_timeout_safe_default_without_fd_capture",
+        "expected": "PPOLL_CHK_EMPTY_TIMEOUT_0",
+        "oracle_source": "FrankenLibC fortify_abi::__ppoll_chk zero-nfds safe-default classification",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__ppoll_chk;mode=hardened;expected=PPOLL_CHK_EMPTY_TIMEOUT_0;actual=PPOLL_CHK_EMPTY_TIMEOUT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__pread64_chk_reads_memfd_offset_strict",
+      "function": "__pread64_chk",
+      "spec_section": "GNU pread64 checked wrapper delegates bounded positional reads and classifies data without recording fds",
+      "inputs": {
+        "symbol": "__pread64_chk",
+        "scenario": "memfd_offset_read_without_fd_or_path_capture",
+        "expected": "PREAD64_CHK_OFFSET5_READ_567",
+        "oracle_source": "FrankenLibC fortify_abi::__pread64_chk bounded memfd positional-read replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__pread64_chk;mode=strict;expected=PREAD64_CHK_OFFSET5_READ_567;actual=PREAD64_CHK_OFFSET5_READ_567;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__pread64_chk_reads_memfd_offset_hardened",
+      "function": "__pread64_chk",
+      "spec_section": "GNU pread64 checked wrapper delegates bounded positional reads and classifies data without recording fds",
+      "inputs": {
+        "symbol": "__pread64_chk",
+        "scenario": "memfd_offset_read_without_fd_or_path_capture",
+        "expected": "PREAD64_CHK_OFFSET5_READ_567",
+        "oracle_source": "FrankenLibC fortify_abi::__pread64_chk bounded memfd positional-read replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__pread64_chk;mode=hardened;expected=PREAD64_CHK_OFFSET5_READ_567;actual=PREAD64_CHK_OFFSET5_READ_567;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

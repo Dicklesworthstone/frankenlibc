@@ -1205,6 +1205,12 @@ pub fn execute_fixture_case(
         | "__getwd_chk"
         | "__longjmp_chk"
         | "__mbsnrtowcs_chk" => execute_fortify_checked_wrapper_wave02_case(function, inputs, mode),
+        // fortify checked wrappers wave-03
+        "__mbsrtowcs_chk" | "__mbstowcs_chk" | "__memcpy_chk" | "__memmove_chk"
+        | "__memset_chk" | "__open64_2" | "__open_2" | "__openat64_2" | "__openat_2"
+        | "__poll_chk" | "__ppoll_chk" | "__pread64_chk" => {
+            execute_fortify_checked_wrapper_wave03_case(function, inputs, mode)
+        }
         // wchar / locale encoding wave-01
         "__islower_l" | "__isoc23_fwscanf" | "__isoc23_swscanf" | "__isoc23_vfwscanf"
         | "__isoc23_vswscanf" | "__isoc23_vwscanf" | "__isoc23_wcstoimax" | "__isoc23_wcstol"
@@ -24836,6 +24842,78 @@ fn fortify_checked_wrapper_wave02_actual(
     }
 }
 
+fn execute_fortify_checked_wrapper_wave03_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "fortify checked-wrapper wave03 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = fortify_checked_wrapper_wave03_actual(function, inputs)?;
+    Ok(non_host_execution(fortify_checked_wrapper_wave02_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn fortify_checked_wrapper_wave03_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    let scenario = parse_string(inputs, "scenario")?;
+    match (function, scenario.as_str()) {
+        ("__mbsrtowcs_chk", "wide_restart_destlen_overflow_aborts_without_pointer_capture") => {
+            Ok(fortify_classify_abort_signal(|| {
+                let source = CString::new("ab").expect("static mbsrtowcs source is valid");
+                let mut source_ptr = source.as_ptr();
+                let mut dest = [0 as c_int; 1];
+                unsafe {
+                    frankenlibc_abi::fortify_abi::__mbsrtowcs_chk(
+                        dest.as_mut_ptr(),
+                        &mut source_ptr,
+                        2,
+                        std::ptr::null_mut(),
+                        0,
+                    );
+                }
+            }))
+        }
+        ("__mbstowcs_chk", "ascii_source_bounded_conversion_without_pointer_capture") => {
+            fortify_mbstowcs_actual()
+        }
+        ("__memcpy_chk", "exact_bound_copy_without_pointer_capture") => Ok(fortify_memcpy_actual()),
+        ("__memmove_chk", "overlap_move_right_without_pointer_capture") => {
+            Ok(fortify_memmove_actual())
+        }
+        ("__memset_chk", "exact_bound_fill_without_pointer_capture") => Ok(fortify_memset_actual()),
+        ("__open64_2", "readonly_null_device_fd_class_without_path_capture") => {
+            fortify_open64_2_actual()
+        }
+        ("__open_2", "missing_path_errno_class_without_path_capture") => fortify_open_2_actual(),
+        ("__openat64_2", "at_fdcwd_readonly_null_device_fd_class_without_path_capture") => {
+            fortify_openat64_2_actual()
+        }
+        ("__openat_2", "bad_dirfd_errno_class_without_path_capture") => fortify_openat_2_actual(),
+        ("__poll_chk", "zero_nfds_timeout_safe_default_without_fd_capture") => {
+            Ok(fortify_poll_chk_actual())
+        }
+        ("__ppoll_chk", "zero_nfds_timeout_safe_default_without_fd_capture") => {
+            Ok(fortify_ppoll_chk_actual())
+        }
+        ("__pread64_chk", "memfd_offset_read_without_fd_or_path_capture") => {
+            fortify_pread64_chk_actual()
+        }
+        _ => Err(format!(
+            "unsupported fortify checked-wrapper wave03 fixture: function={function}, scenario={scenario}"
+        )),
+    }
+}
+
 fn fortify_classify_abort_signal<F>(action: F) -> String
 where
     F: FnOnce(),
@@ -25156,6 +25234,241 @@ fn fortify_mbsnrtowcs_actual() -> Result<String, String> {
         Ok(format!(
             "MBSNRTOWCS_ASCII_WRITTEN_{written}_CONSUMED_{consumed}"
         ))
+    }
+}
+
+fn fortify_mbstowcs_actual() -> Result<String, String> {
+    let source = CString::new("abc").map_err(|_| "__mbstowcs_chk source contains NUL")?;
+    let mut dest = [0 as c_int; 4];
+    let written = unsafe {
+        frankenlibc_abi::fortify_abi::__mbstowcs_chk(
+            dest.as_mut_ptr(),
+            source.as_ptr(),
+            3,
+            dest.len() * std::mem::size_of::<c_int>(),
+        )
+    };
+    if written == 3
+        && dest[0] == c_int::from(b'a')
+        && dest[1] == c_int::from(b'b')
+        && dest[2] == c_int::from(b'c')
+    {
+        Ok(String::from("MBSTOWCS_ASCII_WRITTEN_3"))
+    } else {
+        Ok(format!("MBSTOWCS_ASCII_WRITTEN_{written}"))
+    }
+}
+
+fn fortify_memcpy_actual() -> String {
+    let src = *b"abcd";
+    let mut dest = [0u8; 4];
+    unsafe {
+        frankenlibc_abi::fortify_abi::__memcpy_chk(
+            dest.as_mut_ptr().cast(),
+            src.as_ptr().cast(),
+            src.len(),
+            dest.len(),
+        );
+    }
+    if dest == src {
+        String::from("MEMCPY_COPY_ABCD_OK")
+    } else {
+        String::from("MEMCPY_COPY_ABCD_MISMATCH")
+    }
+}
+
+fn fortify_memmove_actual() -> String {
+    let mut bytes = *b"abcdef";
+    let base = bytes.as_mut_ptr();
+    unsafe {
+        frankenlibc_abi::fortify_abi::__memmove_chk(base.add(1).cast(), base.cast(), 5, 5);
+    }
+    if bytes == *b"aabcde" {
+        String::from("MEMMOVE_OVERLAP_RIGHT_OK")
+    } else {
+        String::from("MEMMOVE_OVERLAP_RIGHT_MISMATCH")
+    }
+}
+
+fn fortify_memset_actual() -> String {
+    let mut bytes = [0u8; 6];
+    unsafe {
+        frankenlibc_abi::fortify_abi::__memset_chk(
+            bytes.as_mut_ptr().cast(),
+            0x42,
+            bytes.len(),
+            bytes.len(),
+        );
+    }
+    if bytes == [0x42; 6] {
+        String::from("MEMSET_FILL_0X42_6_OK")
+    } else {
+        String::from("MEMSET_FILL_0X42_6_MISMATCH")
+    }
+}
+
+fn fortify_reset_errno() {
+    unsafe {
+        frankenlibc_abi::errno_abi::set_abi_errno(0);
+        *libc::__errno_location() = 0;
+    }
+}
+
+fn fortify_read_abi_errno() -> c_int {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+fn fortify_errno_name(errno: c_int) -> &'static str {
+    match errno {
+        libc::EBADF => "EBADF",
+        libc::EFAULT => "EFAULT",
+        libc::ENOENT => "ENOENT",
+        libc::EINVAL => "EINVAL",
+        libc::ENOMEM => "ENOMEM",
+        _ => "OTHER",
+    }
+}
+
+fn fortify_open64_2_actual() -> Result<String, String> {
+    let path = CString::new("/dev/null").map_err(|_| "__open64_2 path contains NUL")?;
+    fortify_reset_errno();
+    let fd = unsafe { frankenlibc_abi::fortify_abi::__open64_2(path.as_ptr(), libc::O_RDONLY) };
+    if fd >= 0 {
+        unsafe {
+            libc::close(fd);
+        }
+        Ok(String::from("OPEN64_2_FD_NONNEGATIVE"))
+    } else {
+        let errno = fortify_read_abi_errno();
+        Ok(format!(
+            "OPEN64_2_RC_NEG1_ERRNO_{}",
+            fortify_errno_name(errno)
+        ))
+    }
+}
+
+fn fortify_open_2_actual() -> Result<String, String> {
+    let path = CString::new("/frankenlibc-fortify-wave03-missing")
+        .map_err(|_| "__open_2 path contains NUL")?;
+    fortify_reset_errno();
+    let fd = unsafe { frankenlibc_abi::fortify_abi::__open_2(path.as_ptr(), libc::O_RDONLY) };
+    if fd >= 0 {
+        unsafe {
+            libc::close(fd);
+        }
+        Ok(String::from("OPEN_2_UNEXPECTED_FD_NONNEGATIVE"))
+    } else {
+        let errno = fortify_read_abi_errno();
+        Ok(format!(
+            "OPEN_2_MISSING_RC_NEG1_ERRNO_{}",
+            fortify_errno_name(errno)
+        ))
+    }
+}
+
+fn fortify_openat64_2_actual() -> Result<String, String> {
+    let path = CString::new("/dev/null").map_err(|_| "__openat64_2 path contains NUL")?;
+    fortify_reset_errno();
+    let fd = unsafe {
+        frankenlibc_abi::fortify_abi::__openat64_2(libc::AT_FDCWD, path.as_ptr(), libc::O_RDONLY)
+    };
+    if fd >= 0 {
+        unsafe {
+            libc::close(fd);
+        }
+        Ok(String::from("OPENAT64_2_FD_NONNEGATIVE"))
+    } else {
+        let errno = fortify_read_abi_errno();
+        Ok(format!(
+            "OPENAT64_2_RC_NEG1_ERRNO_{}",
+            fortify_errno_name(errno)
+        ))
+    }
+}
+
+fn fortify_openat_2_actual() -> Result<String, String> {
+    let path =
+        CString::new("relative-fortify-wave03").map_err(|_| "__openat_2 path contains NUL")?;
+    fortify_reset_errno();
+    let fd = unsafe { frankenlibc_abi::fortify_abi::__openat_2(-1, path.as_ptr(), libc::O_RDONLY) };
+    if fd >= 0 {
+        unsafe {
+            libc::close(fd);
+        }
+        Ok(String::from("OPENAT_2_UNEXPECTED_FD_NONNEGATIVE"))
+    } else {
+        let errno = fortify_read_abi_errno();
+        Ok(format!(
+            "OPENAT_2_BAD_DIRFD_RC_NEG1_ERRNO_{}",
+            fortify_errno_name(errno)
+        ))
+    }
+}
+
+fn fortify_poll_chk_actual() -> String {
+    let rc = unsafe {
+        frankenlibc_abi::fortify_abi::__poll_chk(std::ptr::null_mut::<c_void>(), 0, 0, 0)
+    };
+    format!("POLL_CHK_EMPTY_TIMEOUT_{rc}")
+}
+
+fn fortify_ppoll_chk_actual() -> String {
+    let timeout = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let rc = unsafe {
+        frankenlibc_abi::fortify_abi::__ppoll_chk(
+            std::ptr::null_mut::<c_void>(),
+            0,
+            &timeout,
+            std::ptr::null(),
+            0,
+        )
+    };
+    format!("PPOLL_CHK_EMPTY_TIMEOUT_{rc}")
+}
+
+fn fortify_pread64_chk_actual() -> Result<String, String> {
+    let name = CString::new("frankenlibc-fortify-wave03")
+        .map_err(|_| "__pread64_chk memfd name contains NUL")?;
+    fortify_reset_errno();
+    let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        let errno = unsafe { *libc::__errno_location() };
+        return Ok(format!(
+            "PREAD64_CHK_MEMFD_UNAVAILABLE_ERRNO_{}",
+            fortify_errno_name(errno)
+        ));
+    }
+
+    let fd = fd as c_int;
+    let data = *b"0123456789";
+    let wrote = unsafe { libc::write(fd, data.as_ptr().cast(), data.len()) };
+    if wrote != data.len() as isize {
+        unsafe {
+            libc::close(fd);
+        }
+        return Ok(format!("PREAD64_CHK_WRITE_RC_{wrote}"));
+    }
+
+    let mut out = [0u8; 3];
+    let read = unsafe {
+        frankenlibc_abi::fortify_abi::__pread64_chk(
+            fd,
+            out.as_mut_ptr().cast(),
+            out.len(),
+            5,
+            out.len(),
+        )
+    };
+    unsafe {
+        libc::close(fd);
+    }
+    if read == 3 && out == *b"567" {
+        Ok(String::from("PREAD64_CHK_OFFSET5_READ_567"))
+    } else {
+        Ok(format!("PREAD64_CHK_OFFSET5_READ_RC_{read}"))
     }
 }
 
@@ -29099,6 +29412,48 @@ mod tests {
             include_str!("../../../tests/conformance/fixtures/fortify_checked_wrapper_wave02.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("fortify checked-wrapper wave02 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn fortify_checked_wrapper_wave03_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/fortify_checked_wrapper_wave03.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("fortify checked-wrapper wave03 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

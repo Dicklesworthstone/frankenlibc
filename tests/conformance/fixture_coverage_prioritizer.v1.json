@@ -228,26 +228,26 @@
     },
     {
       "campaign_id": "fcq-fortify-bounds",
-      "current_coverage_pct": 30.77,
+      "current_coverage_pct": 46.15,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 46.15,
+      "expected_coverage_after_first_wave_pct": 61.54,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
-        "__mbsrtowcs_chk",
-        "__mbstowcs_chk",
-        "__memcpy_chk",
-        "__memmove_chk",
-        "__memset_chk",
-        "__open64_2",
-        "__open_2",
-        "__openat64_2",
-        "__openat_2",
-        "__poll_chk",
-        "__ppoll_chk",
-        "__pread64_chk"
+        "__pread_chk",
+        "__printf_chk",
+        "__ptsname_r_chk",
+        "__read_chk",
+        "__readlink_chk",
+        "__readlinkat_chk",
+        "__realpath_chk",
+        "__recv_chk",
+        "__recvfrom_chk",
+        "__snprintf_chk",
+        "__sprintf_chk",
+        "__stpcpy_chk"
       ],
       "module": "fortify_abi",
       "next_step": "Add positive and negative checked-wrapper fixtures before fortify safety claims expand.",
@@ -260,20 +260,20 @@
         "hardened_repair"
       ],
       "scores": {
-        "coverage_gap_score": 54,
+        "coverage_gap_score": 42,
         "feature_gap_risk_score": 0,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 4,
         "parity_risk_score": 5,
-        "priority_score": 2054,
+        "priority_score": 2042,
         "semantic_risk_score": 0,
         "workload_risk_score": 4
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "__*_chk fortified wrappers, object-size behavior, and deny/repair diagnostics",
-      "target_covered": 24,
+      "target_covered": 36,
       "target_total": 78,
-      "target_uncovered": 54,
+      "target_uncovered": 42,
       "title": "fortify and checked-variant fixture wave",
       "workload_domains": [
         "performance_sensitive",
@@ -936,7 +936,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3058,
+    "all_uncovered_target_symbols": 3046,
     "campaign_count": 10,
     "covered_modules": [
       "fortify_abi",
@@ -967,7 +967,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2704,
+    "selected_target_uncovered_symbols": 2692,
     "total_first_wave_fixture_count": 113
   }
 }
