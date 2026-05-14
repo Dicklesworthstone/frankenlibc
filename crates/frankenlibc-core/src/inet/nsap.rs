@@ -32,15 +32,20 @@ pub fn parse_nsap_addr(text: &[u8], dst: &mut [u8]) -> usize {
         i = 2;
     }
     while i < text.len() && o < dst.len() {
-        if text[i] == b'.' || text[i] == b' ' {
+        while i < text.len() && is_separator(text[i]) {
             i += 1;
-            continue;
+        }
+        if i >= text.len() {
+            break;
         }
         let hi = match hex_value(text[i]) {
             Some(v) => v,
             None => return 0,
         };
         i += 1;
+        while i < text.len() && is_separator(text[i]) {
+            i += 1;
+        }
         if i >= text.len() {
             return 0;
         }
@@ -71,6 +76,11 @@ pub fn format_nsap_addr(addr: &[u8]) -> Vec<u8> {
         out.push(HEX[(b & 0x0F) as usize]);
     }
     out
+}
+
+#[inline]
+fn is_separator(b: u8) -> bool {
+    b == b'.' || b == b' '
 }
 
 #[inline]
@@ -130,6 +140,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_with_mid_byte_separators() {
+        let mut dst = [0u8; 16];
+        let n = parse_nsap_addr(b"0.1 2.3 4 5", &mut dst);
+        assert_eq!(n, 3);
+        assert_eq!(&dst[..3], &[0x01, 0x23, 0x45]);
+    }
+
+    #[test]
+    fn parse_allows_trailing_separators_after_complete_byte() {
+        let mut dst = [0u8; 16];
+        let n = parse_nsap_addr(b"ab. cd ", &mut dst);
+        assert_eq!(n, 2);
+        assert_eq!(&dst[..2], &[0xab, 0xcd]);
+    }
+
+    #[test]
     fn parse_mixed_case_hex() {
         let mut dst = [0u8; 16];
         let n = parse_nsap_addr(b"AbCdEf", &mut dst);
@@ -161,6 +187,7 @@ mod tests {
         // "abc" — 3 hex digits, odd. After reading "ab" (1 byte), tries
         // to read "c" then needs another digit but input is exhausted.
         assert_eq!(parse_nsap_addr(b"abc", &mut dst), 0);
+        assert_eq!(parse_nsap_addr(b"ab c.", &mut dst), 0);
     }
 
     #[test]
