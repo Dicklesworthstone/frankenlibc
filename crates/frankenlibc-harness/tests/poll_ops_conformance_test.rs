@@ -46,12 +46,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,8 +131,8 @@ fn poll_ops_fixture_exists() {
 }
 
 #[test]
-fn poll_ops_fixture_valid_schema() {
-    let fixture = load_fixture("poll_ops");
+fn poll_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("poll_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "poll_ops");
@@ -151,6 +151,7 @@ fn poll_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,25 +159,27 @@ fn poll_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn poll_ops_covers_poll() {
-    let fixture = load_fixture("poll_ops");
+fn poll_ops_covers_poll() -> Result<(), String> {
+    let fixture = load_fixture("poll_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("poll")).count() >= 3,
         "poll needs at least 3 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn poll_ops_covers_select() {
-    let fixture = load_fixture("poll_ops");
+fn poll_ops_covers_select() -> Result<(), String> {
+    let fixture = load_fixture("poll_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("select")),
         "Missing test coverage for select"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -184,8 +187,8 @@ fn poll_ops_covers_select() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn poll_ops_error_codes_valid() {
-    let fixture = load_fixture("poll_ops");
+fn poll_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("poll_ops")?;
 
     // Valid POSIX/Linux error codes for poll/select
     let valid_errno_values = [
@@ -205,6 +208,7 @@ fn poll_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,8 +216,8 @@ fn poll_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn poll_ops_modes_valid() {
-    let fixture = load_fixture("poll_ops");
+fn poll_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("poll_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -223,6 +227,7 @@ fn poll_ops_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,14 +235,15 @@ fn poll_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn poll_ops_covers_both_modes() {
-    let fixture = load_fixture("poll_ops");
+fn poll_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("poll_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
 
     assert!(has_strict, "poll_ops must have strict mode test cases");
     assert!(has_hardened, "poll_ops must have hardened mode test cases");
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -245,8 +251,8 @@ fn poll_ops_covers_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn poll_ops_case_count_stable() {
-    let fixture = load_fixture("poll_ops");
+fn poll_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("poll_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 5;
 
@@ -258,6 +264,7 @@ fn poll_ops_case_count_stable() {
     );
 
     eprintln!("poll_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -265,14 +272,15 @@ fn poll_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn poll_ops_covers_error_paths() {
-    let fixture = load_fixture("poll_ops");
+fn poll_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("poll_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|n| n.contains("invalid")),
         "poll_ops must test invalid fd handling"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -280,8 +288,8 @@ fn poll_ops_covers_error_paths() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn poll_ops_has_posix_references() {
-    let fixture = load_fixture("poll_ops");
+fn poll_ops_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("poll_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -291,17 +299,18 @@ fn poll_ops_has_posix_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn poll_ops_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("poll_ops");
+fn poll_ops_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("poll_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -309,13 +318,13 @@ fn poll_ops_fixture_cases_match_execute_fixture_case() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "poll_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -328,4 +337,5 @@ fn poll_ops_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+    Ok(())
 }
