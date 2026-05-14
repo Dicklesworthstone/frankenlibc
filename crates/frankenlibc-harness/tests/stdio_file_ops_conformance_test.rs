@@ -61,12 +61,12 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -131,8 +131,8 @@ fn stdio_file_ops_fixture_exists() {
 }
 
 #[test]
-fn stdio_file_ops_fixture_valid_schema() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "stdio_file_ops");
@@ -160,6 +160,7 @@ fn stdio_file_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,25 +168,27 @@ fn stdio_file_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdio_file_ops_covers_fopen() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_covers_fopen() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("fopen")).count() >= 2,
         "fopen needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn stdio_file_ops_covers_fclose() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_covers_fclose() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("fclose")),
         "Missing test coverage for fclose"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,30 +196,32 @@ fn stdio_file_ops_covers_fclose() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdio_file_ops_covers_fread() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_covers_fread() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("fread")),
         "Missing test coverage for fread"
     );
+    Ok(())
 }
 
 #[test]
-fn stdio_file_ops_covers_fwrite() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_covers_fwrite() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("fwrite")),
         "Missing test coverage for fwrite"
     );
+    Ok(())
 }
 
 #[test]
-fn stdio_file_ops_covers_formatted_io() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_covers_formatted_io() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -225,6 +230,7 @@ fn stdio_file_ops_covers_formatted_io() {
             .any(|name| name.contains("printf") || name.contains("snprintf")),
         "Missing test coverage for formatted output (printf/snprintf)"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -232,36 +238,39 @@ fn stdio_file_ops_covers_formatted_io() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdio_file_ops_covers_fseek() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_covers_fseek() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("fseek")),
         "Missing test coverage for fseek"
     );
+    Ok(())
 }
 
 #[test]
-fn stdio_file_ops_covers_ftell() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_covers_ftell() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("ftell")),
         "Missing test coverage for ftell"
     );
+    Ok(())
 }
 
 #[test]
-fn stdio_file_ops_covers_fflush() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_covers_fflush() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("fflush")),
         "Missing test coverage for fflush"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -269,8 +278,8 @@ fn stdio_file_ops_covers_fflush() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdio_file_ops_error_codes_valid() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
 
     // Valid POSIX/Linux error codes for stdio functions
     let valid_errno_values = [
@@ -288,6 +297,7 @@ fn stdio_file_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -295,8 +305,8 @@ fn stdio_file_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdio_file_ops_modes_valid() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -306,6 +316,7 @@ fn stdio_file_ops_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -313,8 +324,8 @@ fn stdio_file_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdio_file_ops_covers_both_modes() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
@@ -327,6 +338,7 @@ fn stdio_file_ops_covers_both_modes() {
         has_hardened,
         "stdio_file_ops must have hardened mode test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -334,8 +346,8 @@ fn stdio_file_ops_covers_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdio_file_ops_case_count_stable() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 12;
 
@@ -350,6 +362,7 @@ fn stdio_file_ops_case_count_stable() {
         "stdio_file_ops fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -357,8 +370,8 @@ fn stdio_file_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdio_file_ops_covers_error_paths() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -367,6 +380,7 @@ fn stdio_file_ops_covers_error_paths() {
             .any(|n| n.contains("invalid") || n.contains("nonexistent")),
         "stdio_file_ops must test error paths (invalid path/mode)"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -374,8 +388,8 @@ fn stdio_file_ops_covers_error_paths() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdio_file_ops_has_spec_references() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -387,17 +401,18 @@ fn stdio_file_ops_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn stdio_file_ops_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture("stdio_file_ops");
+fn stdio_file_ops_fixture_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture("stdio_file_ops")?;
 
     for case in fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -405,13 +420,13 @@ fn stdio_file_ops_fixture_executes_via_isolated_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute through harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -424,4 +439,5 @@ fn stdio_file_ops_fixture_executes_via_isolated_harness() {
             );
         }
     }
+    Ok(())
 }
