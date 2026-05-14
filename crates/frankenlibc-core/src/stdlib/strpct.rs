@@ -110,6 +110,52 @@ mod tests {
     }
 
     #[test]
+    fn unsigned_ratio_scaling_preserves_rendered_percent() {
+        for (num, denom, scale, precision) in [
+            (1, 3, 7, 2),
+            (25, 400, 11, 3),
+            (999, 1000, 13, 1),
+            (12_345, 67_890, 5, 4),
+        ] {
+            assert_eq!(
+                format_percent_unsigned(num, denom, precision),
+                format_percent_unsigned(num * scale, denom * scale, precision),
+                "{num}/{denom} scaled by {scale} at precision {precision}"
+            );
+        }
+    }
+
+    #[test]
+    fn signed_double_negation_preserves_rendered_percent() {
+        for (num, denom, precision) in [(1, 4, 0), (5, 8, 2), (33, 100, 4), (12_345, 67_890, 3)] {
+            assert_eq!(
+                format_percent_signed(num, denom, precision),
+                format_percent_signed(-num, -denom, precision),
+                "{num}/{denom} at precision {precision}"
+            );
+        }
+    }
+
+    #[test]
+    fn signed_single_negation_adds_one_minus_sign() {
+        for (num, denom, precision) in [(1, 4, 0), (5, 8, 2), (33, 100, 4)] {
+            let positive = format_percent_signed(num, denom, precision);
+            let mut expected_negative = Vec::with_capacity(positive.len() + 1);
+            expected_negative.push(b'-');
+            expected_negative.extend_from_slice(&positive);
+
+            assert_eq!(
+                format_percent_signed(-num, denom, precision),
+                expected_negative
+            );
+            assert_eq!(
+                format_percent_signed(num, -denom, precision),
+                expected_negative
+            );
+        }
+    }
+
+    #[test]
     fn small_values_get_leading_zero() {
         // 1/1000 = 0.1% → "0.10" at precision 2
         assert_eq!(format_percent_unsigned(1, 1000, 2), b"0.10".to_vec());
