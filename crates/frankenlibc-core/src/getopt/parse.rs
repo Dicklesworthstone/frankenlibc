@@ -33,6 +33,9 @@ pub fn getopt_prefers_colon(optspec: &[u8]) -> bool {
 #[inline]
 pub fn getopt_arg_mode(optspec: &[u8], option: u8) -> Option<GetoptArgMode> {
     for (idx, &byte) in optspec.iter().enumerate() {
+        if byte == b':' {
+            continue;
+        }
         if byte != option {
             continue;
         }
@@ -111,11 +114,9 @@ mod tests {
         // ':' is a meta char in optstring, not a selectable option.
         // (When optspec STARTS with ':' it just toggles opterr — the
         // colon itself is not exposed as a 'colon' option.)
-        // But: a colon AFTER non-colon characters is still always
-        // a meta — getopt_arg_mode for ':' should never match in
-        // practice. Verify the function still works on a degenerate
-        // input rather than crashing.
-        let _ = getopt_arg_mode(b"a:b", b':');
+        // A colon AFTER non-colon characters is still metadata for
+        // the preceding option argument mode, not a real option.
+        assert_eq!(getopt_arg_mode(b":a:b::c", b':'), None);
     }
 
     #[test]

@@ -275,6 +275,13 @@ mod tests {
     }
 
     #[test]
+    fn colon_metadata_is_not_a_selectable_option() {
+        let (codes, state, _) = run(&["prog", "-:"], "a:b");
+        assert_eq!(codes, vec![b'?' as i32]);
+        assert_eq!(state.optopt, b':');
+    }
+
+    #[test]
     fn double_dash_terminates_options() {
         let (codes, state, _) = run(&["prog", "-a", "--", "-b"], "ab");
         assert_eq!(codes, vec![b'a' as i32]);
