@@ -145,14 +145,17 @@ fn manifest_anchors_to_d52jw_with_subcommand_name() -> TestResult {
         .get("underlying_lib_functions")
         .and_then(Value::as_array)
         .ok_or_else(|| "missing underlying_lib_functions".to_string())?;
-    for want in [
-        "frankenlibc_membrane::check_oracle::pack_ordering",
-        "frankenlibc_membrane::check_oracle::unpack_ordering",
+    for (want, message) in [
+        (
+            "frankenlibc_membrane::check_oracle::pack_ordering",
+            "missing frankenlibc_membrane::check_oracle::pack_ordering",
+        ),
+        (
+            "frankenlibc_membrane::check_oracle::unpack_ordering",
+            "missing frankenlibc_membrane::check_oracle::unpack_ordering",
+        ),
     ] {
-        require(
-            funcs.iter().any(|v| v.as_str() == Some(want)),
-            format!("missing {want}"),
-        )?;
+        require(funcs.iter().any(|v| v.as_str() == Some(want)), message)?;
     }
     Ok(())
 }
@@ -164,19 +167,49 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_stdout_jsonl_record",
-        "round_trip_codec_is_lossless",
-        "round_trip_ok_true_for_all_valid_orderings",
-        "repeated_stage_flags_and_comma_separated_are_equivalent",
-        "identity_ordering_packs_to_known_hex_0x06543210",
-        "reverse_ordering_packs_to_known_hex_0x00123456",
-        "unknown_stage_name_rejected_with_nonzero_exit",
-        "fewer_than_7_stages_rejected",
-        "more_than_7_stages_rejected",
-        "deterministic_given_inputs",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_stdout_jsonl_record",
+            "must_emit_exactly_one_stdout_jsonl_record must be true",
+        ),
+        (
+            "round_trip_codec_is_lossless",
+            "round_trip_codec_is_lossless must be true",
+        ),
+        (
+            "round_trip_ok_true_for_all_valid_orderings",
+            "round_trip_ok_true_for_all_valid_orderings must be true",
+        ),
+        (
+            "repeated_stage_flags_and_comma_separated_are_equivalent",
+            "repeated_stage_flags_and_comma_separated_are_equivalent must be true",
+        ),
+        (
+            "identity_ordering_packs_to_known_hex_0x06543210",
+            "identity_ordering_packs_to_known_hex_0x06543210 must be true",
+        ),
+        (
+            "reverse_ordering_packs_to_known_hex_0x00123456",
+            "reverse_ordering_packs_to_known_hex_0x00123456 must be true",
+        ),
+        (
+            "unknown_stage_name_rejected_with_nonzero_exit",
+            "unknown_stage_name_rejected_with_nonzero_exit must be true",
+        ),
+        (
+            "fewer_than_7_stages_rejected",
+            "fewer_than_7_stages_rejected must be true",
+        ),
+        (
+            "more_than_7_stages_rejected",
+            "more_than_7_stages_rejected must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -287,26 +320,26 @@ fn cli_round_trip_codec_is_lossless() -> TestResult {
     for perm in &permutations {
         let out = run_repeated(&bin, perm)?;
         if !out.status.success() {
-            return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+            return Err("pack-check-ordering CLI invocation must succeed".into());
         }
         let parsed = parse_stdout(&out)?;
         let stages: Vec<String> = parsed
             .get("stages")
             .and_then(Value::as_array)
-            .ok_or_else(|| "missing stages".to_string())?
+            .ok_or("missing stages")?
             .iter()
             .filter_map(|v| v.as_str().map(str::to_string))
             .collect();
         let unpacked: Vec<String> = parsed
             .get("unpacked_round_trip")
             .and_then(Value::as_array)
-            .ok_or_else(|| "missing unpacked_round_trip".to_string())?
+            .ok_or("missing unpacked_round_trip")?
             .iter()
             .filter_map(|v| v.as_str().map(str::to_string))
             .collect();
         require(
             stages == unpacked,
-            format!("round-trip drift: stages={stages:?} unpacked={unpacked:?}"),
+            "stages must round-trip through unpacked sequence",
         )?;
         require(
             json_bool(&parsed, "round_trip_ok")?,
