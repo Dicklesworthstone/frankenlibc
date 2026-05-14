@@ -112,19 +112,31 @@ fn run_cli(bin: &Path, unix_days: i64, output: &Path) -> TestResult<std::process
 
 fn read_record(out_path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
 fn run_and_parse(bin: &Path, unix_days: i64, label: &str) -> TestResult<Value> {
     let output = unique_tmp(label)?;
     let out = run_cli(bin, unix_days, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
-    let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
-    Ok(parsed)
+    read_record(&output)
 }
 
 #[test]
@@ -167,7 +179,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "month_is_in_1_through_12",
         "day_is_in_1_through_31",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -210,26 +222,26 @@ fn cli_anchor_table_matches_manifest() -> TestResult {
     )?;
     for anchor in anchors {
         let unix_days = json_i64(anchor, "unix_days")?;
-        let parsed = run_and_parse(&bin, unix_days, &format!("anchor_{unix_days}"))?;
+        let parsed = run_and_parse(&bin, unix_days, "anchor")?;
         require(
             json_string(&parsed, "kind")? == "civil_date",
             "kind must be civil_date",
         )?;
         require(
             json_i64(&parsed, "unix_days")? == unix_days,
-            format!("unix_days must echo {unix_days}"),
+            "unix_days must echo manifest anchor",
         )?;
         require(
             json_i64(&parsed, "year")? == json_i64(anchor, "year")?,
-            format!("year mismatch for unix_days={unix_days}"),
+            "year must match manifest anchor",
         )?;
         require(
             json_u64(&parsed, "month")? == json_u64(anchor, "month")?,
-            format!("month mismatch for unix_days={unix_days}"),
+            "month must match manifest anchor",
         )?;
         require(
             json_u64(&parsed, "day")? == json_u64(anchor, "day")?,
-            format!("day mismatch for unix_days={unix_days}"),
+            "day must match manifest anchor",
         )?;
     }
     Ok(())
@@ -268,12 +280,12 @@ fn cli_pins_leap_days_and_y2038_boundary() -> TestResult {
         (11_016, 2000, 2, 29),
         (24_855, 2038, 1, 19),
     ] {
-        let parsed = run_and_parse(&bin, unix_days, &format!("special_{unix_days}"))?;
+        let parsed = run_and_parse(&bin, unix_days, "special")?;
         require(
             json_i64(&parsed, "year")? == year
                 && json_u64(&parsed, "month")? == month
                 && json_u64(&parsed, "day")? == day,
-            format!("unix day {unix_days} must be {year:04}-{month:02}-{day:02}"),
+            "special unix day must map to the expected civil date",
         )?;
     }
     Ok(())
@@ -288,17 +300,11 @@ fn cli_month_and_day_stay_in_civil_ranges() -> TestResult {
     for unix_days in [
         -146_097, -36_525, -365, -1, 0, 365, 11_016, 20_586, 24_855, 146_097,
     ] {
-        let parsed = run_and_parse(&bin, unix_days, &format!("range_{unix_days}"))?;
+        let parsed = run_and_parse(&bin, unix_days, "range")?;
         let month = json_u64(&parsed, "month")?;
         let day = json_u64(&parsed, "day")?;
-        require(
-            (1..=12).contains(&month),
-            format!("month out of range for unix_days={unix_days}: {month}"),
-        )?;
-        require(
-            (1..=31).contains(&day),
-            format!("day out of range for unix_days={unix_days}: {day}"),
-        )?;
+        require((1..=12).contains(&month), "month must stay in 1..=12")?;
+        require((1..=31).contains(&day), "day must stay in 1..=31")?;
     }
     Ok(())
 }
