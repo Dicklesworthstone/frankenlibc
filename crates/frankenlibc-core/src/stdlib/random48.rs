@@ -218,6 +218,67 @@ mod tests {
     }
 
     #[test]
+    fn test_explicit_state_family_shares_transition_step() {
+        let _lock = random48_lock();
+        srand48(1);
+
+        for seed in [
+            [0x0000u16, 0x0000, 0x0000],
+            [0x330Eu16, 0x0000, 0x0001],
+            [0x1234u16, 0x5678, 0x9ABC],
+            [0xFFFFu16, 0xFFFF, 0xFFFF],
+        ] {
+            let expected_next = step(pack_state(&seed), DEFAULT_A, DEFAULT_C);
+
+            let mut erand_state = seed;
+            let erand = erand48(&mut erand_state);
+            assert_eq!(pack_state(&erand_state), expected_next);
+            assert_eq!(erand, expected_next as f64 / (1u64 << 48) as f64);
+
+            let mut nrand_state = seed;
+            let nrand = nrand48(&mut nrand_state);
+            assert_eq!(pack_state(&nrand_state), expected_next);
+            assert_eq!(nrand, (expected_next >> 17) as i64);
+
+            let mut jrand_state = seed;
+            let jrand = jrand48(&mut jrand_state);
+            assert_eq!(pack_state(&jrand_state), expected_next);
+            assert_eq!(jrand, ((expected_next >> 16) as i32) as i64);
+
+            assert_eq!(erand_state, nrand_state);
+            assert_eq!(nrand_state, jrand_state);
+        }
+    }
+
+    #[test]
+    fn test_global_and_explicit_state_families_match_from_same_seed() {
+        let _lock = random48_lock();
+
+        for seed in [
+            [0x330Eu16, 0x0000, 0x0001],
+            [0x2222u16, 0x4444, 0x8888],
+            [0xACE1u16, 0x1357, 0x2468],
+        ] {
+            let mut explicit = seed;
+            seed48(&seed);
+            assert_eq!(drand48(), erand48(&mut explicit));
+            assert_eq!(STATE.load(Ordering::Relaxed), pack_state(&explicit));
+
+            let mut explicit = seed;
+            seed48(&seed);
+            assert_eq!(lrand48(), nrand48(&mut explicit));
+            assert_eq!(STATE.load(Ordering::Relaxed), pack_state(&explicit));
+
+            let mut explicit = seed;
+            seed48(&seed);
+            assert_eq!(mrand48(), jrand48(&mut explicit));
+            assert_eq!(STATE.load(Ordering::Relaxed), pack_state(&explicit));
+        }
+
+        srand48(1);
+    }
+
+    #[test]
     fn test_nrand48_range() {
         let mut state = [0u16, 0, 1];
         for _ in 0..100 {
