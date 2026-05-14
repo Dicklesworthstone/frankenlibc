@@ -1,23 +1,23 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.5",
-  "generated_at": "2026-03-19T17:47:00Z",
+  "generated_at": "2026-05-10T00:00:00Z",
   "summary": {
-    "total_fixture_files": 58,
-    "valid_fixture_files": 58,
+    "total_fixture_files": 123,
+    "valid_fixture_files": 123,
     "invalid_fixture_files": 0,
-    "total_cases": 1294,
+    "total_cases": 2712,
     "total_issues": 0,
     "total_warnings": 0,
-    "unique_families": 57,
-    "unique_symbols": 421,
+    "unique_families": 92,
+    "unique_symbols": 1142,
     "determinism_verified": true
   },
   "regression_detection": {
     "status": "clean",
     "invalid_fixture_files": [],
     "invalid_fixture_issue_counts": {},
-    "baseline_fixture_digest": "6eb52e566e70fd32188328da6fd90beaff6850c37b240cbdbfdfe76a806f4eee"
+    "baseline_fixture_digest": "ccd2435c5c3eb4728a403003fdafa5de7a3501054c074fc724a40483b2960aae"
   },
   "fixture_results": [
     {
@@ -74,8 +74,8 @@
       "file": "dlfcn_ops.json",
       "version": "v1",
       "family": "dlfcn_ops",
-      "case_count": 9,
-      "fixture_hash": "44117e90e2556574",
+      "case_count": 13,
+      "fixture_hash": "f8766ad1170306bd",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -91,11 +91,91 @@
       "warnings": []
     },
     {
+      "file": "err_ops.json",
+      "version": "v1",
+      "family": "err_ops",
+      "case_count": 12,
+      "fixture_hash": "a81abb2aae211f32",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "errno_ops.json",
       "version": "v1",
       "family": "errno_ops",
       "case_count": 23,
       "fixture_hash": "1dd9b2d822578222",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "fenv_ops.json",
+      "version": "v1",
+      "family": "fenv_ops",
+      "case_count": 11,
+      "fixture_hash": "f29aea25a45c3239",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "fortify_checked_wrapper_wave01.json",
+      "version": "v1",
+      "family": "fortify/checked-wrapper",
+      "case_count": 24,
+      "fixture_hash": "4f95ecb44279bb65",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "fortify_checked_wrapper_wave02.json",
+      "version": "v1",
+      "family": "fortify/checked-wrapper",
+      "case_count": 24,
+      "fixture_hash": "d0ee0bca7ae169b3",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "fortify_checked_wrapper_wave03.json",
+      "version": "v1",
+      "family": "fortify/checked-wrapper",
+      "case_count": 24,
+      "fixture_hash": "b7efd08277d8bc7a",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "glibc_internal_bootstrap_wave01.json",
+      "version": "v1",
+      "family": "glibc/internal-bootstrap",
+      "case_count": 22,
+      "fixture_hash": "4c16514899be67f6",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "glibc_internal_compat_wave02.json",
+      "version": "v1",
+      "family": "glibc/internal-compat",
+      "case_count": 24,
+      "fixture_hash": "f1ba1808c1339d95",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "glibc_internal_compat_wave03.json",
+      "version": "v1",
+      "family": "glibc/internal-compat",
+      "case_count": 24,
+      "fixture_hash": "25b823c46f4cc2da",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -141,11 +221,31 @@
       "warnings": []
     },
     {
+      "file": "isoc_wide_scanf_ops.json",
+      "version": "v1",
+      "family": "isoc_wide_scanf_ops",
+      "case_count": 5,
+      "fixture_hash": "f83e52afba7d7502",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "loader_edges.json",
       "version": "v1",
       "family": "loader_edges",
       "case_count": 7,
       "fixture_hash": "94470b86850542ab",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "locale_catalog_wave01.json",
+      "version": "v1",
+      "family": "locale/catalog",
+      "case_count": 16,
+      "fixture_hash": "a7be15e9df074f8a",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -161,11 +261,51 @@
       "warnings": []
     },
     {
+      "file": "malloc_membrane_wave01.json",
+      "version": "v1",
+      "family": "malloc/membrane",
+      "case_count": 24,
+      "fixture_hash": "62729e4d076b73c0",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "malloc_membrane_wave02.json",
+      "version": "v1",
+      "family": "malloc/membrane",
+      "case_count": 10,
+      "fixture_hash": "b6d2cbbc4c8ea307",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "math_finite_special_wave02.json",
+      "version": "v1",
+      "family": "math_finite_special_wave02",
+      "case_count": 24,
+      "fixture_hash": "2b880406f1e0cfe1",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "math_finite_special_wave03.json",
+      "version": "v1",
+      "family": "math_finite_special_wave03",
+      "case_count": 24,
+      "fixture_hash": "b8f5518fc8059d95",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "math_ops.json",
       "version": "v1",
       "family": "math",
-      "case_count": 33,
-      "fixture_hash": "d8fa7f90d4c4e242",
+      "case_count": 51,
+      "fixture_hash": "f8c61f404d06bd45",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -211,6 +351,26 @@
       "warnings": []
     },
     {
+      "file": "poll_event_loop_wave01.json",
+      "version": "v1",
+      "family": "poll_event_loop_wave01",
+      "case_count": 24,
+      "fixture_hash": "e6c18c5131c0c065",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "poll_event_loop_wave02.json",
+      "version": "v1",
+      "family": "poll_event_loop_wave02",
+      "case_count": 4,
+      "fixture_hash": "fc4cdaefc358d656",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "poll_ops.json",
       "version": "v1",
       "family": "poll_ops",
@@ -251,6 +411,56 @@
       "warnings": []
     },
     {
+      "file": "process_spawn_wait_tail.json",
+      "version": "v1",
+      "family": "process/spawn",
+      "case_count": 12,
+      "fixture_hash": "fac785430a05f974",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "process_spawn_wave01.json",
+      "version": "v1",
+      "family": "process/spawn",
+      "case_count": 24,
+      "fixture_hash": "7a468783c0387bfc",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "process_spawn_wave02.json",
+      "version": "v1",
+      "family": "process/spawn",
+      "case_count": 24,
+      "fixture_hash": "70d6626a7dea9af2",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "pthread_attribute_wave03.json",
+      "version": "v1",
+      "family": "pthread/sync",
+      "case_count": 24,
+      "fixture_hash": "434733be4c72d3da",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "pthread_attribute_wave04.json",
+      "version": "v1",
+      "family": "pthread/sync",
+      "case_count": 24,
+      "fixture_hash": "2700effe4c315b8b",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "pthread_cond.json",
       "version": "v1",
       "family": "pthread/cond",
@@ -276,6 +486,36 @@
       "family": "pthread/mutex",
       "case_count": 10,
       "fixture_hash": "da205001a273e414",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "pthread_sync_wave01.json",
+      "version": "v1",
+      "family": "pthread/sync",
+      "case_count": 24,
+      "fixture_hash": "e0b1c641fc80fad0",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "pthread_sync_wave02.json",
+      "version": "v1",
+      "family": "pthread/sync",
+      "case_count": 24,
+      "fixture_hash": "9456b23d6640440d",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "pthread_sync_wave05.json",
+      "version": "v1",
+      "family": "pthread/sync",
+      "case_count": 24,
+      "fixture_hash": "5ea57a8434647e91",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -331,11 +571,51 @@
       "warnings": []
     },
     {
+      "file": "resolver_nss_core_wave01.json",
+      "version": "v1",
+      "family": "resolver_nss_core_wave01",
+      "case_count": 16,
+      "fixture_hash": "fe6039a42a493874",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "resource_ops.json",
       "version": "v1",
       "family": "resource_ops",
       "case_count": 11,
       "fixture_hash": "37bb4d3d3c66ddd9",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "rpc_legacy_network.json",
+      "version": "v1",
+      "family": "rpc/legacy-network",
+      "case_count": 24,
+      "fixture_hash": "8632088ee010c1e3",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "rpc_legacy_network_wave02.json",
+      "version": "v1",
+      "family": "rpc/legacy-network",
+      "case_count": 24,
+      "fixture_hash": "5acc324a4bc1d81b",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "rpc_legacy_network_wave03.json",
+      "version": "v1",
+      "family": "rpc/legacy-network",
+      "case_count": 24,
+      "fixture_hash": "397ca9c98f47a92e",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -391,11 +671,41 @@
       "warnings": []
     },
     {
+      "file": "signal_async_wave01.json",
+      "version": "v1",
+      "family": "signal/async",
+      "case_count": 24,
+      "fixture_hash": "356d6634250156ac",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "signal_async_wave02.json",
+      "version": "v1",
+      "family": "signal/async",
+      "case_count": 14,
+      "fixture_hash": "b1c665ca55a620e9",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "signal_ops.json",
       "version": "v1",
       "family": "signal_ops",
       "case_count": 49,
       "fixture_hash": "aa94cd6b8d7b7848",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "socket_network_wave01.json",
+      "version": "v1",
+      "family": "socket_network_wave01",
+      "case_count": 20,
+      "fixture_hash": "90e97bad26ed95a5",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -451,6 +761,76 @@
       "warnings": []
     },
     {
+      "file": "stdio_libio_symbols.json",
+      "version": "v1",
+      "family": "stdio_libio_symbols",
+      "case_count": 24,
+      "fixture_hash": "fe6422d57bcc9ffc",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "stdio_libio_wave01.json",
+      "version": "v1",
+      "family": "stdio/libio",
+      "case_count": 24,
+      "fixture_hash": "a0bb2651386a90f1",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "stdio_libio_wave02.json",
+      "version": "v1",
+      "family": "stdio/libio",
+      "case_count": 24,
+      "fixture_hash": "5e0513e571e2c746",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "stdio_libio_wave03.json",
+      "version": "v1",
+      "family": "stdio/libio",
+      "case_count": 24,
+      "fixture_hash": "6d84df5094d493b9",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "stdio_libio_wave04.json",
+      "version": "v1",
+      "family": "stdio/libio",
+      "case_count": 24,
+      "fixture_hash": "a1ee136b35fd8a4e",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "stdio_libio_wave05.json",
+      "version": "v1",
+      "family": "stdio/libio",
+      "case_count": 24,
+      "fixture_hash": "fa7618024647bd7b",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "stdio_libio_wave06.json",
+      "version": "v1",
+      "family": "stdio/libio",
+      "case_count": 24,
+      "fixture_hash": "180241d4980a88cd",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "stdlib_conversion.json",
       "version": "v1",
       "family": "stdlib/conversion",
@@ -486,6 +866,116 @@
       "family": "string/memory",
       "case_count": 14,
       "fixture_hash": "7a37d26dbfc77fef",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "string_memory_hotpaths.json",
+      "version": "v1",
+      "family": "string_memory_hotpaths",
+      "case_count": 24,
+      "fixture_hash": "ef91fd03466662a0",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave05.json",
+      "version": "v1",
+      "family": "string_memory_hotpaths_wave05",
+      "case_count": 24,
+      "fixture_hash": "6a96130def989a59",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave06.json",
+      "version": "v1",
+      "family": "string_memory_hotpaths_wave06",
+      "case_count": 24,
+      "fixture_hash": "9d1258757dc04fed",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave07.json",
+      "version": "v1",
+      "family": "string_memory_hotpaths_wave07",
+      "case_count": 20,
+      "fixture_hash": "755f0e9a75840c29",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave08.json",
+      "version": "v1",
+      "family": "string_memory_hotpaths_wave08",
+      "case_count": 12,
+      "fixture_hash": "707259e1e85e88d8",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave09.json",
+      "version": "v1",
+      "family": "string_memory_hotpaths_wave09",
+      "case_count": 8,
+      "fixture_hash": "2bde9deff9f650df",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave10.json",
+      "version": "v1",
+      "family": "string_memory_hotpaths_wave10",
+      "case_count": 24,
+      "fixture_hash": "e6d3a7736c815b4c",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave11.json",
+      "version": "v1",
+      "family": "string_memory_hotpaths_wave11",
+      "case_count": 24,
+      "fixture_hash": "b5f82e3a19ac3d7b",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave12.json",
+      "version": "v1",
+      "family": "string_memory_hotpaths_wave12",
+      "case_count": 24,
+      "fixture_hash": "3809d0dc7f215128",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave13.json",
+      "version": "v1",
+      "family": "string_memory_hotpaths_wave13",
+      "case_count": 24,
+      "fixture_hash": "609483ee892b8015",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "string_memory_hotpaths_wave14.json",
+      "version": "v1",
+      "family": "string_memory_hotpaths_wave14",
+      "case_count": 18,
+      "fixture_hash": "2c4546755d813565",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -541,6 +1031,26 @@
       "warnings": []
     },
     {
+      "file": "time_clock_calendar_wave02.json",
+      "version": "v1",
+      "family": "time/clock-calendar",
+      "case_count": 20,
+      "fixture_hash": "4e2dd838dac588df",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "time_clock_wave01.json",
+      "version": "v1",
+      "family": "time/clock",
+      "case_count": 24,
+      "fixture_hash": "994a0ab06e513a1d",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "time_ops.json",
       "version": "v1",
       "family": "time_ops",
@@ -561,11 +1071,151 @@
       "warnings": []
     },
     {
+      "file": "unistd_process_filesystem.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "653ef0a9012c0511",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave01.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "200ee5fec79bcbe6",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave02.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "9cd16feb7ddbf87b",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave03.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "04062bb99be473a4",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave04.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "ef95504b43c919ff",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave05.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "70181cd1515c5aa5",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave06.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "f703a18ecdde47a9",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave07.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "1412dcb67fd4b981",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave08.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "94fde7bcdafdd869",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave09.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "521d5b35c6d8eab5",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave10.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "932ec93bcdefdafa",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "virtual_memory_ops.json",
       "version": "v1",
       "family": "virtual_memory_ops",
       "case_count": 8,
       "fixture_hash": "677248cdc30d10fe",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "wchar_locale_encoding_wave01.json",
+      "version": "v1",
+      "family": "wchar/locale-encoding",
+      "case_count": 24,
+      "fixture_hash": "68d809e405d0a683",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "wchar_locale_encoding_wave02.json",
+      "version": "v1",
+      "family": "wchar/locale-encoding",
+      "case_count": 24,
+      "fixture_hash": "d6cdf5c7c993c1f5",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "wchar_locale_encoding_wave03.json",
+      "version": "v1",
+      "family": "wchar/locale-encoding",
+      "case_count": 24,
+      "fixture_hash": "90b670d80377ef5f",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -602,8 +1252,8 @@
     }
   ],
   "regression_baseline": {
-    "symbol_count": 421,
-    "total_cases": 1294,
+    "symbol_count": 1142,
+    "total_cases": 2712,
     "symbols": {
       "DnsHeader::new_query": {
         "count": 1,
@@ -659,6 +1309,36 @@
           "pressure_sensing.json"
         ]
       },
+      "_Exit": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "_Fork": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "_IO_2_1_stderr_": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
+        ]
+      },
+      "_IO_2_1_stdin_": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
+        ]
+      },
+      "_IO_2_1_stdout_": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
+        ]
+      },
       "_IO_adjust_column": {
         "count": 3,
         "fixtures": [
@@ -689,10 +1369,34 @@
           "io_internal_ops.json"
         ]
       },
+      "_IO_enable_locks": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "_IO_feof": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
+        ]
+      },
+      "_IO_ferror": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
+        ]
+      },
       "_IO_file_init": {
         "count": 1,
         "fixtures": [
           "io_internal_ops.json"
+        ]
+      },
+      "_IO_flockfile": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
         ]
       },
       "_IO_free_backup_area": {
@@ -705,6 +1409,24 @@
         "count": 1,
         "fixtures": [
           "io_internal_ops.json"
+        ]
+      },
+      "_IO_ftrylockfile": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
+        ]
+      },
+      "_IO_funlockfile": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
+        ]
+      },
+      "_IO_getc": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
         ]
       },
       "_IO_init": {
@@ -761,10 +1483,52 @@
           "io_internal_ops.json"
         ]
       },
+      "_IO_padn": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
+        ]
+      },
+      "_IO_peekc_locked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
+        ]
+      },
+      "_IO_putc": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_symbols.json"
+        ]
+      },
+      "_IO_puts": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
+        ]
+      },
       "_IO_seekmark": {
         "count": 1,
         "fixtures": [
           "io_internal_ops.json"
+        ]
+      },
+      "_IO_seekoff": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
+        ]
+      },
+      "_IO_seekpos": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
+        ]
+      },
+      "_IO_sgetn": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
         ]
       },
       "_IO_str_overflow": {
@@ -821,10 +1585,442 @@
           "io_internal_ops.json"
         ]
       },
+      "_LIB_VERSION": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__abort_msg": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "__acos_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__acosf128_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__acosf_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__acosh_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__acoshf128_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__acoshf_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__acoshl_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__acosl_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__adjtimex": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "__after_morecore_hook": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "__arch_prctl": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "__argz_count": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave09.json"
+        ]
+      },
+      "__argz_next": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave09.json"
+        ]
+      },
+      "__argz_stringify": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave09.json"
+        ]
+      },
+      "__asin_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__asinf128_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__asinf_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave02.json"
+        ]
+      },
+      "__asinl_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__asprintf": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "__asprintf_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
+        ]
+      },
+      "__atan2_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__atan2f128_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__atan2f_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__atan2l_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__atanh_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__atanhf128_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__atanhf_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__atanhl_finite": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__b64_ntop": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "__b64_pton": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "__backtrace": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "__backtrace_symbols": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "__backtrace_symbols_fd": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "__bsd_getpgrp": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave02.json"
+        ]
+      },
+      "__bzero": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave09.json"
+        ]
+      },
+      "__call_tls_dtors": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__check_rhosts_file": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__chk_fail": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
+        ]
+      },
+      "__clock_gettime": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__clog10": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__clog10f": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__clog10l": {
+        "count": 2,
+        "fixtures": [
+          "math_finite_special_wave03.json"
+        ]
+      },
+      "__clone": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__close": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__close_nocancel": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__close_nocancel_nostatus": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__cmsg_nxthdr": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__confstr_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
+        ]
+      },
+      "__connect": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__copy_grp": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__ctype32_b": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__ctype32_tolower": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_compat_wave03.json"
+        ]
+      },
+      "__cxa_atexit": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "__cxa_finalize": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "__cyg_profile_func_enter": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_bootstrap_wave01.json"
+        ]
+      },
+      "__cyg_profile_func_exit": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_bootstrap_wave01.json"
+        ]
+      },
+      "__dprintf_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
+        ]
+      },
       "__errno_location": {
         "count": 5,
         "fixtures": [
           "errno_ops.json"
+        ]
+      },
+      "__explicit_bzero_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
+        ]
+      },
+      "__fdelt_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
+        ]
+      },
+      "__fentry__": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_bootstrap_wave01.json"
+        ]
+      },
+      "__fgets_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
+        ]
+      },
+      "__fgets_unlocked_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
+        ]
+      },
+      "__fgetws_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
+        ]
+      },
+      "__fgetws_unlocked_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
+        ]
+      },
+      "__finite": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "__finitef": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "__fortify_fail": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
+        ]
+      },
+      "__fpclassify": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "__fpclassifyf": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "__fprintf_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave01.json"
         ]
       },
       "__frankenlibc_startup_phase0": {
@@ -839,10 +2035,490 @@
           "startup_ops.json"
         ]
       },
+      "__fread_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__fread_unlocked_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__fwprintf_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__fxstat": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "__fxstat64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "__fxstatat": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "__fxstatat64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "__getcwd_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__getdomainname_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__getgroups_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__gethostname_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__getlogin_r_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__gets_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__getwd_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__gmtime_r": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "__h_errno_location": {
+        "count": 2,
+        "fixtures": [
+          "resolver_nss_core_wave01.json"
+        ]
+      },
+      "__isinf": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "__isinff": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "__islower_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isnan": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "__isnanf": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "__isoc23_fscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
+        ]
+      },
+      "__isoc23_fwscanf": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isoc23_scanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
+        ]
+      },
+      "__isoc23_sscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
+        ]
+      },
+      "__isoc23_swscanf": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isoc23_vfscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
+        ]
+      },
+      "__isoc23_vfwscanf": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isoc23_vscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
+        ]
+      },
+      "__isoc23_vsscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
+        ]
+      },
+      "__isoc23_vswscanf": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isoc23_vwscanf": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isoc23_wcstoimax": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isoc23_wcstol": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isoc23_wcstol_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isoc23_wcstoll": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isoc23_wcstoll_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isoc23_wcstoul": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave01.json"
+        ]
+      },
+      "__isoc23_wcstoul_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__isoc23_wcstoull": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__isoc23_wcstoull_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__isoc23_wcstoumax": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__isoc23_wscanf": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__isoc99_fscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
+        ]
+      },
+      "__isoc99_fwscanf": {
+        "count": 1,
+        "fixtures": [
+          "isoc_wide_scanf_ops.json"
+        ]
+      },
+      "__isoc99_scanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave01.json"
+        ]
+      },
+      "__isoc99_sscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
+        ]
+      },
+      "__isoc99_swscanf": {
+        "count": 1,
+        "fixtures": [
+          "isoc_wide_scanf_ops.json"
+        ]
+      },
+      "__isoc99_vfscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
+        ]
+      },
+      "__isoc99_vfwscanf": {
+        "count": 1,
+        "fixtures": [
+          "isoc_wide_scanf_ops.json"
+        ]
+      },
+      "__isoc99_vscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
+        ]
+      },
+      "__isoc99_vsscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
+        ]
+      },
+      "__isoc99_vswscanf": {
+        "count": 1,
+        "fixtures": [
+          "isoc_wide_scanf_ops.json"
+        ]
+      },
+      "__isoc99_vwscanf": {
+        "count": 1,
+        "fixtures": [
+          "isoc_wide_scanf_ops.json"
+        ]
+      },
+      "__isoc99_wscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
+        ]
+      },
+      "__iswalnum_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__iswalpha_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__iswblank_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__iswcntrl_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__iswctype_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__iswdigit_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__iswgraph_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave02.json"
+        ]
+      },
+      "__iswlower_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__iswprint_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__iswpunct_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__iswspace_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__iswupper_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__iswxdigit_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__libc_allocate_rtsig": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
+      "__libc_current_sigrtmax": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
+        ]
+      },
+      "__libc_current_sigrtmin": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
+        ]
+      },
+      "__libc_freeres": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
+      "__libc_init_first": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
+      "__libc_sa_len": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
       "__libc_start_main": {
         "count": 4,
         "fixtures": [
           "startup_ops.json"
+        ]
+      },
+      "__longjmp_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__lxstat": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "__lxstat64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "__mbsnrtowcs_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave02.json"
+        ]
+      },
+      "__mbsrtowcs_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
+        ]
+      },
+      "__mbstowcs_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
         ]
       },
       "__memcmpeq": {
@@ -851,10 +2527,130 @@
           "string_ops.json"
         ]
       },
+      "__memcpy_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
+        ]
+      },
+      "__memmove_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
+        ]
+      },
       "__mempcpy": {
         "count": 2,
         "fixtures": [
           "string_ops.json"
+        ]
+      },
+      "__memset_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
+        ]
+      },
+      "__monstartup": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_bootstrap_wave01.json"
+        ]
+      },
+      "__open64_2": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
+        ]
+      },
+      "__open_2": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
+        ]
+      },
+      "__openat64_2": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
+        ]
+      },
+      "__openat_2": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
+        ]
+      },
+      "__poll_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
+        ]
+      },
+      "__ppoll_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
+        ]
+      },
+      "__pread64_chk": {
+        "count": 2,
+        "fixtures": [
+          "fortify_checked_wrapper_wave03.json"
+        ]
+      },
+      "__profile_frequency": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_bootstrap_wave01.json"
+        ]
+      },
+      "__progname": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem.json"
+        ]
+      },
+      "__pthread_cleanup_routine": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
+        ]
+      },
+      "__pthread_get_minstack": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
+        ]
+      },
+      "__pthread_getspecific": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
+        ]
+      },
+      "__pthread_key_create": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
+        ]
+      },
+      "__pthread_mutex_destroy": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
+        ]
+      },
+      "__pthread_mutex_init": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
+        ]
+      },
+      "__pthread_mutex_lock": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
         ]
       },
       "__pthread_mutex_trylock": {
@@ -869,10 +2665,190 @@
           "pthread_mutex.json"
         ]
       },
+      "__pthread_mutexattr_destroy": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
+        ]
+      },
+      "__pthread_mutexattr_init": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
+        ]
+      },
+      "__pthread_mutexattr_settype": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
+        ]
+      },
+      "__pthread_once": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
+        ]
+      },
+      "__pthread_register_cancel": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave01.json"
+        ]
+      },
+      "__pthread_register_cancel_defer": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
+      "__pthread_rwlock_destroy": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
+      "__pthread_rwlock_init": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
+      "__pthread_rwlock_rdlock": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
+      "__pthread_rwlock_tryrdlock": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
+      "__pthread_rwlock_trywrlock": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
+      "__pthread_rwlock_unlock": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
+      "__pthread_rwlock_wrlock": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
+      "__pthread_setspecific": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
+      "__pthread_unregister_cancel": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
+      "__pthread_unregister_cancel_restore": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
+      "__pthread_unwind_next": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave02.json"
+        ]
+      },
       "__rawmemchr": {
         "count": 1,
         "fixtures": [
           "string_ops.json"
+        ]
+      },
+      "__rpc_thread_createerr": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
+      "__rpc_thread_svc_fdset": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
+      "__rpc_thread_svc_max_pollfd": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
+      "__rpc_thread_svc_pollfd": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
+      "__sched_cpualloc": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
+        ]
+      },
+      "__sched_cpucount": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
+        ]
+      },
+      "__sched_cpufree": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
+        ]
+      },
+      "__sched_rr_get_interval": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
+        ]
+      },
+      "__sched_setparam": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
+        ]
+      },
+      "__signbit": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "__signbitf": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "__stack_chk_fail": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
+        ]
+      },
+      "__stack_chk_guard": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
         ]
       },
       "__stpcpy": {
@@ -929,10 +2905,316 @@
           "string_ops.json"
         ]
       },
+      "__strcspn_c2": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strcspn_c3": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strdup": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strerror_r": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strfmon_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strftime_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strncasecmp_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strndup": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strpbrk_c2": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strpbrk_c3": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strsep_1c": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strsep_2c": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths.json"
+        ]
+      },
+      "__strsep_3c": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strsep_g": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strspn_c1": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strspn_c2": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strspn_c3": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strtod_internal": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strtod_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strtof_internal": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strtof_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strtok_r": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strtok_r_1c": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strtol_internal": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave05.json"
+        ]
+      },
+      "__strtol_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "__strtold_internal": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "__strtold_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "__strtoll_internal": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "__strtoll_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "__strtoul_internal": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "__strtoul_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "__strtoull_internal": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "__strtoull_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "__strverscmp": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "__strxfrm_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "__toascii_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__tolower_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__toupper_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__towctrans_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__towlower_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__towupper_l": {
+        "count": 2,
+        "fixtures": [
+          "wchar_locale_encoding_wave03.json"
+        ]
+      },
+      "__xpg_basename": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
+        ]
+      },
+      "__xstat": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
+        ]
+      },
+      "__xstat64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
+        ]
+      },
+      "_authenticate": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
+      "_exit": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave01.json"
+        ]
+      },
+      "_null_auth": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
+      "_rpc_dtablesize": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
+      "_seterr_reply": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
       "_setjmp": {
         "count": 1,
         "fixtures": [
           "setjmp_ops.json"
+        ]
+      },
+      "accept": {
+        "count": 2,
+        "fixtures": [
+          "socket_network_wave01.json"
+        ]
+      },
+      "accept4": {
+        "count": 2,
+        "fixtures": [
+          "socket_network_wave01.json"
         ]
       },
       "access": {
@@ -941,14 +3223,284 @@
           "unistd_ops.json"
         ]
       },
-      "acos": {
+      "acct": {
         "count": 2,
+        "fixtures": [
+          "process_spawn_wave01.json"
+        ]
+      },
+      "acos": {
+        "count": 3,
         "fixtures": [
           "math_ops.json"
         ]
       },
-      "asin": {
+      "add_key": {
         "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
+        ]
+      },
+      "addmntent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave02.json"
+        ]
+      },
+      "addseverity": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "adjtimex": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "aio_cancel": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "aio_cancel64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "aio_error": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "aio_error64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "aio_fsync": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "aio_fsync64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "aio_init": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "aio_read": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "aio_read64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "aio_return": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave03.json"
+        ]
+      },
+      "aio_return64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "aio_suspend": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "aio_suspend64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "aio_write": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "aio_write64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "alarm": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "aligned_alloc": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
+      "arc4random": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "arc4random_buf": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "arc4random_uniform": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "argp_error": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "argp_failure": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "argp_help": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave04.json"
+        ]
+      },
+      "argp_parse": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
+        ]
+      },
+      "argp_state_help": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
+        ]
+      },
+      "argp_usage": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
+        ]
+      },
+      "argz_add": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave06.json"
+        ]
+      },
+      "argz_add_sep": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave07.json"
+        ]
+      },
+      "argz_append": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave07.json"
+        ]
+      },
+      "argz_count": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave07.json"
+        ]
+      },
+      "argz_create": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
+        ]
+      },
+      "argz_create_sep": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave07.json"
+        ]
+      },
+      "argz_delete": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave07.json"
+        ]
+      },
+      "argz_extract": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave07.json"
+        ]
+      },
+      "argz_insert": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave07.json"
+        ]
+      },
+      "argz_next": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave07.json"
+        ]
+      },
+      "argz_replace": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave07.json"
+        ]
+      },
+      "argz_stringify": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave07.json"
+        ]
+      },
+      "asctime": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
+        ]
+      },
+      "asctime_r": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
+        ]
+      },
+      "asin": {
+        "count": 3,
         "fixtures": [
           "math_ops.json"
         ]
@@ -984,6 +3536,42 @@
           "stdlib_numeric.json"
         ]
       },
+      "authdes_create": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
+      "authdes_getucred": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
+      "authdes_pk_create": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
+      "authnone_create": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network.json"
+        ]
+      },
+      "authunix_create": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
+        ]
+      },
+      "authunix_create_default": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
+        ]
+      },
       "backtrace": {
         "count": 3,
         "fixtures": [
@@ -1002,16 +3590,70 @@
           "backtrace_ops.json"
         ]
       },
+      "bcmp": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
+        ]
+      },
+      "bcopy": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
+        ]
+      },
       "bind": {
         "count": 1,
         "fixtures": [
           "socket_ops.json"
         ]
       },
+      "bind_textdomain_codeset": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
+        ]
+      },
+      "bindresvport": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
+        ]
+      },
+      "bindtextdomain": {
+        "count": 2,
+        "fixtures": [
+          "locale_catalog_wave01.json"
+        ]
+      },
+      "brk": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
+        ]
+      },
+      "bsd_signal": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
+        ]
+      },
       "bsearch": {
         "count": 6,
         "fixtures": [
           "stdlib_sort.json"
+        ]
+      },
+      "bzero": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
+        ]
+      },
+      "c8rtomb": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
         ]
       },
       "call_once": {
@@ -1024,6 +3666,54 @@
         "count": 1,
         "fixtures": [
           "allocator.json"
+        ]
+      },
+      "callrpc": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
+        ]
+      },
+      "canonicalize_file_name": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
+        ]
+      },
+      "capget": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
+        ]
+      },
+      "capset": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
+        ]
+      },
+      "catclose": {
+        "count": 2,
+        "fixtures": [
+          "locale_catalog_wave01.json"
+        ]
+      },
+      "catgets": {
+        "count": 2,
+        "fixtures": [
+          "locale_catalog_wave01.json"
+        ]
+      },
+      "catopen": {
+        "count": 2,
+        "fixtures": [
+          "locale_catalog_wave01.json"
+        ]
+      },
+      "cbc_crypt": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
         ]
       },
       "ceil": {
@@ -1044,6 +3734,12 @@
           "termios_ops.json"
         ]
       },
+      "cfree": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
       "cfsetispeed": {
         "count": 1,
         "fixtures": [
@@ -1056,10 +3752,142 @@
           "termios_ops.json"
         ]
       },
+      "chdir": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
+        ]
+      },
+      "chmod": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave05.json"
+        ]
+      },
+      "chown": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
+        ]
+      },
+      "chroot": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave01.json"
+        ]
+      },
+      "clearerr": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
+        ]
+      },
+      "clearerr_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
+        ]
+      },
+      "clnt_broadcast": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
+        ]
+      },
+      "clnt_create": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
+        ]
+      },
+      "clnt_pcreateerror": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
+        ]
+      },
+      "clnt_perrno": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
+        ]
+      },
+      "clnt_perror": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
+        ]
+      },
+      "clnt_spcreateerror": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
+        ]
+      },
+      "clnt_sperrno": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave02.json"
+        ]
+      },
+      "clnt_sperror": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
+        ]
+      },
+      "clntraw_create": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
+        ]
+      },
+      "clnttcp_create": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
+        ]
+      },
+      "clntudp_bufcreate": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
+        ]
+      },
+      "clntudp_create": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
+        ]
+      },
+      "clntunix_create": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
+        ]
+      },
       "clock": {
         "count": 1,
         "fixtures": [
           "time_ops.json"
+        ]
+      },
+      "clock_adjtime": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
+        ]
+      },
+      "clock_getcpuclockid": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
+        ]
+      },
+      "clock_getres": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
         ]
       },
       "clock_gettime": {
@@ -1068,16 +3896,52 @@
           "time_ops.json"
         ]
       },
+      "clock_nanosleep": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
+        ]
+      },
+      "clock_settime": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
+        ]
+      },
+      "clone": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave01.json"
+        ]
+      },
       "close": {
         "count": 2,
         "fixtures": [
           "unistd_ops.json"
         ]
       },
+      "close_range": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
+        ]
+      },
       "closedir": {
         "count": 1,
         "fixtures": [
           "dirent_ops.json"
+        ]
+      },
+      "closefrom": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave01.json"
+        ]
+      },
+      "closelog": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
         ]
       },
       "cnd_broadcast": {
@@ -1116,16 +3980,172 @@
           "elf_loader.json"
         ]
       },
+      "connect": {
+        "count": 2,
+        "fixtures": [
+          "socket_network_wave01.json"
+        ]
+      },
+      "consttime_bcmp": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
+        ]
+      },
+      "consttime_memequal": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
+        ]
+      },
       "cos": {
         "count": 2,
         "fixtures": [
           "math_ops.json"
         ]
       },
+      "creat": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
+        ]
+      },
+      "creat64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
+        ]
+      },
+      "crypt": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
+        ]
+      },
+      "crypt_checksalt": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
+        ]
+      },
+      "crypt_gensalt": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
+        ]
+      },
+      "crypt_gensalt_r": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
+        ]
+      },
+      "crypt_gensalt_ra": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
+        ]
+      },
+      "crypt_gensalt_rn": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave01.json"
+        ]
+      },
+      "crypt_preferred_method": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "crypt_r": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "crypt_ra": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "crypt_rn": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "ctermid": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "ctime": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
+        ]
+      },
+      "ctime_r": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
+        ]
+      },
+      "cuserid": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "daemon": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "dcgettext": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "dcngettext": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "des_setparity": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
+        ]
+      },
+      "dgettext": {
+        "count": 2,
+        "fixtures": [
+          "locale_catalog_wave01.json"
+        ]
+      },
+      "difftime": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
+        ]
+      },
       "dirfd": {
         "count": 2,
         "fixtures": [
           "dirent_ops.json"
+        ]
+      },
+      "dl_iterate_phdr": {
+        "count": 2,
+        "fixtures": [
+          "dlfcn_ops.json"
         ]
       },
       "dladdr": {
@@ -1168,6 +4188,36 @@
           "loader_edges.json"
         ]
       },
+      "dlvsym": {
+        "count": 2,
+        "fixtures": [
+          "dlfcn_ops.json"
+        ]
+      },
+      "dn_comp": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "dn_expand": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "dn_skipname": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave06.json"
+        ]
+      },
+      "dngettext": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
+        ]
+      },
       "dprintf": {
         "count": 2,
         "fixtures": [
@@ -1178,6 +4228,18 @@
         "count": 2,
         "fixtures": [
           "locale_ops.json"
+        ]
+      },
+      "eaccess": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
+        ]
+      },
+      "ecb_crypt": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
         ]
       },
       "elf_hash": {
@@ -1192,10 +4254,64 @@
           "resolver.json"
         ]
       },
+      "encrypt": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
+        ]
+      },
+      "encrypt_r": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
+        ]
+      },
+      "endaliasent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
+        ]
+      },
+      "endfsent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
+        ]
+      },
       "endgrent": {
         "count": 2,
         "fixtures": [
           "grp_ops.json"
+        ]
+      },
+      "endhostent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
+        ]
+      },
+      "endmntent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
+        ]
+      },
+      "endnetent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
+        ]
+      },
+      "endnetgrent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
+        ]
+      },
+      "endprotoent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
         ]
       },
       "endpwent": {
@@ -1204,10 +4320,130 @@
           "pwd_ops.json"
         ]
       },
+      "endrpcent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave07.json"
+        ]
+      },
+      "endservent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "endttyent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "endutent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "endutxent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "environ": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
+        ]
+      },
+      "envz_add": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave08.json"
+        ]
+      },
+      "envz_entry": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave08.json"
+        ]
+      },
+      "envz_get": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave08.json"
+        ]
+      },
+      "envz_merge": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave08.json"
+        ]
+      },
+      "envz_remove": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave08.json"
+        ]
+      },
+      "envz_strip": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave08.json"
+        ]
+      },
+      "epoll_create": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
+        ]
+      },
+      "epoll_create1": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
+        ]
+      },
+      "epoll_ctl": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
+        ]
+      },
+      "epoll_pwait": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
+        ]
+      },
+      "epoll_pwait2": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "epoll_wait": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
+        ]
+      },
       "erf": {
         "count": 1,
         "fixtures": [
           "math_ops.json"
+        ]
+      },
+      "err": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
+        ]
+      },
+      "errc": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
         ]
       },
       "errno_constants": {
@@ -1222,10 +4458,130 @@
           "errno_ops.json"
         ]
       },
+      "errx": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
+        ]
+      },
+      "ether_aton": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "ether_aton_r": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "ether_hostton": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "ether_line": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "ether_ntoa": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "ether_ntoa_r": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "ether_ntohost": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave08.json"
+        ]
+      },
+      "euidaccess": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
+      "eventfd": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
+        ]
+      },
+      "eventfd2": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
+      "eventfd_read": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
+      "eventfd_write": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
+      "execl": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
+      "execle": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
+      "execlp": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
+      "execv": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
       "execve": {
         "count": 2,
         "fixtures": [
           "spawn_exec_ops.json"
+        ]
+      },
+      "execveat": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
+      "execvp": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave01.json"
+        ]
+      },
+      "execvpe": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave01.json"
         ]
       },
       "exp": {
@@ -1234,10 +4590,76 @@
           "math_ops.json"
         ]
       },
+      "explicit_bzero": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
+        ]
+      },
+      "explicit_memset": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
+        ]
+      },
       "fabs": {
         "count": 2,
         "fixtures": [
           "math_ops.json"
+        ]
+      },
+      "faccessat": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
+      "fallocate": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
+      "fallocate64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave09.json"
+        ]
+      },
+      "fchdir": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
+        ]
+      },
+      "fchmod": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
+        ]
+      },
+      "fchmodat": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
+        ]
+      },
+      "fchmodat2": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
+        ]
+      },
+      "fchown": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
+        ]
+      },
+      "fchownat": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
         ]
       },
       "fclose": {
@@ -1246,10 +4668,82 @@
           "stdio_file_ops.json"
         ]
       },
+      "fcloseall": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
+        ]
+      },
+      "fcntl64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
+        ]
+      },
+      "fcrypt": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
+        ]
+      },
+      "fdatasync": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
+        ]
+      },
+      "fdopen": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
+        ]
+      },
+      "feclearexcept": {
+        "count": 1,
+        "fixtures": [
+          "fenv_ops.json"
+        ]
+      },
+      "fegetenv": {
+        "count": 1,
+        "fixtures": [
+          "fenv_ops.json"
+        ]
+      },
+      "fegetexceptflag": {
+        "count": 1,
+        "fixtures": [
+          "fenv_ops.json"
+        ]
+      },
+      "fegetround": {
+        "count": 1,
+        "fixtures": [
+          "fenv_ops.json"
+        ]
+      },
+      "feholdexcept": {
+        "count": 1,
+        "fixtures": [
+          "fenv_ops.json"
+        ]
+      },
       "feof": {
         "count": 2,
         "fixtures": [
           "stdio_file_ops.json"
+        ]
+      },
+      "feof_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
+        ]
+      },
+      "feraiseexcept": {
+        "count": 1,
+        "fixtures": [
+          "fenv_ops.json"
         ]
       },
       "ferror": {
@@ -1258,10 +4752,58 @@
           "stdio_file_ops.json"
         ]
       },
+      "ferror_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
+        ]
+      },
+      "fesetenv": {
+        "count": 1,
+        "fixtures": [
+          "fenv_ops.json"
+        ]
+      },
+      "fesetexceptflag": {
+        "count": 1,
+        "fixtures": [
+          "fenv_ops.json"
+        ]
+      },
+      "fesetround": {
+        "count": 1,
+        "fixtures": [
+          "fenv_ops.json"
+        ]
+      },
+      "fetestexcept": {
+        "count": 1,
+        "fixtures": [
+          "fenv_ops.json"
+        ]
+      },
+      "feupdateenv": {
+        "count": 1,
+        "fixtures": [
+          "fenv_ops.json"
+        ]
+      },
+      "fexecve": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
+        ]
+      },
       "fflush": {
         "count": 2,
         "fixtures": [
           "stdio_file_ops.json"
+        ]
+      },
+      "fflush_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave02.json"
         ]
       },
       "fgetc": {
@@ -1270,10 +4812,58 @@
           "stdio_file_ops.json"
         ]
       },
+      "fgetc_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
+        ]
+      },
+      "fgetgrent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
+        ]
+      },
+      "fgetgrent_r": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave10.json"
+        ]
+      },
+      "fgetpos": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
+        ]
+      },
+      "fgetpos64": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
+        ]
+      },
       "fgets": {
         "count": 2,
         "fixtures": [
           "stdio_file_ops.json"
+        ]
+      },
+      "fgets_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
+        ]
+      },
+      "fgetwc_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
+        ]
+      },
+      "fgetws_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
         ]
       },
       "fileno": {
@@ -1282,14 +4872,44 @@
           "stdio_file_ops.json"
         ]
       },
+      "fileno_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
+        ]
+      },
+      "finite": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "finitef": {
+        "count": 1,
+        "fixtures": [
+          "math_ops.json"
+        ]
+      },
+      "flockfile": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
+        ]
+      },
       "floor": {
         "count": 2,
         "fixtures": [
           "math_ops.json"
         ]
       },
+      "fmemopen": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
+        ]
+      },
       "fmod": {
-        "count": 1,
+        "count": 2,
         "fixtures": [
           "math_ops.json"
         ]
@@ -1304,6 +4924,18 @@
         "count": 3,
         "fixtures": [
           "stdio_file_ops.json"
+        ]
+      },
+      "fopen64": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
+        ]
+      },
+      "fopencookie": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
         ]
       },
       "fork": {
@@ -1324,16 +4956,46 @@
           "stdio_file_ops.json"
         ]
       },
+      "fputc_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave03.json"
+        ]
+      },
       "fputs": {
         "count": 2,
         "fixtures": [
           "stdio_file_ops.json"
         ]
       },
+      "fputs_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
+        ]
+      },
+      "fputwc_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
+        ]
+      },
+      "fputws_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
+        ]
+      },
       "fread": {
         "count": 2,
         "fixtures": [
           "stdio_file_ops.json"
+        ]
+      },
+      "fread_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
         ]
       },
       "free": {
@@ -1354,10 +5016,52 @@
           "locale_ops.json"
         ]
       },
+      "freopen": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
+        ]
+      },
+      "freopen64": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
+        ]
+      },
+      "fscanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
+        ]
+      },
       "fseek": {
         "count": 1,
         "fixtures": [
           "stdio_file_ops.json"
+        ]
+      },
+      "fseeko": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
+        ]
+      },
+      "fseeko64": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
+        ]
+      },
+      "fsetpos": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
+        ]
+      },
+      "fsetpos64": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
         ]
       },
       "ftell": {
@@ -1366,10 +5070,52 @@
           "stdio_file_ops.json"
         ]
       },
+      "ftello": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave04.json"
+        ]
+      },
+      "ftello64": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
+        ]
+      },
+      "ftrylockfile": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
+        ]
+      },
+      "funlockfile": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
+        ]
+      },
       "fwrite": {
         "count": 1,
         "fixtures": [
           "stdio_file_ops.json"
+        ]
+      },
+      "fwrite_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
+        ]
+      },
+      "gai_strerror": {
+        "count": 2,
+        "fixtures": [
+          "resolver_nss_core_wave01.json"
+        ]
+      },
+      "get_myaddress": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
         ]
       },
       "getaddrinfo": {
@@ -1384,10 +5130,40 @@
           "stdlib_numeric.json"
         ]
       },
+      "getc": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
+        ]
+      },
+      "getc_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
+        ]
+      },
+      "getchar": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
+        ]
+      },
+      "getchar_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
+        ]
+      },
       "getcwd": {
         "count": 1,
         "fixtures": [
           "unistd_ops.json"
+        ]
+      },
+      "getdelim": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
         ]
       },
       "getegid": {
@@ -1420,10 +5196,22 @@
           "grp_ops.json"
         ]
       },
+      "gethostbyaddr": {
+        "count": 2,
+        "fixtures": [
+          "resolver_nss_core_wave01.json"
+        ]
+      },
       "gethostbyname": {
         "count": 2,
         "fixtures": [
           "resolver.json"
+        ]
+      },
+      "getline": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
         ]
       },
       "getlogin": {
@@ -1444,6 +5232,24 @@
           "mntent_ops.json"
         ]
       },
+      "getnameinfo": {
+        "count": 2,
+        "fixtures": [
+          "resolver_nss_core_wave01.json"
+        ]
+      },
+      "getnetname": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
+        ]
+      },
+      "getpeername": {
+        "count": 2,
+        "fixtures": [
+          "socket_network_wave01.json"
+        ]
+      },
       "getpid": {
         "count": 3,
         "fixtures": [
@@ -1458,6 +5264,24 @@
           "unistd_ops.json"
         ]
       },
+      "getprotobyname": {
+        "count": 2,
+        "fixtures": [
+          "resolver_nss_core_wave01.json"
+        ]
+      },
+      "getprotobynumber": {
+        "count": 2,
+        "fixtures": [
+          "resolver_nss_core_wave01.json"
+        ]
+      },
+      "getpublickey": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
+        ]
+      },
       "getpwnam": {
         "count": 4,
         "fixtures": [
@@ -1470,10 +5294,40 @@
           "pwd_ops.json"
         ]
       },
+      "getresgid": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave01.json"
+        ]
+      },
+      "getresuid": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave01.json"
+        ]
+      },
       "getrlimit": {
         "count": 11,
         "fixtures": [
           "resource_ops.json"
+        ]
+      },
+      "getrpcport": {
+        "count": 2,
+        "fixtures": [
+          "rpc_legacy_network_wave03.json"
+        ]
+      },
+      "getservbyname": {
+        "count": 2,
+        "fixtures": [
+          "resolver_nss_core_wave01.json"
+        ]
+      },
+      "getservbyport": {
+        "count": 2,
+        "fixtures": [
+          "resolver_nss_core_wave01.json"
         ]
       },
       "getsid": {
@@ -1494,16 +5348,52 @@
           "socket_ops.json"
         ]
       },
+      "gettext": {
+        "count": 2,
+        "fixtures": [
+          "locale_catalog_wave01.json"
+        ]
+      },
+      "gettimeofday": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
+        ]
+      },
       "getuid": {
         "count": 1,
         "fixtures": [
           "unistd_ops.json"
         ]
       },
+      "getw": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
+        ]
+      },
       "glob": {
         "count": 2,
         "fixtures": [
           "regex_glob_ops.json"
+        ]
+      },
+      "globfree": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
+        ]
+      },
+      "gmtime": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_wave01.json"
+        ]
+      },
+      "gmtime_r": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_calendar_wave02.json"
         ]
       },
       "gnu_hash": {
@@ -1564,6 +5454,12 @@
         "count": 3,
         "fixtures": [
           "iconv_phase1.json"
+        ]
+      },
+      "index": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
         ]
       },
       "inet_addr": {
@@ -1656,6 +5552,12 @@
           "signal_ops.json"
         ]
       },
+      "killpg": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
+        ]
+      },
       "lfind": {
         "count": 1,
         "fixtures": [
@@ -1680,6 +5582,12 @@
           "locale_ops.json"
         ]
       },
+      "localtime": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_calendar_wave02.json"
+        ]
+      },
       "localtime_r": {
         "count": 1,
         "fixtures": [
@@ -1687,13 +5595,13 @@
         ]
       },
       "log": {
-        "count": 2,
+        "count": 3,
         "fixtures": [
           "math_ops.json"
         ]
       },
       "log10": {
-        "count": 2,
+        "count": 3,
         "fixtures": [
           "math_ops.json"
         ]
@@ -1728,10 +5636,70 @@
           "virtual_memory_ops.json"
         ]
       },
+      "mallinfo": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
+      "mallinfo2": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
       "malloc": {
         "count": 2,
         "fixtures": [
           "allocator.json"
+        ]
+      },
+      "malloc_info": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
+      "malloc_stats": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
+      "malloc_trim": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
+      "malloc_usable_size": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave01.json"
+        ]
+      },
+      "mallopt": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave02.json"
+        ]
+      },
+      "mcount": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_bootstrap_wave01.json"
+        ]
+      },
+      "memalign": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave02.json"
+        ]
+      },
+      "memccpy": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
         ]
       },
       "memchr": {
@@ -1758,11 +5726,23 @@
           "memory_ops.json"
         ]
       },
+      "memmem": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave10.json"
+        ]
+      },
       "memmove": {
         "count": 2,
         "fixtures": [
           "memory_ops.json",
           "string_ops.json"
+        ]
+      },
+      "mempcpy": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
         ]
       },
       "memrchr": {
@@ -1780,10 +5760,40 @@
           "string_ops.json"
         ]
       },
+      "memset_explicit": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
+        ]
+      },
+      "mktemp": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave05.json"
+        ]
+      },
+      "mktime": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_calendar_wave02.json"
+        ]
+      },
       "mmap": {
         "count": 5,
         "fixtures": [
           "virtual_memory_ops.json"
+        ]
+      },
+      "moncontrol": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_bootstrap_wave01.json"
+        ]
+      },
+      "monstartup": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_bootstrap_wave01.json"
         ]
       },
       "mprotect": {
@@ -1840,10 +5850,22 @@
           "virtual_memory_ops.json"
         ]
       },
+      "nanosleep": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_calendar_wave02.json"
+        ]
+      },
       "newlocale": {
         "count": 2,
         "fixtures": [
           "locale_ops.json"
+        ]
+      },
+      "ngettext": {
+        "count": 2,
+        "fixtures": [
+          "locale_catalog_wave01.json"
         ]
       },
       "nl_langinfo": {
@@ -1870,10 +5892,28 @@
           "inet_ops.json"
         ]
       },
+      "open_memstream": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
+        ]
+      },
       "opendir": {
         "count": 4,
         "fixtures": [
           "dirent_ops.json"
+        ]
+      },
+      "pause": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
+        ]
+      },
+      "pclose": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
         ]
       },
       "perror": {
@@ -1894,22 +5934,328 @@
           "poll_ops.json"
         ]
       },
+      "popen": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
+        ]
+      },
+      "posix_memalign": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave02.json"
+        ]
+      },
       "posix_spawn": {
         "count": 3,
         "fixtures": [
           "spawn_exec_ops.json"
         ]
       },
-      "pow": {
+      "posix_spawn_file_actions_addchdir_np": {
         "count": 2,
         "fixtures": [
+          "process_spawn_wave01.json"
+        ]
+      },
+      "posix_spawn_file_actions_addclose": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave01.json"
+        ]
+      },
+      "posix_spawn_file_actions_adddup2": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave01.json"
+        ]
+      },
+      "posix_spawn_file_actions_addfchdir_np": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
+      "posix_spawn_file_actions_addopen": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
+      "posix_spawn_file_actions_destroy": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
+      "posix_spawn_file_actions_init": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
+      "posix_spawnattr_destroy": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
+      "posix_spawnattr_init": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
+      "posix_spawnp": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
+      "pow": {
+        "count": 3,
+        "fixtures": [
           "math_ops.json"
+        ]
+      },
+      "ppoll": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
+        ]
+      },
+      "prctl": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
         ]
       },
       "printf": {
         "count": 2,
         "fixtures": [
           "stdio_file_ops.json"
+        ]
+      },
+      "profil": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_bootstrap_wave01.json"
+        ]
+      },
+      "pselect": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
+        ]
+      },
+      "psiginfo": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
+        ]
+      },
+      "psignal": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
+        ]
+      },
+      "pthread_atfork": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_destroy": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_getaffinity_np": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_getdetachstate": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_getguardsize": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_getinheritsched": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_getschedparam": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_getschedpolicy": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_getscope": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_getsigmask_np": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_getstack": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_getstackaddr": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave03.json"
+        ]
+      },
+      "pthread_attr_getstacksize": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_init": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_setaffinity_np": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_setdetachstate": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_setguardsize": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_setinheritsched": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_setschedparam": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_setschedpolicy": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_setscope": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_setsigmask_np": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_setstack": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_setstackaddr": {
+        "count": 2,
+        "fixtures": [
+          "pthread_attribute_wave04.json"
+        ]
+      },
+      "pthread_attr_setstacksize": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
+        ]
+      },
+      "pthread_barrier_destroy": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
+        ]
+      },
+      "pthread_barrier_init": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
+        ]
+      },
+      "pthread_barrier_wait": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
+        ]
+      },
+      "pthread_barrierattr_destroy": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
+        ]
+      },
+      "pthread_barrierattr_getpshared": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
+        ]
+      },
+      "pthread_barrierattr_init": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
+        ]
+      },
+      "pthread_barrierattr_setpshared": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
+        ]
+      },
+      "pthread_cancel": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
         ]
       },
       "pthread_clockjoin_np": {
@@ -1960,6 +6306,24 @@
           "pthread_cond.json"
         ]
       },
+      "pthread_condattr_destroy": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
+        ]
+      },
+      "pthread_condattr_getclock": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
+        ]
+      },
+      "pthread_condattr_getpshared": {
+        "count": 2,
+        "fixtures": [
+          "pthread_sync_wave05.json"
+        ]
+      },
       "pthread_create": {
         "count": 2,
         "fixtures": [
@@ -2008,6 +6372,12 @@
           "pthread_tls_keys.json"
         ]
       },
+      "pthread_kill_other_threads_np": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_bootstrap_wave01.json"
+        ]
+      },
       "pthread_mutex_destroy": {
         "count": 1,
         "fixtures": [
@@ -2050,6 +6420,12 @@
           "pthread_tls_keys.json"
         ]
       },
+      "pthread_sigmask": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
+        ]
+      },
       "pthread_timedjoin_np": {
         "count": 7,
         "fixtures": [
@@ -2062,6 +6438,48 @@
           "pthread_gnu_extensions.json"
         ]
       },
+      "putc": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
+        ]
+      },
+      "putc_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
+        ]
+      },
+      "putchar": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
+        ]
+      },
+      "putchar_unlocked": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
+        ]
+      },
+      "puts": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
+        ]
+      },
+      "putw": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
+        ]
+      },
+      "pvalloc": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave02.json"
+        ]
+      },
       "qsort": {
         "count": 6,
         "fixtures": [
@@ -2072,6 +6490,60 @@
         "count": 2,
         "fixtures": [
           "signal_ops.json"
+        ]
+      },
+      "rawmemchr": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
+        ]
+      },
+      "re_compile_fastmap": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
+        ]
+      },
+      "re_compile_pattern": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
+        ]
+      },
+      "re_match": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
+        ]
+      },
+      "re_match_2": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
+        ]
+      },
+      "re_search": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
+        ]
+      },
+      "re_search_2": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
+        ]
+      },
+      "re_set_registers": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
+        ]
+      },
+      "re_set_syntax": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
         ]
       },
       "read": {
@@ -2098,10 +6570,28 @@
           "socket_ops.json"
         ]
       },
+      "recvfrom": {
+        "count": 2,
+        "fixtures": [
+          "socket_network_wave01.json"
+        ]
+      },
+      "recvmsg": {
+        "count": 2,
+        "fixtures": [
+          "socket_network_wave01.json"
+        ]
+      },
       "regcomp": {
         "count": 2,
         "fixtures": [
           "regex_glob_ops.json"
+        ]
+      },
+      "regerror": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave12.json"
         ]
       },
       "regexec": {
@@ -2110,10 +6600,28 @@
           "regex_glob_ops.json"
         ]
       },
+      "regfree": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
+        ]
+      },
+      "remove": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
+        ]
+      },
       "remque": {
         "count": 1,
         "fixtures": [
           "search_ops.json"
+        ]
+      },
+      "rewind": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
         ]
       },
       "rewinddir": {
@@ -2122,10 +6630,28 @@
           "dirent_ops.json"
         ]
       },
+      "rindex": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
+        ]
+      },
       "round": {
         "count": 2,
         "fixtures": [
           "math_ops.json"
+        ]
+      },
+      "scanf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_libio_wave06.json"
+        ]
+      },
+      "sched_yield": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
         ]
       },
       "seekdir": {
@@ -2164,6 +6690,18 @@
           "socket_ops.json"
         ]
       },
+      "sendmsg": {
+        "count": 2,
+        "fixtures": [
+          "socket_network_wave01.json"
+        ]
+      },
+      "sendto": {
+        "count": 2,
+        "fixtures": [
+          "socket_network_wave01.json"
+        ]
+      },
       "setbuf": {
         "count": 2,
         "fixtures": [
@@ -2200,10 +6738,28 @@
           "pwd_ops.json"
         ]
       },
+      "setresgid": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
+      "setresuid": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
       "setsid": {
         "count": 2,
         "fixtures": [
           "session_ops.json"
+        ]
+      },
+      "setsockopt": {
+        "count": 2,
+        "fixtures": [
+          "socket_network_wave01.json"
         ]
       },
       "setvbuf": {
@@ -2236,6 +6792,12 @@
           "socket_ops.json"
         ]
       },
+      "sigabbrev_np": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
+        ]
+      },
       "sigaction": {
         "count": 1,
         "fixtures": [
@@ -2246,6 +6808,18 @@
         "count": 4,
         "fixtures": [
           "signal_ops.json"
+        ]
+      },
+      "sigaltstack": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
+        ]
+      },
+      "sigandset": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
         ]
       },
       "sigdelset": {
@@ -2266,6 +6840,30 @@
           "signal_ops.json"
         ]
       },
+      "sighold": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
+        ]
+      },
+      "sigignore": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
+        ]
+      },
+      "siginterrupt": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave01.json"
+        ]
+      },
+      "sigisemptyset": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave02.json"
+        ]
+      },
       "sigismember": {
         "count": 4,
         "fixtures": [
@@ -2276,6 +6874,42 @@
         "count": 11,
         "fixtures": [
           "signal_ops.json"
+        ]
+      },
+      "sigorset": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave02.json"
+        ]
+      },
+      "sigpending": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave02.json"
+        ]
+      },
+      "sigprocmask": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave02.json"
+        ]
+      },
+      "sigrelse": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave02.json"
+        ]
+      },
+      "sigsuspend": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave02.json"
+        ]
+      },
+      "sigwait": {
+        "count": 2,
+        "fixtures": [
+          "signal_async_wave02.json"
         ]
       },
       "sin": {
@@ -2295,6 +6929,12 @@
         "count": 5,
         "fixtures": [
           "socket_ops.json"
+        ]
+      },
+      "socketpair": {
+        "count": 2,
+        "fixtures": [
+          "socket_network_wave01.json"
         ]
       },
       "sprintf": {
@@ -2735,6 +7375,36 @@
           "stdbit_ops.json"
         ]
       },
+      "stpcpy": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
+        ]
+      },
+      "stpncpy": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
+        ]
+      },
+      "strcasecmp": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
+        ]
+      },
+      "strcasecmp_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
+        ]
+      },
+      "strcasestr": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
+        ]
+      },
       "strcat": {
         "count": 3,
         "fixtures": [
@@ -2749,6 +7419,12 @@
           "string_ops.json"
         ]
       },
+      "strchrnul": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
+        ]
+      },
       "strcmp": {
         "count": 3,
         "fixtures": [
@@ -2756,11 +7432,29 @@
           "string_ops.json"
         ]
       },
+      "strcoll": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
+        ]
+      },
       "strcpy": {
         "count": 3,
         "fixtures": [
           "string_memory_full.json",
           "string_ops.json"
+        ]
+      },
+      "strcspn": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
+        ]
+      },
+      "strdup": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
         ]
       },
       "strerror": {
@@ -2779,6 +7473,36 @@
         "count": 3,
         "fixtures": [
           "errno_ops.json"
+        ]
+      },
+      "strerrordesc_np": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
+        ]
+      },
+      "strerrorname_np": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
+        ]
+      },
+      "strfromd": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
+        ]
+      },
+      "strfromf": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
+        ]
+      },
+      "strfroml": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
         ]
       },
       "strlcat": {
@@ -2800,10 +7524,34 @@
           "strlen_strict.json"
         ]
       },
+      "strmode": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
+        ]
+      },
+      "strncasecmp": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
+        ]
+      },
+      "strncasecmp_l": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
+        ]
+      },
       "strncat": {
         "count": 1,
         "fixtures": [
           "string_memory_full.json"
+        ]
+      },
+      "strncmp": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave13.json"
         ]
       },
       "strncpy": {
@@ -2813,11 +7561,59 @@
           "string_ops.json"
         ]
       },
+      "strndup": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave14.json"
+        ]
+      },
+      "strnlen": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave14.json"
+        ]
+      },
+      "strnstr": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave14.json"
+        ]
+      },
+      "strpbrk": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave14.json"
+        ]
+      },
+      "strptime": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_calendar_wave02.json"
+        ]
+      },
       "strrchr": {
         "count": 2,
         "fixtures": [
           "string_memory_full.json",
           "string_ops.json"
+        ]
+      },
+      "strsep": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave14.json"
+        ]
+      },
+      "strsignal": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave14.json"
+        ]
+      },
+      "strspn": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave14.json"
         ]
       },
       "strstr": {
@@ -2850,6 +7646,24 @@
         "count": 2,
         "fixtures": [
           "stdlib_numeric.json"
+        ]
+      },
+      "strverscmp": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave14.json"
+        ]
+      },
+      "strxfrm": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave14.json"
+        ]
+      },
+      "swab": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
         ]
       },
       "system": {
@@ -2886,6 +7700,12 @@
         "count": 2,
         "fixtures": [
           "dirent_ops.json"
+        ]
+      },
+      "textdomain": {
+        "count": 2,
+        "fixtures": [
+          "locale_catalog_wave01.json"
         ]
       },
       "tfind": {
@@ -2948,6 +7768,60 @@
           "time_ops.json"
         ]
       },
+      "timegm": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_calendar_wave02.json"
+        ]
+      },
+      "timerfd_create": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
+        ]
+      },
+      "timerfd_gettime": {
+        "count": 2,
+        "fixtures": [
+          "poll_event_loop_wave01.json"
+        ]
+      },
+      "timerfd_settime": {
+        "count": 4,
+        "fixtures": [
+          "poll_event_loop_wave02.json"
+        ]
+      },
+      "timespec_get": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_calendar_wave02.json"
+        ]
+      },
+      "timespec_getres": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_calendar_wave02.json"
+        ]
+      },
+      "timezone": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_calendar_wave02.json"
+        ]
+      },
+      "timingsafe_bcmp": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
+        ]
+      },
+      "timingsafe_memcmp": {
+        "count": 2,
+        "fixtures": [
+          "string_memory_hotpaths_wave11.json"
+        ]
+      },
       "tolower": {
         "count": 4,
         "fixtures": [
@@ -2958,6 +7832,12 @@
         "count": 4,
         "fixtures": [
           "ctype_ops.json"
+        ]
+      },
+      "tr_break": {
+        "count": 2,
+        "fixtures": [
+          "glibc_internal_bootstrap_wave01.json"
         ]
       },
       "tsearch": {
@@ -2996,6 +7876,12 @@
           "search_ops.json"
         ]
       },
+      "tzset": {
+        "count": 2,
+        "fixtures": [
+          "time_clock_calendar_wave02.json"
+        ]
+      },
       "ungetc": {
         "count": 2,
         "fixtures": [
@@ -3006,6 +7892,12 @@
         "count": 2,
         "fixtures": [
           "locale_ops.json"
+        ]
+      },
+      "valloc": {
+        "count": 2,
+        "fixtures": [
+          "malloc_membrane_wave02.json"
         ]
       },
       "vasprintf": {
@@ -3020,6 +7912,30 @@
           "stdio_file_ops.json"
         ]
       },
+      "verr": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
+        ]
+      },
+      "verrc": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
+        ]
+      },
+      "verrx": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
+        ]
+      },
+      "vfork": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
       "vsnprintf": {
         "count": 2,
         "fixtures": [
@@ -3032,10 +7948,70 @@
           "stdio_file_ops.json"
         ]
       },
+      "vwarn": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
+        ]
+      },
+      "vwarnc": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
+        ]
+      },
+      "vwarnx": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
+        ]
+      },
+      "wait": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
+      "wait3": {
+        "count": 2,
+        "fixtures": [
+          "process_spawn_wave02.json"
+        ]
+      },
+      "wait4": {
+        "count": 6,
+        "fixtures": [
+          "process_spawn_wait_tail.json"
+        ]
+      },
+      "waitid": {
+        "count": 6,
+        "fixtures": [
+          "process_spawn_wait_tail.json"
+        ]
+      },
       "waitpid": {
         "count": 2,
         "fixtures": [
           "process_ops.json"
+        ]
+      },
+      "warn": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
+        ]
+      },
+      "warnc": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
+        ]
+      },
+      "warnx": {
+        "count": 1,
+        "fixtures": [
+          "err_ops.json"
         ]
       },
       "wcscat": {
@@ -3180,56 +8156,121 @@
     "c11threads_ops.json": "18fc2a96e492a3b4",
     "ctype_ops.json": "ce64b3a410dc1f75",
     "dirent_ops.json": "f1a75d458bf894e6",
-    "dlfcn_ops.json": "44117e90e2556574",
+    "dlfcn_ops.json": "f8766ad1170306bd",
     "elf_loader.json": "a564323dcac2924a",
+    "err_ops.json": "a81abb2aae211f32",
     "errno_ops.json": "1dd9b2d822578222",
+    "fenv_ops.json": "f29aea25a45c3239",
+    "fortify_checked_wrapper_wave01.json": "4f95ecb44279bb65",
+    "fortify_checked_wrapper_wave02.json": "d0ee0bca7ae169b3",
+    "fortify_checked_wrapper_wave03.json": "b7efd08277d8bc7a",
+    "glibc_internal_bootstrap_wave01.json": "4c16514899be67f6",
+    "glibc_internal_compat_wave02.json": "f1ba1808c1339d95",
+    "glibc_internal_compat_wave03.json": "25b823c46f4cc2da",
     "grp_ops.json": "ddb9255ac967ca8b",
     "iconv_phase1.json": "b8a60a0a37f3ce94",
     "inet_ops.json": "c075da66c5ff6ac4",
     "io_internal_ops.json": "6e65f4468f622224",
+    "isoc_wide_scanf_ops.json": "f83e52afba7d7502",
     "loader_edges.json": "94470b86850542ab",
+    "locale_catalog_wave01.json": "a7be15e9df074f8a",
     "locale_ops.json": "86ee8c90c46dee29",
-    "math_ops.json": "d8fa7f90d4c4e242",
+    "malloc_membrane_wave01.json": "62729e4d076b73c0",
+    "malloc_membrane_wave02.json": "b6d2cbbc4c8ea307",
+    "math_finite_special_wave02.json": "2b880406f1e0cfe1",
+    "math_finite_special_wave03.json": "b8f5518fc8059d95",
+    "math_ops.json": "f8c61f404d06bd45",
     "membrane_mode_split.json": "bd8641139f333985",
     "memcpy_strict.json": "019955b8e8a3eb83",
     "memory_ops.json": "c870298b53f8fd75",
     "mntent_ops.json": "ddcd44eb374be4af",
+    "poll_event_loop_wave01.json": "e6c18c5131c0c065",
+    "poll_event_loop_wave02.json": "fc4cdaefc358d656",
     "poll_ops.json": "a8f77cb3431d3108",
     "pressure_sensing.json": "591a298eb979e2e1",
     "printf_conformance.json": "6e76e237fd05d15c",
     "process_ops.json": "ab4ab2b4be2b8c93",
+    "process_spawn_wait_tail.json": "fac785430a05f974",
+    "process_spawn_wave01.json": "7a468783c0387bfc",
+    "process_spawn_wave02.json": "70d6626a7dea9af2",
+    "pthread_attribute_wave03.json": "434733be4c72d3da",
+    "pthread_attribute_wave04.json": "2700effe4c315b8b",
     "pthread_cond.json": "5a30161a4d331cc8",
     "pthread_gnu_extensions.json": "e4d2a9ff7fdcfd74",
     "pthread_mutex.json": "da205001a273e414",
+    "pthread_sync_wave01.json": "e0b1c641fc80fad0",
+    "pthread_sync_wave02.json": "9456b23d6640440d",
+    "pthread_sync_wave05.json": "5ea57a8434647e91",
     "pthread_thread.json": "fb6dc8acc17d9764",
     "pthread_tls_keys.json": "be6e8e18f3c8f265",
     "pwd_ops.json": "aa7d819fabf03c95",
     "regex_glob_ops.json": "79f9e164f3f41dfa",
     "resolver.json": "1e505071183007b5",
+    "resolver_nss_core_wave01.json": "fe6039a42a493874",
     "resource_ops.json": "37bb4d3d3c66ddd9",
+    "rpc_legacy_network.json": "8632088ee010c1e3",
+    "rpc_legacy_network_wave02.json": "5acc324a4bc1d81b",
+    "rpc_legacy_network_wave03.json": "397ca9c98f47a92e",
     "scanf_conformance.json": "3bf25931ceac522c",
     "search_ops.json": "89ede2c6430b4017",
     "session_ops.json": "5af770c141efd100",
     "setjmp_nested_edges.json": "d4f724d9db09826b",
     "setjmp_ops.json": "5f4c3e9a87d89872",
+    "signal_async_wave01.json": "356d6634250156ac",
+    "signal_async_wave02.json": "b1c665ca55a620e9",
     "signal_ops.json": "aa94cd6b8d7b7848",
+    "socket_network_wave01.json": "90e97bad26ed95a5",
     "socket_ops.json": "e4d160e2c6d32a95",
     "spawn_exec_ops.json": "9f1653399ce4ec14",
     "startup_ops.json": "c9eda25f37ddc3a8",
     "stdbit_ops.json": "dcae7bac0a0dabbe",
     "stdio_file_ops.json": "5e865785991b7ce7",
+    "stdio_libio_symbols.json": "fe6422d57bcc9ffc",
+    "stdio_libio_wave01.json": "a0bb2651386a90f1",
+    "stdio_libio_wave02.json": "5e0513e571e2c746",
+    "stdio_libio_wave03.json": "6d84df5094d493b9",
+    "stdio_libio_wave04.json": "a1ee136b35fd8a4e",
+    "stdio_libio_wave05.json": "fa7618024647bd7b",
+    "stdio_libio_wave06.json": "180241d4980a88cd",
     "stdlib_conversion.json": "17f389b5edfb0577",
     "stdlib_numeric.json": "2525cd9c74b24312",
     "stdlib_sort.json": "008e876fb94f9b92",
     "string_memory_full.json": "7a37d26dbfc77fef",
+    "string_memory_hotpaths.json": "ef91fd03466662a0",
+    "string_memory_hotpaths_wave05.json": "6a96130def989a59",
+    "string_memory_hotpaths_wave06.json": "9d1258757dc04fed",
+    "string_memory_hotpaths_wave07.json": "755f0e9a75840c29",
+    "string_memory_hotpaths_wave08.json": "707259e1e85e88d8",
+    "string_memory_hotpaths_wave09.json": "2bde9deff9f650df",
+    "string_memory_hotpaths_wave10.json": "e6d3a7736c815b4c",
+    "string_memory_hotpaths_wave11.json": "b5f82e3a19ac3d7b",
+    "string_memory_hotpaths_wave12.json": "3809d0dc7f215128",
+    "string_memory_hotpaths_wave13.json": "609483ee892b8015",
+    "string_memory_hotpaths_wave14.json": "2c4546755d813565",
     "string_ops.json": "6b0ab3cf096e69a1",
     "string_strtok.json": "b7ce10d14d2f264f",
     "strlen_strict.json": "f00af792a6de77ad",
     "sysv_ipc_ops.json": "73fcb6006a564a29",
     "termios_ops.json": "9e1582831d56273a",
+    "time_clock_calendar_wave02.json": "4e2dd838dac588df",
+    "time_clock_wave01.json": "994a0ab06e513a1d",
     "time_ops.json": "05f2c95398f01680",
     "unistd_ops.json": "34a343368a287270",
+    "unistd_process_filesystem.json": "653ef0a9012c0511",
+    "unistd_process_filesystem_wave01.json": "200ee5fec79bcbe6",
+    "unistd_process_filesystem_wave02.json": "9cd16feb7ddbf87b",
+    "unistd_process_filesystem_wave03.json": "04062bb99be473a4",
+    "unistd_process_filesystem_wave04.json": "ef95504b43c919ff",
+    "unistd_process_filesystem_wave05.json": "70181cd1515c5aa5",
+    "unistd_process_filesystem_wave06.json": "f703a18ecdde47a9",
+    "unistd_process_filesystem_wave07.json": "1412dcb67fd4b981",
+    "unistd_process_filesystem_wave08.json": "94fde7bcdafdd869",
+    "unistd_process_filesystem_wave09.json": "521d5b35c6d8eab5",
+    "unistd_process_filesystem_wave10.json": "932ec93bcdefdafa",
     "virtual_memory_ops.json": "677248cdc30d10fe",
+    "wchar_locale_encoding_wave01.json": "68d809e405d0a683",
+    "wchar_locale_encoding_wave02.json": "d6cdf5c7c993c1f5",
+    "wchar_locale_encoding_wave03.json": "90b670d80377ef5f",
     "wide_memory.json": "0bcf13d7c7220745",
     "wide_string.json": "e2a35884601ea279",
     "wide_string_ops.json": "e3567ecafe880397"

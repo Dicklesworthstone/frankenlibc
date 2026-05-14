@@ -280,5 +280,6 @@ fn checker_rejects_generated_log_contract_drift() -> TestResult {
 
     let output = run_checker(&root, &out_dir, &mutated_contract, None)?;
     expect_failure_contains(&output, "generated log missing required field");
+    expect_failure_contains(&output, "not_a_real_fixture_log_field");
     Ok(())
 }

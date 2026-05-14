@@ -262,7 +262,10 @@ fn missing_required_row_field_fails() {
     let fixture = write_json_fixture("support-overlay-missing-field", &overlay);
 
     let output = run_gate_with_env(&[("FLC_SUPPORT_SEMANTIC_OVERLAY", &fixture)]);
-    let report = assert_gate_fails_with(&output, "missing required field");
+    let report = assert_gate_fails_with(
+        &output,
+        "sem-elf-relocation-support: missing required field semantic_class",
+    );
     assert_eq!(report["checks"]["overlay_rows"].as_str(), Some("fail"));
 }
 
