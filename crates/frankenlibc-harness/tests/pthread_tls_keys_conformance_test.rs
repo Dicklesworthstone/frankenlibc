@@ -45,12 +45,12 @@ struct FixtureCase {
     notes: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,8 +126,8 @@ fn pthread_tls_keys_fixture_exists() {
 }
 
 #[test]
-fn pthread_tls_keys_fixture_valid_schema() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "pthread/tls_keys");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -140,11 +140,13 @@ fn pthread_tls_keys_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_tls_keys_covers_key_create() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_covers_key_create() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -154,11 +156,13 @@ fn pthread_tls_keys_covers_key_create() {
             >= 2,
         "pthread_key_create needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn pthread_tls_keys_covers_key_delete() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_covers_key_delete() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -168,11 +172,13 @@ fn pthread_tls_keys_covers_key_delete() {
             >= 2,
         "pthread_key_delete needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn pthread_tls_keys_covers_getspecific() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_covers_getspecific() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -182,11 +188,13 @@ fn pthread_tls_keys_covers_getspecific() {
             >= 2,
         "pthread_getspecific needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn pthread_tls_keys_covers_setspecific() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_covers_setspecific() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -196,11 +204,13 @@ fn pthread_tls_keys_covers_setspecific() {
             >= 2,
         "pthread_setspecific needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn pthread_tls_keys_covers_destructors() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_covers_destructors() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -210,24 +220,28 @@ fn pthread_tls_keys_covers_destructors() {
             >= 3,
         "pthread TLS key destructors need at least 3 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn pthread_tls_keys_modes_valid() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_tls_keys_error_codes_valid() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
 
     // Valid error codes for pthread TLS key operations
     let valid_errno_values = [
@@ -245,11 +259,13 @@ fn pthread_tls_keys_error_codes_valid() {
             valid_errno_values
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_tls_keys_case_count_stable() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
     assert!(
         fixture.cases.len() >= 12,
         "pthread_tls_keys fixture has {} cases, expected at least 12",
@@ -259,11 +275,13 @@ fn pthread_tls_keys_case_count_stable() {
         "pthread_tls_keys fixture has {} test cases",
         fixture.cases.len()
     );
+
+    Ok(())
 }
 
 #[test]
-fn pthread_tls_keys_has_posix_references() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("POSIX"),
@@ -272,11 +290,13 @@ fn pthread_tls_keys_has_posix_references() {
             case.spec_section
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_tls_keys_covers_edge_cases() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_covers_edge_cases() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // Should test: exhaustion, invalid key, deleted key, out of bounds
@@ -294,17 +314,19 @@ fn pthread_tls_keys_covers_edge_cases() {
         case_names.iter().any(|n| n.contains("deleted")),
         "Must test deleted key handling"
     );
+
+    Ok(())
 }
 
 #[test]
-fn pthread_tls_keys_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("pthread_tls_keys");
+fn pthread_tls_keys_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("pthread_tls_keys")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -312,13 +334,13 @@ fn pthread_tls_keys_fixture_cases_match_execute_fixture_case() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "pthread_tls_keys case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -331,4 +353,6 @@ fn pthread_tls_keys_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+
+    Ok(())
 }
