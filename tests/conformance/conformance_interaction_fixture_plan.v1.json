@@ -17,16 +17,16 @@
   ],
   "scheduler_inputs": {
     "symbols": [
-      "__strdup",
-      "_IO_ferror",
-      "_IO_peekc_locked",
-      "dlvsym",
-      "__pthread_getspecific",
-      "gethostbyaddr",
-      "__isoc23_swscanf",
-      "_Exit",
-      "__pthread_cleanup_routine",
-      "dl_iterate_phdr"
+      "fgetxattr",
+      "setbuffer",
+      "vfprintf",
+      "__ctype_init",
+      "pthread_gettid_np",
+      "getsecretkey",
+      "__wcscoll_l",
+      "fpathconf",
+      "pthread_kill",
+      "__dn_expand"
     ],
     "modes": [
       "strict",
@@ -62,7 +62,7 @@
     },
     "fixture_inventory": {
       "artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
-      "expected_campaign_count": 18,
+      "expected_campaign_count": 8,
       "expected_top_campaign_id": "fcq-unistd-process-filesystem"
     },
     "user_workload_exposure": [
@@ -86,9 +86,9 @@
   "candidates": [
     {
       "candidate_id": "ca-001",
-      "symbol": "__strdup",
-      "campaign_id": "fcq-string-memory-hotpaths",
-      "symbol_family": "string_memory",
+      "symbol": "fgetxattr",
+      "campaign_id": "fcq-unistd-process-filesystem",
+      "symbol_family": "unistd_process",
       "runtime_mode": "hardened",
       "locale_env_thread_state": "c_posix_single_thread",
       "invalid_input_class": "invalid_pointer",
@@ -99,11 +99,11 @@
       "hard_parts_weight": 4,
       "priority_score": 1103,
       "feasible": true,
-      "reason": "High-risk string/memory invalid-pointer fixture covers hardened membrane repair pressure without displacing hard-parts rows."
+      "reason": "High-risk filesystem extended-attribute fixture covers hardened invalid-pointer pressure in the current top inventory campaign."
     },
     {
       "candidate_id": "ca-002",
-      "symbol": "_IO_ferror",
+      "symbol": "setbuffer",
       "campaign_id": "fcq-stdio-libio",
       "symbol_family": "stdio_libio",
       "runtime_mode": "strict",
@@ -116,11 +116,11 @@
       "hard_parts_weight": 3,
       "priority_score": 1090,
       "feasible": true,
-      "reason": "Strict-mode libio status check anchors stream-state parity for shell and package-manager workloads."
+      "reason": "Strict-mode stdio buffering fixture anchors stream-state parity for shell and package-manager workloads."
     },
     {
       "candidate_id": "ca-003",
-      "symbol": "_IO_peekc_locked",
+      "symbol": "vfprintf",
       "campaign_id": "fcq-stdio-libio",
       "symbol_family": "stdio_libio",
       "runtime_mode": "hardened",
@@ -133,13 +133,13 @@
       "hard_parts_weight": 3,
       "priority_score": 1080,
       "feasible": true,
-      "reason": "Hardened libio fixture exercises locale and locked stream interaction coverage."
+      "reason": "Hardened stdio formatting fixture exercises locale and stream interaction coverage."
     },
     {
       "candidate_id": "ca-004",
-      "symbol": "dlvsym",
-      "campaign_id": "fcq-dlfcn-loader",
-      "symbol_family": "loader_symbol",
+      "symbol": "__ctype_init",
+      "campaign_id": "fcq-glibc-internal-compat",
+      "symbol_family": "glibc_internal",
       "runtime_mode": "strict",
       "locale_env_thread_state": "secure_env",
       "invalid_input_class": "symbol_version_failure",
@@ -150,13 +150,13 @@
       "hard_parts_weight": 5,
       "priority_score": 1025,
       "feasible": true,
-      "reason": "Versioned-symbol lookup fixture keeps L1 replacement ambition visible while staying deterministic."
+      "reason": "Strict internal-compat fixture keeps L1 replacement ambition visible while staying deterministic."
     },
     {
       "candidate_id": "ca-005",
-      "symbol": "__pthread_getspecific",
+      "symbol": "pthread_gettid_np",
       "campaign_id": "fcq-pthread-sync",
-      "symbol_family": "pthread_cancellation",
+      "symbol_family": "pthread_sync",
       "runtime_mode": "strict",
       "locale_env_thread_state": "c_posix_multi_thread",
       "invalid_input_class": "cancellation_race",
@@ -167,13 +167,13 @@
       "hard_parts_weight": 5,
       "priority_score": 971,
       "feasible": true,
-      "reason": "Thread-local lookup fixture covers pthread and cancellation-adjacent state without nondeterministic signal replay."
+      "reason": "Thread identity fixture covers pthread state without nondeterministic signal replay."
     },
     {
       "candidate_id": "ca-006",
-      "symbol": "gethostbyaddr",
-      "campaign_id": "fcq-resolver-nss-core",
-      "symbol_family": "resolver_nss",
+      "symbol": "getsecretkey",
+      "campaign_id": "fcq-rpc-legacy-network",
+      "symbol_family": "rpc_legacy",
       "runtime_mode": "strict",
       "locale_env_thread_state": "dns_env",
       "invalid_input_class": "dns_negative",
@@ -184,11 +184,11 @@
       "hard_parts_weight": 5,
       "priority_score": 950,
       "feasible": true,
-      "reason": "Negative resolver fixture covers NSS/DNS workload exposure with deterministic oracle behavior."
+      "reason": "Legacy RPC fixture covers network lookup exposure with deterministic oracle behavior."
     },
     {
       "candidate_id": "ca-007",
-      "symbol": "__isoc23_swscanf",
+      "symbol": "__wcscoll_l",
       "campaign_id": "fcq-wchar-locale-encoding",
       "symbol_family": "locale_iconv",
       "runtime_mode": "hardened",
@@ -201,11 +201,11 @@
       "hard_parts_weight": 4,
       "priority_score": 839,
       "feasible": true,
-      "reason": "Wide-scanf locale fixture covers invalid encoding and locale-thread interaction."
+      "reason": "Wide collation fixture covers invalid encoding and locale-thread interaction."
     },
     {
       "candidate_id": "ca-008",
-      "symbol": "_Exit",
+      "symbol": "fpathconf",
       "campaign_id": "fcq-unistd-process-filesystem",
       "symbol_family": "process_exit",
       "runtime_mode": "strict",
@@ -218,13 +218,13 @@
       "hard_parts_weight": 3,
       "priority_score": 821,
       "feasible": true,
-      "reason": "Process-exit fixture preserves startup/linking workload exposure and anchors the top inventory campaign."
+      "reason": "Path-configuration fixture preserves process/filesystem workload exposure and anchors the top inventory campaign."
     },
     {
       "candidate_id": "ca-009",
-      "symbol": "__pthread_cleanup_routine",
+      "symbol": "pthread_kill",
       "campaign_id": "fcq-pthread-sync",
-      "symbol_family": "pthread_cancellation",
+      "symbol_family": "pthread_sync",
       "runtime_mode": "hardened",
       "locale_env_thread_state": "signal_handler",
       "invalid_input_class": "cancellation_race",
@@ -236,13 +236,13 @@
       "priority_score": 1174,
       "feasible": false,
       "blocked_reason": "signal_handler_cancellation_replay_not_deterministic",
-      "reason": "Kept as a visible blocked high-score interaction until deterministic signal/cancellation replay exists."
+      "reason": "Kept as a visible blocked high-score interaction until deterministic signal/thread replay exists."
     },
     {
       "candidate_id": "ca-010",
-      "symbol": "dl_iterate_phdr",
-      "campaign_id": "fcq-dlfcn-loader",
-      "symbol_family": "loader_symbol",
+      "symbol": "__dn_expand",
+      "campaign_id": "fcq-glibc-internal-compat",
+      "symbol_family": "glibc_internal",
       "runtime_mode": "hardened",
       "locale_env_thread_state": "secure_env",
       "invalid_input_class": "symbol_version_failure",
@@ -254,7 +254,7 @@
       "priority_score": 1138,
       "feasible": false,
       "blocked_reason": "L1_standalone_loader_evidence_missing",
-      "reason": "Kept as a visible blocked loader interaction until standalone loader evidence is available."
+      "reason": "Kept as a visible blocked internal-compat interaction until standalone loader evidence is available."
     }
   ],
   "selected_plan": [
@@ -270,7 +270,7 @@
   "blocked_combinations": [
     {
       "candidate_id": "ca-009",
-      "symbol_family": "pthread_cancellation",
+      "symbol_family": "pthread_sync",
       "runtime_mode": "hardened",
       "locale_env_thread_state": "signal_handler",
       "invalid_input_class": "cancellation_race",
@@ -279,7 +279,7 @@
     },
     {
       "candidate_id": "ca-010",
-      "symbol_family": "loader_symbol",
+      "symbol_family": "glibc_internal",
       "runtime_mode": "hardened",
       "locale_env_thread_state": "secure_env",
       "invalid_input_class": "symbol_version_failure",
@@ -294,7 +294,7 @@
         "runtime_mode"
       ],
       "values": [
-        "string_memory",
+        "unistd_process",
         "hardened"
       ]
     },
@@ -344,7 +344,7 @@
         "invalid_input_class"
       ],
       "values": [
-        "resolver_nss",
+        "rpc_legacy",
         "dns_negative"
       ]
     },
@@ -377,7 +377,7 @@
         "invalid_input_class"
       ],
       "values": [
-        "string_memory",
+        "unistd_process",
         "hardened",
         "invalid_pointer"
       ]
@@ -401,7 +401,7 @@
         "replacement_level"
       ],
       "values": [
-        "loader_symbol",
+        "glibc_internal",
         "symbol_version_failure",
         "L1"
       ]
@@ -413,7 +413,7 @@
         "runtime_mode"
       ],
       "values": [
-        "pthread_cancellation",
+        "pthread_sync",
         "cancellation_race",
         "strict"
       ]
@@ -421,7 +421,7 @@
   ],
   "follow_up_fixture_beads": [
     {
-      "fixture_bead_hint": "bd-bp8fl.9.2.followup.string-memory-invalid-pointer",
+      "fixture_bead_hint": "bd-bp8fl.9.2.followup.unistd-invalid-pointer",
       "candidate_id": "ca-001",
       "artifact_refs": [
         "tests/conformance/conformance_interaction_fixture_plan.v1.json",
@@ -429,7 +429,7 @@
       ]
     },
     {
-      "fixture_bead_hint": "bd-bp8fl.9.2.followup.loader-l1-versioned-symbol",
+      "fixture_bead_hint": "bd-bp8fl.9.2.followup.glibc-internal-l1-versioned-symbol",
       "candidate_id": "ca-004",
       "artifact_refs": [
         "tests/conformance/conformance_interaction_fixture_plan.v1.json",

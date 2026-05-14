@@ -92,6 +92,16 @@ fn field<'a>(value: &'a Value, key: &str, context: &str) -> TestResult<&'a Value
         .ok_or_else(|| test_error(format!("{context}.{key} is missing")))
 }
 
+fn require_json_field(value: &Value, key: &str, context: &str) -> TestResult {
+    if value.get(key).is_some() {
+        Ok(())
+    } else {
+        Err(test_error(format!(
+            "{context} missing required field `{key}`"
+        )))
+    }
+}
+
 fn string_field<'a>(value: &'a Value, key: &str, context: &str) -> TestResult<&'a str> {
     field(value, key, context)?
         .as_str()
@@ -258,7 +268,7 @@ fn plan_artifact_defines_scheduler_inputs_and_candidates() -> TestResult {
             .get("expected_campaign_count")
             .and_then(Value::as_u64)
             .ok_or_else(|| test_error("expected_campaign_count must be unsigned integer"))?,
-        18,
+        8,
         "expected_campaign_count",
     )?;
 
@@ -347,7 +357,7 @@ fn gate_generates_report_and_structured_logs() -> TestResult {
         let row: Value =
             serde_json::from_str(line).map_err(|_| test_error("log line should parse as JSON"))?;
         for field in REQUIRED_LOG_FIELDS {
-            ensure(row.get(*field).is_some(), "log row missing required field")?;
+            require_json_field(&row, field, "log row")?;
         }
         match string_field(&row, "coverage_level", "log")? {
             "pairwise" => saw_pairwise = true,
