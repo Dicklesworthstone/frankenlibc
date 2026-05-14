@@ -8,13 +8,23 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    workspace_root
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "workspace root has no repository parent: {}",
+                workspace_root.display()
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,12 +57,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,14 +137,15 @@ fn execute_case_via_harness(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn string_ops_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/string_ops.json");
+fn string_ops_fixture_exists() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/string_ops.json");
     assert!(path.exists(), "string_ops.json fixture must exist");
+    Ok(())
 }
 
 #[test]
-fn string_ops_fixture_valid_schema() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "string/narrow");
@@ -153,6 +164,7 @@ fn string_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,8 +172,8 @@ fn string_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn string_ops_covers_copy_functions() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_covers_copy_functions() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["strcpy", "strncpy"];
@@ -173,22 +185,24 @@ fn string_ops_covers_copy_functions() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn string_ops_covers_concat_functions() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_covers_concat_functions() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("strcat")),
         "Missing test coverage for strcat"
     );
+    Ok(())
 }
 
 #[test]
-fn string_ops_covers_strl_functions() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_covers_strl_functions() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
 
     for function in ["strlcpy", "strlcat"] {
         assert!(
@@ -211,11 +225,12 @@ fn string_ops_covers_strl_functions() {
             "Missing hardened destination-bound repair fixture coverage for {function}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn string_ops_covers_compare_functions() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_covers_compare_functions() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["strcmp", "memcmp"];
@@ -227,11 +242,12 @@ fn string_ops_covers_compare_functions() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn string_ops_covers_search_functions() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_covers_search_functions() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["strchr", "strrchr", "strstr", "memchr"];
@@ -243,11 +259,12 @@ fn string_ops_covers_search_functions() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn string_ops_covers_hotpath_first_wave_symbols() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_covers_hotpath_first_wave_symbols() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
 
     for function in [
         "__memcmpeq",
@@ -268,6 +285,7 @@ fn string_ops_covers_hotpath_first_wave_symbols() {
             "Missing first-wave hot-path fixture coverage for {function}"
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -275,8 +293,8 @@ fn string_ops_covers_hotpath_first_wave_symbols() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn string_ops_error_codes_valid() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
 
     // String ops generally don't set errno on success
     let valid_errno_values = [0];
@@ -290,6 +308,7 @@ fn string_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -297,8 +316,8 @@ fn string_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn string_ops_modes_valid() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -308,6 +327,7 @@ fn string_ops_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -315,8 +335,8 @@ fn string_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn string_ops_case_count_stable() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 10;
 
@@ -328,6 +348,7 @@ fn string_ops_case_count_stable() {
     );
 
     eprintln!("string_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -335,8 +356,8 @@ fn string_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn string_ops_covers_both_modes() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
@@ -346,6 +367,7 @@ fn string_ops_covers_both_modes() {
         has_hardened,
         "string_ops must have hardened mode test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -353,8 +375,8 @@ fn string_ops_covers_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn string_ops_covers_overflow_protection() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_covers_overflow_protection() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // Hardened mode should have overflow protection tests
@@ -362,6 +384,7 @@ fn string_ops_covers_overflow_protection() {
         case_names.iter().any(|name| name.contains("overflow")),
         "Missing test coverage for hardened overflow protection"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -369,8 +392,8 @@ fn string_ops_covers_overflow_protection() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn string_ops_function_distribution() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_function_distribution() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
 
     let functions: Vec<&str> = fixture.cases.iter().map(|c| c.function.as_str()).collect();
 
@@ -388,17 +411,18 @@ fn string_ops_function_distribution() {
         unique_functions.len(),
         unique_functions
     );
+    Ok(())
 }
 
 #[test]
-fn string_ops_fixture_cases_match_direct_execute_fixture_case() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_fixture_cases_match_direct_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -407,12 +431,12 @@ fn string_ops_fixture_cases_match_direct_execute_fixture_case() {
 
         for mode in modes {
             let result =
-                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
-                    panic!(
+                execute_fixture_case(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "string_ops case {} ({mode}) failed to execute directly: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -427,17 +451,18 @@ fn string_ops_fixture_cases_match_direct_execute_fixture_case() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn string_ops_fixture_cases_match_isolated_harness_subprocess() {
-    let fixture = load_fixture("string_ops");
+fn string_ops_fixture_cases_match_isolated_harness_subprocess() -> Result<(), String> {
+    let fixture = load_fixture("string_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -445,13 +470,13 @@ fn string_ops_fixture_cases_match_isolated_harness_subprocess() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "string_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -466,4 +491,5 @@ fn string_ops_fixture_cases_match_isolated_harness_subprocess() {
             );
         }
     }
+    Ok(())
 }
