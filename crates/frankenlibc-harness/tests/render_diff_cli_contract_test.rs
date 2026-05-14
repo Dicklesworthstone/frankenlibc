@@ -106,16 +106,26 @@ fn manifest_anchors_to_bdi7r_with_subcommand_name() -> TestResult {
 fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
-    let policy = m
-        .get("policy")
-        .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "identical_inputs_produce_identical_marker_default_features",
-        "divergent_inputs_start_with_minus_minus_minus_expected_header_default_features",
-        "missing_expected_file_must_fail_closed",
-        "missing_actual_file_must_fail_closed",
+    let policy = m.get("policy").ok_or("missing policy")?;
+    for (field, message) in [
+        (
+            "identical_inputs_produce_identical_marker_default_features",
+            "identical_inputs_produce_identical_marker_default_features must be true",
+        ),
+        (
+            "divergent_inputs_start_with_minus_minus_minus_expected_header_default_features",
+            "divergent_inputs_start_with_minus_minus_minus_expected_header_default_features must be true",
+        ),
+        (
+            "missing_expected_file_must_fail_closed",
+            "missing_expected_file_must_fail_closed must be true",
+        ),
+        (
+            "missing_actual_file_must_fail_closed",
+            "missing_actual_file_must_fail_closed must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
