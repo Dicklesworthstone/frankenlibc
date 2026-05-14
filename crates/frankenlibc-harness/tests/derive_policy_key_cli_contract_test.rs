@@ -119,20 +119,47 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "risk_bucket_in_0_15",
-        "budget_bucket_in_0_7",
-        "consistency_bucket_in_0_3",
-        "key_index_below_total_table_len",
-        "mode_off_maps_to_same_index_as_strict",
-        "deterministic_given_inputs",
-        "fail_closed_on_unknown_mode",
-        "fail_closed_on_unknown_family",
-        "risk_ppm_zero_yields_bucket_zero",
-        "risk_ppm_999999_yields_bucket_15",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        ("risk_bucket_in_0_15", "risk_bucket_in_0_15 must be true"),
+        ("budget_bucket_in_0_7", "budget_bucket_in_0_7 must be true"),
+        (
+            "consistency_bucket_in_0_3",
+            "consistency_bucket_in_0_3 must be true",
+        ),
+        (
+            "key_index_below_total_table_len",
+            "key_index_below_total_table_len must be true",
+        ),
+        (
+            "mode_off_maps_to_same_index_as_strict",
+            "mode_off_maps_to_same_index_as_strict must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "fail_closed_on_unknown_mode",
+            "fail_closed_on_unknown_mode must be true",
+        ),
+        (
+            "fail_closed_on_unknown_family",
+            "fail_closed_on_unknown_family must be true",
+        ),
+        (
+            "risk_ppm_zero_yields_bucket_zero",
+            "risk_ppm_zero_yields_bucket_zero must be true",
+        ),
+        (
+            "risk_ppm_999999_yields_bucket_15",
+            "risk_ppm_999999_yields_bucket_15 must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
