@@ -153,7 +153,10 @@ fn harness_source_registers_asupersync_detect_subcommand() -> TestResult {
         "        path_search_paths",
         "        output",
     ] {
-        require(src.contains(anchor), "AsupersyncDetect missing field")?;
+        require(
+            src.contains(anchor),
+            format!("AsupersyncDetect missing field anchor `{anchor}`"),
+        )?;
     }
     require(
         src.contains("detect_asupersync_available(&env)"),
@@ -201,7 +204,10 @@ fn cli_emits_one_record_with_enum_detection_reason() -> TestResult {
         .iter()
         .filter_map(Value::as_str)
     {
-        require(parsed.get(f).is_some(), "record missing required field")?;
+        require(
+            parsed.get(f).is_some(),
+            format!("record missing required field `{f}`"),
+        )?;
     }
     require(
         json_string(&parsed, "kind")? == "lab_availability",
