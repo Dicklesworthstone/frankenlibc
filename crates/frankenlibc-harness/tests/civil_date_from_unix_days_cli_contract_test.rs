@@ -134,7 +134,7 @@ fn run_and_parse(bin: &Path, unix_days: i64, label: &str) -> TestResult<Value> {
     let output = unique_tmp(label)?;
     let out = run_cli(bin, unix_days, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("civil-date-from-unix-days CLI invocation must succeed".into());
     }
     read_record(&output)
 }
@@ -166,20 +166,53 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_unix_days_into_output_record",
-        "deterministic_given_inputs",
-        "day_zero_is_1970_01_01_unix_epoch",
-        "day_minus_one_is_1969_12_31",
-        "first_post_epoch_leap_day_unix_789_is_1972_02_29",
-        "y2k_leap_day_unix_11016_is_2000_02_29",
-        "y2038_boundary_unix_24855_is_2038_01_19",
-        "year_month_day_match_expected_anchor_table",
-        "month_is_in_1_through_12",
-        "day_is_in_1_through_31",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_unix_days_into_output_record",
+            "echoes_unix_days_into_output_record must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "day_zero_is_1970_01_01_unix_epoch",
+            "day_zero_is_1970_01_01_unix_epoch must be true",
+        ),
+        (
+            "day_minus_one_is_1969_12_31",
+            "day_minus_one_is_1969_12_31 must be true",
+        ),
+        (
+            "first_post_epoch_leap_day_unix_789_is_1972_02_29",
+            "first_post_epoch_leap_day_unix_789_is_1972_02_29 must be true",
+        ),
+        (
+            "y2k_leap_day_unix_11016_is_2000_02_29",
+            "y2k_leap_day_unix_11016_is_2000_02_29 must be true",
+        ),
+        (
+            "y2038_boundary_unix_24855_is_2038_01_19",
+            "y2038_boundary_unix_24855_is_2038_01_19 must be true",
+        ),
+        (
+            "year_month_day_match_expected_anchor_table",
+            "year_month_day_match_expected_anchor_table must be true",
+        ),
+        (
+            "month_is_in_1_through_12",
+            "month_is_in_1_through_12 must be true",
+        ),
+        (
+            "day_is_in_1_through_31",
+            "day_is_in_1_through_31 must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
