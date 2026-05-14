@@ -20,7 +20,7 @@ fn workspace_root() -> TestResult<PathBuf> {
 fn manifest_path(root: &Path) -> PathBuf {
     root.join("tests")
         .join("conformance")
-        .join("recommend_healing_cli_contract.v1.json")
+        .join("recommend_healing_for_canonical_class_cli_contract.v1.json")
 }
 
 fn load_json(path: &Path) -> TestResult<Value> {
