@@ -37,6 +37,20 @@ pub struct MapsEntry<'a> {
     pub path: Option<&'a str>,
 }
 
+fn parse_hex_usize(field: &str) -> Option<usize> {
+    if field.is_empty() || !field.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    usize::from_str_radix(field, 16).ok()
+}
+
+fn parse_hex_u64(field: &str) -> Option<u64> {
+    if field.is_empty() || !field.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u64::from_str_radix(field, 16).ok()
+}
+
 /// Parse one `/proc/self/maps` line.
 ///
 /// Returns `None` if any of the five mandatory fields is missing or
@@ -59,9 +73,9 @@ pub fn parse_maps_line(line: &str) -> Option<MapsEntry<'_>> {
     }
 
     let dash = range.find('-')?;
-    let start = usize::from_str_radix(&range[..dash], 16).ok()?;
-    let end = usize::from_str_radix(&range[dash + 1..], 16).ok()?;
-    let offset = u64::from_str_radix(offset_s, 16).ok()?;
+    let start = parse_hex_usize(&range[..dash])?;
+    let end = parse_hex_usize(&range[dash + 1..])?;
+    let offset = parse_hex_u64(offset_s)?;
     let inode = inode_s.parse::<u64>().ok()?;
 
     Some(MapsEntry {
@@ -83,8 +97,8 @@ pub fn parse_maps_line(line: &str) -> Option<MapsEntry<'_>> {
 pub fn parse_maps_range(line: &str) -> Option<(usize, usize)> {
     let range = line.split_whitespace().next()?;
     let dash = range.find('-')?;
-    let start = usize::from_str_radix(&range[..dash], 16).ok()?;
-    let end = usize::from_str_radix(&range[dash + 1..], 16).ok()?;
+    let start = parse_hex_usize(&range[..dash])?;
+    let end = parse_hex_usize(&range[dash + 1..])?;
     Some((start, end))
 }
 
@@ -172,6 +186,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_rejects_signed_hex_fields() {
+        assert!(parse_maps_line("+400000-401000 r--p 0 00:00 0").is_none());
+        assert!(parse_maps_line("400000-+401000 r--p 0 00:00 0").is_none());
+        assert!(parse_maps_line("-400000-401000 r--p 0 00:00 0").is_none());
+        assert!(parse_maps_line("400000-401000 r--p +0 00:00 0").is_none());
+    }
+
+    #[test]
     fn parse_rejects_truncated_line() {
         assert!(parse_maps_line("400000-401000 r--p").is_none());
         assert!(parse_maps_line("400000-401000").is_none());
@@ -240,6 +262,13 @@ mod tests {
     fn range_rejects_non_hex() {
         assert!(parse_maps_range("xyz-401000 r--p 0 00:00 0").is_none());
         assert!(parse_maps_range("400000-xyz r--p 0 00:00 0").is_none());
+    }
+
+    #[test]
+    fn range_rejects_signed_hex_fields() {
+        assert!(parse_maps_range("+400000-401000 r--p 0 00:00 0").is_none());
+        assert!(parse_maps_range("400000-+401000 r--p 0 00:00 0").is_none());
+        assert!(parse_maps_range("-400000-401000 r--p 0 00:00 0").is_none());
     }
 
     #[test]
