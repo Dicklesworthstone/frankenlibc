@@ -134,18 +134,45 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_active_support_vector_into_output_record",
-        "deterministic_given_inputs",
-        "empty_support_yields_none_class",
-        "single_cause_support_yields_matching_class",
-        "temporal_regime_reduces_to_regime",
-        "congestion_numeric_reduces_to_congestion",
-        "topological_admissibility_reduces_to_admissibility",
-        "unreduced_multi_cause_support_yields_compound",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_active_support_vector_into_output_record",
+            "echoes_active_support_vector_into_output_record must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "empty_support_yields_none_class",
+            "empty_support_yields_none_class must be true",
+        ),
+        (
+            "single_cause_support_yields_matching_class",
+            "single_cause_support_yields_matching_class must be true",
+        ),
+        (
+            "temporal_regime_reduces_to_regime",
+            "temporal_regime_reduces_to_regime must be true",
+        ),
+        (
+            "congestion_numeric_reduces_to_congestion",
+            "congestion_numeric_reduces_to_congestion must be true",
+        ),
+        (
+            "topological_admissibility_reduces_to_admissibility",
+            "topological_admissibility_reduces_to_admissibility must be true",
+        ),
+        (
+            "unreduced_multi_cause_support_yields_compound",
+            "unreduced_multi_cause_support_yields_compound must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -194,7 +221,22 @@ fn run_cli(bin: &Path, active: &[bool], output: &Path) -> TestResult<std::proces
 
 fn read_record(out_path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "expected exactly one JSONL record in {}, got {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
 fn run_and_parse(bin: &Path, active: &[bool], label: &str) -> TestResult<Value> {
@@ -221,10 +263,7 @@ fn cli_expected_class_table_matches_manifest() -> TestResult {
     for entry in table {
         let case = json_string(entry, "case")?;
         let active = bool_vec(entry, "active")?;
-        require(
-            active.len() == 6,
-            format!("{case}: active must have 6 bools"),
-        )?;
+        require(active.len() == 6, "active support vector must have 6 bools")?;
         let parsed = run_and_parse(&bin, &active, case)?;
         require(
             json_string(&parsed, "kind")? == "canonical_class_from_support",
@@ -232,15 +271,15 @@ fn cli_expected_class_table_matches_manifest() -> TestResult {
         )?;
         require(
             bool_vec(&parsed, "active")? == active,
-            format!("{case}: active vector must be echoed"),
+            "active support vector must be echoed",
         )?;
         require(
             json_u64(&parsed, "class_id")? == json_u64(entry, "class_id")?,
-            format!("{case}: class_id drift"),
+            "class_id must match manifest expectation",
         )?;
         require(
             json_string(&parsed, "class_label")? == json_string(entry, "class_label")?,
-            format!("{case}: class_label drift"),
+            "class_label must match manifest expectation",
         )?;
     }
     Ok(())
