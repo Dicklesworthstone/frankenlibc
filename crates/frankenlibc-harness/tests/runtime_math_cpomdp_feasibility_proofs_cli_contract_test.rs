@@ -109,18 +109,45 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
     let policy = m.get("policy").ok_or("missing policy")?;
-    for key in [
-        "must_write_jsonl_log_file_at_log_path",
-        "must_write_json_report_file_at_report_path",
-        "must_write_feasibility_artifact_at_feasibility_artifact_path",
-        "must_write_sensitivity_artifact_at_sensitivity_artifact_path",
-        "creates_parent_directories_for_all_four_output_paths_if_missing",
-        "exits_nonzero_when_summary_failed_nonzero",
-        "exits_zero_when_summary_failed_count_is_zero",
-        "report_contains_summary_with_checks_count",
-        "uses_workspace_root_for_source_paths",
+    for (field, message) in [
+        (
+            "must_write_jsonl_log_file_at_log_path",
+            "must_write_jsonl_log_file_at_log_path must be true",
+        ),
+        (
+            "must_write_json_report_file_at_report_path",
+            "must_write_json_report_file_at_report_path must be true",
+        ),
+        (
+            "must_write_feasibility_artifact_at_feasibility_artifact_path",
+            "must_write_feasibility_artifact_at_feasibility_artifact_path must be true",
+        ),
+        (
+            "must_write_sensitivity_artifact_at_sensitivity_artifact_path",
+            "must_write_sensitivity_artifact_at_sensitivity_artifact_path must be true",
+        ),
+        (
+            "creates_parent_directories_for_all_four_output_paths_if_missing",
+            "creates_parent_directories_for_all_four_output_paths_if_missing must be true",
+        ),
+        (
+            "exits_nonzero_when_summary_failed_nonzero",
+            "exits_nonzero_when_summary_failed_nonzero must be true",
+        ),
+        (
+            "exits_zero_when_summary_failed_count_is_zero",
+            "exits_zero_when_summary_failed_count_is_zero must be true",
+        ),
+        (
+            "report_contains_summary_with_checks_count",
+            "report_contains_summary_with_checks_count must be true",
+        ),
+        (
+            "uses_workspace_root_for_source_paths",
+            "uses_workspace_root_for_source_paths must be true",
+        ),
     ] {
-        require(json_bool(policy, key)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
