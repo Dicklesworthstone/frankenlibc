@@ -1,0 +1,106 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "fault-inject-cli-contract",
+  "bead": "bd-3fil",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "908774c24c1d568a8f6cdf20391c926bb390d94b",
+  "purpose": "Pin the harness binary `fault-inject` subcommand that loads the canonical fault-injection scenario catalog, executes deterministic memory/time/concurrency fault scenarios through frankenlibc_harness::fault_injection, writes a JSON report, structured JSONL log, and artifact index, and fails closed when requested scenarios are unknown or --fail-on-mismatch observes failed cases.",
+  "subcommand_name": "fault-inject",
+  "binary_target": "harness",
+  "required_flags": [
+    "--manifest"
+  ],
+  "optional_flags": [
+    "--scenario",
+    "--out-dir",
+    "--report",
+    "--log",
+    "--artifact-index",
+    "--mode",
+    "--fail-on-mismatch"
+  ],
+  "canonical_manifest_path": "tests/conformance/fault_injection_scenarios.v1.yaml",
+  "canonical_manifest_id": "bd-3fil-franken-fault-catalog",
+  "single_scenario_probe": {
+    "scenario": "memory.oom_budget",
+    "mode": "both",
+    "expected_scenario_count": 1,
+    "expected_total_cases": 4,
+    "expected_modes": {
+      "strict": 2,
+      "hardened": 2
+    }
+  },
+  "underlying_lib_functions": [
+    "frankenlibc_harness::fault_injection::FaultManifest::from_path",
+    "frankenlibc_harness::fault_injection::FaultRunConfig::new",
+    "frankenlibc_harness::fault_injection::run_manifest_with_default_executor"
+  ],
+  "io_pattern": "yaml_or_json_manifest_to_json_report_plus_structured_jsonl_log_plus_artifact_index",
+  "default_out_dir": "target/conformance/fault_injection",
+  "default_report_path": "target/conformance/fault_injection.current.v1.json",
+  "default_log_path": "target/conformance/fault_injection.log.jsonl",
+  "default_artifact_index_path": "target/conformance/fault_injection.artifacts.v1.json",
+  "report_contract": {
+    "schema_version": "v1",
+    "bead": "bd-3fil",
+    "required_summary_fields": [
+      "scenario_count",
+      "total_cases",
+      "passed",
+      "failed",
+      "false_negatives",
+      "mismatches",
+      "by_domain",
+      "by_mode"
+    ],
+    "single_scenario_must_have_failed_zero": true,
+    "single_scenario_must_have_false_negatives_zero": true
+  },
+  "log_contract": {
+    "event": "fault_injection",
+    "gate": "fault_injection",
+    "stream": "conformance",
+    "single_scenario_row_count": 4,
+    "single_scenario_required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "single_scenario_required_outcome": "pass"
+  },
+  "artifact_index_contract": {
+    "required_artifact_kinds": [
+      "log",
+      "report",
+      "manifest"
+    ],
+    "must_include_trace_join_keys": true
+  },
+  "policy": {
+    "must_load_canonical_fault_catalog": true,
+    "must_create_parent_directories_for_outputs": true,
+    "must_write_report_log_and_artifact_index": true,
+    "must_record_manifest_as_artifact_when_manifest_path_exists": true,
+    "must_emit_one_structured_log_row_per_executed_case": true,
+    "must_preserve_strict_and_hardened_mode_rows_for_mode_both": true,
+    "unknown_scenario_must_fail_closed": true,
+    "fail_on_mismatch_must_exit_nonzero_when_failures_present": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_manifest_flag",
+    "unknown_scenario_silently_passed",
+    "missing_report",
+    "missing_log",
+    "missing_artifact_index",
+    "missing_manifest_artifact",
+    "missing_trace_join_keys",
+    "mode_both_lost_strict_or_hardened_rows",
+    "failed_cases_silently_passed"
+  ],
+  "summary": {
+    "bead": "bd-3fil",
+    "subcommand": "fault-inject",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
