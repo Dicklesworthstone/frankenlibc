@@ -160,7 +160,7 @@ pub fn parse_services_line(line: &[u8]) -> Option<ServiceEntry> {
 
     let slash_pos = port_proto.iter().position(|&b| b == b'/')?;
     let port_str = core::str::from_utf8(&port_proto[..slash_pos]).ok()?;
-    let port: u16 = port_str.parse().ok()?;
+    let port = u16::try_from(parse_ascii_decimal_u32(port_str)?).ok()?;
     let proto = &port_proto[slash_pos + 1..];
     if proto.is_empty() || proto.contains(&b'/') {
         return None;
@@ -1656,7 +1656,7 @@ mod tests {
                 },
                 Case {
                     id: "SERVICES-PARSE-009",
-                    // Non-numeric port must be rejected (u16::parse fails).
+                    // Non-numeric port must be rejected.
                     spec_ref: "services(5) ¶Format — non-numeric port rejected",
                     input: b"bad abc/tcp",
                     expected_name: None,
@@ -1666,6 +1666,16 @@ mod tests {
                 },
                 Case {
                     id: "SERVICES-PARSE-010",
+                    // A leading sign is not part of the decimal port grammar.
+                    spec_ref: "services(5) ¶Format — signed port rejected",
+                    input: b"bad +80/tcp",
+                    expected_name: None,
+                    expected_port: 0,
+                    expected_proto: b"",
+                    expected_aliases: &[],
+                },
+                Case {
+                    id: "SERVICES-PARSE-011",
                     // Port > 65535 must be rejected (u16 overflow).
                     spec_ref: "services(5) ¶Format — port must fit u16 (0..=65535)",
                     input: b"bad 70000/tcp",
@@ -1675,7 +1685,7 @@ mod tests {
                     expected_aliases: &[],
                 },
                 Case {
-                    id: "SERVICES-PARSE-011",
+                    id: "SERVICES-PARSE-012",
                     spec_ref: "services(5) ¶Format — boundary: port 0 is valid",
                     input: b"nullport 0/tcp",
                     expected_name: Some(b"nullport"),
@@ -1684,7 +1694,7 @@ mod tests {
                     expected_aliases: &[],
                 },
                 Case {
-                    id: "SERVICES-PARSE-012",
+                    id: "SERVICES-PARSE-013",
                     spec_ref: "services(5) ¶Format — boundary: port 65535 is valid",
                     input: b"maxport 65535/tcp",
                     expected_name: Some(b"maxport"),

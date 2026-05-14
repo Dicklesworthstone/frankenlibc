@@ -876,6 +876,25 @@ fn getaddrinfo_ignores_malformed_service_protocol_field() {
 }
 
 #[test]
+fn getaddrinfo_ignores_signed_service_port_field() {
+    with_resolver_backends(
+        Some(b"203.0.113.10 fixture-host\n"),
+        Some(b"fixture-svc +80/tcp\n"),
+        |_| {
+            let node = CString::new("fixture-host").unwrap();
+            let service = CString::new("fixture-svc").unwrap();
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+            };
+            assert_eq!(rc, libc::EAI_SERVICE);
+            assert!(res.is_null());
+        },
+    );
+}
+
+#[test]
 fn getaddrinfo_ai_addrconfig_filters_dual_stack_hosts_to_ipv4() {
     with_resolver_backends_and_addrconfig(
         Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
