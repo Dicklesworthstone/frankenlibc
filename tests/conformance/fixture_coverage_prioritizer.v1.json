@@ -339,56 +339,6 @@
       ]
     },
     {
-      "campaign_id": "fcq-signal-async",
-      "current_coverage_pct": 75.0,
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "expected_coverage_after_first_wave_pct": 100.0,
-      "first_wave_fixture_count": 7,
-      "first_wave_symbols": [
-        "sigisemptyset",
-        "sigorset",
-        "sigpending",
-        "sigprocmask",
-        "sigrelse",
-        "sigsuspend",
-        "sigwait"
-      ],
-      "module": "signal_abi",
-      "next_step": "Add deterministic signal-mask and alternate-stack fixtures before broader async-cancellation campaigns.",
-      "oracle_kind": "mode_pair_process_replay",
-      "rank": 7,
-      "risk_tags": [
-        "async_signal",
-        "diagnostics_gap",
-        "pthread_cancellation",
-        "semantic_divergence"
-      ],
-      "scores": {
-        "coverage_gap_score": 7,
-        "feature_gap_risk_score": 3,
-        "hard_parts_risk_tags": [],
-        "implementation_complexity_score": 4,
-        "parity_risk_score": 4,
-        "priority_score": 1807,
-        "semantic_risk_score": 0,
-        "workload_risk_score": 4
-      },
-      "structured_log_fields": "required_log_fields",
-      "symbol_family": "signal masks, alternate stacks, RT min/max, pause, and async-visible diagnostics",
-      "target_covered": 21,
-      "target_total": 28,
-      "target_uncovered": 7,
-      "title": "signal and async-observable fixture wave",
-      "workload_domains": [
-        "threaded_services",
-        "shell_coreutils",
-        "language_runtimes"
-      ]
-    },
-    {
       "campaign_id": "fcq-glibc-internal-compat",
       "current_coverage_pct": 4.91,
       "deterministic_e2e_scripts": [
@@ -413,7 +363,7 @@
       "module": "glibc_internal_abi",
       "next_step": "Split compatibility internals into supported, deterministic-fallback, and claim-blocked fixture groups.",
       "oracle_kind": "symbol_coverage_gate",
-      "rank": 8,
+      "rank": 7,
       "risk_tags": [
         "compatibility_internal",
         "diagnostics_gap",
@@ -467,7 +417,7 @@
       "module": "rpc_abi",
       "next_step": "Add deterministic compatibility/unsupported fixtures before claiming RPC-related coverage.",
       "oracle_kind": "claim_reconciliation_gate",
-      "rank": 9,
+      "rank": 8,
       "risk_tags": [
         "deterministic_fallback",
         "legacy_network",
@@ -782,6 +732,19 @@
     {
       "coverage_state": "covered",
       "current_coverage_pct": 100.0,
+      "module": "signal_abi",
+      "target_covered": 28,
+      "target_total": 28,
+      "target_uncovered": 0,
+      "workload_domains": [
+        "threaded_services",
+        "shell_coreutils",
+        "language_runtimes"
+      ]
+    },
+    {
+      "coverage_state": "covered",
+      "current_coverage_pct": 100.0,
       "module": "socket_abi",
       "target_covered": 18,
       "target_total": 18,
@@ -893,15 +856,14 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 3024,
-    "campaign_count": 9,
+    "all_uncovered_target_symbols": 3017,
+    "campaign_count": 8,
     "covered_modules": [
       "fortify_abi",
       "glibc_internal_abi",
       "math_abi",
       "pthread_abi",
       "rpc_abi",
-      "signal_abi",
       "stdio_abi",
       "unistd_abi",
       "wchar_abi"
@@ -923,7 +885,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2670,
-    "total_first_wave_fixture_count": 103
+    "selected_target_uncovered_symbols": 2663,
+    "total_first_wave_fixture_count": 96
   }
 }

@@ -1175,6 +1175,8 @@ pub fn execute_fixture_case(
         | "sighold"
         | "sigignore"
         | "siginterrupt" => execute_signal_async_wave01_case(function, inputs, mode),
+        "sigisemptyset" | "sigorset" | "sigpending" | "sigprocmask" | "sigrelse" | "sigsuspend"
+        | "sigwait" => execute_signal_async_wave02_case(function, inputs, mode),
         // dirent ops
         "opendir" => execute_opendir_case(inputs, mode),
         "readdir" => execute_readdir_case(inputs, mode),
@@ -23841,6 +23843,344 @@ fn signal_async_siginterrupt_actual() -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// signal/async wave-02 conformance executors (bd-gmbqy.9)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn execute_signal_async_wave02_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "signal/async wave02 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    if let Some(policy) = parse_optional_string(inputs, "ambient_state_policy")?
+        && policy != SIGNAL_ASYNC_AMBIENT_POLICY
+    {
+        return Err(format!(
+            "signal/async wave02 ambient policy drift: expected {SIGNAL_ASYNC_AMBIENT_POLICY}, got {policy}"
+        ));
+    }
+
+    let expected = parse_string(inputs, "expected")?;
+    let scenario = parse_string(inputs, "scenario")?;
+    let actual = match (function, scenario.as_str()) {
+        ("sigisemptyset", "empty_then_member") => signal_async_sigisemptyset_actual(),
+        ("sigorset", "union_sigint_sigterm") => signal_async_sigorset_actual(),
+        ("sigpending", "blocked_usr1_pending_in_child") => signal_async_sigpending_actual(),
+        ("sigprocmask", "block_restore_sigusr1") => signal_async_sigprocmask_actual(),
+        ("sigrelse", "release_blocked_sigusr1") => signal_async_sigrelse_actual(),
+        ("sigsuspend", "isolated_child_interrupted") => signal_async_sigsuspend_actual(),
+        ("sigwait", "blocked_usr1_wait_child") => signal_async_sigwait_actual(),
+        _ => {
+            return Err(format!(
+                "unsupported signal/async wave02 fixture: function={function}, scenario={scenario}"
+            ));
+        }
+    };
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    Ok(non_host_execution(format!(
+        "symbol={function};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )))
+}
+
+fn signal_async_sigisemptyset_actual() -> String {
+    let mut set = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+    // SAFETY: set points at fixture-owned signal-set storage.
+    let (empty_rc, empty_class, add_rc, member_class) = unsafe {
+        let empty_rc = frankenlibc_abi::signal_abi::sigemptyset(&mut set);
+        let empty_class = frankenlibc_abi::signal_abi::sigisemptyset(&set);
+        let add_rc = frankenlibc_abi::signal_abi::sigaddset(&mut set, libc::SIGUSR1);
+        let member_class = frankenlibc_abi::signal_abi::sigisemptyset(&set);
+        (empty_rc, empty_class, add_rc, member_class)
+    };
+    if empty_rc == 0 && add_rc == 0 {
+        format!("SIGISEMPTYSET_EMPTY_{empty_class}_AFTER_ADD_{member_class}")
+    } else {
+        format!("SIGISEMPTYSET_ERROR_empty_{empty_rc}_add_{add_rc}")
+    }
+}
+
+fn signal_async_sigorset_actual() -> String {
+    let mut left = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+    let mut right = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+    let mut dest = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+    // SAFETY: all sigset pointers are fixture-owned initialized storage.
+    let (rc, int_member, term_member, hup_member) = unsafe {
+        frankenlibc_abi::signal_abi::sigemptyset(&mut left);
+        frankenlibc_abi::signal_abi::sigemptyset(&mut right);
+        frankenlibc_abi::signal_abi::sigaddset(&mut left, libc::SIGINT);
+        frankenlibc_abi::signal_abi::sigaddset(&mut right, libc::SIGTERM);
+        let rc = frankenlibc_abi::signal_abi::sigorset(&mut dest, &left, &right);
+        let int_member = frankenlibc_abi::signal_abi::sigismember(&dest, libc::SIGINT);
+        let term_member = frankenlibc_abi::signal_abi::sigismember(&dest, libc::SIGTERM);
+        let hup_member = frankenlibc_abi::signal_abi::sigismember(&dest, libc::SIGHUP);
+        (rc, int_member, term_member, hup_member)
+    };
+    format!("SIGORSET_RC_{rc}_INT_{int_member}_TERM_{term_member}_HUP_{hup_member}")
+}
+
+fn signal_async_sigpending_actual() -> String {
+    // SAFETY: fork isolates pending signal state from the harness process.
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        return String::from("SIGPENDING_FORK_ERROR");
+    }
+    if pid == 0 {
+        // SAFETY: child process owns all signal-mask mutations and exits immediately.
+        unsafe {
+            libc::alarm(2);
+            let mut block_set = std::mem::zeroed::<libc::sigset_t>();
+            let mut pending_set = std::mem::zeroed::<libc::sigset_t>();
+            let empty_rc = frankenlibc_abi::signal_abi::sigemptyset(&mut block_set);
+            let add_rc = frankenlibc_abi::signal_abi::sigaddset(&mut block_set, libc::SIGUSR1);
+            let block_rc = frankenlibc_abi::signal_abi::sigprocmask(
+                libc::SIG_BLOCK,
+                &block_set,
+                std::ptr::null_mut(),
+            );
+            let raise_rc = frankenlibc_abi::signal_abi::raise(libc::SIGUSR1);
+            let pending_rc = frankenlibc_abi::signal_abi::sigpending(&mut pending_set);
+            let member = frankenlibc_abi::signal_abi::sigismember(&pending_set, libc::SIGUSR1);
+            libc::_exit(
+                if empty_rc == 0
+                    && add_rc == 0
+                    && block_rc == 0
+                    && raise_rc == 0
+                    && pending_rc == 0
+                    && member == 1
+                {
+                    0
+                } else {
+                    72
+                },
+            );
+        }
+    }
+    signal_async_child_exit_class(pid, "SIGPENDING_USR1")
+}
+
+fn signal_async_sigprocmask_actual() -> String {
+    let mut block_set = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+    let mut old_set = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+    let mut current_set = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+    // SAFETY: all sigset pointers are fixture-owned initialized storage.
+    let (empty_rc, add_rc, block_rc, query_rc, has_usr1, restore_rc) = unsafe {
+        let empty_rc = frankenlibc_abi::signal_abi::sigemptyset(&mut block_set);
+        let add_rc = frankenlibc_abi::signal_abi::sigaddset(&mut block_set, libc::SIGUSR1);
+        let block_rc =
+            frankenlibc_abi::signal_abi::sigprocmask(libc::SIG_BLOCK, &block_set, &mut old_set);
+        let query_rc = frankenlibc_abi::signal_abi::sigprocmask(
+            libc::SIG_SETMASK,
+            std::ptr::null(),
+            &mut current_set,
+        );
+        let has_usr1 = frankenlibc_abi::signal_abi::sigismember(&current_set, libc::SIGUSR1);
+        let restore_rc = frankenlibc_abi::signal_abi::sigprocmask(
+            libc::SIG_SETMASK,
+            &old_set,
+            std::ptr::null_mut(),
+        );
+        (empty_rc, add_rc, block_rc, query_rc, has_usr1, restore_rc)
+    };
+    if empty_rc == 0 && add_rc == 0 && block_rc == 0 && query_rc == 0 && restore_rc == 0 {
+        format!("SIGPROCMASK_BLOCK_RC_0_SET_HAS_USR1_{has_usr1}")
+    } else {
+        format!(
+            "SIGPROCMASK_ERROR_empty_{empty_rc}_add_{add_rc}_block_{block_rc}_query_{query_rc}_restore_{restore_rc}"
+        )
+    }
+}
+
+fn signal_async_sigrelse_actual() -> String {
+    let mut old_set = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+    let mut block_set = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+    let mut current_set = unsafe { std::mem::zeroed::<libc::sigset_t>() };
+    // SAFETY: SIGUSR1 is blocked only for this thread and the mask is restored before return.
+    let (save_rc, empty_rc, add_rc, block_rc, release_rc, query_rc, has_usr1, restore_rc) = unsafe {
+        let save_rc = frankenlibc_abi::signal_abi::sigprocmask(
+            libc::SIG_SETMASK,
+            std::ptr::null(),
+            &mut old_set,
+        );
+        let empty_rc = frankenlibc_abi::signal_abi::sigemptyset(&mut block_set);
+        let add_rc = frankenlibc_abi::signal_abi::sigaddset(&mut block_set, libc::SIGUSR1);
+        let block_rc = frankenlibc_abi::signal_abi::sigprocmask(
+            libc::SIG_BLOCK,
+            &block_set,
+            std::ptr::null_mut(),
+        );
+        let release_rc = frankenlibc_abi::signal_abi::sigrelse(libc::SIGUSR1);
+        let query_rc = frankenlibc_abi::signal_abi::sigprocmask(
+            libc::SIG_SETMASK,
+            std::ptr::null(),
+            &mut current_set,
+        );
+        let has_usr1 = frankenlibc_abi::signal_abi::sigismember(&current_set, libc::SIGUSR1);
+        let restore_rc = frankenlibc_abi::signal_abi::sigprocmask(
+            libc::SIG_SETMASK,
+            &old_set,
+            std::ptr::null_mut(),
+        );
+        (
+            save_rc, empty_rc, add_rc, block_rc, release_rc, query_rc, has_usr1, restore_rc,
+        )
+    };
+    if save_rc == 0
+        && empty_rc == 0
+        && add_rc == 0
+        && block_rc == 0
+        && release_rc == 0
+        && query_rc == 0
+        && restore_rc == 0
+    {
+        format!("SIGRELSE_RC_0_USR1_HELD_{has_usr1}")
+    } else {
+        format!(
+            "SIGRELSE_ERROR_save_{save_rc}_empty_{empty_rc}_add_{add_rc}_block_{block_rc}_release_{release_rc}_query_{query_rc}_restore_{restore_rc}"
+        )
+    }
+}
+
+fn signal_async_sigsuspend_actual() -> String {
+    let mut pipe_fds = [0; 2];
+    // SAFETY: pipe_fds points at two valid file-descriptor slots.
+    if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
+        return String::from("SIGSUSPEND_PIPE_ERROR");
+    }
+
+    // SAFETY: fork isolates signal delivery from the test harness process.
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        // SAFETY: both descriptors were opened by pipe above.
+        unsafe {
+            libc::close(pipe_fds[0]);
+            libc::close(pipe_fds[1]);
+        }
+        return String::from("SIGSUSPEND_FORK_ERROR");
+    }
+
+    if pid == 0 {
+        // SAFETY: child owns these descriptors and installs handlers only for itself.
+        unsafe {
+            libc::close(pipe_fds[0]);
+            frankenlibc_abi::signal_abi::signal(
+                libc::SIGUSR1,
+                signal_async_noop_handler as *const () as libc::sighandler_t,
+            );
+            frankenlibc_abi::signal_abi::signal(
+                libc::SIGALRM,
+                signal_async_noop_handler as *const () as libc::sighandler_t,
+            );
+            let ready = [1_u8; 1];
+            let _ = libc::write(pipe_fds[1], ready.as_ptr().cast(), ready.len());
+            libc::close(pipe_fds[1]);
+            libc::alarm(1);
+            let mut suspend_mask = std::mem::zeroed::<libc::sigset_t>();
+            let empty_rc = frankenlibc_abi::signal_abi::sigemptyset(&mut suspend_mask);
+            let rc = frankenlibc_abi::signal_abi::sigsuspend(&suspend_mask);
+            let errno = *frankenlibc_abi::errno_abi::__errno_location();
+            libc::_exit(if empty_rc == 0 && rc == -1 && errno == libc::EINTR {
+                0
+            } else {
+                73
+            });
+        }
+    }
+
+    // SAFETY: parent no longer writes readiness bytes.
+    unsafe {
+        libc::close(pipe_fds[1]);
+    }
+    let mut ready = [0_u8; 1];
+    // SAFETY: ready points at a one-byte output buffer.
+    let read_rc = unsafe { libc::read(pipe_fds[0], ready.as_mut_ptr().cast(), ready.len()) };
+    // SAFETY: read descriptor was opened by pipe above.
+    unsafe {
+        libc::close(pipe_fds[0]);
+    }
+    if read_rc != 1 {
+        // SAFETY: pid is the live child returned by fork.
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+            let mut status = 0;
+            libc::waitpid(pid, &mut status, 0);
+        }
+        return String::from("SIGSUSPEND_READY_PIPE_ERROR");
+    }
+
+    // SAFETY: pid is the isolated fixture child and SIGUSR1 is handled there.
+    unsafe {
+        libc::kill(pid, libc::SIGUSR1);
+    }
+    signal_async_child_exit_class(pid, "SIGSUSPEND_EINTR")
+}
+
+fn signal_async_sigwait_actual() -> String {
+    // SAFETY: fork isolates pending signal state from the harness process.
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        return String::from("SIGWAIT_FORK_ERROR");
+    }
+    if pid == 0 {
+        // SAFETY: child process owns all signal-mask mutations and exits immediately.
+        unsafe {
+            libc::alarm(2);
+            let mut wait_set = std::mem::zeroed::<libc::sigset_t>();
+            let mut caught = 0;
+            let empty_rc = frankenlibc_abi::signal_abi::sigemptyset(&mut wait_set);
+            let add_rc = frankenlibc_abi::signal_abi::sigaddset(&mut wait_set, libc::SIGUSR1);
+            let block_rc = frankenlibc_abi::signal_abi::sigprocmask(
+                libc::SIG_BLOCK,
+                &wait_set,
+                std::ptr::null_mut(),
+            );
+            let raise_rc = frankenlibc_abi::signal_abi::raise(libc::SIGUSR1);
+            let wait_rc = frankenlibc_abi::signal_abi::sigwait(&wait_set, &mut caught);
+            libc::_exit(
+                if empty_rc == 0
+                    && add_rc == 0
+                    && block_rc == 0
+                    && raise_rc == 0
+                    && wait_rc == 0
+                    && caught == libc::SIGUSR1
+                {
+                    0
+                } else {
+                    74
+                },
+            );
+        }
+    }
+    signal_async_child_exit_class(pid, "SIGWAIT_USR1")
+}
+
+fn signal_async_child_exit_class(pid: libc::pid_t, label: &str) -> String {
+    let mut status = 0;
+    // SAFETY: status points at valid wait status storage for the child pid.
+    if unsafe { libc::waitpid(pid, &mut status, 0) } < 0 {
+        return format!("{label}_WAIT_ERROR");
+    }
+    if libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0 {
+        format!("{label}_CHILD_EXIT_0")
+    } else if libc::WIFEXITED(status) {
+        format!("{label}_CHILD_EXIT_NONZERO")
+    } else if libc::WIFSIGNALED(status) {
+        format!("{label}_CHILD_SIGNAL")
+    } else {
+        format!("{label}_CHILD_OTHER_STATUS")
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // dirent_ops conformance executors (bd-ihl3)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -30258,6 +30598,47 @@ mod tests {
         let raw = include_str!("../../../tests/conformance/fixtures/signal_async_wave01.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("signal/async wave01 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn signal_async_wave02_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/signal_async_wave02.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("signal/async wave02 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

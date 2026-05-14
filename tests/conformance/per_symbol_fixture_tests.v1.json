@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-14T00:54:38Z",
-  "report_hash": "f81f0f7f857afa8b",
+  "generated_at": "2026-05-14T01:14:16Z",
+  "report_hash": "61eb9bc5f7b918de",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 1093,
-    "symbols_without_fixtures": 3026,
-    "fixture_coverage_pct": 26.5,
-    "implemented_coverage_pct": 25.8,
-    "total_fixture_files": 120,
-    "total_cases": 2640,
+    "symbols_with_fixtures": 1100,
+    "symbols_without_fixtures": 3019,
+    "fixture_coverage_pct": 26.7,
+    "implemented_coverage_pct": 25.9,
+    "total_fixture_files": 121,
+    "total_cases": 2654,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 649,
-    "symbols_with_errno_checks": 1090,
-    "total_quality_issues": 3427,
-    "uncovered_action_count": 3026
+    "symbols_with_edge_cases": 656,
+    "symbols_with_errno_checks": 1097,
+    "total_quality_issues": 3425,
+    "uncovered_action_count": 3019
   },
   "fixture_file_analyses": [
     {
@@ -528,6 +528,14 @@
       "valid": true,
       "total_cases": 24,
       "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "signal_async_wave02.json",
+      "family": "signal/async",
+      "valid": true,
+      "total_cases": 14,
+      "unique_symbols": 7,
       "issues": []
     },
     {
@@ -55805,15 +55813,20 @@
       "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "sigismember",
@@ -55961,15 +55974,20 @@
       "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "sigpause",
@@ -55991,12 +56009,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -56004,12 +56029,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -56030,12 +56062,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -56118,12 +56157,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -56159,12 +56205,19 @@
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_async_wave02.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -85272,13 +85325,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "sigisemptyset",
-      "status": "Implemented",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "siglongjmp",
       "status": "Implemented",
       "module": "setjmp_abi",
@@ -85328,13 +85374,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "sigorset",
-      "status": "Implemented",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "sigpause",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -85342,30 +85381,9 @@
       "priority": "normal"
     },
     {
-      "symbol": "sigpending",
-      "status": "RawSyscall",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "sigprocmask",
-      "status": "RawSyscall",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "sigqueue",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "sigrelse",
-      "status": "RawSyscall",
-      "module": "signal_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -85405,13 +85423,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "sigsuspend",
-      "status": "RawSyscall",
-      "module": "signal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "sigtimedwait",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -85422,13 +85433,6 @@
       "symbol": "sigvec",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "sigwait",
-      "status": "RawSyscall",
-      "module": "signal_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

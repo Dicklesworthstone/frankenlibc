@@ -1,0 +1,229 @@
+{
+  "version": "v1",
+  "family": "signal/async",
+  "captured_at": "2026-05-14T00:00:00Z",
+  "description": "Deterministic signal/async fixture wave-02 for signal-set emptiness, signal-set union, pending signal class in an isolated child, thread mask block/restore, obsolete sigrelse release/restore, isolated sigsuspend interruption, and isolated sigwait consumption, without capturing signal delivery timing, raw signal-set bytes, stack addresses, handler addresses, stderr bytes, stdout bytes, process ids, thread ids, wait status integers, or wall-clock values.",
+  "spec_reference": "POSIX sigpending, sigprocmask, sigrelse, sigsuspend, sigwait; GNU sigisemptyset, sigorset",
+  "campaign": {
+    "bead": "bd-gmbqy.9",
+    "campaign_id": "fcq-signal-async",
+    "wave_id": "wave-02-signal-async",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture",
+    "first_wave_symbols": [
+      "sigisemptyset",
+      "sigorset",
+      "sigpending",
+      "sigprocmask",
+      "sigrelse",
+      "sigsuspend",
+      "sigwait"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "sigisemptyset_empty_then_member_strict",
+      "function": "sigisemptyset",
+      "spec_section": "GNU sigisemptyset distinguishes empty and populated caller-owned signal sets",
+      "inputs": {
+        "symbol": "sigisemptyset",
+        "scenario": "empty_then_member",
+        "expected": "SIGISEMPTYSET_EMPTY_1_AFTER_ADD_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigisemptyset;mode=strict;expected=SIGISEMPTYSET_EMPTY_1_AFTER_ADD_0;actual=SIGISEMPTYSET_EMPTY_1_AFTER_ADD_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sigisemptyset_empty_then_member_hardened",
+      "function": "sigisemptyset",
+      "spec_section": "GNU sigisemptyset distinguishes empty and populated caller-owned signal sets",
+      "inputs": {
+        "symbol": "sigisemptyset",
+        "scenario": "empty_then_member",
+        "expected": "SIGISEMPTYSET_EMPTY_1_AFTER_ADD_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigisemptyset;mode=hardened;expected=SIGISEMPTYSET_EMPTY_1_AFTER_ADD_0;actual=SIGISEMPTYSET_EMPTY_1_AFTER_ADD_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigorset_union_sigint_sigterm_strict",
+      "function": "sigorset",
+      "spec_section": "GNU sigorset computes the union of two caller-owned signal sets",
+      "inputs": {
+        "symbol": "sigorset",
+        "scenario": "union_sigint_sigterm",
+        "expected": "SIGORSET_RC_0_INT_1_TERM_1_HUP_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigorset;mode=strict;expected=SIGORSET_RC_0_INT_1_TERM_1_HUP_0;actual=SIGORSET_RC_0_INT_1_TERM_1_HUP_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sigorset_union_sigint_sigterm_hardened",
+      "function": "sigorset",
+      "spec_section": "GNU sigorset computes the union of two caller-owned signal sets",
+      "inputs": {
+        "symbol": "sigorset",
+        "scenario": "union_sigint_sigterm",
+        "expected": "SIGORSET_RC_0_INT_1_TERM_1_HUP_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigorset;mode=hardened;expected=SIGORSET_RC_0_INT_1_TERM_1_HUP_0;actual=SIGORSET_RC_0_INT_1_TERM_1_HUP_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigpending_blocked_usr1_pending_child_strict",
+      "function": "sigpending",
+      "spec_section": "POSIX sigpending reports a blocked pending signal in an isolated child",
+      "inputs": {
+        "symbol": "sigpending",
+        "scenario": "blocked_usr1_pending_in_child",
+        "expected": "SIGPENDING_USR1_CHILD_EXIT_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigpending;mode=strict;expected=SIGPENDING_USR1_CHILD_EXIT_0;actual=SIGPENDING_USR1_CHILD_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sigpending_blocked_usr1_pending_child_hardened",
+      "function": "sigpending",
+      "spec_section": "POSIX sigpending reports a blocked pending signal in an isolated child",
+      "inputs": {
+        "symbol": "sigpending",
+        "scenario": "blocked_usr1_pending_in_child",
+        "expected": "SIGPENDING_USR1_CHILD_EXIT_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigpending;mode=hardened;expected=SIGPENDING_USR1_CHILD_EXIT_0;actual=SIGPENDING_USR1_CHILD_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigprocmask_block_restore_strict",
+      "function": "sigprocmask",
+      "spec_section": "POSIX sigprocmask blocks one signal and restores the previous calling-thread mask",
+      "inputs": {
+        "symbol": "sigprocmask",
+        "scenario": "block_restore_sigusr1",
+        "expected": "SIGPROCMASK_BLOCK_RC_0_SET_HAS_USR1_1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigprocmask;mode=strict;expected=SIGPROCMASK_BLOCK_RC_0_SET_HAS_USR1_1;actual=SIGPROCMASK_BLOCK_RC_0_SET_HAS_USR1_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sigprocmask_block_restore_hardened",
+      "function": "sigprocmask",
+      "spec_section": "POSIX sigprocmask blocks one signal and restores the previous calling-thread mask",
+      "inputs": {
+        "symbol": "sigprocmask",
+        "scenario": "block_restore_sigusr1",
+        "expected": "SIGPROCMASK_BLOCK_RC_0_SET_HAS_USR1_1",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigprocmask;mode=hardened;expected=SIGPROCMASK_BLOCK_RC_0_SET_HAS_USR1_1;actual=SIGPROCMASK_BLOCK_RC_0_SET_HAS_USR1_1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigrelse_release_blocked_sigusr1_strict",
+      "function": "sigrelse",
+      "spec_section": "XSI sigrelse removes one signal from the calling-thread mask and restores prior state",
+      "inputs": {
+        "symbol": "sigrelse",
+        "scenario": "release_blocked_sigusr1",
+        "expected": "SIGRELSE_RC_0_USR1_HELD_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigrelse;mode=strict;expected=SIGRELSE_RC_0_USR1_HELD_0;actual=SIGRELSE_RC_0_USR1_HELD_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sigrelse_release_blocked_sigusr1_hardened",
+      "function": "sigrelse",
+      "spec_section": "XSI sigrelse removes one signal from the calling-thread mask and restores prior state",
+      "inputs": {
+        "symbol": "sigrelse",
+        "scenario": "release_blocked_sigusr1",
+        "expected": "SIGRELSE_RC_0_USR1_HELD_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigrelse;mode=hardened;expected=SIGRELSE_RC_0_USR1_HELD_0;actual=SIGRELSE_RC_0_USR1_HELD_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigsuspend_isolated_child_interrupted_strict",
+      "function": "sigsuspend",
+      "spec_section": "POSIX sigsuspend returns EINTR after signal interruption in an isolated child",
+      "inputs": {
+        "symbol": "sigsuspend",
+        "scenario": "isolated_child_interrupted",
+        "expected": "SIGSUSPEND_EINTR_CHILD_EXIT_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigsuspend;mode=strict;expected=SIGSUSPEND_EINTR_CHILD_EXIT_0;actual=SIGSUSPEND_EINTR_CHILD_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sigsuspend_isolated_child_interrupted_hardened",
+      "function": "sigsuspend",
+      "spec_section": "POSIX sigsuspend returns EINTR after signal interruption in an isolated child",
+      "inputs": {
+        "symbol": "sigsuspend",
+        "scenario": "isolated_child_interrupted",
+        "expected": "SIGSUSPEND_EINTR_CHILD_EXIT_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigsuspend;mode=hardened;expected=SIGSUSPEND_EINTR_CHILD_EXIT_0;actual=SIGSUSPEND_EINTR_CHILD_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigwait_blocked_usr1_wait_child_strict",
+      "function": "sigwait",
+      "spec_section": "POSIX sigwait consumes a blocked pending signal in an isolated child",
+      "inputs": {
+        "symbol": "sigwait",
+        "scenario": "blocked_usr1_wait_child",
+        "expected": "SIGWAIT_USR1_CHILD_EXIT_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigwait;mode=strict;expected=SIGWAIT_USR1_CHILD_EXIT_0;actual=SIGWAIT_USR1_CHILD_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "sigwait_blocked_usr1_wait_child_hardened",
+      "function": "sigwait",
+      "spec_section": "POSIX sigwait consumes a blocked pending signal in an isolated child",
+      "inputs": {
+        "symbol": "sigwait",
+        "scenario": "blocked_usr1_wait_child",
+        "expected": "SIGWAIT_USR1_CHILD_EXIT_0",
+        "ambient_state_policy": "forbid_signal_delivery_timing_raw_sigset_bytes_stack_address_handler_address_stderr_stdout_pid_tid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=sigwait;mode=hardened;expected=SIGWAIT_USR1_CHILD_EXIT_0;actual=SIGWAIT_USR1_CHILD_EXIT_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
