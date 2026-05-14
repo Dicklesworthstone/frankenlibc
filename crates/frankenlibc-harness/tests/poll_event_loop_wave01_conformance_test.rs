@@ -25,13 +25,23 @@ const FIRST_WAVE_SYMBOLS: &[&str] = &[
 const REQUIRED_LOG_FIELDS: &[&str] = &["symbol", "mode", "expected", "actual", "failure_signature"];
 const AMBIENT_POLICY: &str = "forbid_fd_thread_time_stderr_scheduler_or_process_capture";
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    workspace_root
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "workspace root has no repository parent: {}",
+                workspace_root.display()
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,12 +99,12 @@ struct DifferentialExecution {
     note: Option<String>,
 }
 
-fn load_fixture() -> FixtureFile {
-    let path = repo_root().join("tests/conformance/fixtures/poll_event_loop_wave01.json");
+fn load_fixture() -> Result<FixtureFile, String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/poll_event_loop_wave01.json");
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -149,14 +159,14 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn poll_event_loop_wave01_fixture_exists_and_names_campaign() {
-    let path = repo_root().join("tests/conformance/fixtures/poll_event_loop_wave01.json");
+fn poll_event_loop_wave01_fixture_exists_and_names_campaign() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/poll_event_loop_wave01.json");
     assert!(
         path.exists(),
         "poll_event_loop_wave01.json fixture must exist"
     );
 
-    let fixture = load_fixture();
+    let fixture = load_fixture()?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "poll_event_loop_wave01");
     assert_eq!(fixture.campaign.bead, "bd-kgy3r.2");
@@ -176,11 +186,12 @@ fn poll_event_loop_wave01_fixture_exists_and_names_campaign() {
             && fixture.description.contains("process-global counters"),
         "fixture description must reject fd/thread/time/stderr/scheduler/process capture"
     );
+    Ok(())
 }
 
 #[test]
-fn poll_event_loop_wave01_covers_first_wave_in_both_modes() {
-    let fixture = load_fixture();
+fn poll_event_loop_wave01_covers_first_wave_in_both_modes() -> Result<(), String> {
+    let fixture = load_fixture()?;
     let expected: BTreeSet<_> = FIRST_WAVE_SYMBOLS.iter().copied().collect();
     let declared: BTreeSet<_> = fixture
         .campaign
@@ -205,18 +216,19 @@ fn poll_event_loop_wave01_covers_first_wave_in_both_modes() {
     for symbol in FIRST_WAVE_SYMBOLS {
         let modes = modes_by_symbol
             .get(symbol)
-            .unwrap_or_else(|| panic!("missing fixture cases for {symbol}"));
+            .ok_or_else(|| format!("missing fixture cases for {symbol}"))?;
         assert!(modes.contains("strict"), "missing strict case for {symbol}");
         assert!(
             modes.contains("hardened"),
             "missing hardened case for {symbol}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn poll_event_loop_wave01_logs_without_ambient_leaks() {
-    let fixture = load_fixture();
+fn poll_event_loop_wave01_logs_without_ambient_leaks() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert_eq!(
         fixture.structured_log_fields, REQUIRED_LOG_FIELDS,
         "structured log field contract drifted"
@@ -248,25 +260,27 @@ fn poll_event_loop_wave01_logs_without_ambient_leaks() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn poll_event_loop_wave01_spec_reference_names_required_surfaces() {
-    let fixture = load_fixture();
+fn poll_event_loop_wave01_spec_reference_names_required_surfaces() -> Result<(), String> {
+    let fixture = load_fixture()?;
     for token in FIRST_WAVE_SYMBOLS {
         assert!(
             fixture.spec_reference.contains(token),
             "spec reference must mention {token}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn poll_event_loop_wave01_executes_via_isolated_harness() {
-    let fixture = load_fixture();
+fn poll_event_loop_wave01_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture()?;
     for case in &fixture.cases {
         let run = execute_case_via_harness(&case.function, &case.inputs, &case.mode)
-            .unwrap_or_else(|err| panic!("{} failed isolated harness execution: {err}", case.name));
+            .map_err(|err| format!("{} failed isolated harness execution: {err}", case.name))?;
         assert_eq!(run.impl_output, case.expected_output, "impl log mismatch");
         assert_eq!(
             run.host_output, "SKIP",
@@ -280,4 +294,5 @@ fn poll_event_loop_wave01_executes_via_isolated_harness() {
             case.name
         );
     }
+    Ok(())
 }
