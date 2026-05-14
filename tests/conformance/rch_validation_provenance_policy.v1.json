@@ -1,0 +1,62 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-j1u6u.4",
+  "gate_id": "rch-validation-provenance-v1",
+  "description": "Policy for machine-readable rch validation proof bundles used by conformance bead closeouts. A valid proof must record the required cargo command surface, prove each cargo command ran on a remote worker, reject local fallback, and preserve command/host/exit evidence for later completion gates.",
+  "proof_bundle_kind": "conformance_bead_rch_validation_proof",
+  "required_summary_fields": [
+    "schema_version",
+    "kind",
+    "bead_id",
+    "source_commit",
+    "commands"
+  ],
+  "source_commit_regex": "^[0-9a-f]{8,40}$",
+  "required_command_classes": [
+    "cargo_test",
+    "cargo_check",
+    "cargo_clippy"
+  ],
+  "command_class_requirements": [
+    {
+      "class": "cargo_test",
+      "command_must_contain": [
+        "rch exec",
+        "cargo test"
+      ]
+    },
+    {
+      "class": "cargo_check",
+      "command_must_contain": [
+        "rch exec",
+        "cargo check"
+      ]
+    },
+    {
+      "class": "cargo_clippy",
+      "command_must_contain": [
+        "rch exec",
+        "cargo clippy",
+        "-D warnings"
+      ]
+    }
+  ],
+  "required_record_fields": [
+    "class",
+    "command",
+    "remote_host_id",
+    "exit_status",
+    "local_fallback_observed",
+    "stdout",
+    "stderr"
+  ],
+  "remote_host_id_regex": "^vmi[0-9]+$",
+  "exit_status_success": 0,
+  "local_fallback_field": "local_fallback_observed",
+  "local_fallback_must_be": false,
+  "forbidden_output_markers": [
+    "[RCH] local",
+    "local (remote execution failed)",
+    "remote execution failed"
+  ]
+}
