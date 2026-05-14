@@ -8,13 +8,23 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    workspace_root
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "workspace root has no repository parent: {}",
+                workspace_root.display()
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,12 +57,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,14 +132,15 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn resolver_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/resolver.json");
+fn resolver_fixture_exists() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/resolver.json");
     assert!(path.exists(), "resolver.json fixture must exist");
+    Ok(())
 }
 
 #[test]
-fn resolver_fixture_valid_schema() {
-    let fixture = load_fixture("resolver");
+fn resolver_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "resolv/dns");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -142,11 +153,12 @@ fn resolver_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn resolver_covers_resolv_conf() {
-    let fixture = load_fixture("resolver");
+fn resolver_covers_resolv_conf() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -156,21 +168,23 @@ fn resolver_covers_resolv_conf() {
             >= 3,
         "resolv.conf parsing needs at least 3 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn resolver_covers_dns_header() {
-    let fixture = load_fixture("resolver");
+fn resolver_covers_dns_header() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("dns_header")),
         "Missing test coverage for DNS header"
     );
+    Ok(())
 }
 
 #[test]
-fn resolver_covers_domain_name_encoding() {
-    let fixture = load_fixture("resolver");
+fn resolver_covers_domain_name_encoding() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -180,11 +194,12 @@ fn resolver_covers_domain_name_encoding() {
             >= 2,
         "Domain name encoding needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn resolver_covers_hosts_lookup() {
-    let fixture = load_fixture("resolver");
+fn resolver_covers_hosts_lookup() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -194,11 +209,12 @@ fn resolver_covers_hosts_lookup() {
             >= 3,
         "hosts file lookup needs at least 3 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn resolver_covers_getaddrinfo() {
-    let fixture = load_fixture("resolver");
+fn resolver_covers_getaddrinfo() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -208,21 +224,23 @@ fn resolver_covers_getaddrinfo() {
             >= 3,
         "getaddrinfo needs at least 3 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn resolver_covers_gethostbyname() {
-    let fixture = load_fixture("resolver");
+fn resolver_covers_gethostbyname() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("gethostbyname")),
         "Missing test coverage for gethostbyname"
     );
+    Ok(())
 }
 
 #[test]
-fn resolver_modes_valid() {
-    let fixture = load_fixture("resolver");
+fn resolver_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     for case in &fixture.cases {
         assert!(
             case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
@@ -231,31 +249,34 @@ fn resolver_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn resolver_covers_both_modes() {
-    let fixture = load_fixture("resolver");
+fn resolver_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
     assert!(has_strict, "resolver must have strict mode test cases");
     assert!(has_hardened, "resolver must have hardened mode test cases");
+    Ok(())
 }
 
 #[test]
-fn resolver_case_count_stable() {
-    let fixture = load_fixture("resolver");
+fn resolver_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     assert!(
         fixture.cases.len() >= 15,
         "resolver fixture has {} cases, expected at least 15",
         fixture.cases.len()
     );
     eprintln!("resolver fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 #[test]
-fn resolver_has_spec_references() {
-    let fixture = load_fixture("resolver");
+fn resolver_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("resolver")
@@ -267,20 +288,22 @@ fn resolver_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn resolver_has_dns_protocol_metadata() {
-    let fixture = load_fixture("resolver");
+fn resolver_has_dns_protocol_metadata() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
     assert!(
         fixture.dns_protocol.is_some(),
         "resolver fixture should have dns_protocol metadata"
     );
+    Ok(())
 }
 
 #[test]
-fn resolver_fixture_executes_via_harness() {
-    let fixture = load_fixture("resolver");
+fn resolver_fixture_executes_via_harness() -> Result<(), String> {
+    let fixture = load_fixture("resolver")?;
 
     for case in &fixture.cases {
         let modes = if case.mode == "both" {
@@ -290,18 +313,18 @@ fn resolver_fixture_executes_via_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "resolver case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
 
             let expected = case
                 .expected_output
                 .as_ref()
-                .unwrap_or_else(|| panic!("resolver case {} missing expected_output", case.name));
+                .ok_or_else(|| format!("resolver case {} missing expected_output", case.name))?;
 
             match expected {
                 serde_json::Value::String(expected_text) => {
@@ -313,12 +336,12 @@ fn resolver_fixture_executes_via_harness() {
                 }
                 _ => {
                     let actual: serde_json::Value = serde_json::from_str(&result.impl_output)
-                        .unwrap_or_else(|err| {
-                            panic!(
+                        .map_err(|err| {
+                            format!(
                                 "resolver case {} ({mode}) produced non-JSON output {}: {err}",
                                 case.name, result.impl_output
                             )
-                        });
+                        })?;
                     assert_eq!(
                         actual, *expected,
                         "resolver case {} ({mode}) impl_output mismatch",
@@ -334,4 +357,5 @@ fn resolver_fixture_executes_via_harness() {
             );
         }
     }
+    Ok(())
 }
