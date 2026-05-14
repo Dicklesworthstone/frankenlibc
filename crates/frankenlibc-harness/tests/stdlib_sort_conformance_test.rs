@@ -61,12 +61,12 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -131,8 +131,8 @@ fn stdlib_sort_fixture_exists() {
 }
 
 #[test]
-fn stdlib_sort_fixture_valid_schema() {
-    let fixture = load_fixture("stdlib_sort");
+fn stdlib_sort_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_sort")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "stdlib/sort");
@@ -159,6 +159,7 @@ fn stdlib_sort_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,14 +167,15 @@ fn stdlib_sort_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_sort_covers_qsort() {
-    let fixture = load_fixture("stdlib_sort");
+fn stdlib_sort_covers_qsort() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_sort")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("qsort")),
         "Missing test coverage for qsort"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,14 +183,15 @@ fn stdlib_sort_covers_qsort() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_sort_covers_bsearch() {
-    let fixture = load_fixture("stdlib_sort");
+fn stdlib_sort_covers_bsearch() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_sort")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("bsearch")).count() >= 2,
         "bsearch needs at least 2 test cases (found and not found)"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -196,8 +199,8 @@ fn stdlib_sort_covers_bsearch() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_sort_error_codes_valid() {
-    let fixture = load_fixture("stdlib_sort");
+fn stdlib_sort_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_sort")?;
 
     // qsort and bsearch don't set errno
     let valid_errno_values = [0];
@@ -210,6 +213,7 @@ fn stdlib_sort_error_codes_valid() {
             case.expected_errno,
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -217,8 +221,8 @@ fn stdlib_sort_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_sort_modes_valid() {
-    let fixture = load_fixture("stdlib_sort");
+fn stdlib_sort_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_sort")?;
 
     for case in &fixture.cases {
         assert!(
@@ -228,6 +232,7 @@ fn stdlib_sort_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -235,8 +240,8 @@ fn stdlib_sort_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_sort_case_count_stable() {
-    let fixture = load_fixture("stdlib_sort");
+fn stdlib_sort_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_sort")?;
 
     const EXPECTED_MIN_CASES: usize = 3;
 
@@ -248,6 +253,7 @@ fn stdlib_sort_case_count_stable() {
     );
 
     eprintln!("stdlib_sort fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -255,8 +261,8 @@ fn stdlib_sort_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_sort_has_spec_references() {
-    let fixture = load_fixture("stdlib_sort");
+fn stdlib_sort_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_sort")?;
 
     for case in &fixture.cases {
         assert!(
@@ -266,17 +272,18 @@ fn stdlib_sort_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn stdlib_sort_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture("stdlib_sort");
+fn stdlib_sort_fixture_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_sort")?;
 
     for case in fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -284,13 +291,13 @@ fn stdlib_sort_fixture_executes_via_isolated_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute through harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -303,4 +310,5 @@ fn stdlib_sort_fixture_executes_via_isolated_harness() {
             );
         }
     }
+    Ok(())
 }
