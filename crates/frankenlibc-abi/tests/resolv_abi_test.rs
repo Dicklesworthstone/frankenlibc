@@ -22,6 +22,7 @@ const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
 const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
 const PROC_NET_ROUTE_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_ROUTE_PATH";
 const PROC_NET_IF_INET6_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_IF_INET6_PATH";
+const EAI_ADDRFAMILY: c_int = -9;
 
 static RESOLVER_FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
 static RESOLVER_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -633,6 +634,14 @@ fn gai_strerror_eai_family_returns_message() {
 }
 
 #[test]
+fn gai_strerror_eai_addrfamily_returns_message() {
+    let msg = unsafe { resolv_abi::gai_strerror(EAI_ADDRFAMILY) };
+    assert!(!msg.is_null());
+    let s = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
+    assert_eq!(s, "Address family for hostname not supported");
+}
+
+#[test]
 fn gai_strerror_unknown_code_returns_fallback() {
     let msg = unsafe { resolv_abi::gai_strerror(99999) };
     assert!(!msg.is_null());
@@ -784,6 +793,39 @@ fn getaddrinfo_ai_numerichost_rejects_hosts_backend_names() {
             }
         }
     });
+}
+
+#[test]
+fn getaddrinfo_numeric_host_respects_family_hint() {
+    let cases = [
+        ("127.0.0.1", libc::AF_INET, 0, Some(libc::AF_INET)),
+        ("127.0.0.1", libc::AF_INET6, EAI_ADDRFAMILY, None),
+        ("::1", libc::AF_INET6, 0, Some(libc::AF_INET6)),
+        ("::1", libc::AF_INET, EAI_ADDRFAMILY, None),
+        ("127.0.0.1", libc::AF_UNIX, libc::EAI_FAMILY, None),
+    ];
+
+    for (node_text, family, expected_rc, expected_family) in cases {
+        let node = CString::new(node_text).unwrap();
+        let service = CString::new("80").unwrap();
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = family;
+        hints.ai_socktype = libc::SOCK_STREAM;
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res) };
+        assert_eq!(rc, expected_rc, "node {node_text:?}, family {family}");
+
+        if let Some(family) = expected_family {
+            assert!(!res.is_null());
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, family);
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        } else {
+            assert!(res.is_null());
+        }
+    }
 }
 
 #[test]

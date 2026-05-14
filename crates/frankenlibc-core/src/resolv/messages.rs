@@ -19,6 +19,7 @@ pub const EAI_FAIL: i32 = -4;
 pub const EAI_FAMILY: i32 = -6;
 pub const EAI_SOCKTYPE: i32 = -7;
 pub const EAI_SERVICE: i32 = -8;
+pub const EAI_ADDRFAMILY: i32 = -9;
 pub const EAI_OVERFLOW: i32 = -12;
 
 /// Canonical glibc message for a `getaddrinfo` error code.
@@ -33,6 +34,7 @@ pub fn gai_strerror_text(errcode: i32) -> &'static str {
         EAI_BADFLAGS => "Invalid value for ai_flags",
         EAI_FAIL => "Non-recoverable failure in name resolution",
         EAI_FAMILY => "ai_family not supported",
+        EAI_ADDRFAMILY => "Address family for hostname not supported",
         EAI_NONAME => "Name or service not known",
         EAI_SERVICE => "Service not supported for socket type",
         EAI_SOCKTYPE => "Socket type not supported",
@@ -91,6 +93,10 @@ mod tests {
             "Non-recoverable failure in name resolution"
         );
         assert_eq!(gai_strerror_text(EAI_FAMILY), "ai_family not supported");
+        assert_eq!(
+            gai_strerror_text(EAI_ADDRFAMILY),
+            "Address family for hostname not supported"
+        );
         assert_eq!(gai_strerror_text(EAI_NONAME), "Name or service not known");
         assert_eq!(
             gai_strerror_text(EAI_SERVICE),
@@ -122,6 +128,7 @@ mod tests {
         assert_eq!(EAI_FAMILY, -6);
         assert_eq!(EAI_SOCKTYPE, -7);
         assert_eq!(EAI_SERVICE, -8);
+        assert_eq!(EAI_ADDRFAMILY, -9);
         assert_eq!(EAI_OVERFLOW, -12);
     }
 

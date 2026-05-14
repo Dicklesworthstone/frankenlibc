@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 const HOST_NOT_FOUND_ERRNO: c_int = 1;
 const NO_RECOVERY_ERRNO: c_int = 3;
+const EAI_ADDRFAMILY: c_int = -9;
 const HOSTS_PATH: &str = "/etc/hosts";
 const SERVICES_PATH: &str = "/etc/services";
 const PROC_NET_ROUTE_PATH: &str = "/proc/net/route";
@@ -1247,10 +1248,58 @@ pub unsafe extern "C" fn getaddrinfo(
             let mut numeric_host = false;
             if let Ok(v4) = text.parse::<Ipv4Addr>() {
                 numeric_host = true;
-                nodes.push(unsafe { build_addrinfo_v4(v4, port, hints_ref) });
+                match family {
+                    libc::AF_UNSPEC | libc::AF_INET => {
+                        nodes.push(unsafe { build_addrinfo_v4(v4, port, hints_ref) });
+                    }
+                    libc::AF_INET6 => {
+                        record_resolver_stage_outcome(
+                            &ordering,
+                            aligned,
+                            recent_page,
+                            Some(stage_index(&ordering, CheckStage::Bounds)),
+                        );
+                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                        return EAI_ADDRFAMILY;
+                    }
+                    _ => {
+                        record_resolver_stage_outcome(
+                            &ordering,
+                            aligned,
+                            recent_page,
+                            Some(stage_index(&ordering, CheckStage::Bounds)),
+                        );
+                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                        return libc::EAI_FAMILY;
+                    }
+                }
             } else if let Ok(v6) = text.parse::<Ipv6Addr>() {
                 numeric_host = true;
-                nodes.push(unsafe { build_addrinfo_v6(v6, port, hints_ref) });
+                match family {
+                    libc::AF_UNSPEC | libc::AF_INET6 => {
+                        nodes.push(unsafe { build_addrinfo_v6(v6, port, hints_ref) });
+                    }
+                    libc::AF_INET => {
+                        record_resolver_stage_outcome(
+                            &ordering,
+                            aligned,
+                            recent_page,
+                            Some(stage_index(&ordering, CheckStage::Bounds)),
+                        );
+                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                        return EAI_ADDRFAMILY;
+                    }
+                    _ => {
+                        record_resolver_stage_outcome(
+                            &ordering,
+                            aligned,
+                            recent_page,
+                            Some(stage_index(&ordering, CheckStage::Bounds)),
+                        );
+                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                        return libc::EAI_FAMILY;
+                    }
+                }
             } else {
                 if (flags & libc::AI_NUMERICHOST) != 0 {
                     record_resolver_stage_outcome(
@@ -1608,6 +1657,9 @@ pub unsafe extern "C" fn gai_strerror(errcode: c_int) -> *const c_char {
             c"Non-recoverable failure in name resolution".as_ptr()
         }
         "ai_family not supported" => c"ai_family not supported".as_ptr(),
+        "Address family for hostname not supported" => {
+            c"Address family for hostname not supported".as_ptr()
+        }
         "Name or service not known" => c"Name or service not known".as_ptr(),
         "Service not supported for socket type" => {
             c"Service not supported for socket type".as_ptr()
