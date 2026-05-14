@@ -36,6 +36,26 @@ fn require(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
+fn read_record(path: &Path) -> TestResult<Value> {
+    let body = std::fs::read_to_string(path).map_err(|e| format!("read jsonl: {e}"))?;
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
+}
+
 fn json_string<'a>(value: &'a Value, field: &str) -> TestResult<&'a str> {
     value
         .get(field)
@@ -124,7 +144,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "fail_closed_when_expected_source_commit_blank",
         "output_schema_must_be_runtime_evidence_verifier_v1",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -176,23 +196,14 @@ fn cli_passes_on_empty_jsonl_log() -> TestResult {
     let output = unique_tmp("empty_out", "jsonl")?;
     std::fs::write(&jsonl, "").map_err(|e| format!("write empty jsonl: {e}"))?;
     let out = run_cli(&bin, &jsonl, "1".repeat(40).as_str(), &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "verify-runtime-evidence failed on empty log: status={:?} stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 1,
-        format!("expected exactly 1 JSONL record; got {}", lines.len()),
-    )?;
-    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         json_string(&parsed, "schema")? == "runtime_evidence_verifier.v1",
         "output schema must be runtime_evidence_verifier.v1",
@@ -221,15 +232,12 @@ fn cli_fails_on_corrupt_jsonl_row() -> TestResult {
     let output = unique_tmp("corrupt_out", "jsonl")?;
     std::fs::write(&jsonl, "this is not json\n").map_err(|e| format!("write: {e}"))?;
     let out = run_cli(&bin, &jsonl, "1".repeat(40).as_str(), &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     require(
         !out.status.success(),
         "corrupt JSONL must cause verify-runtime-evidence to exit non-zero",
     )?;
     // Output file still written before the non-zero exit.
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         json_string(&parsed, "status")? == "fail",
         "corrupt row must yield status=fail",
@@ -270,8 +278,6 @@ fn cli_fails_closed_on_blank_expected_source_commit() -> TestResult {
         .arg(&output)
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
-    let _ = std::fs::remove_file(&jsonl);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "blank --expected-source-commit must cause non-zero exit",
