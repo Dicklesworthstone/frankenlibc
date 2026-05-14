@@ -61,12 +61,12 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -127,8 +127,8 @@ fn iconv_phase1_fixture_exists() {
 }
 
 #[test]
-fn iconv_phase1_fixture_valid_schema() {
-    let fixture = load_fixture("iconv_phase1");
+fn iconv_phase1_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("iconv_phase1")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "iconv/phase1");
     assert!(
@@ -154,11 +154,12 @@ fn iconv_phase1_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn iconv_phase1_covers_iconv_open() {
-    let fixture = load_fixture("iconv_phase1");
+fn iconv_phase1_covers_iconv_open() -> Result<(), String> {
+    let fixture = load_fixture("iconv_phase1")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -168,11 +169,12 @@ fn iconv_phase1_covers_iconv_open() {
             >= 2,
         "iconv_open needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn iconv_phase1_covers_iconv() {
-    let fixture = load_fixture("iconv_phase1");
+fn iconv_phase1_covers_iconv() -> Result<(), String> {
+    let fixture = load_fixture("iconv_phase1")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -182,21 +184,23 @@ fn iconv_phase1_covers_iconv() {
             >= 5,
         "iconv conversion needs at least 5 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn iconv_phase1_covers_iconv_close() {
-    let fixture = load_fixture("iconv_phase1");
+fn iconv_phase1_covers_iconv_close() -> Result<(), String> {
+    let fixture = load_fixture("iconv_phase1")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("iconv_close")),
         "Missing test coverage for iconv_close"
     );
+    Ok(())
 }
 
 #[test]
-fn iconv_phase1_covers_error_codes() {
-    let fixture = load_fixture("iconv_phase1");
+fn iconv_phase1_covers_error_codes() -> Result<(), String> {
+    let fixture = load_fixture("iconv_phase1")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -216,24 +220,26 @@ fn iconv_phase1_covers_error_codes() {
             .any(|n| n.contains("einval") || n.contains("EINVAL")),
         "Missing test coverage for EINVAL"
     );
+    Ok(())
 }
 
 #[test]
-fn iconv_phase1_modes_valid() {
-    let fixture = load_fixture("iconv_phase1");
+fn iconv_phase1_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("iconv_phase1")?;
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn iconv_phase1_covers_both_modes() {
-    let fixture = load_fixture("iconv_phase1");
+fn iconv_phase1_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("iconv_phase1")?;
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
     assert!(has_strict, "iconv_phase1 must have strict mode test cases");
@@ -241,11 +247,12 @@ fn iconv_phase1_covers_both_modes() {
         has_hardened,
         "iconv_phase1 must have hardened mode test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn iconv_phase1_case_count_stable() {
-    let fixture = load_fixture("iconv_phase1");
+fn iconv_phase1_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("iconv_phase1")?;
     assert!(
         fixture.cases.len() >= 10,
         "iconv_phase1 fixture has {} cases, expected at least 10",
@@ -255,11 +262,12 @@ fn iconv_phase1_case_count_stable() {
         "iconv_phase1 fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn iconv_phase1_has_spec_references() {
-    let fixture = load_fixture("iconv_phase1");
+fn iconv_phase1_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("iconv_phase1")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("POSIX")
@@ -270,11 +278,12 @@ fn iconv_phase1_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn iconv_phase1_error_codes_valid() {
-    let fixture = load_fixture("iconv_phase1");
+fn iconv_phase1_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("iconv_phase1")?;
 
     // Valid error codes for iconv operations
     let valid_errno_values = [
@@ -293,17 +302,18 @@ fn iconv_phase1_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 #[test]
-fn iconv_phase1_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture("iconv_phase1");
+fn iconv_phase1_fixture_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture("iconv_phase1")?;
 
     for case in fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -311,13 +321,13 @@ fn iconv_phase1_fixture_executes_via_isolated_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute through harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -330,4 +340,6 @@ fn iconv_phase1_fixture_executes_via_isolated_harness() {
             );
         }
     }
+
+    Ok(())
 }
