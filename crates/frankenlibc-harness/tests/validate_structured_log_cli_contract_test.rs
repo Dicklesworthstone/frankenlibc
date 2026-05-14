@@ -118,7 +118,11 @@ fn read_single_record(path: &Path) -> TestResult<Value> {
         lines.len() == 1,
         format!("expected exactly 1 JSONL record; got {}", lines.len()),
     )?;
-    serde_json::from_str(lines[0]).map_err(|e| format!("parse output record: {e}"))
+    let line = lines
+        .first()
+        .copied()
+        .ok_or_else(|| "missing output JSONL record".to_string())?;
+    serde_json::from_str(line).map_err(|e| format!("parse output record: {e}"))
 }
 
 #[test]
@@ -148,14 +152,29 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "ok_true_iff_errors_array_empty",
-        "exit_non_zero_when_ok_false",
-        "empty_jsonl_must_pass",
-        "io_error_must_fail_closed",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "ok_true_iff_errors_array_empty",
+            "ok_true_iff_errors_array_empty must be true",
+        ),
+        (
+            "exit_non_zero_when_ok_false",
+            "exit_non_zero_when_ok_false must be true",
+        ),
+        (
+            "empty_jsonl_must_pass",
+            "empty_jsonl_must_pass must be true",
+        ),
+        (
+            "io_error_must_fail_closed",
+            "io_error_must_fail_closed must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
