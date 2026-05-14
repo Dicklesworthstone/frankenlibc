@@ -138,6 +138,20 @@ fn getgrgid_nonexistent() {
 }
 
 #[test]
+fn getgrnam_getgrgid_ignore_signed_gid_rows() {
+    let fixture = b"plus:x:+27:root\nvalid:x:27:root\n";
+    with_group_file(fixture, || {
+        let plus = CString::new("plus").unwrap();
+        assert!(unsafe { getgrnam(plus.as_ptr()) }.is_null());
+
+        let grp = unsafe { getgrgid(27) };
+        assert!(!grp.is_null(), "valid unsigned gid row should still match");
+        let gr_name = unsafe { CStr::from_ptr((*grp).gr_name) };
+        assert_eq!(gr_name.to_bytes(), b"valid");
+    });
+}
+
+#[test]
 fn getgrnam_null_returns_null() {
     with_group_lock(|| {
         let grp = unsafe { getgrnam(std::ptr::null()) };

@@ -46,7 +46,7 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
         return None;
     }
 
-    let gid = core::str::from_utf8(fields[2]).ok()?.parse::<u32>().ok()?;
+    let gid = parse_u32_decimal(fields[2])?;
 
     if fields[0].is_empty() {
         return None;
@@ -67,6 +67,13 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
         gr_gid: gid,
         gr_mem: members,
     })
+}
+
+fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
+    if field.is_empty() || !field.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    core::str::from_utf8(field).ok()?.parse::<u32>().ok()
 }
 
 /// Look up a group entry by name.
@@ -252,6 +259,11 @@ ubuntu:x:1000:
     #[test]
     fn reject_non_numeric_gid() {
         assert!(parse_group_line(b"root:x:abc:").is_none());
+    }
+
+    #[test]
+    fn reject_signed_gid() {
+        assert!(parse_group_line(b"root:x:+0:").is_none());
     }
 
     #[test]

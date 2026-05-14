@@ -67,8 +67,8 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
         return None;
     }
 
-    let uid = core::str::from_utf8(fields[2]).ok()?.parse::<u32>().ok()?;
-    let gid = core::str::from_utf8(fields[3]).ok()?.parse::<u32>().ok()?;
+    let uid = parse_u32_decimal(fields[2])?;
+    let gid = parse_u32_decimal(fields[3])?;
 
     // Name must be non-empty
     if fields[0].is_empty() {
@@ -84,6 +84,13 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
         pw_dir: fields[5].to_vec(),
         pw_shell: fields[6].to_vec(),
     })
+}
+
+fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
+    if field.is_empty() || !field.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    core::str::from_utf8(field).ok()?.parse::<u32>().ok()
 }
 
 /// Look up a passwd entry by username.
@@ -254,6 +261,12 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
     #[test]
     fn reject_non_numeric_gid() {
         assert!(parse_passwd_line(b"root:x:0:xyz:root:/root:/bin/bash").is_none());
+    }
+
+    #[test]
+    fn reject_signed_uid_gid() {
+        assert!(parse_passwd_line(b"user:x:+1000:1000:user:/home/user:/bin/sh").is_none());
+        assert!(parse_passwd_line(b"user:x:1000:+1000:user:/home/user:/bin/sh").is_none());
     }
 
     #[test]

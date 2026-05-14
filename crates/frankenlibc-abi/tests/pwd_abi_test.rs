@@ -203,6 +203,26 @@ fn getpwuid_not_found() {
     });
 }
 
+#[test]
+fn getpwnam_getpwuid_ignore_signed_uid_gid_rows() {
+    let fixture = b"\
+plusuid:x:+1000:1000:Plus:/home/plus:/bin/sh
+plusgid:x:1001:+1001:PlusGid:/home/plusgid:/bin/sh
+valid:x:1000:1000:Valid:/home/valid:/bin/sh
+";
+    with_passwd_file(fixture, || {
+        let plusuid = CString::new("plusuid").unwrap();
+        let plusgid = CString::new("plusgid").unwrap();
+        assert!(unsafe { getpwnam(plusuid.as_ptr()) }.is_null());
+        assert!(unsafe { getpwnam(plusgid.as_ptr()) }.is_null());
+
+        let pw = unsafe { getpwuid(1000) };
+        assert!(!pw.is_null(), "valid unsigned uid row should still match");
+        let pw_name = unsafe { CStr::from_ptr((*pw).pw_name) };
+        assert_eq!(pw_name.to_bytes(), b"valid");
+    });
+}
+
 // ---------------------------------------------------------------------------
 // getpwnam_r (reentrant)
 // ---------------------------------------------------------------------------
