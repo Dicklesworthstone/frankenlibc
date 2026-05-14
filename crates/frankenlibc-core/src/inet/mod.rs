@@ -350,6 +350,16 @@ pub fn format_ipv4_len(addr: &[u8; 4]) -> usize {
 // Internal: IPv6 parsing
 // ---------------------------------------------------------------------------
 
+fn parse_ipv6_hextet(group: &str) -> Option<u16> {
+    if group.is_empty() || group.len() > 4 {
+        return None;
+    }
+    if !group.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u16::from_str_radix(group, 16).ok()
+}
+
 /// Parses an IPv6 address string into 16 network-order bytes.
 ///
 /// Supports:
@@ -392,13 +402,7 @@ pub fn parse_ipv6(src: &[u8]) -> Option<[u8; 16]> {
     let mut front_groups: Vec<u16> = Vec::new();
     if !front_str.is_empty() {
         for g in front_str.split(':') {
-            if g.is_empty() {
-                return None;
-            }
-            if g.len() > 4 {
-                return None;
-            }
-            front_groups.push(u16::from_str_radix(g, 16).ok()?);
+            front_groups.push(parse_ipv6_hextet(g)?);
         }
     }
 
@@ -420,23 +424,11 @@ pub fn parse_ipv6(src: &[u8]) -> Option<[u8; 16]> {
 
             // Parse any hex groups before the IPv4 part.
             for g in &colon_parts[..colon_parts.len() - 1] {
-                if g.is_empty() {
-                    return None;
-                }
-                if g.len() > 4 {
-                    return None;
-                }
-                back_groups.push(u16::from_str_radix(g, 16).ok()?);
+                back_groups.push(parse_ipv6_hextet(g)?);
             }
         } else {
             for g in back_str.split(':') {
-                if g.is_empty() {
-                    return None;
-                }
-                if g.len() > 4 {
-                    return None;
-                }
-                back_groups.push(u16::from_str_radix(g, 16).ok()?);
+                back_groups.push(parse_ipv6_hextet(g)?);
             }
         }
     }
@@ -453,13 +445,7 @@ pub fn parse_ipv6(src: &[u8]) -> Option<[u8; 16]> {
             ipv4_suffix = Some(v4);
             front_groups.clear();
             for g in &colon_parts[..colon_parts.len() - 1] {
-                if g.is_empty() {
-                    return None;
-                }
-                if g.len() > 4 {
-                    return None;
-                }
-                front_groups.push(u16::from_str_radix(g, 16).ok()?);
+                front_groups.push(parse_ipv6_hextet(g)?);
             }
         }
     }
@@ -1011,6 +997,19 @@ mod tests {
         assert_eq!(inet_pton(AF_INET6, b"1::2::3", &mut buf), 0);
         // Trailing single colon.
         assert_eq!(inet_pton(AF_INET6, b"1:2:3:4:5:6:7:", &mut buf), 0);
+    }
+
+    #[test]
+    fn test_pton_ipv6_rejects_sign_prefixed_hextets() {
+        let mut buf = [0u8; 16];
+        assert_eq!(inet_pton(AF_INET6, b"1::", &mut buf), 1);
+        assert_eq!(buf[..2], [0x00, 0x01]);
+
+        assert_eq!(inet_pton(AF_INET6, b"+1::", &mut buf), 0);
+        assert_eq!(inet_pton(AF_INET6, b"-1::", &mut buf), 0);
+        assert_eq!(inet_pton(AF_INET6, b"1:+2::", &mut buf), 0);
+        assert_eq!(inet_pton(AF_INET6, b"::+3", &mut buf), 0);
+        assert_eq!(inet_pton(AF_INET6, b"+ffff:0:0:0:0:0:0:1", &mut buf), 0);
     }
 
     #[test]
