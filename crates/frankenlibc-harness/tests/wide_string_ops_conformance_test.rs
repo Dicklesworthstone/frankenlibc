@@ -55,12 +55,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[test]
@@ -70,8 +70,8 @@ fn wide_string_ops_fixture_exists() {
 }
 
 #[test]
-fn wide_string_ops_fixture_valid_schema() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "string/wide");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -84,84 +84,92 @@ fn wide_string_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn wide_string_ops_covers_wcslen() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_covers_wcslen() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("wcslen")).count() >= 2,
         "wcslen needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn wide_string_ops_covers_wcscpy() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_covers_wcscpy() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("wcscpy")),
         "Missing test coverage for wcscpy"
     );
+    Ok(())
 }
 
 #[test]
-fn wide_string_ops_covers_wcscmp() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_covers_wcscmp() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("wcscmp")).count() >= 2,
         "wcscmp needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn wide_string_ops_covers_wcschr() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_covers_wcschr() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("wcschr")).count() >= 2,
         "wcschr needs at least 2 test cases (found and not found)"
     );
+    Ok(())
 }
 
 #[test]
-fn wide_string_ops_covers_wcsstr() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_covers_wcsstr() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("wcsstr")),
         "Missing test coverage for wcsstr"
     );
+    Ok(())
 }
 
 #[test]
-fn wide_string_ops_modes_valid() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn wide_string_ops_covers_hardened_mode() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_covers_hardened_mode() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
     assert!(
         has_hardened,
         "wide_string_ops must have hardened mode test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn wide_string_ops_case_count_stable() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
     assert!(
         fixture.cases.len() >= 10,
         "wide_string_ops fixture has {} cases, expected at least 10",
@@ -171,11 +179,12 @@ fn wide_string_ops_case_count_stable() {
         "wide_string_ops fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn wide_string_ops_has_spec_references() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("ISO C") || case.spec_section.contains("TSM"),
@@ -184,11 +193,12 @@ fn wide_string_ops_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn wide_string_ops_error_codes_valid() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
 
     // Wide string functions don't set errno
     for case in &fixture.cases {
@@ -198,17 +208,18 @@ fn wide_string_ops_error_codes_valid() {
             case.name, case.expected_errno
         );
     }
+    Ok(())
 }
 
 #[test]
-fn wide_string_ops_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -217,12 +228,12 @@ fn wide_string_ops_fixture_cases_match_execute_fixture_case() {
 
         for mode in modes {
             let result =
-                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
-                    panic!(
+                execute_fixture_case(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -237,6 +248,8 @@ fn wide_string_ops_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -318,14 +331,14 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn wide_string_ops_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("wide_string_ops");
+fn wide_string_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("wide_string_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -333,13 +346,13 @@ fn wide_string_ops_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "wide_string_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity || result.host_output == "UB",
                 "wide_string_ops case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -354,4 +367,6 @@ fn wide_string_ops_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+
+    Ok(())
 }
