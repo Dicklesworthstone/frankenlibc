@@ -832,6 +832,24 @@ enum Command {
     /// Convert a sparse-recovery boolean support vector over the six latent
     /// causes into a compact Grobner canonical class id via
     /// `frankenlibc_membrane::grobner::canonical_class_from_support`.
+    /// Encode a single XOR repair symbol via
+    /// `frankenlibc_membrane::runtime_math::evidence::encode_xor_repair_payload_v1`.
+    /// Source payloads are read from a binary file containing K concatenated
+    /// 128-byte (EVIDENCE_SYMBOL_SIZE_T) symbols.
+    EncodeXorRepairPayload {
+        /// Epoch seed used by derive_repair_schedule_v1 to pick source indices.
+        #[arg(long)]
+        epoch_seed: u64,
+        /// Binary input path. Must contain a multiple of 128 bytes.
+        #[arg(long)]
+        source_payloads: PathBuf,
+        /// Repair ESI (must be >= K = number of source symbols).
+        #[arg(long)]
+        repair_esi: u16,
+        /// Output JSONL path: one xor_repair_payload record (hex payload + schedule).
+        #[arg(long)]
+        output: PathBuf,
+    },
     CanonicalClassFromSupport {
         /// Active latent cause C0: temporal/provenance.
         #[arg(long)]
@@ -3276,6 +3294,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&output, body)?;
             eprintln!(
                 "recommend-healing-for-canonical-class: class_id={class_id} ({class_label}) -> action={action_label}"
+            );
+        }
+        Command::EncodeXorRepairPayload {
+            epoch_seed,
+            source_payloads,
+            repair_esi,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::evidence::{
+                EVIDENCE_SYMBOL_SIZE_T, derive_repair_schedule_v1, encode_xor_repair_payload_v1,
+            };
+            let body = std::fs::read(&source_payloads)
+                .map_err(|e| format!("read {}: {e}", source_payloads.display()))?;
+            if body.len() % EVIDENCE_SYMBOL_SIZE_T != 0 {
+                return Err(format!(
+                    "source_payloads length {} is not a multiple of {EVIDENCE_SYMBOL_SIZE_T}",
+                    body.len()
+                )
+                .into());
+            }
+            let k = body.len() / EVIDENCE_SYMBOL_SIZE_T;
+            if k == 0 {
+                return Err("source_payloads must contain at least one 128-byte symbol".into());
+            }
+            let k_u16 = u16::try_from(k)
+                .map_err(|_| format!("k_source={k} exceeds u16::MAX"))?;
+            if repair_esi < k_u16 {
+                return Err(format!(
+                    "repair_esi={repair_esi} must be >= k_source={k_u16}"
+                )
+                .into());
+            }
+            let mut payloads: Vec<[u8; EVIDENCE_SYMBOL_SIZE_T]> = Vec::with_capacity(k);
+            for i in 0..k {
+                let start = i * EVIDENCE_SYMBOL_SIZE_T;
+                let mut arr = [0u8; EVIDENCE_SYMBOL_SIZE_T];
+                arr.copy_from_slice(&body[start..start + EVIDENCE_SYMBOL_SIZE_T]);
+                payloads.push(arr);
+            }
+            let sched = derive_repair_schedule_v1(epoch_seed, k_u16, repair_esi);
+            let schedule_indices: Vec<u16> = sched.indices().to_vec();
+            let payload = encode_xor_repair_payload_v1(epoch_seed, &payloads, repair_esi);
+            let payload_hex: String = payload.iter().map(|b| format!("{b:02x}")).collect();
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let line = serde_json::json!({
+                "kind": "xor_repair_payload",
+                "epoch_seed": epoch_seed,
+                "k_source": k_u16,
+                "repair_esi": repair_esi,
+                "schedule_indices": schedule_indices,
+                "payload_hex": payload_hex,
+            });
+            let mut out_body = line.to_string();
+            out_body.push('\n');
+            std::fs::write(&output, out_body)?;
+            eprintln!(
+                "encode-xor-repair-payload: epoch_seed={epoch_seed} k_source={k_u16} repair_esi={repair_esi} schedule_len={}",
+                schedule_indices.len()
             );
         }
         Command::CanonicalClassFromSupport {

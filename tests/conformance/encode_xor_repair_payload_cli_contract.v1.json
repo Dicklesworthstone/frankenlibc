@@ -1,0 +1,53 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "encode-xor-repair-payload-cli-contract",
+  "bead": "bd-3nygl",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "9bb48640",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::evidence::encode_xor_repair_payload_v1(epoch_seed, &[[u8; 128]], repair_esi) -> [u8; 128]. Reads source payloads from a binary file containing K concatenated 128-byte EVIDENCE_SYMBOL_SIZE_T symbols, derives the XOR schedule via derive_repair_schedule_v1(epoch_seed, k_source, repair_esi), and XOR-combines the source symbols at scheduled indices to produce one repair payload. Emits a single JSONL record { kind: 'xor_repair_payload', epoch_seed, k_source, repair_esi, schedule_indices, payload_hex } where payload_hex is 256 lowercase hex chars (128 bytes). Previously reachable only from Rust callers; the CLI lets CI verify XOR-repair encoding without compiling.",
+  "subcommand_name": "encode-xor-repair-payload",
+  "binary_target": "harness",
+  "required_flags": [
+    "--epoch-seed",
+    "--source-payloads",
+    "--repair-esi",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::encode_xor_repair_payload_v1",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "xor_repair_payload",
+    "required_fields": [
+      "kind",
+      "epoch_seed",
+      "k_source",
+      "repair_esi",
+      "schedule_indices",
+      "payload_hex"
+    ]
+  },
+  "policy": {
+    "must_emit_exactly_one_jsonl_record": true,
+    "echoes_inputs_into_output_record": true,
+    "deterministic_given_inputs": true,
+    "payload_hex_is_256_lowercase_hex_chars": true,
+    "single_index_schedule_yields_source_payload_at_that_index": true,
+    "multi_index_schedule_yields_xor_of_source_payloads_at_indices": true,
+    "repair_esi_below_k_source_is_rejected": true,
+    "non_multiple_of_128_input_file_is_rejected": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "payload_diverges_from_xor_of_scheduled_indices",
+    "repair_esi_below_k_source_certified",
+    "uneven_input_file_certified"
+  ],
+  "summary": {
+    "bead": "bd-3nygl",
+    "subcommand": "encode-xor-repair-payload",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
