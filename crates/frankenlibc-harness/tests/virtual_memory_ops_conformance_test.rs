@@ -44,12 +44,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,8 +125,8 @@ fn virtual_memory_ops_fixture_exists() {
 }
 
 #[test]
-fn virtual_memory_ops_fixture_valid_schema() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "virtual_memory_ops");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -139,64 +139,70 @@ fn virtual_memory_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn virtual_memory_ops_covers_mmap() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_covers_mmap() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("mmap")).count() >= 2,
         "mmap needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn virtual_memory_ops_covers_munmap() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_covers_munmap() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("munmap")),
         "Missing test coverage for munmap"
     );
+    Ok(())
 }
 
 #[test]
-fn virtual_memory_ops_covers_mprotect() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_covers_mprotect() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("mprotect")),
         "Missing test coverage for mprotect"
     );
+    Ok(())
 }
 
 #[test]
-fn virtual_memory_ops_covers_madvise() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_covers_madvise() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("madvise")),
         "Missing test coverage for madvise"
     );
+    Ok(())
 }
 
 #[test]
-fn virtual_memory_ops_modes_valid() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn virtual_memory_ops_covers_both_modes() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
     assert!(
@@ -207,11 +213,12 @@ fn virtual_memory_ops_covers_both_modes() {
         has_hardened,
         "virtual_memory_ops must have hardened mode test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn virtual_memory_ops_case_count_stable() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
     assert!(
         fixture.cases.len() >= 6,
         "virtual_memory_ops fixture has {} cases, expected at least 6",
@@ -221,11 +228,12 @@ fn virtual_memory_ops_case_count_stable() {
         "virtual_memory_ops fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn virtual_memory_ops_has_posix_references() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("POSIX") || case.spec_section.contains("Linux"),
@@ -234,11 +242,12 @@ fn virtual_memory_ops_has_posix_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn virtual_memory_ops_error_codes_valid() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
 
     // Valid error codes for virtual memory operations
     let valid_errno_values = [
@@ -255,11 +264,12 @@ fn virtual_memory_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 #[test]
-fn virtual_memory_ops_covers_error_paths() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -267,17 +277,18 @@ fn virtual_memory_ops_covers_error_paths() {
             .any(|n| n.contains("zero_length") || n.contains("invalid")),
         "virtual_memory_ops must test error paths"
     );
+    Ok(())
 }
 
 #[test]
-fn virtual_memory_ops_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("virtual_memory_ops");
+fn virtual_memory_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("virtual_memory_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -285,13 +296,13 @@ fn virtual_memory_ops_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "virtual_memory_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -304,4 +315,5 @@ fn virtual_memory_ops_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+    Ok(())
 }
