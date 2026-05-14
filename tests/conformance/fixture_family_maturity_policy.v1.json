@@ -1,0 +1,70 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-j1u6u.5",
+  "gate_id": "fixture-family-maturity-v1",
+  "description": "Policy for fixture-family maturity claims. Fixture waves may claim structural coverage, deterministic safe-default coverage, host-differential parity, or replacement-ready behavior only when the evidence reaches the declared state. Safe-default rows alone must never imply full libc replacement readiness.",
+  "claim_bundle_kind": "fixture_family_maturity_claim",
+  "maturity_order": [
+    "structural_coverage",
+    "deterministic_safe_default",
+    "host_differential_parity",
+    "replacement_ready"
+  ],
+  "state_requirements": [
+    {
+      "state": "structural_coverage",
+      "required_evidence_kinds": [
+        "fixture_schema_valid",
+        "coverage_inventory_linked"
+      ]
+    },
+    {
+      "state": "deterministic_safe_default",
+      "required_evidence_kinds": [
+        "safe_default_rows",
+        "explicit_oracle_kind",
+        "divergence_policy"
+      ]
+    },
+    {
+      "state": "host_differential_parity",
+      "required_evidence_kinds": [
+        "strict_rows",
+        "hardened_rows",
+        "host_differential_oracle",
+        "isolated_execution"
+      ]
+    },
+    {
+      "state": "replacement_ready",
+      "required_evidence_kinds": [
+        "strict_rows",
+        "hardened_rows",
+        "host_parity_rows",
+        "isolated_execution",
+        "non_safe_default_oracle",
+        "no_uncovered_required_symbols"
+      ]
+    }
+  ],
+  "replacement_ready_claim_markers": [
+    "replacement-ready",
+    "replacement ready",
+    "full replacement",
+    "drop-in replacement ready",
+    "libc replacement ready"
+  ],
+  "safe_default_only_evidence_kinds": [
+    "safe_default_rows",
+    "explicit_oracle_kind",
+    "divergence_policy"
+  ],
+  "required_claim_fields": [
+    "schema_version",
+    "kind",
+    "family",
+    "claimed_state",
+    "claim_text",
+    "evidence"
+  ]
+}
