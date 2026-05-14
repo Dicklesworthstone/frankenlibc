@@ -172,7 +172,22 @@ fn run_cli(
 
 fn read_record(out_path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "expected exactly one JSONL record in {}, got {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
 #[test]
@@ -184,11 +199,9 @@ fn cli_exact_size_with_valid_membership_certified_safe() -> TestResult {
     let output = unique_tmp("safe")?;
     let out = run_cli(&bin, 64, 64, true, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         json_string(&parsed, "kind")? == "size_class_barrier",
         "kind must be size_class_barrier",
@@ -214,11 +227,9 @@ fn cli_invalid_class_membership_violates() -> TestResult {
     // membership_violation_ppm penalty.
     let out = run_cli(&bin, 64, 64, false, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         !json_bool(&parsed, "safe")?,
         "invalid membership must yield safe=false",
@@ -239,11 +250,9 @@ fn cli_underflow_mapped_smaller_than_requested_violates() -> TestResult {
     // Requested 64 but mapped only 8 → underflow_violation_ppm fires.
     let out = run_cli(&bin, 64, 8, true, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         !json_bool(&parsed, "safe")?,
         "underflow must yield safe=false",
@@ -273,14 +282,12 @@ fn cli_safe_flag_matches_headroom_sign() -> TestResult {
         let output = unique_tmp(&format!("sign_{i}"))?;
         let out = run_cli(&bin, *req, *mapped, *valid, &output)?;
         if !out.status.success() {
-            let _ = std::fs::remove_file(&output);
             return Err(format!(
                 "case {i} stderr={}",
                 String::from_utf8_lossy(&out.stderr)
             ));
         }
         let parsed = read_record(&output)?;
-        let _ = std::fs::remove_file(&output);
         let headroom = json_i64(&parsed, "headroom")?;
         let safe = json_bool(&parsed, "safe")?;
         require(
@@ -309,8 +316,6 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
     )?;
     let pa = read_record(&a)?;
     let pb = read_record(&b)?;
-    let _ = std::fs::remove_file(&a);
-    let _ = std::fs::remove_file(&b);
     require(pa == pb, "same inputs must produce identical output")
 }
 
@@ -327,7 +332,6 @@ fn cli_echoes_inputs_into_record() -> TestResult {
         format!("stderr={}", String::from_utf8_lossy(&out.stderr)),
     )?;
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         parsed.get("requested_size").and_then(Value::as_u64) == Some(256),
         "requested_size must echo",
