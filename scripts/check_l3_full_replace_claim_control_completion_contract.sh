@@ -144,6 +144,11 @@ def err(message: str) -> None:
     errors.append(message)
 
 
+def missing_ordered(expected: list[str], actual: list[str]) -> list[str]:
+    actual_set = set(actual)
+    return [item for item in expected if item not in actual_set]
+
+
 def rel(path: pathlib.Path | str) -> str:
     path = pathlib.Path(path)
     try:
@@ -467,18 +472,47 @@ missing_fuzz_targets = sorted(EXPECTED_FUZZ_MUTATION_TARGETS - fuzz_targets)
 if missing_fuzz_targets:
     err(f"completion_debt_evidence.required_fuzz_mutation_targets missing {missing_fuzz_targets}")
 
-claim_log_fields = set(as_string_list(evidence.get("required_claim_log_fields"), "completion_debt_evidence.required_claim_log_fields"))
-if claim_log_fields != EXPECTED_CLAIM_LOG_FIELDS:
-    err("completion_debt_evidence.required_claim_log_fields must match release claim gate row fields")
-
-required_l3_signatures = set(
-    as_string_list(
-        evidence.get("required_l3_release_claim_failure_signatures"),
-        "completion_debt_evidence.required_l3_release_claim_failure_signatures",
-    )
+required_claim_log_fields = as_string_list(
+    evidence.get("required_claim_log_fields"),
+    "completion_debt_evidence.required_claim_log_fields",
 )
+claim_log_fields = set(required_claim_log_fields)
+if claim_log_fields != EXPECTED_CLAIM_LOG_FIELDS:
+    missing_claim_log_fields = missing_ordered(
+        sorted(EXPECTED_CLAIM_LOG_FIELDS),
+        required_claim_log_fields,
+    )
+    if missing_claim_log_fields:
+        err(
+            "completion_debt_evidence.required_claim_log_fields missing "
+            f"{missing_claim_log_fields}"
+        )
+    else:
+        err(
+            "completion_debt_evidence.required_claim_log_fields must match "
+            "release claim gate row fields"
+        )
+
+required_l3_signature_values = as_string_list(
+    evidence.get("required_l3_release_claim_failure_signatures"),
+    "completion_debt_evidence.required_l3_release_claim_failure_signatures",
+)
+required_l3_signatures = set(required_l3_signature_values)
 if not EXPECTED_L3_FAILURE_SIGNATURES.issubset(required_l3_signatures):
-    err("completion_debt_evidence.required_l3_release_claim_failure_signatures must include L2 and L3 missing-evidence blockers")
+    missing_l3_signatures = missing_ordered(
+        sorted(EXPECTED_L3_FAILURE_SIGNATURES),
+        required_l3_signature_values,
+    )
+    if missing_l3_signatures:
+        err(
+            "completion_debt_evidence.required_l3_release_claim_failure_signatures missing "
+            f"{missing_l3_signatures}"
+        )
+    else:
+        err(
+            "completion_debt_evidence.required_l3_release_claim_failure_signatures "
+            "must include L2 and L3 missing-evidence blockers"
+        )
 
 matrix_rows = [row for row in matrix.get("proof_rows", []) if isinstance(row, dict)]
 obligations = [row for row in matrix.get("obligations", []) if isinstance(row, dict)]
@@ -497,7 +531,17 @@ required_l3_obligations = as_string_list(
     "completion_debt_evidence.required_l3_obligation_ids",
 )
 if required_l3_obligations != l3_obligation_ids:
-    err("completion_debt_evidence.required_l3_obligation_ids must match standalone readiness L3 obligations")
+    missing_l3_obligations = missing_ordered(l3_obligation_ids, required_l3_obligations)
+    if missing_l3_obligations:
+        err(
+            "completion_debt_evidence.required_l3_obligation_ids missing "
+            f"{missing_l3_obligations}"
+        )
+    else:
+        err(
+            "completion_debt_evidence.required_l3_obligation_ids must match "
+            "standalone readiness L3 obligations"
+        )
 required_l3_negative_tests = as_string_list(
     evidence.get("required_l3_negative_claim_tests"),
     "completion_debt_evidence.required_l3_negative_claim_tests",

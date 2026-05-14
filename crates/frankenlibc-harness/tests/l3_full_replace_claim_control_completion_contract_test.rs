@@ -290,6 +290,17 @@ fn checker_output_message(output: &std::process::Output) -> String {
     )
 }
 
+fn assert_report_error_contains(report: &Value, needle: &str) {
+    assert!(
+        report["errors"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|error| error.as_str().is_some_and(|text| text.contains(needle))),
+        "failure report should include {needle}: {report}"
+    );
+}
+
 fn run_passing_checker(root: &Path, label: &str) -> TestResult<PathBuf> {
     let out_dir = unique_output_dir(root, label)?;
     let output = run_checker(
@@ -690,16 +701,8 @@ fn checker_rejects_missing_required_claim_log_field_binding() -> TestResult {
     let report =
         read_json(&out_dir.join("l3_full_replace_claim_control_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    assert!(
-        report["errors"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|error| error
-                .as_str()
-                .is_some_and(|text| text.contains("required_claim_log_fields"))),
-        "failure report should explain missing required_claim_log_fields"
-    );
+    assert_report_error_contains(&report, "required_claim_log_fields");
+    assert_report_error_contains(&report, "failure_signature");
     Ok(())
 }
 
@@ -731,16 +734,8 @@ fn checker_rejects_missing_l3_obligation_binding() -> TestResult {
     let report =
         read_json(&out_dir.join("l3_full_replace_claim_control_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    assert!(
-        report["errors"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|error| error
-                .as_str()
-                .is_some_and(|text| text.contains("required_l3_obligation_ids"))),
-        "failure report should explain missing required_l3_obligation_ids"
-    );
+    assert_report_error_contains(&report, "required_l3_obligation_ids");
+    assert_report_error_contains(&report, "l3-zero-host-glibc");
     Ok(())
 }
 
@@ -773,16 +768,8 @@ fn checker_rejects_missing_l3_release_claim_signature_binding() -> TestResult {
     let report =
         read_json(&out_dir.join("l3_full_replace_claim_control_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    assert!(
-        report["errors"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|error| error
-                .as_str()
-                .is_some_and(|text| text.contains("required_l3_release_claim_failure_signatures"))),
-        "failure report should explain missing L3 failure signature"
-    );
+    assert_report_error_contains(&report, "required_l3_release_claim_failure_signatures");
+    assert_report_error_contains(&report, "release_claim_missing_l3_evidence");
     Ok(())
 }
 
@@ -815,15 +802,10 @@ fn checker_rejects_missing_fuzz_binding() -> TestResult {
     let report =
         read_json(&out_dir.join("l3_full_replace_claim_control_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    assert!(
-        report["errors"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|error| error
-                .as_str()
-                .is_some_and(|text| text.contains("required_fuzz_mutation_targets"))),
-        "failure report should explain missing required_fuzz_mutation_targets"
+    assert_report_error_contains(&report, "required_fuzz_mutation_targets");
+    assert_report_error_contains(
+        &report,
+        "completion_debt_evidence.required_l3_obligation_ids",
     );
     Ok(())
 }
