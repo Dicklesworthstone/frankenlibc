@@ -132,16 +132,37 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
     let policy = m.get("policy").ok_or("missing policy")?;
-    for key in [
-        "without_output_flag_renders_markdown_to_stdout",
-        "with_output_flag_writes_markdown_to_output_path",
-        "with_output_flag_writes_json_sibling_at_output_path_with_json_extension",
-        "spawns_two_subprocesses_strict_and_hardened",
-        "report_contains_strict_and_hardened_metrics_blocks",
-        "json_sibling_includes_both_modes_with_their_safety_levels",
-        "deterministic_seed_steps_microbench_iters_roundtrip_to_each_mode_block",
+    for (key, message) in [
+        (
+            "without_output_flag_renders_markdown_to_stdout",
+            "without_output_flag_renders_markdown_to_stdout must be true",
+        ),
+        (
+            "with_output_flag_writes_markdown_to_output_path",
+            "with_output_flag_writes_markdown_to_output_path must be true",
+        ),
+        (
+            "with_output_flag_writes_json_sibling_at_output_path_with_json_extension",
+            "with_output_flag_writes_json_sibling_at_output_path_with_json_extension must be true",
+        ),
+        (
+            "spawns_two_subprocesses_strict_and_hardened",
+            "spawns_two_subprocesses_strict_and_hardened must be true",
+        ),
+        (
+            "report_contains_strict_and_hardened_metrics_blocks",
+            "report_contains_strict_and_hardened_metrics_blocks must be true",
+        ),
+        (
+            "json_sibling_includes_both_modes_with_their_safety_levels",
+            "json_sibling_includes_both_modes_with_their_safety_levels must be true",
+        ),
+        (
+            "deterministic_seed_steps_microbench_iters_roundtrip_to_each_mode_block",
+            "deterministic_seed_steps_microbench_iters_roundtrip_to_each_mode_block must be true",
+        ),
     ] {
-        require(json_bool(policy, key)?, "policy invariant must be true")?;
+        require(json_bool(policy, key)?, message)?;
     }
     Ok(())
 }
