@@ -1,0 +1,71 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "reality-report-cli-contract",
+  "bead": "bd-0agsk.3",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "aeb064979730c1a0405c76fc987c7afd379d044e",
+  "purpose": "Pin the harness binary `reality-report` subcommand that exposes the support-matrix taxonomy report used by support_reality_regeneration. The command must read a support_matrix JSON file, produce a pretty v1 RealityReport JSON document, support stdout and --output modes, create the output parent directory, sort stub symbols, and fail closed when the support matrix is missing or malformed.",
+  "subcommand_name": "reality-report",
+  "binary_target": "harness",
+  "required_flags": [
+    "--support-matrix"
+  ],
+  "optional_flags": [
+    "--output"
+  ],
+  "default_inputs": {
+    "support_matrix": "support_matrix.json"
+  },
+  "underlying_lib_functions": [
+    "frankenlibc_harness::report::RealityReport::from_support_matrix_path",
+    "frankenlibc_harness::report::RealityReport::from_support_matrix_json_str",
+    "frankenlibc_harness::report::RealityReport::to_json"
+  ],
+  "output_contract": {
+    "format": "pretty_json",
+    "schema_version": "v1",
+    "required_top_level_fields": [
+      "schema_version",
+      "generated_at_utc",
+      "total_exported",
+      "counts",
+      "stubs"
+    ],
+    "required_count_fields": [
+      "implemented",
+      "raw_syscall",
+      "wraps_host_libc",
+      "glibc_call_through",
+      "stub"
+    ],
+    "source_fields": {
+      "generated_at_utc": "support_matrix.generated_at_utc",
+      "total_exported": "support_matrix.total_exported"
+    }
+  },
+  "policy": {
+    "stdout_mode_emits_valid_json": true,
+    "output_mode_writes_parent_directories": true,
+    "status_counts_must_sum_to_total_exported": true,
+    "stub_symbols_must_be_sorted": true,
+    "unknown_support_status_must_fail_closed": true,
+    "missing_support_matrix_must_fail_closed": true,
+    "support_matrix_symbol_count_mismatch_must_fail_closed": true,
+    "must_preserve_support_reality_regeneration_bead": true
+  },
+  "rejected_evidence_kinds": [
+    "stdout_mode_non_json",
+    "missing_output_file_accepted",
+    "unsorted_stub_symbols",
+    "support_matrix_count_mismatch_accepted",
+    "missing_support_matrix_accepted",
+    "wrong_report_schema_version",
+    "wrong_report_bead"
+  ],
+  "summary": {
+    "bead": "bd-0agsk.3",
+    "subcommand": "reality-report",
+    "report_only": true,
+    "claim_status": "code_only_pending_tracker_closeout"
+  }
+}
