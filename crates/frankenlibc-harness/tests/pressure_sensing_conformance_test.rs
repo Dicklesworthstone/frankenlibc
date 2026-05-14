@@ -44,12 +44,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,8 +135,8 @@ fn pressure_sensing_fixture_exists() {
 }
 
 #[test]
-fn pressure_sensing_fixture_valid_schema() {
-    let fixture = load_fixture("pressure_sensing");
+fn pressure_sensing_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("pressure_sensing")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "pressure_sensing");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -149,61 +149,67 @@ fn pressure_sensing_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn pressure_sensing_covers_nominal_regime() {
-    let fixture = load_fixture("pressure_sensing");
+fn pressure_sensing_covers_nominal_regime() -> Result<(), String> {
+    let fixture = load_fixture("pressure_sensing")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("nominal")),
         "Missing test coverage for Nominal regime"
     );
+    Ok(())
 }
 
 #[test]
-fn pressure_sensing_covers_pressured_regime() {
-    let fixture = load_fixture("pressure_sensing");
+fn pressure_sensing_covers_pressured_regime() -> Result<(), String> {
+    let fixture = load_fixture("pressure_sensing")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("pressured")),
         "Missing test coverage for Pressured regime"
     );
+    Ok(())
 }
 
 #[test]
-fn pressure_sensing_covers_overloaded_regime() {
-    let fixture = load_fixture("pressure_sensing");
+fn pressure_sensing_covers_overloaded_regime() -> Result<(), String> {
+    let fixture = load_fixture("pressure_sensing")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("overloaded")),
         "Missing test coverage for Overloaded regime"
     );
+    Ok(())
 }
 
 #[test]
-fn pressure_sensing_covers_recovery() {
-    let fixture = load_fixture("pressure_sensing");
+fn pressure_sensing_covers_recovery() -> Result<(), String> {
+    let fixture = load_fixture("pressure_sensing")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("recovery")),
         "Missing test coverage for Recovery transitions"
     );
+    Ok(())
 }
 
 #[test]
-fn pressure_sensing_covers_hysteresis() {
-    let fixture = load_fixture("pressure_sensing");
+fn pressure_sensing_covers_hysteresis() -> Result<(), String> {
+    let fixture = load_fixture("pressure_sensing")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("hysteresis")),
         "Missing test coverage for hysteresis behavior"
     );
+    Ok(())
 }
 
 #[test]
-fn pressure_sensing_has_strict_and_hardened() {
-    let fixture = load_fixture("pressure_sensing");
+fn pressure_sensing_has_strict_and_hardened() -> Result<(), String> {
+    let fixture = load_fixture("pressure_sensing")?;
     let strict_count = fixture.cases.iter().filter(|c| c.mode == "strict").count();
     let hardened_count = fixture
         .cases
@@ -218,24 +224,26 @@ fn pressure_sensing_has_strict_and_hardened() {
         hardened_count >= 1,
         "pressure_sensing needs at least 1 hardened mode case"
     );
+    Ok(())
 }
 
 #[test]
-fn pressure_sensing_modes_valid() {
-    let fixture = load_fixture("pressure_sensing");
+fn pressure_sensing_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("pressure_sensing")?;
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn pressure_sensing_case_count_stable() {
-    let fixture = load_fixture("pressure_sensing");
+fn pressure_sensing_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("pressure_sensing")?;
     assert!(
         fixture.cases.len() >= 5,
         "pressure_sensing fixture has {} cases, expected at least 5",
@@ -245,11 +253,12 @@ fn pressure_sensing_case_count_stable() {
         "pressure_sensing fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn pressure_sensing_has_spec_references() {
-    let fixture = load_fixture("pressure_sensing");
+fn pressure_sensing_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("pressure_sensing")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("bd-w2c3") || case.spec_section.contains("Regime"),
@@ -258,11 +267,12 @@ fn pressure_sensing_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn pressure_sensing_fixture_executes_via_harness() {
-    let fixture = load_fixture("pressure_sensing");
+fn pressure_sensing_fixture_executes_via_harness() -> Result<(), String> {
+    let fixture = load_fixture("pressure_sensing")?;
 
     for case in &fixture.cases {
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
@@ -272,18 +282,20 @@ fn pressure_sensing_fixture_executes_via_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "pressure_sensing case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
-            let expected = expected_output_text(
-                case.expected_output
-                    .as_ref()
-                    .expect("pressure_sensing cases must have expected_output"),
-            );
+                })?;
+            let expected_value = case.expected_output.as_ref().ok_or_else(|| {
+                format!(
+                    "pressure_sensing case {} is missing expected_output",
+                    case.name
+                )
+            })?;
+            let expected = expected_output_text(expected_value);
             assert_eq!(
                 result.impl_output, expected,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -299,4 +311,5 @@ fn pressure_sensing_fixture_executes_via_harness() {
             );
         }
     }
+    Ok(())
 }
