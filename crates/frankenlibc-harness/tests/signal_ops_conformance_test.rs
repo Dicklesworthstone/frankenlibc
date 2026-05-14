@@ -46,12 +46,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,8 +133,8 @@ fn signal_ops_fixture_exists() {
 }
 
 #[test]
-fn signal_ops_fixture_valid_schema() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "signal_ops");
@@ -153,6 +153,8 @@ fn signal_ops_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,19 +162,21 @@ fn signal_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn signal_ops_covers_raise() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_covers_raise() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("raise")),
         "Missing test coverage for raise"
     );
+
+    Ok(())
 }
 
 #[test]
-fn signal_ops_covers_kill() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_covers_kill() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["kill_self", "kill_invalid"];
@@ -184,22 +188,26 @@ fn signal_ops_covers_kill() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn signal_ops_covers_sigaction() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_covers_sigaction() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("sigaction")),
         "Missing test coverage for sigaction"
     );
+
+    Ok(())
 }
 
 #[test]
-fn signal_ops_covers_signal() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_covers_signal() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     for pattern in ["signal_install", "signal_invalid"] {
@@ -209,11 +217,13 @@ fn signal_ops_covers_signal() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn signal_ops_covers_legacy_sysv_signals() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_covers_legacy_sysv_signals() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     for pattern in ["ssignal", "gsignal"] {
@@ -223,6 +233,8 @@ fn signal_ops_covers_legacy_sysv_signals() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,8 +242,8 @@ fn signal_ops_covers_legacy_sysv_signals() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn signal_ops_error_codes_valid() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
 
     // Valid POSIX/Linux error codes for signal functions
     let valid_errno_values = [
@@ -250,6 +262,8 @@ fn signal_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -257,8 +271,8 @@ fn signal_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn signal_ops_function_distribution() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_function_distribution() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
 
     let mut raise_count = 0;
     let mut ssignal_count = 0;
@@ -276,7 +290,7 @@ fn signal_ops_function_distribution() {
             "sigaction" => sigaction_count += 1,
             "signal" => signal_count += 1,
             "sigemptyset" | "sigfillset" | "sigaddset" | "sigdelset" | "sigismember" => {}
-            f => panic!("Unexpected function in fixture: {}", f),
+            function => return Err(format!("unexpected function in fixture: {function}")),
         }
     }
 
@@ -316,6 +330,8 @@ fn signal_ops_function_distribution() {
         "signal_ops coverage: raise={}, ssignal={}, gsignal={}, kill={}, sigaction={}, signal={}",
         raise_count, ssignal_count, gsignal_count, kill_count, sigaction_count, signal_count
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -323,17 +339,19 @@ fn signal_ops_function_distribution() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn signal_ops_modes_valid() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -341,8 +359,8 @@ fn signal_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn signal_ops_case_count_stable() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 5;
 
@@ -354,17 +372,19 @@ fn signal_ops_case_count_stable() {
     );
 
     eprintln!("signal_ops fixture has {} test cases", fixture.cases.len());
+
+    Ok(())
 }
 
 #[test]
-fn signal_ops_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -372,13 +392,13 @@ fn signal_ops_fixture_cases_match_execute_fixture_case() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "signal_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -391,6 +411,8 @@ fn signal_ops_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -398,8 +420,8 @@ fn signal_ops_fixture_cases_match_execute_fixture_case() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn signal_ops_covers_both_modes() {
-    let fixture = load_fixture("signal_ops");
+fn signal_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("signal_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
@@ -409,4 +431,6 @@ fn signal_ops_covers_both_modes() {
         has_hardened,
         "signal_ops must have hardened mode test cases"
     );
+
+    Ok(())
 }
