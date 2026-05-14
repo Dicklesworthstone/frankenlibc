@@ -114,6 +114,11 @@ def err(message: str) -> None:
     errors.append(message)
 
 
+def missing_ordered(expected: list[str], actual: list[str]) -> list[str]:
+    actual_set = set(actual)
+    return [item for item in expected if item not in actual_set]
+
+
 def load_json(path: pathlib.Path, label: str) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -396,7 +401,15 @@ required_negative_tests = as_string_list(
 
 matrix_log_fields = matrix.get("required_log_fields")
 if required_log_fields != matrix_log_fields:
-    err("completion_debt_evidence.required_log_fields must match standalone readiness matrix required_log_fields")
+    expected_log_fields = matrix_log_fields if isinstance(matrix_log_fields, list) else []
+    missing_log_fields = missing_ordered(expected_log_fields, required_log_fields)
+    if missing_log_fields:
+        err(
+            "completion_debt_evidence.required_log_fields missing "
+            f"{missing_log_fields}"
+        )
+    else:
+        err("completion_debt_evidence.required_log_fields must match standalone readiness matrix required_log_fields")
 matrix_row_ids = [str(row.get("proof_row_id")) for row in matrix_rows if isinstance(row.get("proof_row_id"), str)]
 if required_row_ids != matrix_row_ids:
     err("completion_debt_evidence.required_proof_row_ids must match standalone readiness matrix proof_rows")
@@ -405,7 +418,14 @@ l3_obligations = [row for row in obligations if row.get("level") == "L3"]
 l2_obligation_ids = [str(row.get("id")) for row in l2_obligations if isinstance(row.get("id"), str)]
 obligation_ids = [str(row.get("id")) for row in obligations if isinstance(row.get("id"), str)]
 if required_l2_obligations != l2_obligation_ids:
-    err("completion_debt_evidence.required_l2_obligation_ids must match standalone readiness matrix L2 obligations")
+    missing_l2_obligations = missing_ordered(l2_obligation_ids, required_l2_obligations)
+    if missing_l2_obligations:
+        err(
+            "completion_debt_evidence.required_l2_obligation_ids missing "
+            f"{missing_l2_obligations}"
+        )
+    else:
+        err("completion_debt_evidence.required_l2_obligation_ids must match standalone readiness matrix L2 obligations")
 if required_obligations != obligation_ids:
     err("completion_debt_evidence.required_obligation_ids must match standalone readiness matrix obligations")
 negative_ids = [

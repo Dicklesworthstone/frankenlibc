@@ -254,6 +254,17 @@ fn checker_output_message(output: &std::process::Output) -> String {
     )
 }
 
+fn assert_report_error_contains(report: &Value, needle: &str) {
+    assert!(
+        report["errors"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|error| error.as_str().is_some_and(|text| text.contains(needle))),
+        "failure report should include {needle}: {report}"
+    );
+}
+
 fn run_passing_checker(root: &Path, label: &str) -> TestResult<PathBuf> {
     let out_dir = unique_output_dir(root, label)?;
     let output = run_checker(
@@ -620,16 +631,8 @@ fn checker_rejects_missing_required_log_field_binding() -> TestResult {
     );
     let report = read_json(&out_dir.join("l2_partial_replace_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    assert!(
-        report["errors"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|error| error
-                .as_str()
-                .is_some_and(|text| text.contains("required_log_fields"))),
-        "failure report should explain missing required_log_fields"
-    );
+    assert_report_error_contains(&report, "required_log_fields");
+    assert_report_error_contains(&report, "failure_signature");
     Ok(())
 }
 
@@ -660,16 +663,8 @@ fn checker_rejects_missing_l2_obligation_binding() -> TestResult {
     );
     let report = read_json(&out_dir.join("l2_partial_replace_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    assert!(
-        report["errors"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|error| error
-                .as_str()
-                .is_some_and(|text| text.contains("required_l2_obligation_ids"))),
-        "failure report should explain missing required_l2_obligation_ids"
-    );
+    assert_report_error_contains(&report, "required_l2_obligation_ids");
+    assert_report_error_contains(&report, "l2-host-dependency-allowlist");
     Ok(())
 }
 
@@ -701,15 +696,10 @@ fn checker_rejects_missing_fuzz_binding() -> TestResult {
     );
     let report = read_json(&out_dir.join("l2_partial_replace_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    assert!(
-        report["errors"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|error| error
-                .as_str()
-                .is_some_and(|text| text.contains("required_fuzz_mutation_targets"))),
-        "failure report should explain missing required_fuzz_mutation_targets"
+    assert_report_error_contains(&report, "required_fuzz_mutation_targets");
+    assert_report_error_contains(
+        &report,
+        "completion_debt_evidence.required_l2_obligation_ids",
     );
     Ok(())
 }
