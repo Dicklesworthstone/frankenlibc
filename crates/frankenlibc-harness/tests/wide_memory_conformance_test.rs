@@ -52,12 +52,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -134,8 +134,8 @@ fn wide_memory_fixture_exists() {
 }
 
 #[test]
-fn wide_memory_fixture_valid_schema() {
-    let fixture = load_fixture("wide_memory");
+fn wide_memory_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("wide_memory")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "string/wide_memory");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -148,85 +148,93 @@ fn wide_memory_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn wide_memory_covers_wmemcpy() {
-    let fixture = load_fixture("wide_memory");
+fn wide_memory_covers_wmemcpy() -> Result<(), String> {
+    let fixture = load_fixture("wide_memory")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("wmemcpy")),
         "Missing test coverage for wmemcpy"
     );
+    Ok(())
 }
 
 #[test]
-fn wide_memory_covers_wmemmove() {
-    let fixture = load_fixture("wide_memory");
+fn wide_memory_covers_wmemmove() -> Result<(), String> {
+    let fixture = load_fixture("wide_memory")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("wmemmove")),
         "Missing test coverage for wmemmove"
     );
+    Ok(())
 }
 
 #[test]
-fn wide_memory_covers_wmemset() {
-    let fixture = load_fixture("wide_memory");
+fn wide_memory_covers_wmemset() -> Result<(), String> {
+    let fixture = load_fixture("wide_memory")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("wmemset")),
         "Missing test coverage for wmemset"
     );
+    Ok(())
 }
 
 #[test]
-fn wide_memory_covers_wmemcmp() {
-    let fixture = load_fixture("wide_memory");
+fn wide_memory_covers_wmemcmp() -> Result<(), String> {
+    let fixture = load_fixture("wide_memory")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("wmemcmp")).count() >= 2,
         "wmemcmp needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn wide_memory_covers_wmemchr() {
-    let fixture = load_fixture("wide_memory");
+fn wide_memory_covers_wmemchr() -> Result<(), String> {
+    let fixture = load_fixture("wide_memory")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("wmemchr")),
         "Missing test coverage for wmemchr"
     );
+    Ok(())
 }
 
 #[test]
-fn wide_memory_modes_valid() {
-    let fixture = load_fixture("wide_memory");
+fn wide_memory_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("wide_memory")?;
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn wide_memory_case_count_stable() {
-    let fixture = load_fixture("wide_memory");
+fn wide_memory_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("wide_memory")?;
     assert!(
         fixture.cases.len() >= 5,
         "wide_memory fixture has {} cases, expected at least 5",
         fixture.cases.len()
     );
     eprintln!("wide_memory fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 #[test]
-fn wide_memory_has_spec_references() {
-    let fixture = load_fixture("wide_memory");
+fn wide_memory_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("wide_memory")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("ISO C"),
@@ -235,11 +243,12 @@ fn wide_memory_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn wide_memory_error_codes_valid() {
-    let fixture = load_fixture("wide_memory");
+fn wide_memory_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("wide_memory")?;
 
     // Wide memory functions don't set errno
     for case in &fixture.cases {
@@ -249,19 +258,20 @@ fn wide_memory_error_codes_valid() {
             case.name, case.expected_errno
         );
     }
+    Ok(())
 }
 
 #[test]
-fn wide_memory_fixture_cases_match_execute_fixture_case() {
+fn wide_memory_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
     // In-process oracle: catches divergence directly from the test
     // process via the shared `frankenlibc_fixture_exec` helper.
-    let fixture = load_fixture("wide_memory");
+    let fixture = load_fixture("wide_memory")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -270,12 +280,12 @@ fn wide_memory_fixture_cases_match_execute_fixture_case() {
 
         for mode in modes {
             let result =
-                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
-                    panic!(
+                execute_fixture_case(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -290,20 +300,22 @@ fn wide_memory_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+
+    Ok(())
 }
 
 #[test]
-fn wide_memory_fixture_executes_with_host_parity_via_harness_matrix() {
+fn wide_memory_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
     // Isolated harness subprocess (bd-s1ew): mirrors the CI conformance
     // matrix's case dispatch path, so packaging/dispatch regressions
     // surface here even when the in-process executor passes.
-    let fixture = load_fixture("wide_memory");
+    let fixture = load_fixture("wide_memory")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -311,13 +323,13 @@ fn wide_memory_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "wide_memory case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity || result.host_output == "UB",
                 "wide_memory case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -332,4 +344,6 @@ fn wide_memory_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+
+    Ok(())
 }
