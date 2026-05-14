@@ -752,6 +752,41 @@ fn getaddrinfo_ai_numericserv_rejects_service_names() {
 }
 
 #[test]
+fn getaddrinfo_ai_numerichost_rejects_hosts_backend_names() {
+    with_resolver_backends(Some(b"203.0.113.10 fixture-host\n"), None, |_| {
+        let cases = [
+            ("203.0.113.10", 0, Some([203, 0, 113, 10])),
+            ("fixture-host", libc::EAI_NONAME, None),
+        ];
+
+        for (node_text, expected_rc, expected_addr) in cases {
+            let node = CString::new(node_text).unwrap();
+            let service = CString::new("80").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            hints.ai_flags = libc::AI_NUMERICHOST;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, expected_rc, "node {node_text:?}");
+
+            if let Some(addr) = expected_addr {
+                assert!(!res.is_null());
+                let sin = unsafe { &*((*res).ai_addr as *const libc::sockaddr_in) };
+                assert_eq!(sin.sin_port, 80u16.to_be());
+                assert_eq!(sin.sin_addr.s_addr, u32::from_ne_bytes(addr));
+                unsafe { resolv_abi::freeaddrinfo(res) };
+            } else {
+                assert!(res.is_null());
+            }
+        }
+    });
+}
+
+#[test]
 fn getaddrinfo_numeric_ipv6_resolves() {
     let node = CString::new("::1").unwrap();
     let service = CString::new("443").unwrap();

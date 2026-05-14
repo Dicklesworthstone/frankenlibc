@@ -1252,6 +1252,17 @@ pub unsafe extern "C" fn getaddrinfo(
                 numeric_host = true;
                 nodes.push(unsafe { build_addrinfo_v6(v6, port, hints_ref) });
             } else {
+                if (flags & libc::AI_NUMERICHOST) != 0 {
+                    record_resolver_stage_outcome(
+                        &ordering,
+                        aligned,
+                        recent_page,
+                        Some(stage_index(&ordering, CheckStage::Bounds)),
+                    );
+                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                    return libc::EAI_NONAME;
+                }
+
                 // Check /etc/hosts for all matches (subset only)
                 let content = read_hosts_backend().unwrap_or_default();
                 let candidates = frankenlibc_core::resolv::lookup_hosts(&content, text.as_bytes());
