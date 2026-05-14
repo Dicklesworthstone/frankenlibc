@@ -119,12 +119,21 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "override_var_flag_takes_precedence_over_process_env",
-        "detection_reason_must_be_one_of_enum",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "override_var_flag_takes_precedence_over_process_env",
+            "override_var_flag_takes_precedence_over_process_env must be true",
+        ),
+        (
+            "detection_reason_must_be_one_of_enum",
+            "detection_reason_must_be_one_of_enum must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
