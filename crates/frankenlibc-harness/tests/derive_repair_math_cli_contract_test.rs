@@ -132,15 +132,33 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "r_repair_zero_when_k_source_zero",
-        "loss_fraction_zero_when_k_source_zero",
-        "loss_fraction_max_ppm_at_or_below_1_000_000",
-        "r_repair_at_or_above_slack_decode_when_k_source_positive",
-        "echoes_inputs_into_output_record",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "r_repair_zero_when_k_source_zero",
+            "r_repair_zero_when_k_source_zero must be true",
+        ),
+        (
+            "loss_fraction_zero_when_k_source_zero",
+            "loss_fraction_zero_when_k_source_zero must be true",
+        ),
+        (
+            "loss_fraction_max_ppm_at_or_below_1_000_000",
+            "loss_fraction_max_ppm_at_or_below_1_000_000 must be true",
+        ),
+        (
+            "r_repair_at_or_above_slack_decode_when_k_source_positive",
+            "r_repair_at_or_above_slack_decode_when_k_source_positive must be true",
+        ),
+        (
+            "echoes_inputs_into_output_record",
+            "echoes_inputs_into_output_record must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
