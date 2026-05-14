@@ -898,6 +898,20 @@ fn getaddrinfo_null_node_respects_ai_passive_and_family() {
 }
 
 #[test]
+fn getaddrinfo_null_node_ai_canonname_returns_badflags() {
+    let service = CString::new("8080").unwrap();
+    let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+    hints.ai_family = libc::AF_INET;
+    hints.ai_socktype = libc::SOCK_STREAM;
+    hints.ai_flags = libc::AI_CANONNAME;
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
+    assert_eq!(rc, libc::EAI_BADFLAGS);
+    assert!(res.is_null());
+}
+
+#[test]
 fn getaddrinfo_null_service_uses_port_zero() {
     let node = CString::new("127.0.0.1").unwrap();
     let mut res: *mut libc::addrinfo = ptr::null_mut();

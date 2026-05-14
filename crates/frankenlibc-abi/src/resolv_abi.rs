@@ -1238,6 +1238,16 @@ pub unsafe extern "C" fn getaddrinfo(
 
     let flags = hints_ref.map(|h| h.ai_flags).unwrap_or(0);
     let family = hints_ref.map(|h| h.ai_family).unwrap_or(libc::AF_UNSPEC);
+    if node_cstr.is_none() && (flags & libc::AI_CANONNAME) != 0 {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_BADFLAGS;
+    }
     let host_text = node_cstr.and_then(|c| c.to_str().ok());
 
     let mut nodes = Vec::new();
