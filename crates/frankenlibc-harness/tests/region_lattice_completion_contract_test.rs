@@ -264,8 +264,16 @@ fn checker_emits_report_and_jsonl() -> TestResult {
     );
 
     let rows = read_jsonl(&out_dir.join("region_lattice_completion_contract.log.jsonl"))?;
-    assert_eq!(rows.len(), 1, "checker should emit one telemetry row");
-    let row = &rows[0];
+    let row = match rows.as_slice() {
+        [row] => row,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("checker should emit one telemetry row; got {}", rows.len()),
+            )
+            .into());
+        }
+    };
     assert!(json_str_field_is(
         row,
         "event",
