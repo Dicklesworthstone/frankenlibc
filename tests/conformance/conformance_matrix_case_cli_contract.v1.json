@@ -1,0 +1,72 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "conformance-matrix-case-cli-contract",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "c1b73a927fa7836a00e1549b1ddab7d4a53f08fb",
+  "purpose": "Pin the hidden `conformance-matrix-case` subprocess entrypoint used by isolated conformance-matrix runs. This command is not operator-facing, but it is the crash/timeout containment boundary for fixture execution.",
+  "subcommand_name": "conformance-matrix-case",
+  "binary_target": "harness",
+  "visibility": "hidden_subprocess_entrypoint",
+  "required_flags": [
+    "--function",
+    "--mode"
+  ],
+  "stdin_contract": {
+    "format": "single JSON value",
+    "passed_to": "frankenlibc_fixture_exec::execute_fixture_case(function, inputs, mode)",
+    "invalid_json_fails_closed": true
+  },
+  "output_contract": {
+    "stdout_format": "MatrixCaseEnvelope JSON",
+    "success_kind": "ok",
+    "error_kind": "error",
+    "success_required_fields": [
+      "kind",
+      "run",
+      "startup_runtime_mode",
+      "startup_frankenlibc_mode",
+      "startup_mode_matches"
+    ],
+    "run_required_fields": [
+      "host_output",
+      "impl_output",
+      "host_parity"
+    ],
+    "error_required_fields": [
+      "kind",
+      "error",
+      "startup_runtime_mode",
+      "startup_frankenlibc_mode",
+      "startup_mode_matches"
+    ],
+    "startup_mode_evidence": {
+      "startup_runtime_mode": "the requested --mode",
+      "startup_frankenlibc_mode": "FRANKENLIBC_MODE or <unset>",
+      "startup_mode_matches": "true iff FRANKENLIBC_MODE equals --mode"
+    }
+  },
+  "special_test_functions": {
+    "__harness_test_timeout": "sleeps long enough for the parent isolated runner timeout path",
+    "__harness_test_crash": "exits with deterministic abnormal code 134 for crash-row classification"
+  },
+  "policy": {
+    "must_remain_registered_even_though_hidden": true,
+    "must_accept_case_inputs_from_stdin": true,
+    "must_emit_success_envelope_for_supported_fixture": true,
+    "must_emit_error_envelope_for_unsupported_fixture": true,
+    "must_record_startup_mode_evidence": true,
+    "invalid_stdin_must_fail_closed_without_json_envelope": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_hidden_command",
+    "missing_stdin_contract",
+    "missing_startup_mode_evidence",
+    "unsupported_fixture_panics",
+    "invalid_stdin_returns_success"
+  ],
+  "summary": {
+    "subcommand": "conformance-matrix-case",
+    "claim_status": "cli-contract",
+    "evidence_scope": "hidden isolated fixture subprocess contract"
+  }
+}
