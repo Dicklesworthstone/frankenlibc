@@ -224,7 +224,7 @@ fn fortify_checked_wrapper_wave02_covers_second_wave_in_both_modes() -> Result<(
     for symbol in SECOND_WAVE_SYMBOLS {
         let modes = modes_by_symbol
             .get(symbol)
-            .unwrap_or_else(|| panic!("missing fixture cases for {symbol}"));
+            .ok_or_else(|| format!("missing fixture cases for {symbol}"))?;
         assert!(modes.contains("strict"), "missing strict case for {symbol}");
         assert!(
             modes.contains("hardened"),
