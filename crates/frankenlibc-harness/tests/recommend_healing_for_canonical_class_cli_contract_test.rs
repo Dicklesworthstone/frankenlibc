@@ -57,6 +57,18 @@ fn json_u64(value: &Value, field: &str) -> TestResult<u64> {
         .ok_or_else(|| format!("missing or non-u64 `{field}`"))
 }
 
+fn expected_action_table_key_error() -> String {
+    "expected_action_table key must parse as u8".to_owned()
+}
+
+fn expected_action_label_missing() -> String {
+    "expected action label missing".to_owned()
+}
+
+fn expected_action_missing() -> String {
+    "expected action missing".to_owned()
+}
+
 fn cargo_target_dir_for_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_TARGET_DIR") {
         PathBuf::from(p)
@@ -134,7 +146,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "compound_class_yields_return_safe_default",
         "out_of_range_class_id_falls_through_to_return_safe_default",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -172,19 +184,31 @@ fn run_cli(bin: &Path, class_id: u8, output: &Path) -> TestResult<std::process::
 
 fn read_record(out_path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
 fn run_and_parse(bin: &Path, class_id: u8, label: &str) -> TestResult<Value> {
     let output = unique_tmp(label)?;
     let out = run_cli(bin, class_id, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
-    let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
-    Ok(parsed)
+    read_record(&output)
 }
 
 #[test]
@@ -202,31 +226,31 @@ fn cli_full_action_table_matches_manifest() -> TestResult {
     for (id_str, want) in table {
         let id: u8 = id_str
             .parse()
-            .map_err(|e| format!("bad id {id_str}: {e}"))?;
+            .map_err(|_| expected_action_table_key_error())?;
         let want_label = want
             .get("label")
             .and_then(Value::as_str)
-            .ok_or_else(|| format!("expected_action_table.{id_str}.label missing"))?;
+            .ok_or_else(expected_action_label_missing)?;
         let want_action = want
             .get("action")
             .and_then(Value::as_str)
-            .ok_or_else(|| format!("expected_action_table.{id_str}.action missing"))?;
-        let parsed = run_and_parse(&bin, id, &format!("table_{id}"))?;
+            .ok_or_else(expected_action_missing)?;
+        let parsed = run_and_parse(&bin, id, "table")?;
         require(
             json_string(&parsed, "kind")? == "recommended_healing",
             "kind must be recommended_healing",
         )?;
         require(
             json_u64(&parsed, "class_id")? == u64::from(id),
-            format!("class_id must echo {id}"),
+            "class_id must echo manifest table id",
         )?;
         require(
             json_string(&parsed, "class_label")? == want_label,
-            format!("class_id={id}: class_label drift; want={want_label}"),
+            "class label must match manifest table",
         )?;
         require(
             json_string(&parsed, "action")? == want_action,
-            format!("class_id={id}: action drift; want={want_action}"),
+            "action must match manifest table",
         )?;
     }
     Ok(())
