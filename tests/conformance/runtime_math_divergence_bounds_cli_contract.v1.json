@@ -1,0 +1,45 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "runtime-math-divergence-bounds-cli-contract",
+  "bead": "bd-aep7v",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "7fd29a29",
+  "purpose": "Pin the harness binary 'runtime-math-divergence-bounds' subcommand which exposes frankenlibc_harness::runtime_math_divergence_bounds::run_and_write as a CLI. Validates the divergence bounds between strict-mode and hardened-mode runtime_math decisions across a canonical fixture set, writes structured JSONL log + JSON report. Exits non-zero on any case failure OR any divergence violation.",
+  "subcommand_name": "runtime-math-divergence-bounds",
+  "binary_target": "harness",
+  "required_flags": [],
+  "optional_flags": [
+    "--workspace-root",
+    "--log",
+    "--report"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::runtime_math_divergence_bounds::run_and_write"
+  ],
+  "io_pattern": "jsonl_log_plus_json_report_no_stdout_jsonl",
+  "default_workspace_root": ".",
+  "default_log_path": "target/conformance/runtime_math_divergence_bounds.log.jsonl",
+  "default_report_path": "target/conformance/runtime_math_divergence_bounds.report.json",
+  "policy": {
+    "must_write_jsonl_log_file_at_log_path": true,
+    "must_write_json_report_file_at_report_path": true,
+    "creates_parent_directories_for_log_and_report_paths_if_missing": true,
+    "exits_nonzero_when_summary_failed_nonzero": true,
+    "exits_nonzero_when_summary_violations_nonzero": true,
+    "exits_zero_when_summary_failed_and_violations_both_zero": true,
+    "report_contains_summary_with_total_cases_and_violations_fields": true,
+    "uses_workspace_root_for_source_paths": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_log_file",
+    "missing_report_file",
+    "summary_violations_nonzero_silently_passed",
+    "summary_failed_silently_passed"
+  ],
+  "summary": {
+    "bead": "bd-aep7v",
+    "subcommand": "runtime-math-divergence-bounds",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
