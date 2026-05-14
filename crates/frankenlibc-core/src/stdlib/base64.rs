@@ -97,6 +97,59 @@ mod tests {
     }
 
     #[test]
+    fn test_l64a_a64l_roundtrip_uses_low_32_bits() {
+        for val in [
+            i64::MIN,
+            -2,
+            -1,
+            0,
+            1,
+            63,
+            64,
+            4095,
+            4096,
+            i32::MAX as i64,
+            u32::MAX as i64,
+            1i64 << 32,
+            (1i64 << 40) + 12345,
+            i64::MAX,
+        ] {
+            let expected = (val as u32) as i64;
+            assert_eq!(
+                a64l(&l64a(val)),
+                expected,
+                "low32 roundtrip failed for {val}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_l64a_outputs_canonical_alphabet_slice() {
+        for val in [
+            -1,
+            0,
+            1,
+            62,
+            63,
+            64,
+            65,
+            1_000_000,
+            i32::MAX as i64,
+            u32::MAX as i64,
+        ] {
+            let encoded = l64a(val);
+            assert!(
+                encoded.len() <= 6,
+                "encoded too long for {val}: {encoded:?}"
+            );
+            assert!(
+                encoded.iter().all(|c| ALPHABET.contains(c)),
+                "non-alphabet byte emitted for {val}: {encoded:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_l64a_depends_only_on_low_32_bits() {
         let high_bit = 1i64 << 32;
 
@@ -130,6 +183,26 @@ mod tests {
             let mut nul_terminated = prefix.to_vec();
             nul_terminated.extend_from_slice(b"\0zzzz");
             assert_eq!(a64l(&nul_terminated), expected);
+        }
+    }
+
+    #[test]
+    fn test_a64l_canonical_fixed_point_for_valid_prefixes() {
+        for input in [
+            b".".as_slice(),
+            b"/".as_slice(),
+            b"0".as_slice(),
+            b"z".as_slice(),
+            b"Az09".as_slice(),
+            b"zzzzz1".as_slice(),
+            b"zzzzzz".as_slice(),
+        ] {
+            let decoded = a64l(input);
+            assert_eq!(
+                a64l(&l64a(decoded)),
+                decoded,
+                "canonical fixed point failed for {input:?}"
+            );
         }
     }
 
