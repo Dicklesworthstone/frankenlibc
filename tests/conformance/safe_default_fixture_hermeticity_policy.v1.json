@@ -1,0 +1,81 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-j1u6u.2",
+  "gate_id": "safe-default-fixture-hermeticity-v1",
+  "description": "Policy for deterministic safe-default conformance fixture logs. Safe-default fixture rows must remain hermetic: they may record classified outcomes and local contract labels, but must not capture ambient process, host, resolver, network, path, pointer, stderr, or address details unless the row explicitly declares an intentional host-differential oracle.",
+  "fixture_glob": "tests/conformance/fixtures/*.json",
+  "safe_default_markers": [
+    "safe-default",
+    "safe_default",
+    "native_safe_default"
+  ],
+  "required_case_fields": [
+    "expected_output",
+    "inputs.safe_default_rationale",
+    "inputs.oracle_source"
+  ],
+  "recommended_case_fields": [
+    "inputs.oracle_kind",
+    "inputs.divergence_policy"
+  ],
+  "required_output_tokens": [
+    "symbol=",
+    "mode=",
+    "failure_signature="
+  ],
+  "forbidden_expected_output_tokens": [
+    "address=",
+    "pid=",
+    "host=",
+    "hostname=",
+    "resolver=",
+    "stderr=",
+    "stdout=",
+    "/tmp",
+    "/var/tmp",
+    "0x"
+  ],
+  "forbidden_expected_output_regexes": [
+    {
+      "id": "ipv4-address",
+      "pattern": "\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b"
+    },
+    {
+      "id": "raw-pointer-like-hex",
+      "pattern": "\\b0x[0-9a-fA-F]{6,}\\b"
+    },
+    {
+      "id": "pid-assignment",
+      "pattern": "\\b(?:pid|ppid|tid|uid|gid)=[0-9]+\\b"
+    },
+    {
+      "id": "absolute-temp-path",
+      "pattern": "(?:^|[=; ])/(?:tmp|var/tmp)/[^; ]+"
+    }
+  ],
+  "forbidden_metadata_regexes": [
+    {
+      "id": "raw-pointer-like-hex",
+      "pattern": "\\b0x[0-9a-fA-F]{6,}\\b"
+    },
+    {
+      "id": "pid-assignment",
+      "pattern": "\\b(?:pid|ppid|tid|uid|gid)=[0-9]+\\b"
+    },
+    {
+      "id": "absolute-temp-path",
+      "pattern": "(?:^|[=; ])/(?:tmp|var/tmp)/[^; ]+"
+    },
+    {
+      "id": "raw-stderr-assignment",
+      "pattern": "\\bstderr="
+    }
+  ],
+  "host_differential_exemption": {
+    "required_oracle_kinds": [
+      "host_differential",
+      "host_glibc_differential"
+    ],
+    "required_divergence_policy_prefix": "allow_ambient_capture:"
+  }
+}
