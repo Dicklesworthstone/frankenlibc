@@ -75,6 +75,16 @@ fn string_field<'a>(value: &'a Value, key: &str, context: &str) -> TestResult<&'
         .ok_or_else(|| test_error(format!("{context}.{key} must be a string")))
 }
 
+fn require_log_row_field(log_row: &Value, field: &str) -> TestResult {
+    if log_row.get(field).is_some() {
+        Ok(())
+    } else {
+        Err(test_error(format!(
+            "log row missing required field `{field}`"
+        )))
+    }
+}
+
 fn surface_mut<'a>(manifest: &'a mut Value, surface_id: &str) -> TestResult<&'a mut Value> {
     manifest
         .get_mut("surfaces")
@@ -240,10 +250,7 @@ fn checker_passes_current_rch_validation_lane_plan() -> TestResult {
         "latency_ns",
         "artifact_refs",
     ] {
-        ensure(
-            log_row.get(field).is_some(),
-            "log row missing required field",
-        )?;
+        require_log_row_field(&log_row, field)?;
     }
     Ok(())
 }
