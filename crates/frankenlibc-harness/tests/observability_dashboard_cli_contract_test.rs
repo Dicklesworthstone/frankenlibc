@@ -158,10 +158,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "nonexistent_input_path_rejected_with_nonzero_exit",
         "missing_required_input_flag_rejected_with_nonzero_exit",
     ] {
-        require(
-            json_bool(policy, key)?,
-            format!("policy.{key} must be true (manifest pin)"),
-        )?;
+        require(json_bool(policy, key)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -240,24 +237,16 @@ fn cli_writes_all_five_bundle_artifacts_from_three_inputs() -> TestResult {
             String::from_utf8_lossy(&result.stderr)
         ),
     )?;
-    for (p, label) in [
-        (&out_summary, "summary"),
-        (&out_prom, "prometheus"),
-        (&out_statsd, "statsd"),
-        (&out_grafana, "grafana"),
-        (&out_alerts, "alerts"),
-    ] {
-        require(p.exists(), format!("{label} output file must be written"))?;
-    }
-    let summary: Value = serde_json::from_str(
-        &std::fs::read_to_string(&out_summary).map_err(|e| format!("read summary: {e}"))?,
-    )
-    .map_err(|e| format!("parse summary: {e}"))?;
+    require(out_summary.exists(), "summary output file must be written")?;
+    require(out_prom.exists(), "prometheus output file must be written")?;
+    require(out_statsd.exists(), "statsd output file must be written")?;
+    require(out_grafana.exists(), "grafana output file must be written")?;
+    require(out_alerts.exists(), "alerts output file must be written")?;
+    let summary = load_json(&out_summary)?;
     require(
         summary.get("summary").is_some(),
         "summary file must have a 'summary' top-level field",
     )?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -304,7 +293,6 @@ fn cli_nonexistent_input_path_rejected_with_nonzero_exit() -> TestResult {
         !result.status.success(),
         "harness must exit non-zero on nonexistent input path",
     )?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -337,22 +325,22 @@ fn cli_summary_records_total_and_invalid_row_counts() -> TestResult {
     }
     let result = cmd.output().map_err(|e| format!("spawn: {e}"))?;
     require(result.status.success(), "harness exit failed")?;
-    let summary: Value = serde_json::from_str(
-        &std::fs::read_to_string(&out_summary).map_err(|e| format!("read summary: {e}"))?,
-    )
-    .map_err(|e| format!("parse summary: {e}"))?;
+    let summary = load_json(&out_summary)?;
     let s = summary
         .get("summary")
         .ok_or("summary.summary block missing")?;
+    let total_rows = s
+        .get("total_rows")
+        .and_then(Value::as_u64)
+        .ok_or("summary.total_rows must be u64")?;
     require(
-        s.get("total_rows").and_then(Value::as_u64).unwrap_or(0) >= 3,
+        total_rows >= 3,
         "summary.total_rows must account for the three seeded JSONL inputs",
     )?;
     require(
         s.get("invalid_rows").and_then(Value::as_u64) == Some(0),
         "summary.invalid_rows must stay zero for seeded inputs",
     )?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -380,18 +368,31 @@ fn cli_uses_default_output_paths_when_overrides_omitted() -> TestResult {
         ),
     )?;
     let default_dir = cwd.join("target").join("conformance");
-    for name in [
-        "observability_dashboard.current.v1.json",
-        "observability_dashboard.prom",
-        "observability_dashboard.statsd",
-        "observability_dashboard.grafana.json",
-        "observability_dashboard.alerts.yaml",
-    ] {
-        require(
-            default_dir.join(name).exists(),
-            format!("default output {name} must be written"),
-        )?;
-    }
-    let _ = std::fs::remove_dir_all(&dir);
+    require(
+        default_dir
+            .join("observability_dashboard.current.v1.json")
+            .exists(),
+        "default summary output must be written",
+    )?;
+    require(
+        default_dir.join("observability_dashboard.prom").exists(),
+        "default prometheus output must be written",
+    )?;
+    require(
+        default_dir.join("observability_dashboard.statsd").exists(),
+        "default statsd output must be written",
+    )?;
+    require(
+        default_dir
+            .join("observability_dashboard.grafana.json")
+            .exists(),
+        "default grafana output must be written",
+    )?;
+    require(
+        default_dir
+            .join("observability_dashboard.alerts.yaml")
+            .exists(),
+        "default alerts output must be written",
+    )?;
     Ok(())
 }
