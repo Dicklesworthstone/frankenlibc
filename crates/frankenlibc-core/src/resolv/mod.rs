@@ -474,11 +474,7 @@ pub fn parse_proc_net_route_has_ipv4(content: &[u8]) -> bool {
             continue;
         }
 
-        let Ok(flags) = core::str::from_utf8(flags)
-            .ok()
-            .and_then(|field| u32::from_str_radix(field, 16).ok())
-            .ok_or(())
-        else {
+        let Some(flags) = parse_proc_net_route_flags(flags) else {
             continue;
         };
         if (flags & 0x1) != 0 {
@@ -486,6 +482,14 @@ pub fn parse_proc_net_route_has_ipv4(content: &[u8]) -> bool {
         }
     }
     false
+}
+
+fn parse_proc_net_route_flags(field: &[u8]) -> Option<u32> {
+    let field = core::str::from_utf8(field).ok()?;
+    if field.is_empty() || !field.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(field, 16).ok()
 }
 
 /// Parse `/proc/net/if_inet6` content and report whether a non-loopback IPv6 address exists.
@@ -980,6 +984,17 @@ mod tests {
         let non_loopback =
             b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n";
         assert!(parse_proc_net_route_has_ipv4(non_loopback));
+    }
+
+    #[test]
+    fn parse_proc_net_route_rejects_signed_hex_flags() {
+        let signed_plus =
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t+0001\t0\t0\t0\t00000000\t0\t0\t0\n";
+        assert!(!parse_proc_net_route_has_ipv4(signed_plus));
+
+        let signed_minus =
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t-0001\t0\t0\t0\t00000000\t0\t0\t0\n";
+        assert!(!parse_proc_net_route_has_ipv4(signed_minus));
     }
 
     #[test]

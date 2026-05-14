@@ -847,6 +847,35 @@ fn getaddrinfo_ai_addrconfig_filters_dual_stack_hosts_to_ipv6() {
 }
 
 #[test]
+fn getaddrinfo_ai_addrconfig_ignores_signed_ipv4_route_flags() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t+0001\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"fe800000000000000000000000000001 02 40 20 80   eth0\n"),
+        |_| {
+            let node = CString::new("dual-stack").unwrap();
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let families = unsafe { collect_addrinfo_families(res) };
+            assert_eq!(families, vec![libc::AF_INET6]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
 fn getaddrinfo_ai_addrconfig_numeric_ipv6_bypasses_filter() {
     with_resolver_backends_and_addrconfig(
         None,
