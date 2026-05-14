@@ -62,31 +62,31 @@ struct ExpectedOutput {
     failure_signature: String,
 }
 
-fn load_fixture() -> FixtureFile {
+fn load_fixture() -> Result<FixtureFile, String> {
     let path = repo_root().join("tests/conformance/fixtures/isoc_wide_scanf_ops.json");
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
-fn load_json(path: &str) -> serde_json::Value {
+fn load_json(path: &str) -> Result<serde_json::Value, String> {
     let path = repo_root().join(path);
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[test]
-fn isoc_wide_scanf_fixture_exists_and_names_scope() {
+fn isoc_wide_scanf_fixture_exists_and_names_scope() -> Result<(), String> {
     let fixture_path = repo_root().join("tests/conformance/fixtures/isoc_wide_scanf_ops.json");
     assert!(
         fixture_path.exists(),
         "isoc_wide_scanf_ops fixture must exist"
     );
 
-    let fixture = load_fixture();
+    let fixture = load_fixture()?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "isoc_wide_scanf_ops");
     assert!(
@@ -101,11 +101,12 @@ fn isoc_wide_scanf_fixture_exists_and_names_scope() {
             && fixture.spec_reference.contains("glibc"),
         "fixture must cite ISO C99, POSIX, and glibc compatibility"
     );
+    Ok(())
 }
 
 #[test]
-fn isoc_wide_scanf_fixture_covers_every_uncovered_isoc_symbol() {
-    let fixture = load_fixture();
+fn isoc_wide_scanf_fixture_covers_every_uncovered_isoc_symbol() -> Result<(), String> {
+    let fixture = load_fixture()?;
     let declared: BTreeSet<&str> = fixture
         .cases
         .iter()
@@ -121,11 +122,12 @@ fn isoc_wide_scanf_fixture_covers_every_uncovered_isoc_symbol() {
         ISOC_WIDE_SCANF_SYMBOLS.len(),
         "isoc_wide_scanf_ops should bind one deterministic case per remaining symbol"
     );
+    Ok(())
 }
 
 #[test]
-fn isoc_wide_scanf_cases_are_deterministic_and_mode_paired() {
-    let fixture = load_fixture();
+fn isoc_wide_scanf_cases_are_deterministic_and_mode_paired() -> Result<(), String> {
+    let fixture = load_fixture()?;
     for case in &fixture.cases {
         assert!(!case.name.is_empty(), "case name must not be empty");
         assert!(
@@ -168,14 +170,15 @@ fn isoc_wide_scanf_cases_are_deterministic_and_mode_paired() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn isoc_wide_scanf_fixture_is_backed_by_existing_tests() {
+fn isoc_wide_scanf_fixture_is_backed_by_existing_tests() -> Result<(), String> {
     let root = repo_root();
     let isoc_test =
         std::fs::read_to_string(root.join("crates/frankenlibc-abi/tests/isoc_abi_test.rs"))
-            .expect("read isoc_abi unit test");
+            .map_err(|err| format!("failed to read isoc_abi unit test: {err}"))?;
     let needle = "isoc99_swscanf_parses_wide_integer";
     assert!(
         isoc_test.contains(needle),
@@ -183,15 +186,17 @@ fn isoc_wide_scanf_fixture_is_backed_by_existing_tests() {
     );
 
     let isoc_source = std::fs::read_to_string(root.join("crates/frankenlibc-abi/src/isoc_abi.rs"))
-        .expect("read isoc_abi source");
+        .map_err(|err| format!("failed to read isoc_abi source: {err}"))?;
     for needle in [
         "fn __isoc99_fwscanf",
         "fn __isoc99_vwscanf",
         "fn __isoc99_vfwscanf",
         "fn __isoc99_vswscanf",
-        "unsafe { vfwscanf(stream, format, ap) }",
-        "unsafe { vwscanf(format, ap) }",
-        "unsafe { vswscanf(s, format, ap) }",
+        "crate::wchar_abi::vfwscanf(stream, format.cast::<libc::wchar_t>(), ap)",
+        "crate::wchar_abi::vwscanf(format.cast::<libc::wchar_t>(), ap)",
+        "crate::wchar_abi::vswscanf(",
+        "s.cast::<libc::wchar_t>()",
+        "format.cast::<libc::wchar_t>()",
     ] {
         assert!(
             isoc_source.contains(needle),
@@ -201,7 +206,7 @@ fn isoc_wide_scanf_fixture_is_backed_by_existing_tests() {
 
     let wchar_test =
         std::fs::read_to_string(root.join("crates/frankenlibc-abi/tests/wchar_abi_test.rs"))
-            .expect("read wchar_abi unit test");
+            .map_err(|err| format!("failed to read wchar_abi unit test: {err}"))?;
     for needle in [
         "swscanf_parses_integer",
         "wide_vscanf_null_va_list_fails_closed",
@@ -211,27 +216,28 @@ fn isoc_wide_scanf_fixture_is_backed_by_existing_tests() {
             "missing wchar test anchor {needle}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn symbol_fixture_coverage_counts_isoc_wide_scanf_fixture() {
-    let matrix = load_json("tests/conformance/symbol_fixture_coverage.v1.json");
+fn symbol_fixture_coverage_counts_isoc_wide_scanf_fixture() -> Result<(), String> {
+    let matrix = load_json("tests/conformance/symbol_fixture_coverage.v1.json")?;
     let symbols = matrix["symbols"]
         .as_array()
-        .expect("symbol_fixture_coverage.symbols must be an array");
+        .ok_or_else(|| "symbol_fixture_coverage.symbols must be an array".to_string())?;
 
     for symbol in ISOC_WIDE_SCANF_SYMBOLS {
         let row = symbols
             .iter()
             .find(|row| row["module"] == "isoc_abi" && row["symbol"] == symbol)
-            .unwrap_or_else(|| panic!("missing isoc_abi symbol row for {symbol}"));
+            .ok_or_else(|| format!("missing isoc_abi symbol row for {symbol}"))?;
         assert!(
             row["fixture_case_count"].as_u64().unwrap_or(0) >= 1,
             "symbol_fixture_coverage must count isoc_wide_scanf_ops fixture case for {symbol}"
         );
         let fixture_files = row["fixture_files"]
             .as_array()
-            .unwrap_or_else(|| panic!("fixture_files missing for {symbol}"));
+            .ok_or_else(|| format!("fixture_files missing for {symbol}"))?;
         assert!(
             fixture_files
                 .iter()
@@ -242,11 +248,12 @@ fn symbol_fixture_coverage_counts_isoc_wide_scanf_fixture() {
 
     let uncovered = matrix["uncovered_target_families"]
         .as_array()
-        .expect("uncovered_target_families must be an array");
+        .ok_or_else(|| "uncovered_target_families must be an array".to_string())?;
     assert!(
         uncovered
             .iter()
             .all(|family| family["module"].as_str() != Some("isoc_abi")),
         "isoc_abi should not remain a critical uncovered target family after isoc_wide_scanf_ops fixture"
     );
+    Ok(())
 }
