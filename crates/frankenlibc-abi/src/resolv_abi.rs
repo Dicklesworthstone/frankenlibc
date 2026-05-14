@@ -428,6 +428,19 @@ fn lookup_service_port(service: &[u8], hints: Option<&libc::addrinfo>) -> Option
     frankenlibc_core::resolv::lookup_service(&content, service, service_protocol_filter(hints))
 }
 
+fn parse_numeric_service_port(text: &str) -> Option<u16> {
+    // glibc parses numeric services through a signed-long path, then
+    // rejects values whose 32-bit signed result is negative. The final
+    // sockaddr port still uses the low 16 bits.
+    let text = text.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let value = text.parse::<i64>().ok()?;
+    let narrowed = value as i32;
+    if narrowed < 0 {
+        return None;
+    }
+    Some(narrowed as u16)
+}
+
 fn parse_port(
     service: Option<&CStr>,
     hints: Option<&libc::addrinfo>,
@@ -438,7 +451,7 @@ fn parse_port(
     };
 
     if let Ok(text) = service.to_str()
-        && let Ok(port) = text.parse::<u16>()
+        && let Some(port) = parse_numeric_service_port(text)
     {
         return Ok(port);
     }

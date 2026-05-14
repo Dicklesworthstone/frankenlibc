@@ -666,6 +666,55 @@ fn getaddrinfo_numeric_ipv4_resolves() {
 }
 
 #[test]
+fn getaddrinfo_numeric_service_matches_glibc_wrapping() {
+    with_resolver_backends(None, Some(b""), |_| {
+        let cases = [
+            ("+80", Some(80)),
+            (" 80", Some(80)),
+            ("65536", Some(0)),
+            ("65537", Some(1)),
+            ("2147483647", Some(65535)),
+            ("2147483648", None),
+            ("4294967296", Some(0)),
+            ("-2147483649", Some(65535)),
+            ("-1", None),
+            ("80 ", None),
+        ];
+
+        for (service_text, expected_port) in cases {
+            let node = CString::new("127.0.0.1").unwrap();
+            let service = CString::new(service_text).unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+
+            match expected_port {
+                Some(port) => {
+                    assert_eq!(rc, 0, "service {service_text:?} should resolve");
+                    assert!(!res.is_null());
+                    let sin = unsafe { &*((*res).ai_addr as *const libc::sockaddr_in) };
+                    assert_eq!(
+                        u16::from_be(sin.sin_port),
+                        port,
+                        "service {service_text:?} port"
+                    );
+                    unsafe { resolv_abi::freeaddrinfo(res) };
+                }
+                None => {
+                    assert_eq!(rc, libc::EAI_SERVICE, "service {service_text:?}");
+                    assert!(res.is_null());
+                }
+            }
+        }
+    });
+}
+
+#[test]
 fn getaddrinfo_numeric_ipv6_resolves() {
     let node = CString::new("::1").unwrap();
     let service = CString::new("443").unwrap();
