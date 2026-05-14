@@ -82,6 +82,34 @@ fn find_harness_binary() -> Option<PathBuf> {
     None
 }
 
+fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("clock: {e}"))?
+        .as_nanos();
+    Ok(std::env::temp_dir().join(format!("bd_38wu3_{stem}_{}_{ts}.jsonl", std::process::id())))
+}
+
+fn read_record(out_path: &Path) -> TestResult<Value> {
+    let body = std::fs::read_to_string(out_path).map_err(|e| format!("read jsonl: {e}"))?;
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse jsonl: {e}"))
+}
+
 #[test]
 fn manifest_anchors_to_38wu3_with_subcommand_name() -> TestResult {
     let root = workspace_root()?;
@@ -118,7 +146,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "frankentui_feature_present_must_be_true",
         "frankentui_dependency_set_complete_must_be_true",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -148,11 +176,7 @@ fn cli_emits_exactly_one_record_with_all_boolean_fields() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| format!("clock: {e}"))?
-        .as_nanos();
-    let tmp = std::env::temp_dir().join(format!("bd_38wu3_{}_{ts}.jsonl", std::process::id()));
+    let tmp = unique_tmp("fields")?;
     let out = Command::new(&bin)
         .arg("tooling-contract")
         .arg("--output")
@@ -160,21 +184,13 @@ fn cli_emits_exactly_one_record_with_all_boolean_fields() -> TestResult {
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&tmp);
         return Err(format!(
             "tooling-contract failed: status={:?} stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
-    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 1,
-        format!("expected exactly 1 JSONL record; got {}", lines.len()),
-    )?;
-    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&tmp)?;
     require(
         json_string(&parsed, "kind")? == "tooling_contract",
         "kind must be tooling_contract",
@@ -187,10 +203,7 @@ fn cli_emits_exactly_one_record_with_all_boolean_fields() -> TestResult {
         .iter()
         .filter_map(Value::as_str)
     {
-        require(
-            parsed.get(f).is_some(),
-            format!("record missing required field `{f}`"),
-        )?;
+        require(parsed.get(f).is_some(), "record missing required field")?;
     }
     for f in json_array(contract, "boolean_fields")?
         .iter()
@@ -198,7 +211,7 @@ fn cli_emits_exactly_one_record_with_all_boolean_fields() -> TestResult {
     {
         require(
             parsed.get(f).and_then(Value::as_bool).is_some(),
-            format!("field `{f}` must be a JSON boolean"),
+            "field must be a JSON boolean",
         )?;
     }
     Ok(())
@@ -210,11 +223,7 @@ fn cli_pins_invariant_truths_for_default_build() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| format!("clock: {e}"))?
-        .as_nanos();
-    let tmp = std::env::temp_dir().join(format!("bd_38wu3_inv_{}_{ts}.jsonl", std::process::id()));
+    let tmp = unique_tmp("invariants")?;
     let out = Command::new(&bin)
         .arg("tooling-contract")
         .arg("--output")
@@ -222,16 +231,13 @@ fn cli_pins_invariant_truths_for_default_build() -> TestResult {
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&tmp);
         return Err(format!(
             "tooling-contract failed: status={:?} stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&tmp)?;
     // These fields are compile-time constants pinned `true` in
     // tooling_contract() — they describe Cargo.toml shape, not the
     // active build's --features flags. Any false here = the source
@@ -245,7 +251,7 @@ fn cli_pins_invariant_truths_for_default_build() -> TestResult {
     ] {
         require(
             json_bool(&parsed, f)?,
-            format!("`{f}` must be true (pinned in tooling_contract())"),
+            "pinned tooling contract field must be true",
         )?;
     }
     Ok(())
