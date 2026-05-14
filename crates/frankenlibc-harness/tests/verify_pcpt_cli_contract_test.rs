@@ -118,7 +118,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "non_magic_bytes_must_fail_closed_with_BadMagic_error",
         "missing_pcpt_file_must_fail_closed",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -153,6 +153,26 @@ fn run_cli(bin: &Path, pcpt: &Path, output: &Path) -> TestResult<std::process::O
         .map_err(|e| format!("spawn: {e}"))
 }
 
+fn read_record(out_path: &Path) -> TestResult<Value> {
+    let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "expected exactly one JSONL record in {}, got {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
+}
+
 #[test]
 fn cli_too_short_input_yields_too_short_error_and_non_zero_exit() -> TestResult {
     let Some(bin) = find_harness_binary() else {
@@ -163,16 +183,13 @@ fn cli_too_short_input_yields_too_short_error_and_non_zero_exit() -> TestResult 
     let output = unique_tmp("too_short", "jsonl")?;
     std::fs::write(&pcpt, b"").map_err(|e| format!("write: {e}"))?;
     let out = run_cli(&bin, &pcpt, &output)?;
-    let _ = std::fs::remove_file(&pcpt);
     require(
         !out.status.success(),
         "too-short input must yield non-zero exit",
     )?;
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
-        json_string(&parsed, "kind")? == "pcpt_verification",
+        matches!(json_string(&parsed, "kind")?, "pcpt_verification"),
         "kind must be pcpt_verification",
     )?;
     require(!json_bool(&parsed, "ok")?, "too-short must yield ok=false")?;
@@ -197,14 +214,11 @@ fn cli_bad_magic_yields_bad_magic_error() -> TestResult {
     // we get BadMagic (not TooShort).
     std::fs::write(&pcpt, vec![0_u8; 256]).map_err(|e| format!("write: {e}"))?;
     let out = run_cli(&bin, &pcpt, &output)?;
-    let _ = std::fs::remove_file(&pcpt);
     require(
         !out.status.success(),
         "bad-magic input must yield non-zero exit",
     )?;
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(!json_bool(&parsed, "ok")?, "bad-magic must yield ok=false")?;
     require(
         json_string(&parsed, "error")?.contains("BadMagic"),
@@ -225,7 +239,6 @@ fn cli_fails_closed_on_missing_pcpt_file() -> TestResult {
     let output = unique_tmp("missing", "jsonl")?;
     // pcpt file deliberately not created.
     let out = run_cli(&bin, &pcpt, &output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "missing --pcpt file must yield non-zero exit",
