@@ -47,12 +47,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,8 +66,8 @@ fn memory_ops_fixture_exists() {
 }
 
 #[test]
-fn memory_ops_fixture_valid_schema() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "memory_ops");
@@ -86,6 +86,7 @@ fn memory_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,8 +94,8 @@ fn memory_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn memory_ops_covers_memcpy() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_covers_memcpy() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["memcpy_basic", "memcpy_zero"];
@@ -106,33 +107,36 @@ fn memory_ops_covers_memcpy() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn memory_ops_covers_memmove() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_covers_memmove() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("memmove")),
         "Missing test coverage for memmove"
     );
+    Ok(())
 }
 
 #[test]
-fn memory_ops_covers_memset() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_covers_memset() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("memset")),
         "Missing test coverage for memset"
     );
+    Ok(())
 }
 
 #[test]
-fn memory_ops_covers_memcmp() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_covers_memcmp() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["memcmp_equal", "memcmp_less", "memcmp_greater"];
@@ -144,11 +148,12 @@ fn memory_ops_covers_memcmp() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn memory_ops_covers_memchr() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_covers_memchr() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["memchr_found", "memchr_not_found"];
@@ -160,6 +165,7 @@ fn memory_ops_covers_memchr() {
             pattern
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,8 +173,8 @@ fn memory_ops_covers_memchr() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn memory_ops_error_codes_valid() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
 
     // Memory ops generally don't set errno on success
     let valid_errno_values = [0];
@@ -182,6 +188,7 @@ fn memory_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -189,8 +196,8 @@ fn memory_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn memory_ops_function_distribution() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_function_distribution() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
 
     let mut memcpy_count = 0;
     let mut memmove_count = 0;
@@ -205,7 +212,7 @@ fn memory_ops_function_distribution() {
             "memset" => memset_count += 1,
             "memcmp" => memcmp_count += 1,
             "memchr" => memchr_count += 1,
-            f => panic!("Unexpected function in fixture: {}", f),
+            f => return Err(format!("unexpected function in fixture: {f}")),
         }
     }
 
@@ -240,6 +247,7 @@ fn memory_ops_function_distribution() {
         "memory_ops coverage: memcpy={}, memmove={}, memset={}, memcmp={}, memchr={}",
         memcpy_count, memmove_count, memset_count, memcmp_count, memchr_count
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,8 +255,8 @@ fn memory_ops_function_distribution() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn memory_ops_modes_valid() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -258,6 +266,7 @@ fn memory_ops_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -265,8 +274,8 @@ fn memory_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn memory_ops_case_count_stable() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 10;
 
@@ -278,6 +287,7 @@ fn memory_ops_case_count_stable() {
     );
 
     eprintln!("memory_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -285,8 +295,8 @@ fn memory_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn memory_ops_has_c11_references() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_has_c11_references() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -296,6 +306,7 @@ fn memory_ops_has_c11_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -303,8 +314,8 @@ fn memory_ops_has_c11_references() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn memory_ops_covers_both_modes() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
@@ -314,6 +325,7 @@ fn memory_ops_covers_both_modes() {
         has_hardened,
         "memory_ops must have hardened mode test cases"
     );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -326,14 +338,14 @@ fn memory_ops_covers_both_modes() {
 // CI conformance matrix.
 
 #[test]
-fn memory_ops_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -342,12 +354,12 @@ fn memory_ops_fixture_cases_match_execute_fixture_case() {
 
         for mode in modes {
             let result =
-                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
-                    panic!(
+                execute_fixture_case(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -362,6 +374,7 @@ fn memory_ops_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -432,14 +445,14 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn memory_ops_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("memory_ops");
+fn memory_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("memory_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -447,13 +460,13 @@ fn memory_ops_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "memory_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity || result.host_output == "UB",
                 "memory_ops case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -468,4 +481,5 @@ fn memory_ops_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+    Ok(())
 }
