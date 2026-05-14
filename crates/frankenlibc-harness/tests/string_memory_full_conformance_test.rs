@@ -44,12 +44,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,8 +126,8 @@ fn string_memory_full_fixture_exists() {
 }
 
 #[test]
-fn string_memory_full_fixture_valid_schema() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "string/memory");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -140,94 +140,103 @@ fn string_memory_full_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_covers_memset() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_covers_memset() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("memset")),
         "Missing test coverage for memset"
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_covers_memcmp() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_covers_memcmp() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("memcmp")).count() >= 2,
         "memcmp needs at least 2 test cases (equal and not equal)"
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_covers_memchr() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_covers_memchr() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("memchr")),
         "Missing test coverage for memchr"
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_covers_memrchr() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_covers_memrchr() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("memrchr")),
         "Missing test coverage for memrchr"
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_covers_strcmp() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_covers_strcmp() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("strcmp")).count() >= 2,
         "strcmp needs at least 2 test cases (equal and not equal)"
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_covers_strcpy() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_covers_strcpy() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("strcpy")),
         "Missing test coverage for strcpy"
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_covers_strncpy() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_covers_strncpy() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("strncpy")),
         "Missing test coverage for strncpy"
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_modes_valid() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_case_count_stable() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     assert!(
         fixture.cases.len() >= 8,
         "string_memory_full fixture has {} cases, expected at least 8",
@@ -237,11 +246,12 @@ fn string_memory_full_case_count_stable() {
         "string_memory_full fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_has_spec_references() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("POSIX") || case.spec_section.contains("GNU"),
@@ -250,11 +260,12 @@ fn string_memory_full_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_error_codes_valid() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
     // Standard string/memory functions don't set errno
     for case in &fixture.cases {
         assert_eq!(
@@ -263,17 +274,18 @@ fn string_memory_full_error_codes_valid() {
             case.name, case.expected_errno
         );
     }
+    Ok(())
 }
 
 #[test]
-fn string_memory_full_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("string_memory_full");
+fn string_memory_full_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("string_memory_full")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -281,13 +293,13 @@ fn string_memory_full_fixture_cases_match_execute_fixture_case() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "string_memory_full case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -302,4 +314,6 @@ fn string_memory_full_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+
+    Ok(())
 }
