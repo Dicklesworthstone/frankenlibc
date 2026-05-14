@@ -132,7 +132,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "supports_current_schema_version",
         "io_failure_to_open_input_must_be_reported",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -167,6 +167,26 @@ fn run_cli(bin: &Path, jsonl: &Path, output: &Path) -> TestResult<std::process::
         .map_err(|e| format!("spawn: {e}"))
 }
 
+fn read_record(out_path: &Path) -> TestResult<Value> {
+    let body = std::fs::read_to_string(out_path).map_err(|e| format!("read jsonl: {e}"))?;
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
+}
+
 #[test]
 fn cli_passes_on_empty_jsonl() -> TestResult {
     let Some(bin) = find_harness_binary() else {
@@ -177,23 +197,14 @@ fn cli_passes_on_empty_jsonl() -> TestResult {
     let output = unique_tmp("empty_out")?;
     std::fs::write(&jsonl, "").map_err(|e| format!("write: {e}"))?;
     let out = run_cli(&bin, &jsonl, &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "validate-stdio-evidence failed on empty log: status={:?} stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 1,
-        format!("expected exactly 1 JSONL record; got {}", lines.len()),
-    )?;
-    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         json_string(&parsed, "kind")? == "stdio_evidence_validation",
         "kind must be stdio_evidence_validation",
@@ -219,14 +230,11 @@ fn cli_fails_on_corrupt_json_row() -> TestResult {
     let output = unique_tmp("corrupt_out")?;
     std::fs::write(&jsonl, "this is not json\n").map_err(|e| format!("write: {e}"))?;
     let out = run_cli(&bin, &jsonl, &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     require(
         !out.status.success(),
         "corrupt JSON row must yield non-zero exit",
     )?;
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         !json_bool(&parsed, "ok")?,
         "corrupt JSON row must yield ok=false",
@@ -257,14 +265,11 @@ fn cli_fails_on_unsupported_schema_version() -> TestResult {
     )
     .map_err(|e| format!("write: {e}"))?;
     let out = run_cli(&bin, &jsonl, &output)?;
-    let _ = std::fs::remove_file(&jsonl);
     require(
         !out.status.success(),
         "unsupported schema version must yield non-zero exit",
     )?;
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         !json_bool(&parsed, "ok")?,
         "unsupported schema version must yield ok=false",
@@ -291,9 +296,7 @@ fn cli_reports_io_error_for_missing_input() -> TestResult {
         !out.status.success(),
         "missing input must yield non-zero exit",
     )?;
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         !json_bool(&parsed, "ok")?,
         "missing input must yield ok=false",
