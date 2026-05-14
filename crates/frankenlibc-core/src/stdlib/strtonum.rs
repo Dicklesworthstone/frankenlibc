@@ -207,6 +207,52 @@ mod tests {
         );
     }
 
+    #[test]
+    fn leading_whitespace_and_plus_preserve_nonnegative_parse() {
+        for (digits, minval, maxval, expected) in [
+            ("0", -5, 5, 0),
+            ("7", 0, 10, 7),
+            ("00042", 0, 100, 42),
+            ("9223372036854775807", 0, i64::MAX, i64::MAX),
+        ] {
+            let decorated = format!(" \t\n+{digits}");
+            assert_eq!(parse(digits.as_bytes(), minval, maxval), Ok(expected));
+            assert_eq!(parse(decorated.as_bytes(), minval, maxval), Ok(expected));
+        }
+    }
+
+    #[test]
+    fn range_expansion_preserves_successful_parse() {
+        for (input, minval, maxval, expanded_min, expanded_max, expected) in [
+            (b"-5".as_slice(), -5, -5, -10, 0, -5),
+            (b"0".as_slice(), 0, 0, -1, 1, 0),
+            (b"42".as_slice(), 40, 50, i64::MIN, i64::MAX, 42),
+            (b"100".as_slice(), 100, 100, 0, 1000, 100),
+        ] {
+            assert_eq!(parse(input, minval, maxval), Ok(expected));
+            assert_eq!(parse(input, expanded_min, expanded_max), Ok(expected));
+        }
+    }
+
+    #[test]
+    fn range_narrowing_around_value_classifies_direction() {
+        for (input, value) in [
+            (b"-7".as_slice(), -7),
+            (b"0".as_slice(), 0),
+            (b"42".as_slice(), 42),
+        ] {
+            assert_eq!(parse(input, value, value), Ok(value));
+            assert_eq!(
+                parse(input, value + 1, i64::MAX),
+                Err(StrtonumError::TooSmall)
+            );
+            assert_eq!(
+                parse(input, i64::MIN, value - 1),
+                Err(StrtonumError::TooLarge)
+            );
+        }
+    }
+
     // ---- range errors ----
 
     #[test]
