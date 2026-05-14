@@ -1,0 +1,60 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "observability-dashboard-cli-contract",
+  "bead": "bd-djtar",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "ff3254d6",
+  "purpose": "Pin the harness binary 'observability-dashboard' subcommand which exposes frankenlibc_harness::observability_dashboard::write_bundle as a CLI: reads one or more JSONL metric/evidence input files, writes 5 bundle artifacts (JSON summary, prometheus exposition, statsd line protocol, grafana dashboard template, prometheus alert-rules YAML). Companion downstream of bd-wn47r (observability-capture) which seeds JSONL inputs.",
+  "subcommand_name": "observability-dashboard",
+  "binary_target": "harness",
+  "required_flags": [
+    "--input"
+  ],
+  "optional_flags": [
+    "--output",
+    "--prometheus-output",
+    "--statsd-output",
+    "--grafana-output",
+    "--alerts-output"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::observability_dashboard::write_bundle"
+  ],
+  "io_pattern": "five_output_files_no_stdout_jsonl",
+  "default_output_paths": {
+    "summary": "target/conformance/observability_dashboard.current.v1.json",
+    "prometheus": "target/conformance/observability_dashboard.prom",
+    "statsd": "target/conformance/observability_dashboard.statsd",
+    "grafana": "target/conformance/observability_dashboard.grafana.json",
+    "alerts": "target/conformance/observability_dashboard.alerts.yaml"
+  },
+  "policy": {
+    "must_write_summary_json_at_output_path": true,
+    "must_write_prometheus_exposition_at_prometheus_output_path": true,
+    "must_write_statsd_lines_at_statsd_output_path": true,
+    "must_write_grafana_dashboard_at_grafana_output_path": true,
+    "must_write_alert_rules_yaml_at_alerts_output_path": true,
+    "summary_records_total_rows_count": true,
+    "summary_records_invalid_rows_count": true,
+    "accepts_multiple_input_files_via_repeated_flag": true,
+    "default_output_paths_when_overrides_omitted": true,
+    "nonexistent_input_path_rejected_with_nonzero_exit": true,
+    "missing_required_input_flag_rejected_with_nonzero_exit": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_input_flag",
+    "missing_summary_output_file",
+    "missing_prometheus_output_file",
+    "missing_statsd_output_file",
+    "missing_grafana_output_file",
+    "missing_alerts_output_file",
+    "summary_total_rows_drift",
+    "nonexistent_input_silently_accepted"
+  ],
+  "summary": {
+    "bead": "bd-djtar",
+    "subcommand": "observability-dashboard",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
