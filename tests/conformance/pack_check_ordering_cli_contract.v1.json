@@ -1,0 +1,70 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "pack-check-ordering-cli-contract",
+  "bead": "bd-d52jw",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "2afa0aa7",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::check_oracle::{pack_ordering, unpack_ordering} (4-bit-per-stage u64 codec for a 7-stage validation pipeline permutation). Pack accepts the 7-stage permutation via repeated --stage flags or comma-separated names; the lib API packs the [CheckStage; 7] into a u64 with 4 bits per stage. Unlike most harness bridges this subcommand prints to stdout (no --output file). Pairs naturally with the membrane validation pipeline (null, tls-cache, bloom, arena, fingerprint, canary, bounds) where a contextual bandit reorders checks per call family to minimize total check cost. Previously unpinned by a conformance manifest; this contract closes the gate gap.",
+  "subcommand_name": "pack-check-ordering",
+  "binary_target": "harness",
+  "required_flags": [
+    "--stage"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::check_oracle::pack_ordering",
+    "frankenlibc_membrane::check_oracle::unpack_ordering"
+  ],
+  "io_pattern": "stdout_one_jsonl_record_no_output_file_flag",
+  "stdout_output_contract": {
+    "record_count": 1,
+    "record_kind_marker": "check_ordering_pack",
+    "required_fields": [
+      "kind",
+      "stages",
+      "packed_u64",
+      "packed_hex",
+      "unpacked_round_trip",
+      "round_trip_ok"
+    ]
+  },
+  "stage_name_enum": [
+    "null",
+    "tls-cache",
+    "bloom",
+    "arena",
+    "fingerprint",
+    "canary",
+    "bounds"
+  ],
+  "expected_identity_packed_hex": "0x0000000006543210",
+  "expected_identity_packed_u64": 106181136,
+  "expected_reverse_packed_hex": "0x0000000000123456",
+  "expected_reverse_packed_u64": 1193046,
+  "policy": {
+    "must_emit_exactly_one_stdout_jsonl_record": true,
+    "round_trip_codec_is_lossless": true,
+    "round_trip_ok_true_for_all_valid_orderings": true,
+    "repeated_stage_flags_and_comma_separated_are_equivalent": true,
+    "identity_ordering_packs_to_known_hex_0x06543210": true,
+    "reverse_ordering_packs_to_known_hex_0x00123456": true,
+    "unknown_stage_name_rejected_with_nonzero_exit": true,
+    "fewer_than_7_stages_rejected": true,
+    "more_than_7_stages_rejected": true,
+    "deterministic_given_inputs": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "round_trip_failure_certified",
+    "unknown_stage_certified",
+    "non_seven_stage_count_certified",
+    "identity_packed_hex_drift",
+    "reverse_packed_hex_drift"
+  ],
+  "summary": {
+    "bead": "bd-d52jw",
+    "subcommand": "pack-check-ordering",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
