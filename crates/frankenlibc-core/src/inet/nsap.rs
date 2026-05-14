@@ -6,10 +6,9 @@
 //! format; this module only implements the on-the-wire hex encoding
 //! that glibc's `inet_nsap_addr` / `inet_nsap_ntoa` accept.
 //!
-//! Wire form: pairs of hex digits, optionally separated by `.` or
-//! `' '`, with an optional leading `0x` / `0X` prefix.
-//! Example: `0x47.0005.80.005a00.0000.0001.0001.eed7d4f3.00`
-//! decodes to the corresponding 17 bytes.
+//! Wire form: pairs of hex digits, optionally separated by `.`.
+//! Example: `47.0005.80.005a00.0000.0001.0001.eed7d4f3.00`
+//! decodes to the corresponding 18 bytes.
 
 /// Parse an NSAP hex address from `text` into `dst`, returning the
 /// number of bytes written.
@@ -17,20 +16,16 @@
 /// Returns `0` on any of:
 ///   - empty input,
 ///   - odd number of hex digits (truncated last byte),
-///   - non-hex character outside `.`/` ` separators,
+///   - non-hex character outside `.` separators,
 ///   - input requires more than `dst.len()` bytes (truncates without
 ///     error otherwise — caller can detect via the returned count).
 ///
-/// The optional `0x` / `0X` prefix at the start is consumed silently.
-/// `.` and `' '` separators between hex pairs are skipped (they may
-/// also appear mid-byte, since the decoder consumes one digit at a
-/// time).
+/// Dot separators between hex byte pairs are skipped, including leading,
+/// repeated, and trailing dots. Separators inside a byte pair are rejected
+/// to match host glibc's `inet_nsap_addr` parser.
 pub fn parse_nsap_addr(text: &[u8], dst: &mut [u8]) -> usize {
     let mut i = 0usize;
     let mut o = 0usize;
-    if text.len() >= 2 && text[0] == b'0' && (text[1] == b'x' || text[1] == b'X') {
-        i = 2;
-    }
     while i < text.len() && o < dst.len() {
         while i < text.len() && is_separator(text[i]) {
             i += 1;
@@ -43,9 +38,6 @@ pub fn parse_nsap_addr(text: &[u8], dst: &mut [u8]) -> usize {
             None => return 0,
         };
         i += 1;
-        while i < text.len() && is_separator(text[i]) {
-            i += 1;
-        }
         if i >= text.len() {
             return 0;
         }
@@ -80,7 +72,7 @@ pub fn format_nsap_addr(addr: &[u8]) -> Vec<u8> {
 
 #[inline]
 fn is_separator(b: u8) -> bool {
-    b == b'.' || b == b' '
+    b == b'.'
 }
 
 #[inline]
@@ -112,15 +104,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_with_0x_prefix() {
+    fn parse_rejects_0x_prefix() {
         let mut dst = [0u8; 16];
-        let n = parse_nsap_addr(b"0xab", &mut dst);
-        assert_eq!(n, 1);
-        assert_eq!(dst[0], 0xab);
-
-        let n = parse_nsap_addr(b"0XCD", &mut dst);
-        assert_eq!(n, 1);
-        assert_eq!(dst[0], 0xcd);
+        assert_eq!(parse_nsap_addr(b"0xab", &mut dst), 0);
+        assert_eq!(parse_nsap_addr(b"0XCD", &mut dst), 0);
     }
 
     #[test]
@@ -132,25 +119,23 @@ mod tests {
     }
 
     #[test]
-    fn parse_with_space_separators() {
+    fn parse_rejects_space_separators() {
         let mut dst = [0u8; 16];
-        let n = parse_nsap_addr(b"01 23 45", &mut dst);
-        assert_eq!(n, 3);
-        assert_eq!(&dst[..3], &[0x01, 0x23, 0x45]);
+        assert_eq!(parse_nsap_addr(b"01 23 45", &mut dst), 0);
     }
 
     #[test]
-    fn parse_with_mid_byte_separators() {
+    fn parse_rejects_mid_byte_separators() {
         let mut dst = [0u8; 16];
-        let n = parse_nsap_addr(b"0.1 2.3 4 5", &mut dst);
-        assert_eq!(n, 3);
-        assert_eq!(&dst[..3], &[0x01, 0x23, 0x45]);
+        assert_eq!(parse_nsap_addr(b"0.12345", &mut dst), 0);
+        assert_eq!(parse_nsap_addr(b"01.2.3", &mut dst), 0);
+        assert_eq!(parse_nsap_addr(b"012.3", &mut dst), 0);
     }
 
     #[test]
-    fn parse_allows_trailing_separators_after_complete_byte() {
+    fn parse_allows_dot_separators_around_complete_bytes() {
         let mut dst = [0u8; 16];
-        let n = parse_nsap_addr(b"ab. cd ", &mut dst);
+        let n = parse_nsap_addr(b"..ab..cd.", &mut dst);
         assert_eq!(n, 2);
         assert_eq!(&dst[..2], &[0xab, 0xcd]);
     }
@@ -166,7 +151,7 @@ mod tests {
     #[test]
     fn parse_real_nsap_address() {
         // From RFC 1629 example.
-        let text = b"0x47.0005.80.005a00.0000.0001.0001.eed7d4f3.00";
+        let text = b"47.0005.80.005a00.0000.0001.0001.eed7d4f3.00";
         let mut dst = [0u8; 32];
         let n = parse_nsap_addr(text, &mut dst);
         // 47 + 0005 + 80 + 005a00 + 0000 + 0001 + 0001 + eed7d4f3 + 00
