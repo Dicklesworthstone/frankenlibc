@@ -185,20 +185,42 @@ fn manifest_anchors_to_3nygl_with_subcommand_name() -> TestResult {
 fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
-    let policy = m
-        .get("policy")
-        .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_inputs_into_output_record",
-        "deterministic_given_inputs",
-        "payload_hex_is_256_lowercase_hex_chars",
-        "single_index_schedule_yields_source_payload_at_that_index",
-        "multi_index_schedule_yields_xor_of_source_payloads_at_indices",
-        "repair_esi_below_k_source_is_rejected",
-        "non_multiple_of_128_input_file_is_rejected",
+    let policy = m.get("policy").ok_or("missing policy")?;
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_inputs_into_output_record",
+            "echoes_inputs_into_output_record must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "payload_hex_is_256_lowercase_hex_chars",
+            "payload_hex_is_256_lowercase_hex_chars must be true",
+        ),
+        (
+            "single_index_schedule_yields_source_payload_at_that_index",
+            "single_index_schedule_yields_source_payload_at_that_index must be true",
+        ),
+        (
+            "multi_index_schedule_yields_xor_of_source_payloads_at_indices",
+            "multi_index_schedule_yields_xor_of_source_payloads_at_indices must be true",
+        ),
+        (
+            "repair_esi_below_k_source_is_rejected",
+            "repair_esi_below_k_source_is_rejected must be true",
+        ),
+        (
+            "non_multiple_of_128_input_file_is_rejected",
+            "non_multiple_of_128_input_file_is_rejected must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -260,7 +282,7 @@ fn read_record(out_path: &Path) -> TestResult<Value> {
     )?;
     let record = records
         .first()
-        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+        .ok_or("missing JSONL record after record-count check")?;
     serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
@@ -268,7 +290,7 @@ fn schedule_indices(value: &Value) -> TestResult<Vec<u16>> {
     let values = value
         .get("schedule_indices")
         .and_then(Value::as_array)
-        .ok_or_else(|| "missing schedule_indices".to_string())?;
+        .ok_or("missing schedule_indices")?;
     let mut out = Vec::with_capacity(values.len());
     for entry in values {
         let raw = match entry.as_u64() {
@@ -295,7 +317,7 @@ fn cli_payload_hex_is_256_lowercase_hex_chars() -> TestResult {
     let output = unique_tmp("hex", "jsonl")?;
     let out = run_cli(&bin, 42, &srcs_path, 4, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("encode-xor-repair-payload CLI invocation must succeed".into());
     }
     let parsed = read_record(&output)?;
     let hex = json_string(&parsed, "payload_hex")?;
@@ -322,7 +344,7 @@ fn cli_single_index_schedule_yields_source_payload_at_index() -> TestResult {
     let output = unique_tmp("single", "jsonl")?;
     let out = run_cli(&bin, 42, &srcs_path, 4, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("encode-xor-repair-payload CLI invocation must succeed".into());
     }
     let parsed = read_record(&output)?;
     let sched = schedule_indices(&parsed)?;
@@ -351,7 +373,7 @@ fn cli_multi_index_schedule_yields_xor_of_indices() -> TestResult {
     let output = unique_tmp("multi", "jsonl")?;
     let out = run_cli(&bin, 1000, &srcs_path, 4, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("encode-xor-repair-payload CLI invocation must succeed".into());
     }
     let parsed = read_record(&output)?;
     let sched = schedule_indices(&parsed)?;
@@ -385,7 +407,7 @@ fn cli_repair_esi_below_k_source_is_rejected() -> TestResult {
     let stderr = String::from_utf8_lossy(&out.stderr);
     require(
         stderr.contains("repair_esi") && stderr.contains("k_source"),
-        format!("stderr must mention repair_esi and k_source: {stderr}"),
+        "stderr must mention repair_esi and k_source",
     )
 }
 
@@ -405,7 +427,7 @@ fn cli_non_multiple_of_128_input_is_rejected() -> TestResult {
     let stderr = String::from_utf8_lossy(&out.stderr);
     require(
         stderr.contains("not a multiple of 128"),
-        format!("stderr must mention 128-byte multiple: {stderr}"),
+        "stderr must mention 128-byte multiple",
     )
 }
 
@@ -420,7 +442,7 @@ fn cli_echoes_inputs_into_record() -> TestResult {
     let output = unique_tmp("echo", "jsonl")?;
     let out = run_cli(&bin, 9876, &srcs_path, 5, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("encode-xor-repair-payload CLI invocation must succeed".into());
     }
     let parsed = read_record(&output)?;
     require(json_u64(&parsed, "epoch_seed")? == 9876, "epoch_seed echo")?;
