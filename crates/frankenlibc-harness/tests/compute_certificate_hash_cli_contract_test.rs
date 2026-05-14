@@ -150,7 +150,7 @@ fn run_and_parse(
     let output = unique_tmp(label, "jsonl")?;
     let out = run_cli(bin, &m_path, monomial_degree, barrier_budget_milli, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("compute-certificate-hash CLI invocation must succeed".into());
     }
     let parsed = read_record(&output)?;
     Ok(parsed)
@@ -183,20 +183,53 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_inputs_into_output_record",
-        "deterministic_given_inputs",
-        "hash_hex_is_64_lowercase_hex_chars",
-        "different_gram_matrix_yields_different_hash",
-        "different_monomial_degree_yields_different_hash",
-        "different_barrier_budget_yields_different_hash",
-        "supported_dims_2_through_8_succeed",
-        "unsupported_dim_is_rejected",
-        "non_square_matrix_is_rejected",
-        "d4_anchor_hash_matches_expected",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_inputs_into_output_record",
+            "echoes_inputs_into_output_record must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "hash_hex_is_64_lowercase_hex_chars",
+            "hash_hex_is_64_lowercase_hex_chars must be true",
+        ),
+        (
+            "different_gram_matrix_yields_different_hash",
+            "different_gram_matrix_yields_different_hash must be true",
+        ),
+        (
+            "different_monomial_degree_yields_different_hash",
+            "different_monomial_degree_yields_different_hash must be true",
+        ),
+        (
+            "different_barrier_budget_yields_different_hash",
+            "different_barrier_budget_yields_different_hash must be true",
+        ),
+        (
+            "supported_dims_2_through_8_succeed",
+            "supported_dims_2_through_8_succeed must be true",
+        ),
+        (
+            "unsupported_dim_is_rejected",
+            "unsupported_dim_is_rejected must be true",
+        ),
+        (
+            "non_square_matrix_is_rejected",
+            "non_square_matrix_is_rejected must be true",
+        ),
+        (
+            "d4_anchor_hash_matches_expected",
+            "d4_anchor_hash_matches_expected must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -351,17 +384,11 @@ fn cli_unsupported_dim_is_rejected() -> TestResult {
     let m_path = write_matrix("d1", &m)?;
     let output = unique_tmp("d1", "jsonl")?;
     let out = run_cli(&bin, &m_path, 2, 0, &output)?;
-    require(
-        !out.status.success(),
-        format!(
-            "D=1 must exit non-zero; stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        ),
-    )?;
+    require(!out.status.success(), "D=1 must exit non-zero")?;
     let stderr = String::from_utf8_lossy(&out.stderr);
     require(
         stderr.contains("unsupported gram_matrix dim"),
-        format!("stderr must mention unsupported dim: {stderr}"),
+        "stderr must mention unsupported dim",
     )
 }
 
@@ -378,10 +405,7 @@ fn cli_non_square_matrix_is_rejected() -> TestResult {
     let out = run_cli(&bin, &m_path, 2, 0, &output)?;
     require(
         !out.status.success(),
-        format!(
-            "non-square matrix must exit non-zero; stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        ),
+        "non-square matrix must exit non-zero",
     )
 }
 
