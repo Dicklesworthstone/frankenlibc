@@ -353,6 +353,71 @@ mod sort_variant_tests {
             .collect()
     }
 
+    fn cmp_key_u32(key: &u32, elem: &[u8]) -> i32 {
+        let ev = u32::from_le_bytes(elem[..4].try_into().unwrap());
+        key.cmp(&ev) as i32
+    }
+
+    // ---- cross-sort/search metamorphic invariants ----
+
+    #[test]
+    fn qsort_permutation_invariance_matches_reversed_input() {
+        let values = [42, 7, 19, 7, 0, 255, 3, 19, 88, 1, 144, 2];
+        let reversed: Vec<u32> = values.iter().copied().rev().collect();
+
+        let mut original_buf = flatten_u32(&values);
+        let mut reversed_buf = flatten_u32(&reversed);
+        qsort(&mut original_buf, 4, cmp_u32_le);
+        qsort(&mut reversed_buf, 4, cmp_u32_le);
+
+        assert_eq!(unflatten_u32(&original_buf), unflatten_u32(&reversed_buf));
+    }
+
+    #[test]
+    fn sort_variants_agree_under_total_order() {
+        let values = [13, 5, 8, 5, 21, 3, 34, 2, 1, 1, 55, 0, 89];
+        let mut qsort_buf = flatten_u32(&values);
+        let mut mergesort_buf = flatten_u32(&values);
+        let mut heapsort_buf = flatten_u32(&values);
+
+        qsort(&mut qsort_buf, 4, cmp_u32_le);
+        mergesort(&mut mergesort_buf, 4, cmp_u32_le);
+        heapsort(&mut heapsort_buf, 4, cmp_u32_le);
+
+        assert_eq!(qsort_buf, mergesort_buf);
+        assert_eq!(qsort_buf, heapsort_buf);
+    }
+
+    #[test]
+    fn bsearch_finds_each_distinct_key_after_qsort() {
+        let mut buf = flatten_u32(&[12, 4, 12, 9, 1, 0, 4, 16, 25, 9]);
+        qsort(&mut buf, 4, cmp_u32_le);
+
+        for key in [0, 1, 4, 9, 12, 16, 25] {
+            let found = bsearch(&key, &buf, 4, cmp_key_u32).expect("key should be present");
+            assert_eq!(u32::from_le_bytes(found.try_into().unwrap()), key);
+        }
+        assert!(bsearch(&11, &buf, 4, cmp_key_u32).is_none());
+    }
+
+    #[test]
+    fn radix_sort_identity_table_matches_untranslated_order() {
+        let mut identity = [0u8; 256];
+        for (i, slot) in identity.iter_mut().enumerate() {
+            *slot = i as u8;
+        }
+        let items: Vec<&[u8]> = vec![b"beta", b"alpha", b"alphabet", b"gamma", b""];
+
+        assert_eq!(
+            radix_sort(&items, Some(&identity), true),
+            radix_sort(&items, None, true)
+        );
+        assert_eq!(
+            radix_sort(&items, Some(&identity), false),
+            radix_sort(&items, None, false)
+        );
+    }
+
     // ---- mergesort (stable) ----
 
     #[test]
