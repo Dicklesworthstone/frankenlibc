@@ -198,6 +198,58 @@ mod tests {
         assert_eq!(parse(b"-2M"), Ok(-2 * 1024 * 1024));
     }
 
+    #[test]
+    fn suffix_case_does_not_change_scale() {
+        for (lower, upper, expected) in [
+            (b"3k".as_slice(), b"3K".as_slice(), 3 * 1024),
+            (b"4m".as_slice(), b"4M".as_slice(), 4 * 1024 * 1024),
+            (b"5g".as_slice(), b"5G".as_slice(), 5 * 1024 * 1024 * 1024),
+            (b"6t".as_slice(), b"6T".as_slice(), 6 * 1024i64.pow(4)),
+            (b"7p".as_slice(), b"7P".as_slice(), 7 * 1024i64.pow(5)),
+            (b"1e".as_slice(), b"1E".as_slice(), 1024i64.pow(6)),
+        ] {
+            assert_eq!(parse(lower), Ok(expected));
+            assert_eq!(parse(upper), Ok(expected));
+            assert_eq!(parse(lower), parse(upper));
+        }
+    }
+
+    #[test]
+    fn byte_suffix_is_plain_decimal_identity() {
+        for digits in ["0", "1", "42", "9223372036854775807"] {
+            let lower = format!("{digits}b");
+            let upper = format!("{digits}B");
+            let expected = parse(digits.as_bytes());
+            assert_eq!(parse(lower.as_bytes()), expected);
+            assert_eq!(parse(upper.as_bytes()), expected);
+        }
+    }
+
+    #[test]
+    fn sign_negation_is_symmetric_for_scaled_values() {
+        for (positive, negative) in [
+            ("1k", "-1k"),
+            ("2M", "-2M"),
+            ("3g", "-3g"),
+            ("4T", "-4T"),
+            ("5p", "-5p"),
+            ("6", "-6"),
+        ] {
+            assert_eq!(
+                parse(negative.as_bytes()),
+                parse(positive.as_bytes()).map(|v| -v)
+            );
+        }
+    }
+
+    #[test]
+    fn leading_whitespace_and_plus_preserve_positive_parse() {
+        for input in ["0", "7", "13k", "21M", "1e"] {
+            let decorated = format!(" \t\n+{input}");
+            assert_eq!(parse(decorated.as_bytes()), parse(input.as_bytes()));
+        }
+    }
+
     // ---- invalid input ----
 
     #[test]
