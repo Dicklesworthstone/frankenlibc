@@ -115,7 +115,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "missing_expected_file_must_fail_closed",
         "missing_actual_file_must_fail_closed",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -166,10 +166,7 @@ fn cli_identical_inputs_produce_identical_marker() -> TestResult {
     std::fs::write(&expected, text).map_err(|e| format!("write expected: {e}"))?;
     std::fs::write(&actual, text).map_err(|e| format!("write actual: {e}"))?;
     let out = run_cli(&bin, &expected, &actual, &output)?;
-    let _ = std::fs::remove_file(&expected);
-    let _ = std::fs::remove_file(&actual);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "render-diff failed: status={:?} stderr={}",
             out.status,
@@ -177,7 +174,6 @@ fn cli_identical_inputs_produce_identical_marker() -> TestResult {
         ));
     }
     let body = std::fs::read_to_string(&output).map_err(|e| format!("read: {e}"))?;
-    let _ = std::fs::remove_file(&output);
     require(
         body == "[identical]",
         format!("identical inputs must produce literal '[identical]' marker; got {body:?}"),
@@ -196,10 +192,7 @@ fn cli_divergent_inputs_start_with_expected_actual_header() -> TestResult {
     std::fs::write(&expected, "hello\n").map_err(|e| format!("write: {e}"))?;
     std::fs::write(&actual, "world\n").map_err(|e| format!("write: {e}"))?;
     let out = run_cli(&bin, &expected, &actual, &output)?;
-    let _ = std::fs::remove_file(&expected);
-    let _ = std::fs::remove_file(&actual);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "render-diff failed: status={:?} stderr={}",
             out.status,
@@ -207,7 +200,6 @@ fn cli_divergent_inputs_start_with_expected_actual_header() -> TestResult {
         ));
     }
     let body = std::fs::read_to_string(&output).map_err(|e| format!("read: {e}"))?;
-    let _ = std::fs::remove_file(&output);
     require(
         body.starts_with("--- expected\n+++ actual\n"),
         format!("divergent inputs must start with diff header; got {body:?}"),
@@ -229,8 +221,6 @@ fn cli_fails_closed_on_missing_expected_file() -> TestResult {
     let output = unique_tmp("out")?;
     std::fs::write(&actual, "x").map_err(|e| format!("write: {e}"))?;
     let out = run_cli(&bin, &expected, &actual, &output)?;
-    let _ = std::fs::remove_file(&actual);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "missing --expected must cause non-zero exit",
@@ -252,8 +242,6 @@ fn cli_fails_closed_on_missing_actual_file() -> TestResult {
     let output = unique_tmp("out")?;
     std::fs::write(&expected, "x").map_err(|e| format!("write: {e}"))?;
     let out = run_cli(&bin, &expected, &actual, &output)?;
-    let _ = std::fs::remove_file(&expected);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "missing --actual must cause non-zero exit",
