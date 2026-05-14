@@ -97,6 +97,26 @@ fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
     Ok(std::env::temp_dir().join(format!("bd_r0315_{stem}_{}_{ts}.jsonl", std::process::id())))
 }
 
+fn read_record(out_path: &Path) -> TestResult<Value> {
+    let body = std::fs::read_to_string(out_path).map_err(|e| format!("read jsonl: {e}"))?;
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse jsonl: {e}"))
+}
+
 #[test]
 fn manifest_anchors_to_r0315_with_subcommand_name() -> TestResult {
     let root = workspace_root()?;
@@ -133,7 +153,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "fail_closed_on_zero_reads_per_phase",
         "writes_array_in_output_must_echo_parsed_input",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -177,21 +197,13 @@ fn cli_emits_one_record_with_identical_outcomes_and_expected_lengths() -> TestRe
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&tmp);
         return Err(format!(
             "lane-isomorphism failed: status={:?} stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
-    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 1,
-        format!("expected exactly 1 JSONL record; got {}", lines.len()),
-    )?;
-    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&tmp)?;
     require(
         json_string(&parsed, "kind")? == "isomorphism_report",
         "kind must be isomorphism_report",
@@ -246,7 +258,6 @@ fn cli_fails_closed_on_empty_writes() -> TestResult {
         .arg(&tmp)
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
     require(
         !out.status.success(),
         "lane-isomorphism must exit non-zero on empty --writes",
@@ -274,7 +285,6 @@ fn cli_fails_closed_on_zero_reads_per_phase() -> TestResult {
         .arg(&tmp)
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
     require(
         !out.status.success(),
         "lane-isomorphism must exit non-zero on --reads-per-phase=0",
@@ -302,7 +312,6 @@ fn cli_fails_closed_on_non_u32_write_token() -> TestResult {
         .arg(&tmp)
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
     require(
         !out.status.success(),
         "lane-isomorphism must exit non-zero on non-u32 --writes token",
