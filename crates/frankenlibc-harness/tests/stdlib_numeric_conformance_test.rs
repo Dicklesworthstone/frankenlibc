@@ -61,12 +61,12 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -131,8 +131,8 @@ fn stdlib_numeric_fixture_exists() {
 }
 
 #[test]
-fn stdlib_numeric_fixture_valid_schema() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "stdlib/numeric");
@@ -159,6 +159,7 @@ fn stdlib_numeric_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,25 +167,27 @@ fn stdlib_numeric_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_numeric_covers_atoi() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_covers_atoi() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("atoi")).count() >= 2,
         "atoi needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn stdlib_numeric_covers_atol() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_covers_atol() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("atol")).count() >= 2,
         "atol needs at least 2 test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,30 +195,32 @@ fn stdlib_numeric_covers_atol() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_numeric_covers_strtol() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_covers_strtol() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("strtol")).count() >= 2,
         "strtol needs at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn stdlib_numeric_covers_strtoul() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_covers_strtoul() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("strtoul")),
         "Missing test coverage for strtoul"
     );
+    Ok(())
 }
 
 #[test]
-fn stdlib_numeric_covers_getbsize() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_covers_getbsize() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
     let cases: Vec<&FixtureCase> = fixture
         .cases
         .iter()
@@ -260,6 +265,7 @@ fn stdlib_numeric_covers_getbsize() {
             .any(|case| case.name.contains("negative_zero_unit")),
         "getbsize needs signed zero suffix coverage"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,8 +273,8 @@ fn stdlib_numeric_covers_getbsize() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_numeric_error_codes_valid() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
 
     // Valid POSIX/Linux error codes for numeric conversion functions
     let valid_errno_values = [
@@ -286,6 +292,7 @@ fn stdlib_numeric_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -293,17 +300,18 @@ fn stdlib_numeric_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_numeric_modes_valid() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,8 +319,8 @@ fn stdlib_numeric_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_numeric_case_count_stable() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
 
     const EXPECTED_MIN_CASES: usize = 8;
 
@@ -327,6 +335,7 @@ fn stdlib_numeric_case_count_stable() {
         "stdlib_numeric fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -334,8 +343,8 @@ fn stdlib_numeric_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_numeric_covers_edge_cases() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_covers_edge_cases() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -346,6 +355,7 @@ fn stdlib_numeric_covers_edge_cases() {
         case_names.iter().any(|n| n.contains("whitespace")),
         "Must test whitespace handling"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -353,8 +363,8 @@ fn stdlib_numeric_covers_edge_cases() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn stdlib_numeric_has_spec_references() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
 
     for case in &fixture.cases {
         assert!(
@@ -366,17 +376,18 @@ fn stdlib_numeric_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn stdlib_numeric_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture("stdlib_numeric");
+fn stdlib_numeric_fixture_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture("stdlib_numeric")?;
 
     for case in fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -384,13 +395,13 @@ fn stdlib_numeric_fixture_executes_via_isolated_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute through harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -403,4 +414,6 @@ fn stdlib_numeric_fixture_executes_via_isolated_harness() {
             );
         }
     }
+
+    Ok(())
 }
