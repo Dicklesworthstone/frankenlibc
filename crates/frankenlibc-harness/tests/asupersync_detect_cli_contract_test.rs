@@ -57,6 +57,16 @@ fn json_array<'a>(value: &'a Value, field: &str) -> TestResult<&'a Vec<Value>> {
         .ok_or_else(|| format!("missing or non-array `{field}`"))
 }
 
+fn read_single_jsonl_record(path: &Path) -> TestResult<Value> {
+    let body = std::fs::read_to_string(path).map_err(|e| format!("read jsonl: {e}"))?;
+    let mut lines = body.lines().filter(|line| !line.trim().is_empty());
+    let Some(record) = lines.next() else {
+        return Err("expected exactly one JSONL record".into());
+    };
+    require(lines.next().is_none(), "expected exactly one JSONL record")?;
+    serde_json::from_str(record).map_err(|_| "parse jsonl".into())
+}
+
 fn cargo_target_dir_for_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_TARGET_DIR") {
         PathBuf::from(p)
@@ -114,7 +124,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "override_var_flag_takes_precedence_over_process_env",
         "detection_reason_must_be_one_of_enum",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -128,17 +138,13 @@ fn harness_source_registers_asupersync_detect_subcommand() -> TestResult {
         src.contains("AsupersyncDetect {"),
         "harness.rs must declare AsupersyncDetect Command variant",
     )?;
-    for field in [
-        "override_var",
-        "asupersync_dir",
-        "path_search_paths",
-        "output",
+    for anchor in [
+        "        override_var",
+        "        asupersync_dir",
+        "        path_search_paths",
+        "        output",
     ] {
-        let anchor = format!("        {field}");
-        require(
-            src.contains(&anchor),
-            format!("AsupersyncDetect missing field `{field}`"),
-        )?;
+        require(src.contains(anchor), "AsupersyncDetect missing field")?;
     }
     require(
         src.contains("detect_asupersync_available(&env)"),
@@ -171,21 +177,13 @@ fn cli_emits_one_record_with_enum_detection_reason() -> TestResult {
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
     if !output.status.success() {
-        let _ = std::fs::remove_file(&tmp);
         return Err(format!(
             "asupersync-detect failed: status={:?} stderr={}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
-    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 1,
-        format!("expected exactly 1 JSONL record; got {}", lines.len()),
-    )?;
-    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse jsonl: {e}"))?;
+    let parsed = read_single_jsonl_record(&tmp)?;
     let m = load_json(&manifest_path(&workspace_root()?))?;
     let contract = m
         .get("jsonl_output_contract")
@@ -194,10 +192,7 @@ fn cli_emits_one_record_with_enum_detection_reason() -> TestResult {
         .iter()
         .filter_map(Value::as_str)
     {
-        require(
-            parsed.get(f).is_some(),
-            format!("record missing required field `{f}`"),
-        )?;
+        require(parsed.get(f).is_some(), "record missing required field")?;
     }
     require(
         json_string(&parsed, "kind")? == "lab_availability",
@@ -212,13 +207,10 @@ fn cli_emits_one_record_with_enum_detection_reason() -> TestResult {
         .iter()
         .filter_map(Value::as_str)
         .collect();
-    require(
-        valid.contains(&reason),
-        format!("detection_reason `{reason}` not in enum {valid:?}"),
-    )?;
+    require(valid.contains(&reason), "detection_reason must be in enum")?;
     require(
         reason == "env_override_disabled",
-        format!("override_var=0 must give env_override_disabled; got {reason}"),
+        "override_var=0 must give env_override_disabled",
     )
 }
 
@@ -238,17 +230,13 @@ fn cli_override_var_enabled_produces_enabled_reason() -> TestResult {
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
     if !output.status.success() {
-        let _ = std::fs::remove_file(&tmp);
         return Err(format!(
             "asupersync-detect failed: status={:?} stderr={}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
-    let parsed: Value =
-        serde_json::from_str(body.trim()).map_err(|e| format!("parse jsonl: {e}"))?;
+    let parsed = read_single_jsonl_record(&tmp)?;
     require(
         parsed.get("available").and_then(Value::as_bool) == Some(true),
         "override_var=1 must produce available=true",
