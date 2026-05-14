@@ -127,18 +127,45 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_inputs_into_output_record",
-        "deterministic_given_inputs",
-        "depth_at_or_below_floor_yields_zero_arena_ppm",
-        "depth_at_max_yields_maximum_arena_ppm",
-        "depth_arena_ppm_is_monotone_nondecreasing_in_depth",
-        "composed_ppm_at_or_above_depth_arena_ppm",
-        "composed_ppm_clamped_to_unit_ppm_max",
-        "all_zero_pressure_with_floor_depth_yields_zero_composed",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_inputs_into_output_record",
+            "echoes_inputs_into_output_record must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "depth_at_or_below_floor_yields_zero_arena_ppm",
+            "depth_at_or_below_floor_yields_zero_arena_ppm must be true",
+        ),
+        (
+            "depth_at_max_yields_maximum_arena_ppm",
+            "depth_at_max_yields_maximum_arena_ppm must be true",
+        ),
+        (
+            "depth_arena_ppm_is_monotone_nondecreasing_in_depth",
+            "depth_arena_ppm_is_monotone_nondecreasing_in_depth must be true",
+        ),
+        (
+            "composed_ppm_at_or_above_depth_arena_ppm",
+            "composed_ppm_at_or_above_depth_arena_ppm must be true",
+        ),
+        (
+            "composed_ppm_clamped_to_unit_ppm_max",
+            "composed_ppm_clamped_to_unit_ppm_max must be true",
+        ),
+        (
+            "all_zero_pressure_with_floor_depth_yields_zero_composed",
+            "all_zero_pressure_with_floor_depth_yields_zero_composed must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -212,7 +239,7 @@ fn run_and_parse(bin: &Path, depth: u32, score: u64, raw: u64, label: &str) -> T
     let output = unique_tmp(label)?;
     let out = run_cli(bin, depth, score, raw, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("compute-memory-pressure-ppm CLI invocation must succeed".into());
     }
     read_record(&output)
 }
