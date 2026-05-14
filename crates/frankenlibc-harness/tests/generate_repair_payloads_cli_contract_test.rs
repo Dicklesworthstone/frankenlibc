@@ -59,6 +59,13 @@ fn json_u64(value: &Value, field: &str) -> TestResult<u64> {
         .ok_or_else(|| format!("missing or non-u64 `{field}`"))
 }
 
+fn json_array<'a>(value: &'a Value, field: &str) -> TestResult<&'a Vec<Value>> {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("missing or non-array `{field}`"))
+}
+
 fn cargo_target_dir_for_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_TARGET_DIR") {
         PathBuf::from(p)
@@ -113,10 +120,37 @@ fn write_bin(stem: &str, body: &[u8]) -> TestResult<PathBuf> {
 
 fn read_records(path: &Path) -> TestResult<Vec<Value>> {
     let body = std::fs::read_to_string(path).map_err(|e| format!("read: {e}"))?;
-    body.lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| serde_json::from_str(l).map_err(|e| format!("parse: {e}")))
-        .collect()
+    let mut records = Vec::new();
+    for line in body.lines().filter(|line| !line.trim().is_empty()) {
+        let record = match serde_json::from_str(line) {
+            Ok(record) => record,
+            Err(_) => return Err("parse JSONL record".into()),
+        };
+        records.push(record);
+    }
+    require(
+        !records.is_empty(),
+        format!("{} must contain at least one JSONL record", path.display()),
+    )?;
+    Ok(records)
+}
+
+fn split_payload_records(records: &[Value]) -> TestResult<(&[Value], &Value)> {
+    let Some((summary, payloads)) = records.split_last() else {
+        return Err("CLI output must contain a summary record".into());
+    };
+    Ok((payloads, summary))
+}
+
+fn json_u64_vec(value: &Value, field: &str) -> TestResult<Vec<u64>> {
+    let mut out = Vec::new();
+    for entry in json_array(value, field)? {
+        let Some(raw) = entry.as_u64() else {
+            return Err("array entries must be u64".into());
+        };
+        out.push(raw);
+    }
+    Ok(out)
 }
 
 fn run_cli(
@@ -177,7 +211,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "non_multiple_of_128_input_file_is_rejected",
         "k_zero_input_is_rejected",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -213,41 +247,32 @@ fn cli_esis_are_contiguous_from_k_source() -> TestResult {
     let srcs_path = write_bin("contig_srcs", &srcs)?;
     let output = unique_tmp("contig", "jsonl")?;
     let out = run_cli(&bin, 1, &srcs_path, 100, &output)?;
-    let _ = std::fs::remove_file(&srcs_path);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let recs = read_records(&output)?;
-    let _ = std::fs::remove_file(&output);
-    let r = recs.len() - 1; // last is summary
+    let (payloads, summary) = split_payload_records(&recs)?;
+    let r = payloads.len();
     require(r > 0, "must emit at least 1 repair record")?;
-    for (i, rec) in recs[..r].iter().enumerate() {
+    for (i, rec) in payloads.iter().enumerate() {
         require(
             json_string(rec, "kind")? == "repair_payload",
-            format!("record {i} kind"),
+            "payload record kind",
         )?;
         let esi = json_u64(rec, "esi")?;
         let expected = 4 + (i as u64);
         require(
             esi == expected,
-            format!("record {i}: esi must be {expected}, got {esi}"),
+            "payload esi must be contiguous from k_source",
         )?;
     }
-    let summary = &recs[r];
     require(
         json_string(summary, "kind")? == "repair_payload_summary",
         "summary kind",
     )?;
-    let esis: Vec<u64> = summary
-        .get("esis")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "missing esis".to_string())?
-        .iter()
-        .map(|v| v.as_u64().unwrap_or(0))
-        .collect();
+    let esis = json_u64_vec(summary, "esis")?;
     let expected: Vec<u64> = (0..r as u64).map(|i| 4 + i).collect();
-    require(esis == expected, format!("summary esis drift: {esis:?}"))
+    require(esis == expected, "summary esis must match payload records")
 }
 
 #[test]
@@ -260,24 +285,21 @@ fn cli_repair_count_matches_summary_esis_length() -> TestResult {
     let srcs_path = write_bin("count_srcs", &srcs)?;
     let output = unique_tmp("count", "jsonl")?;
     let out = run_cli(&bin, 42, &srcs_path, 50, &output)?;
-    let _ = std::fs::remove_file(&srcs_path);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let recs = read_records(&output)?;
-    let _ = std::fs::remove_file(&output);
-    let summary = recs.last().unwrap();
+    let (payloads, summary) = split_payload_records(&recs)?;
     let count = json_u64(summary, "repair_count")?;
-    let esis = summary.get("esis").and_then(Value::as_array).unwrap();
-    let emitted = recs.len() - 1;
+    let esis = json_array(summary, "esis")?;
+    let emitted = payloads.len();
     require(
         count as usize == esis.len(),
-        format!("repair_count={count} vs esis.len={}", esis.len()),
+        "repair_count must equal summary esis length",
     )?;
     require(
         count as usize == emitted,
-        format!("repair_count={count} vs emitted records={emitted}"),
+        "repair_count must equal emitted payload records",
     )
 }
 
@@ -291,19 +313,14 @@ fn cli_each_payload_hex_is_256_lowercase_hex_chars() -> TestResult {
     let srcs_path = write_bin("hex_srcs", &srcs)?;
     let output = unique_tmp("hex", "jsonl")?;
     let out = run_cli(&bin, 999, &srcs_path, 100, &output)?;
-    let _ = std::fs::remove_file(&srcs_path);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let recs = read_records(&output)?;
-    let _ = std::fs::remove_file(&output);
-    for rec in &recs[..recs.len() - 1] {
+    let (payloads, _) = split_payload_records(&recs)?;
+    for rec in payloads {
         let hex = json_string(rec, "payload_hex")?;
-        require(
-            hex.len() == 256,
-            format!("payload_hex must be 256 chars, got {}", hex.len()),
-        )?;
+        require(hex.len() == 256, "payload_hex must be 256 chars")?;
         require(
             hex.chars()
                 .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
@@ -322,8 +339,6 @@ fn cli_non_multiple_of_128_input_is_rejected() -> TestResult {
     let srcs_path = write_bin("short_srcs", b"short")?;
     let output = unique_tmp("reject_len", "jsonl")?;
     let out = run_cli(&bin, 1, &srcs_path, 25, &output)?;
-    let _ = std::fs::remove_file(&srcs_path);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "non-multiple-of-128 file must exit non-zero",
@@ -344,8 +359,6 @@ fn cli_k_zero_input_is_rejected() -> TestResult {
     let srcs_path = write_bin("empty_srcs", b"")?;
     let output = unique_tmp("k_zero", "jsonl")?;
     let out = run_cli(&bin, 1, &srcs_path, 25, &output)?;
-    let _ = std::fs::remove_file(&srcs_path);
-    let _ = std::fs::remove_file(&output);
     require(!out.status.success(), "k=0 (empty file) must exit non-zero")
 }
 
@@ -361,14 +374,11 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
     let b = unique_tmp("det_b", "jsonl")?;
     let r_a = run_cli(&bin, 12345, &srcs_path, 75, &a)?;
     let r_b = run_cli(&bin, 12345, &srcs_path, 75, &b)?;
-    let _ = std::fs::remove_file(&srcs_path);
     require(
         r_a.status.success() && r_b.status.success(),
         "both runs must succeed",
     )?;
     let pa = read_records(&a)?;
     let pb = read_records(&b)?;
-    let _ = std::fs::remove_file(&a);
-    let _ = std::fs::remove_file(&b);
     require(pa == pb, "same inputs must produce identical output")
 }
