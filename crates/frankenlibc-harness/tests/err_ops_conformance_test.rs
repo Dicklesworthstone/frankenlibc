@@ -62,28 +62,28 @@ struct ExpectedOutput {
     exit_status: Option<i32>,
 }
 
-fn load_fixture() -> FixtureFile {
+fn load_fixture() -> Result<FixtureFile, String> {
     let path = repo_root().join("tests/conformance/fixtures/err_ops.json");
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
-fn load_json(path: &str) -> serde_json::Value {
+fn load_json(path: &str) -> Result<serde_json::Value, String> {
     let path = repo_root().join(path);
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[test]
-fn err_ops_fixture_exists_and_names_scope() {
+fn err_ops_fixture_exists_and_names_scope() -> Result<(), String> {
     let fixture_path = repo_root().join("tests/conformance/fixtures/err_ops.json");
     assert!(fixture_path.exists(), "err_ops.json fixture must exist");
 
-    let fixture = load_fixture();
+    let fixture = load_fixture()?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "err_ops");
     assert!(
@@ -94,11 +94,12 @@ fn err_ops_fixture_exists_and_names_scope() {
         fixture.spec_reference.contains("err(3)") && fixture.spec_reference.contains("glibc"),
         "fixture must cite BSD err(3) and glibc compatibility"
     );
+    Ok(())
 }
 
 #[test]
-fn err_ops_fixture_covers_every_exported_err_symbol() {
-    let fixture = load_fixture();
+fn err_ops_fixture_covers_every_exported_err_symbol() -> Result<(), String> {
+    let fixture = load_fixture()?;
     let declared: BTreeSet<&str> = fixture
         .cases
         .iter()
@@ -109,11 +110,12 @@ fn err_ops_fixture_covers_every_exported_err_symbol() {
         declared, expected,
         "err_ops fixture must cover exactly the exported err_abi symbols"
     );
+    Ok(())
 }
 
 #[test]
-fn err_ops_fixture_cases_are_deterministic_and_mode_paired() {
-    let fixture = load_fixture();
+fn err_ops_fixture_cases_are_deterministic_and_mode_paired() -> Result<(), String> {
+    let fixture = load_fixture()?;
     for case in &fixture.cases {
         assert!(!case.name.is_empty(), "case name must not be empty");
         assert!(
@@ -168,15 +170,16 @@ fn err_ops_fixture_cases_are_deterministic_and_mode_paired() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn err_ops_fixture_is_backed_by_existing_diff_and_unit_tests() {
+fn err_ops_fixture_is_backed_by_existing_diff_and_unit_tests() -> Result<(), String> {
     let root = repo_root();
     let diff_test = std::fs::read_to_string(
         root.join("crates/frankenlibc-abi/tests/conformance_diff_err_h.rs"),
     )
-    .expect("read err.h differential test");
+    .map_err(|err| format!("failed to read err.h differential test: {err}"))?;
     for needle in [
         "diff_warnx_message_body",
         "diff_warnx_formatted_args",
@@ -192,7 +195,7 @@ fn err_ops_fixture_is_backed_by_existing_diff_and_unit_tests() {
 
     let unit_test =
         std::fs::read_to_string(root.join("crates/frankenlibc-abi/tests/err_abi_test.rs"))
-            .expect("read err_abi unit test");
+            .map_err(|err| format!("failed to read err_abi unit test: {err}"))?;
     for needle in [
         "test_warnc_uses_explicit_code_not_global_errno",
         "test_vwarn_with_message",
@@ -205,27 +208,28 @@ fn err_ops_fixture_is_backed_by_existing_diff_and_unit_tests() {
             "missing err_abi test anchor {needle}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn symbol_fixture_coverage_counts_err_ops_fixture() {
-    let matrix = load_json("tests/conformance/symbol_fixture_coverage.v1.json");
+fn symbol_fixture_coverage_counts_err_ops_fixture() -> Result<(), String> {
+    let matrix = load_json("tests/conformance/symbol_fixture_coverage.v1.json")?;
     let symbols = matrix["symbols"]
         .as_array()
-        .expect("symbol_fixture_coverage.symbols must be an array");
+        .ok_or_else(|| "symbol_fixture_coverage.symbols must be an array".to_string())?;
 
     for symbol in ERR_SYMBOLS {
         let row = symbols
             .iter()
             .find(|row| row["module"] == "err_abi" && row["symbol"] == symbol)
-            .unwrap_or_else(|| panic!("missing err_abi symbol row for {symbol}"));
+            .ok_or_else(|| format!("missing err_abi symbol row for {symbol}"))?;
         assert!(
             row["fixture_case_count"].as_u64().unwrap_or(0) >= 1,
             "symbol_fixture_coverage must count err_ops fixture case for {symbol}"
         );
         let fixture_files = row["fixture_files"]
             .as_array()
-            .unwrap_or_else(|| panic!("fixture_files missing for {symbol}"));
+            .ok_or_else(|| format!("fixture_files missing for {symbol}"))?;
         assert!(
             fixture_files.iter().any(|file| file == "err_ops.json"),
             "symbol_fixture_coverage must cite err_ops.json for {symbol}"
@@ -234,11 +238,12 @@ fn symbol_fixture_coverage_counts_err_ops_fixture() {
 
     let uncovered = matrix["uncovered_target_families"]
         .as_array()
-        .expect("uncovered_target_families must be an array");
+        .ok_or_else(|| "uncovered_target_families must be an array".to_string())?;
     assert!(
         uncovered
             .iter()
             .all(|family| family["module"].as_str() != Some("err_abi")),
         "err_abi should not remain a critical uncovered target family after err_ops fixture"
     );
+    Ok(())
 }
