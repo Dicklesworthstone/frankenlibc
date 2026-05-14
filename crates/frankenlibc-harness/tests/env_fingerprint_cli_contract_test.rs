@@ -83,6 +83,26 @@ fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
     Ok(std::env::temp_dir().join(format!("bd_fmdp3_{stem}_{}_{ts}.jsonl", std::process::id())))
 }
 
+fn read_record(out_path: &Path) -> TestResult<Value> {
+    let body = std::fs::read_to_string(out_path).map_err(|e| format!("read jsonl: {e}"))?;
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse jsonl: {e}"))
+}
+
 #[test]
 fn manifest_anchors_to_fmdp3_with_subcommand_name() -> TestResult {
     let root = workspace_root()?;
@@ -116,7 +136,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "validate_mode_fails_closed_on_malformed_input_without_panicking",
         "detect_mode_record_source_must_be_detected",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -160,21 +180,13 @@ fn cli_detect_mode_honors_env_override() -> TestResult {
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&tmp);
         return Err(format!(
             "env-fingerprint failed: status={:?} stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
-    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 1,
-        format!("expected exactly 1 JSONL record; got {}", lines.len()),
-    )?;
-    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse jsonl: {e}"))?;
+    let parsed = read_record(&tmp)?;
     require(
         json_string(&parsed, "kind")? == "environment_fingerprint",
         "kind must be environment_fingerprint in detect mode",
@@ -190,7 +202,7 @@ fn cli_detect_mode_honors_env_override() -> TestResult {
     for f in ["os", "arch", "kernel_release"] {
         require(
             parsed.get(f).and_then(Value::as_str).is_some(),
-            format!("record missing string field `{f}`"),
+            "record missing string field",
         )?;
     }
     require(
@@ -216,17 +228,13 @@ fn cli_validate_mode_round_trips_well_formed_input() -> TestResult {
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&tmp);
         return Err(format!(
             "env-fingerprint validate failed: status={:?} stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
-    let parsed: Value =
-        serde_json::from_str(body.trim()).map_err(|e| format!("parse jsonl: {e}"))?;
+    let parsed = read_record(&tmp)?;
     require(
         json_string(&parsed, "kind")? == "environment_fingerprint_validation",
         "kind must be environment_fingerprint_validation in validate mode",
@@ -281,10 +289,7 @@ fn cli_validate_mode_fails_closed_on_malformed_input_without_panic() -> TestResu
             String::from_utf8_lossy(&out.stderr)
         ),
     )?;
-    let body = std::fs::read_to_string(&tmp).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
-    let parsed: Value =
-        serde_json::from_str(body.trim()).map_err(|e| format!("parse jsonl: {e}"))?;
+    let parsed = read_record(&tmp)?;
     require(
         json_string(&parsed, "kind")? == "environment_fingerprint_validation",
         "kind must be environment_fingerprint_validation in validate mode",
