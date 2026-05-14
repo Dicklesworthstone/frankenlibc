@@ -1222,6 +1222,17 @@ pub unsafe extern "C" fn getaddrinfo(
         Some(unsafe { &*hints })
     };
 
+    if node_cstr.is_none() && service_cstr.is_none() {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_NONAME;
+    }
+
     let port = match parse_port(service_cstr, hints_ref, repair) {
         Ok(port) => port,
         Err(err) => {

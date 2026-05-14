@@ -928,6 +928,15 @@ fn getaddrinfo_null_service_uses_port_zero() {
 }
 
 #[test]
+fn getaddrinfo_null_node_and_null_service_returns_noname() {
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(ptr::null(), ptr::null(), ptr::null(), &mut res) };
+    assert_eq!(rc, libc::EAI_NONAME);
+    assert!(res.is_null());
+}
+
+#[test]
 fn getaddrinfo_null_result_returns_error() {
     let node = CString::new("127.0.0.1").unwrap();
     let rc = unsafe {
