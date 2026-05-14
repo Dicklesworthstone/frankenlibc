@@ -120,10 +120,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "report_contains_summary_with_checks_count",
         "uses_workspace_root_for_source_paths",
     ] {
-        require(
-            json_bool(policy, key)?,
-            format!("policy.{key} must be true (manifest pin)"),
-        )?;
+        require(json_bool(policy, key)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -205,9 +202,7 @@ fn cli_writes_four_output_files_at_user_paths() -> TestResult {
     require(report.exists(), "report file must be written")?;
     require(feasibility.exists(), "feasibility artifact must be written")?;
     require(sensitivity.exists(), "sensitivity artifact must be written")?;
-    let report_value: Value =
-        serde_json::from_str(&std::fs::read_to_string(&report).map_err(|e| format!("read: {e}"))?)
-            .map_err(|e| format!("parse: {e}"))?;
+    let report_value = load_json(&report)?;
     let summary = report_value
         .get("summary")
         .ok_or("report.summary missing")?;
@@ -219,6 +214,5 @@ fn cli_writes_four_output_files_at_user_paths() -> TestResult {
         summary.get("failed").and_then(Value::as_u64) == Some(0),
         "summary.failed must be 0 on a clean tree",
     )?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
