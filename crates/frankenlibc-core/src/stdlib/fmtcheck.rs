@@ -240,6 +240,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn shape_list_invariant_under_literal_and_flag_decoration() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (
+                b"%d %s".as_slice(),
+                b"prefix %% %08d :: %.10s suffix".as_slice(),
+            ),
+            (
+                b"%lld %Lf %p".as_slice(),
+                b"[%#020lld] literal [%-12.4Lf] -> %p".as_slice(),
+            ),
+            (
+                b"%n %c %u".as_slice(),
+                b"count=%n char=%c unsigned=%#12x".as_slice(),
+            ),
+        ];
+
+        for (base, decorated) in cases {
+            assert_eq!(shape_list(base), shape_list(decorated));
+        }
+    }
+
     // ---- compatible ----
 
     #[test]
@@ -313,6 +335,31 @@ mod tests {
     }
 
     #[test]
+    fn compatible_is_symmetric_for_equivalent_shape_pairs() {
+        let pairs: &[(&[u8], &[u8])] = &[
+            (b"%d %s".as_slice(), b"%i %.12s".as_slice()),
+            (b"%o %Lf".as_slice(), b"%#08X %LA".as_slice()),
+            (b"%jd %p %lln".as_slice(), b"%lld %p %lln".as_slice()),
+        ];
+
+        for (left, right) in pairs {
+            assert!(compatible(left, right));
+            assert_eq!(compatible(left, right), compatible(right, left));
+        }
+    }
+
+    #[test]
+    fn compatible_is_transitive_across_decorated_equivalents() {
+        let plain = b"%d %s %f";
+        let decorated = b"prefix %08i | %.5s | %#12.4g";
+        let compact = b"%+d%s%e";
+
+        assert!(compatible(plain, decorated));
+        assert!(compatible(decorated, compact));
+        assert!(compatible(plain, compact));
+    }
+
+    #[test]
     fn compatible_with_percent_literal_in_one() {
         assert!(compatible(b"100%% %d", b"%d"));
     }
@@ -338,5 +385,21 @@ mod tests {
         use ValueArgKind::*;
         assert_eq!(arg_kind_list(b"%d %s %p %f"), vec![Gp, Gp, Gp, Fp]);
         assert_eq!(arg_kind_list(b"%lld %Lf"), vec![Gp, Fp]);
+    }
+
+    #[test]
+    fn arg_kind_list_matches_shape_projection() {
+        use ValueArgKind::*;
+
+        let fmt = b"literal %d %Lf %p %% %zd %a %n";
+        let projected: Vec<ValueArgKind> = shape_list(fmt)
+            .into_iter()
+            .map(|shape| match shape {
+                ConvShape::Float(_) => Fp,
+                _ => Gp,
+            })
+            .collect();
+
+        assert_eq!(arg_kind_list(fmt), projected);
     }
 }
