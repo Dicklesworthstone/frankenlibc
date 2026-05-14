@@ -1,0 +1,70 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "proof-chain-e2e-cli-contract",
+  "bead": "pending-tracker-lease",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "c5a4f698b4f6da769865488ec87e662c10a78479",
+  "purpose": "Pin the harness binary `proof-chain-e2e` subcommand that exposes frankenlibc_harness::proof_chain_e2e::run_and_write as a CLI. The command chains proof-binder verification, proof-obligation dashboard aggregation, and cross-report consistency checks; writes a top-level structured JSONL log, JSON report, nested proof-binder artifacts, validator snapshot, and cross-report artifact; and fails closed when any chain step fails.",
+  "subcommand_name": "proof-chain-e2e",
+  "binary_target": "harness",
+  "required_flags": [],
+  "optional_flags": [
+    "--workspace-root",
+    "--log",
+    "--report",
+    "--binder-log",
+    "--binder-report",
+    "--validator-report",
+    "--cross-report"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::proof_chain_e2e::run_and_write",
+    "frankenlibc_harness::proof_binder_proofs::run_and_write"
+  ],
+  "io_pattern": "jsonl_log_plus_json_report_plus_nested_binder_and_cross_report_artifacts",
+  "default_workspace_root": ".",
+  "default_log_path": "target/conformance/proof_chain_e2e.log.jsonl",
+  "default_report_path": "target/conformance/proof_chain_e2e.report.json",
+  "default_binder_log_path": "target/conformance/proof_chain_e2e.proof_binder.log.jsonl",
+  "default_binder_report_path": "target/conformance/proof_chain_e2e.proof_binder.report.json",
+  "default_validator_report_path": "target/conformance/proof_chain_e2e.validator.current.v1.json",
+  "default_cross_report_path": "target/conformance/proof_chain_e2e.cross_report.current.v1.json",
+  "policy": {
+    "must_write_top_level_jsonl_log_file": true,
+    "must_write_top_level_json_report_file": true,
+    "must_write_nested_binder_log_and_report_files": true,
+    "must_write_validator_snapshot_and_cross_report_files": true,
+    "creates_parent_directories_for_output_paths_if_missing": true,
+    "exits_nonzero_when_summary_failed_nonzero": true,
+    "exits_zero_when_summary_failed_count_is_zero": true,
+    "report_schema_version_must_be_v1": true,
+    "report_bead_must_remain_bd_34s_6": true,
+    "log_must_include_scope_binder_integrity_dashboard_cross_report_and_summary_events": true,
+    "scope_boundary_must_state_non_claim_about_theorem_level_completeness": true
+  },
+  "required_log_events": [
+    "proof_chain.scope_boundary",
+    "proof_chain.proof_binder",
+    "proof_chain.chain_integrity",
+    "proof_chain.dashboard",
+    "proof_chain.cross_report_consistency",
+    "proof_chain.summary"
+  ],
+  "rejected_evidence_kinds": [
+    "missing_top_level_log",
+    "missing_top_level_report",
+    "missing_nested_binder_artifacts",
+    "missing_validator_snapshot",
+    "missing_cross_report",
+    "summary_failed_silently_passed",
+    "missing_scope_boundary",
+    "cross_report_errors_silently_passed",
+    "workspace_root_drift"
+  ],
+  "summary": {
+    "bead": "pending-tracker-lease",
+    "subcommand": "proof-chain-e2e",
+    "report_only": true,
+    "claim_status": "pending_tracker_lease"
+  }
+}
