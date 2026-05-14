@@ -46,12 +46,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,8 +128,8 @@ fn search_ops_fixture_exists() {
 }
 
 #[test]
-fn search_ops_fixture_valid_schema() {
-    let fixture = load_fixture("search_ops");
+fn search_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("search_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "search/ops");
@@ -156,11 +156,13 @@ fn search_ops_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn search_ops_covers_hash_tables() {
-    let fixture = load_fixture("search_ops");
+fn search_ops_covers_hash_tables() -> Result<(), String> {
+    let fixture = load_fixture("search_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     for pattern in ["hcreate", "hsearch", "hdestroy", "hsearch_r"] {
@@ -169,11 +171,13 @@ fn search_ops_covers_hash_tables() {
             "Missing hash-table coverage for {pattern}"
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn search_ops_covers_binary_trees() {
-    let fixture = load_fixture("search_ops");
+fn search_ops_covers_binary_trees() -> Result<(), String> {
+    let fixture = load_fixture("search_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     for pattern in ["tsearch", "tfind", "tdelete", "twalk"] {
@@ -182,11 +186,13 @@ fn search_ops_covers_binary_trees() {
             "Missing binary-tree coverage for {pattern}"
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn search_ops_covers_linear_search() {
-    let fixture = load_fixture("search_ops");
+fn search_ops_covers_linear_search() -> Result<(), String> {
+    let fixture = load_fixture("search_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     for pattern in ["lfind", "lsearch"] {
@@ -195,11 +201,13 @@ fn search_ops_covers_linear_search() {
             "Missing linear-search coverage for {pattern}"
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn search_ops_covers_queue_operations() {
-    let fixture = load_fixture("search_ops");
+fn search_ops_covers_queue_operations() -> Result<(), String> {
+    let fixture = load_fixture("search_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     for pattern in ["insque", "remque"] {
@@ -208,11 +216,13 @@ fn search_ops_covers_queue_operations() {
             "Missing queue-operation coverage for {pattern}"
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn search_ops_error_codes_valid() {
-    let fixture = load_fixture("search_ops");
+fn search_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("search_ops")?;
 
     for case in &fixture.cases {
         assert_eq!(
@@ -221,25 +231,29 @@ fn search_ops_error_codes_valid() {
             case.name, case.expected_errno
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn search_ops_modes_valid() {
-    let fixture = load_fixture("search_ops");
+fn search_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("search_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn search_ops_case_count_stable() {
-    let fixture = load_fixture("search_ops");
+fn search_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("search_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 11;
 
@@ -249,11 +263,13 @@ fn search_ops_case_count_stable() {
         fixture.cases.len(),
         EXPECTED_MIN_CASES
     );
+
+    Ok(())
 }
 
 #[test]
-fn search_ops_has_search_spec_references() {
-    let fixture = load_fixture("search_ops");
+fn search_ops_has_search_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("search_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -263,17 +279,19 @@ fn search_ops_has_search_spec_references() {
             case.spec_section
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn search_ops_fixture_executes_with_host_parity_in_both_modes() {
-    let fixture = load_fixture("search_ops");
+fn search_ops_fixture_executes_with_host_parity_in_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("search_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -281,13 +299,13 @@ fn search_ops_fixture_executes_with_host_parity_in_both_modes() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "search_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity,
                 "search_ops case {} ({mode}) lost host parity: host_output={}",
@@ -300,4 +318,6 @@ fn search_ops_fixture_executes_with_host_parity_in_both_modes() {
             );
         }
     }
+
+    Ok(())
 }
