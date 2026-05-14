@@ -44,12 +44,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,8 +135,8 @@ fn session_ops_fixture_exists() {
 }
 
 #[test]
-fn session_ops_fixture_valid_schema() {
-    let fixture = load_fixture("session_ops");
+fn session_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("session_ops")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "session_ops");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -144,84 +144,104 @@ fn session_ops_fixture_valid_schema() {
         assert!(!case.name.is_empty(), "Case name must not be empty");
         assert!(!case.function.is_empty(), "Function must not be empty");
     }
+
+    Ok(())
 }
 
 #[test]
-fn session_ops_covers_getlogin() {
-    let fixture = load_fixture("session_ops");
+fn session_ops_covers_getlogin() -> Result<(), String> {
+    let fixture = load_fixture("session_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("getlogin")).count() >= 2,
         "getlogin needs at least 2 test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn session_ops_covers_setsid() {
-    let fixture = load_fixture("session_ops");
+fn session_ops_covers_setsid() -> Result<(), String> {
+    let fixture = load_fixture("session_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|name| name.contains("setsid")),
         "Missing test coverage for setsid"
     );
+
+    Ok(())
 }
 
 #[test]
-fn session_ops_covers_getsid() {
-    let fixture = load_fixture("session_ops");
+fn session_ops_covers_getsid() -> Result<(), String> {
+    let fixture = load_fixture("session_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|name| name.contains("getsid")),
         "Missing test coverage for getsid"
     );
+
+    Ok(())
 }
 
 #[test]
-fn session_ops_modes_valid() {
-    let fixture = load_fixture("session_ops");
+fn session_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("session_ops")?;
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn session_ops_covers_both_modes() {
-    let fixture = load_fixture("session_ops");
-    let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
-    let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
+fn session_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("session_ops")?;
+    let has_strict = fixture
+        .cases
+        .iter()
+        .any(|case| matches!(case.mode.as_str(), "strict"));
+    let has_hardened = fixture
+        .cases
+        .iter()
+        .any(|case| matches!(case.mode.as_str(), "hardened"));
     assert!(has_strict, "session_ops must have strict mode test cases");
     assert!(
         has_hardened,
         "session_ops must have hardened mode test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn session_ops_case_count_stable() {
-    let fixture = load_fixture("session_ops");
+fn session_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("session_ops")?;
     assert!(
         fixture.cases.len() >= 5,
         "session_ops fixture has {} cases, expected at least 5",
         fixture.cases.len()
     );
     eprintln!("session_ops fixture has {} test cases", fixture.cases.len());
+
+    Ok(())
 }
 
 #[test]
-fn session_ops_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("session_ops");
+fn session_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("session_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_ref()
             .map(expected_output_text)
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -229,13 +249,13 @@ fn session_ops_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "session_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity,
                 "session_ops case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -248,4 +268,6 @@ fn session_ops_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+
+    Ok(())
 }
