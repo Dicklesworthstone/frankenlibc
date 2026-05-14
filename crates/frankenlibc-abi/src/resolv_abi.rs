@@ -412,30 +412,46 @@ fn lookup_hosts_ipv4_by_name(name: &[u8]) -> Option<Ipv4Addr> {
     None
 }
 
-fn parse_port(service: Option<&CStr>, repair: bool) -> Result<u16, c_int> {
+fn service_protocol_filter(hints: Option<&libc::addrinfo>) -> Option<&'static [u8]> {
+    let hints = hints?;
+    match hints.ai_socktype {
+        libc::SOCK_STREAM => Some(b"tcp"),
+        libc::SOCK_DGRAM => Some(b"udp"),
+        _ if hints.ai_protocol == libc::IPPROTO_TCP => Some(b"tcp"),
+        _ if hints.ai_protocol == libc::IPPROTO_UDP => Some(b"udp"),
+        _ => None,
+    }
+}
+
+fn lookup_service_port(service: &[u8], hints: Option<&libc::addrinfo>) -> Option<u16> {
+    let content = read_services_backend().ok()?;
+    frankenlibc_core::resolv::lookup_service(&content, service, service_protocol_filter(hints))
+}
+
+fn parse_port(
+    service: Option<&CStr>,
+    hints: Option<&libc::addrinfo>,
+    repair: bool,
+) -> Result<u16, c_int> {
     let Some(service) = service else {
         return Ok(0);
     };
-    let text = match service.to_str() {
-        Ok(t) => t,
-        Err(_) => {
-            return if repair {
-                Ok(0)
-            } else {
-                Err(libc::EAI_SERVICE)
-            };
-        }
-    };
-    match text.parse::<u16>() {
-        Ok(port) => Ok(port),
-        Err(_) => {
-            if repair {
-                global_healing_policy().record(&HealingAction::ReturnSafeDefault);
-                Ok(0)
-            } else {
-                Err(libc::EAI_SERVICE)
-            }
-        }
+
+    if let Ok(text) = service.to_str()
+        && let Ok(port) = text.parse::<u16>()
+    {
+        return Ok(port);
+    }
+
+    if let Some(port) = lookup_service_port(service.to_bytes(), hints) {
+        return Ok(port);
+    }
+
+    if repair {
+        global_healing_policy().record(&HealingAction::ReturnSafeDefault);
+        Ok(0)
+    } else {
+        Err(libc::EAI_SERVICE)
     }
 }
 
@@ -1163,7 +1179,7 @@ pub unsafe extern "C" fn getaddrinfo(
         Some(unsafe { &*hints })
     };
 
-    let port = match parse_port(service_cstr, repair) {
+    let port = match parse_port(service_cstr, hints_ref, repair) {
         Ok(port) => port,
         Err(err) => {
             record_resolver_stage_outcome(

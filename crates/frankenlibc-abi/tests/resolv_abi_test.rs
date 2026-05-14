@@ -788,6 +788,75 @@ fn getaddrinfo_uses_overridden_hosts_backend() {
 }
 
 #[test]
+fn getaddrinfo_resolves_service_name_from_overridden_services_backend() {
+    with_resolver_backends(
+        Some(b"203.0.113.10 fixture-host\n"),
+        Some(b"fixture-svc 4242/tcp fixturealias\n"),
+        |_| {
+            let node = CString::new("fixture-host").unwrap();
+            let service = CString::new("fixturealias").unwrap();
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, libc::AF_INET);
+            let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_port, 4242u16.to_be());
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_service_name_respects_udp_socktype_hint() {
+    with_resolver_backends(
+        Some(b"203.0.113.10 fixture-host\n"),
+        Some(b"fixture-svc 1111/tcp\nfixture-svc 2222/udp\n"),
+        |_| {
+            let node = CString::new("fixture-host").unwrap();
+            let service = CString::new("fixture-svc").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_socktype = libc::SOCK_DGRAM;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_socktype, libc::SOCK_DGRAM);
+            let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_port, 2222u16.to_be());
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_unknown_service_name_returns_eai_service() {
+    with_resolver_backends(None, Some(b"known-svc 4242/tcp\n"), |_| {
+        let node = CString::new("127.0.0.1").unwrap();
+        let service = CString::new("missing-svc").unwrap();
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+        let rc = unsafe {
+            resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+        };
+        assert_eq!(rc, libc::EAI_SERVICE);
+        assert!(res.is_null());
+    });
+}
+
+#[test]
 fn getaddrinfo_ai_addrconfig_filters_dual_stack_hosts_to_ipv4() {
     with_resolver_backends_and_addrconfig(
         Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
