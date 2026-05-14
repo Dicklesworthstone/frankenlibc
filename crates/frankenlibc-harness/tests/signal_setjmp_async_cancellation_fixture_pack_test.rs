@@ -72,6 +72,13 @@ fn ensure(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
+fn require_json_field(value: &Value, field: &str, context: &str) -> TestResult {
+    ensure(
+        value.get(field).is_some(),
+        format!("{context} missing required field `{field}`"),
+    )
+}
+
 fn unique_temp_dir(label: &str) -> TestResult<PathBuf> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -196,7 +203,9 @@ fn run_negative_case(root: &Path, case_name: &str, manifest: &Value) -> TestResu
 fn expect_failure_signature(report: &Value, signature: &str) -> TestResult {
     let errors = array_field(report, "errors", "report")?;
     if errors.iter().any(|row| {
-        row.get("failure_signature").and_then(Value::as_str) == Some(signature)
+        row.get("failure_signature")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.eq(signature))
             || row
                 .get("message")
                 .and_then(Value::as_str)
@@ -320,7 +329,7 @@ fn manifest_defines_signal_setjmp_schema_and_required_coverage() -> TestResult {
             "direct_runner",
             "isolated_runner",
         ] {
-            ensure(row.get(key).is_some(), "fixture row missing required key")?;
+            require_json_field(row, key, "fixture row")?;
         }
         let expected = field(row, "expected", "fixture_row")?;
         for key in [
@@ -333,10 +342,7 @@ fn manifest_defines_signal_setjmp_schema_and_required_coverage() -> TestResult {
             "failure_signature",
             "user_diagnostic",
         ] {
-            ensure(
-                expected.get(key).is_some(),
-                "expected block missing required key",
-            )?;
+            require_json_field(expected, key, "fixture row expected block")?;
         }
     }
     Ok(())
@@ -358,7 +364,7 @@ fn checker_passes_and_emits_report_and_logs() -> TestResult {
 
     let report = load_json(&out_dir.join("signal-setjmp-async-cancellation.report.json"))?;
     ensure(
-        string_field(&report, "status", "report")? == "pass",
+        string_field(&report, "status", "report")?.eq("pass"),
         "report status should be pass",
     )?;
     for (key, expected) in [
@@ -370,7 +376,7 @@ fn checker_passes_and_emits_report_and_logs() -> TestResult {
         ("log_row_count", json!(9)),
     ] {
         ensure(
-            field(&report, key, "report")? == &expected,
+            field(&report, key, "report")?.eq(&expected),
             "report summary count did not match expected value",
         )?;
     }
@@ -387,7 +393,7 @@ fn checker_passes_and_emits_report_and_logs() -> TestResult {
     ensure(log_rows.len() == 9, "checker should emit nine log rows")?;
     for row in log_rows {
         for field in REQUIRED_LOG_FIELDS {
-            ensure(row.get(field).is_some(), "log row missing required field")?;
+            require_json_field(&row, field, "log row")?;
         }
     }
     Ok(())
@@ -410,8 +416,11 @@ fn checker_rejects_stale_source_commit() -> TestResult {
 fn checker_rejects_missing_required_scenario() -> TestResult {
     let root = workspace_root();
     let mut manifest = load_json(&manifest_path(&root))?;
-    mutable_rows(&mut manifest)?
-        .retain(|row| row.get("scenario_kind").and_then(Value::as_str) != Some("handler_longjmp"));
+    mutable_rows(&mut manifest)?.retain(|row| {
+        row.get("scenario_kind")
+            .and_then(Value::as_str)
+            .is_none_or(|kind| !kind.eq("handler_longjmp"))
+    });
     let report = run_negative_case(&root, "signal-setjmp-missing-scenario", &manifest)?;
     expect_failure_signature(&report, "missing_fixture_case")
 }
