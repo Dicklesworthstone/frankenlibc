@@ -125,13 +125,25 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "fail_closed_when_source_commit_is_not_40_char_sha",
-        "fail_closed_when_multiple_below_two",
-        "fail_closed_when_cap_not_supported",
-        "must_emit_exactly_one_jsonl_record",
+    for (field, message) in [
+        (
+            "fail_closed_when_source_commit_is_not_40_char_sha",
+            "fail_closed_when_source_commit_is_not_40_char_sha must be true",
+        ),
+        (
+            "fail_closed_when_multiple_below_two",
+            "fail_closed_when_multiple_below_two must be true",
+        ),
+        (
+            "fail_closed_when_cap_not_supported",
+            "fail_closed_when_cap_not_supported must be true",
+        ),
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
