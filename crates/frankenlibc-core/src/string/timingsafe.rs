@@ -171,6 +171,29 @@ mod tests {
     }
 
     #[test]
+    fn bcmp_result_invariant_under_common_xor_transform() {
+        let cases: &[(&[u8], &[u8], usize)] = &[
+            (b"abc", b"abc", 3),
+            (b"abc", b"abx", 3),
+            (b"\x00\xff\x55", b"\x00\xff\x55", 3),
+            (b"\x00\xff\x55", b"\xff\x00\xaa", 3),
+            (b"prefix-one", b"prefix-two", 6),
+        ];
+
+        for (left, right, n) in cases {
+            for mask in [0x00u8, 0x01, 0x55, 0xaa, 0xff] {
+                let transformed_left: Vec<u8> = left.iter().map(|byte| byte ^ mask).collect();
+                let transformed_right: Vec<u8> = right.iter().map(|byte| byte ^ mask).collect();
+                assert_eq!(
+                    bcmp(left, right, *n),
+                    bcmp(&transformed_left, &transformed_right, *n),
+                    "bcmp changed under xor mask {mask:#x} for {left:?} vs {right:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn bcmp_empty_slices() {
         assert_eq!(bcmp(&[], &[], 5), 0);
     }
@@ -247,6 +270,53 @@ mod tests {
                     "memcmp({a:#x},{b:#x}) = {ours} expected {expected}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn memcmp_is_antisymmetric_for_same_length_inputs() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"abc", b"abc"),
+            (b"abc", b"abd"),
+            (b"abd", b"abc"),
+            (b"\x00\xff", b"\xff\x00"),
+            (b"common-prefix-a", b"common-prefix-z"),
+        ];
+
+        for (left, right) in cases {
+            let n = left.len();
+            assert_eq!(n, right.len(), "test cases must have equal lengths");
+            assert_eq!(
+                memcmp(left, right, n).signum(),
+                -memcmp(right, left, n).signum(),
+                "memcmp antisymmetry failed for {left:?} vs {right:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn memcmp_sign_invariant_under_common_context() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"abc", b"abc"),
+            (b"abc", b"abx"),
+            (b"xbc", b"abc"),
+            (b"\x00\x80\xff", b"\x00\x7f\xff"),
+        ];
+
+        for (left, right) in cases {
+            let mut contextual_left = b"shared-prefix:".to_vec();
+            contextual_left.extend_from_slice(left);
+            contextual_left.extend_from_slice(b":shared-suffix");
+
+            let mut contextual_right = b"shared-prefix:".to_vec();
+            contextual_right.extend_from_slice(right);
+            contextual_right.extend_from_slice(b":shared-suffix");
+
+            assert_eq!(
+                memcmp(left, right, left.len()).signum(),
+                memcmp(&contextual_left, &contextual_right, contextual_left.len()).signum(),
+                "common context changed memcmp sign for {left:?} vs {right:?}"
+            );
         }
     }
 
