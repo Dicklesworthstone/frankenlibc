@@ -1,0 +1,89 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "errno-edge-report-cli-contract",
+  "bead": "bd-2tq.5",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "03e14bbaa0a510743b6e02bd026a718aab8adb94",
+  "purpose": "Pin the harness binary `errno-edge-report` subcommand that builds the bd-2tq.5 errno and edge-case prioritization report from support_matrix.json, fixture JSON, and conformance_matrix.v1.json. The command must write a v1 JSON report with summary counts, prioritized rows, repo-relative artifact references, and actionable triage steps, and fail closed when any required input cannot be read or parsed.",
+  "subcommand_name": "errno-edge-report",
+  "binary_target": "harness",
+  "required_flags": [],
+  "optional_flags": [
+    "--support-matrix",
+    "--fixture",
+    "--conformance-matrix",
+    "--output"
+  ],
+  "default_support_matrix": "support_matrix.json",
+  "default_fixture": "tests/conformance/fixtures",
+  "default_conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+  "default_output": "target/conformance/errno_edge_report.current.v1.json",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::report::ErrnoEdgeCaseReport::from_paths",
+    "frankenlibc_harness::report::ErrnoEdgeCaseReport::to_json"
+  ],
+  "io_pattern": "support_matrix_plus_fixture_catalog_plus_conformance_matrix_to_prioritized_errno_edge_json_report",
+  "report_contract": {
+    "schema_version": "v1",
+    "bead": "bd-2tq.5",
+    "required_summary_fields": [
+      "tracked_symbols",
+      "total_edge_cases",
+      "errno_cases",
+      "covered_edge_cases",
+      "failing_edge_cases",
+      "execution_error_cases",
+      "missing_execution_cases",
+      "symbols_with_failures"
+    ],
+    "required_row_fields": [
+      "priority_score",
+      "trace_id",
+      "symbol",
+      "symbol_family",
+      "owner",
+      "support_status",
+      "runtime_mode",
+      "case_id",
+      "spec_section",
+      "edge_class",
+      "expected_output",
+      "expected_errno",
+      "status",
+      "failure_kind",
+      "diff_ref",
+      "artifact_refs",
+      "triage_steps"
+    ],
+    "rows_must_be_non_empty_for_canonical_inputs": true,
+    "artifact_refs_must_be_repo_relative": true,
+    "triage_steps_must_be_non_empty": true
+  },
+  "policy": {
+    "must_create_parent_directories_for_output": true,
+    "must_write_pretty_json_report": true,
+    "must_preserve_bd_2tq_5_report_bead": true,
+    "must_reject_missing_support_matrix_with_nonzero_exit": true,
+    "must_reject_unreadable_fixture_dir_with_nonzero_exit": true,
+    "must_reject_invalid_conformance_matrix_with_nonzero_exit": true,
+    "must_keep_artifact_refs_repo_relative": true,
+    "must_keep_rows_prioritized_by_priority_score": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_report",
+    "wrong_schema_version",
+    "wrong_report_bead",
+    "empty_rows_for_canonical_inputs",
+    "absolute_artifact_ref",
+    "empty_triage_steps",
+    "missing_summary_field",
+    "missing_row_field",
+    "missing_input_silently_passed"
+  ],
+  "summary": {
+    "bead": "bd-2tq.5",
+    "subcommand": "errno-edge-report",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
