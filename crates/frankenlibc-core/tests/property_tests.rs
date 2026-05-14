@@ -446,6 +446,80 @@ mod base64_properties {
 }
 
 // ---------------------------------------------------------------------------
+// Sort operation properties
+// ---------------------------------------------------------------------------
+
+mod sort_properties {
+    use super::*;
+    use frankenlibc_core::stdlib::sort::{heapsort, mergesort, qsort};
+
+    fn cmp_i32_le(a: &[u8], b: &[u8]) -> i32 {
+        let av = i32::from_le_bytes(a[..4].try_into().unwrap());
+        let bv = i32::from_le_bytes(b[..4].try_into().unwrap());
+        match av.cmp(&bv) {
+            core::cmp::Ordering::Less => -1,
+            core::cmp::Ordering::Equal => 0,
+            core::cmp::Ordering::Greater => 1,
+        }
+    }
+
+    fn flatten_i32(values: &[i32]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(values.len() * 4);
+        for value in values {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out
+    }
+
+    fn unflatten_i32(bytes: &[u8]) -> Vec<i32> {
+        bytes
+            .chunks_exact(4)
+            .map(|chunk| i32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect()
+    }
+
+    proptest! {
+        #![proptest_config(super::property_proptest_config(256))]
+
+        /// qsort output is ordered and preserves the input multiset.
+        #[test]
+        fn prop_qsort_matches_rust_sorted_order(values in proptest::collection::vec(any::<i32>(), 0..128)) {
+            let mut expected = values.clone();
+            expected.sort();
+
+            let mut buf = flatten_i32(&values);
+            qsort(&mut buf, 4, cmp_i32_le);
+
+            prop_assert_eq!(unflatten_i32(&buf), expected);
+        }
+
+        /// mergesort output is ordered and preserves the input multiset.
+        #[test]
+        fn prop_mergesort_matches_rust_sorted_order(values in proptest::collection::vec(any::<i32>(), 0..128)) {
+            let mut expected = values.clone();
+            expected.sort();
+
+            let mut buf = flatten_i32(&values);
+            mergesort(&mut buf, 4, cmp_i32_le);
+
+            prop_assert_eq!(unflatten_i32(&buf), expected);
+        }
+
+        /// heapsort output is ordered and preserves the input multiset.
+        #[test]
+        fn prop_heapsort_matches_rust_sorted_order(values in proptest::collection::vec(any::<i32>(), 0..128)) {
+            let mut expected = values.clone();
+            expected.sort();
+
+            let mut buf = flatten_i32(&values);
+            heapsort(&mut buf, 4, cmp_i32_le);
+
+            prop_assert_eq!(unflatten_i32(&buf), expected);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ctype classification properties
 // ---------------------------------------------------------------------------
 
