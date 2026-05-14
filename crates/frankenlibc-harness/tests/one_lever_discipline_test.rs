@@ -208,7 +208,7 @@ fn all_entries_have_valid_lever_category() {
 }
 
 #[test]
-fn all_entries_have_required_wave_metadata() {
+fn all_entries_have_required_wave_metadata() -> Result<(), String> {
     let root = workspace_root();
     let matrix = load_opportunity_matrix();
     let entries = matrix["entries"].as_array().unwrap();
@@ -218,10 +218,10 @@ fn all_entries_have_required_wave_metadata() {
 
         let golden = entry["golden_output_verification"]
             .as_object()
-            .unwrap_or_else(|| panic!("{eid}: missing golden_output_verification"));
+            .ok_or_else(|| format!("{eid}: missing golden_output_verification"))?;
         let artifact_refs = golden["artifact_refs"]
             .as_array()
-            .unwrap_or_else(|| panic!("{eid}: missing golden_output_verification.artifact_refs"));
+            .ok_or_else(|| format!("{eid}: missing golden_output_verification.artifact_refs"))?;
         assert!(
             !artifact_refs.is_empty(),
             "{eid}: artifact_refs must not be empty"
@@ -229,7 +229,7 @@ fn all_entries_have_required_wave_metadata() {
         for artifact in artifact_refs {
             let artifact = artifact
                 .as_str()
-                .unwrap_or_else(|| panic!("{eid}: artifact_refs entries must be strings"));
+                .ok_or_else(|| format!("{eid}: artifact_refs entries must be strings"))?;
             assert!(
                 root.join(artifact).exists(),
                 "{eid}: referenced artifact does not exist: {artifact}"
@@ -237,14 +237,14 @@ fn all_entries_have_required_wave_metadata() {
         }
         let verification_command = golden["verification_command"]
             .as_str()
-            .unwrap_or_else(|| panic!("{eid}: missing verification_command"));
+            .ok_or_else(|| format!("{eid}: missing verification_command"))?;
         assert!(
             !verification_command.trim().is_empty(),
             "{eid}: verification_command must not be empty"
         );
         let invariants = golden["invariants"]
             .as_array()
-            .unwrap_or_else(|| panic!("{eid}: missing invariants"));
+            .ok_or_else(|| format!("{eid}: missing invariants"))?;
         assert!(
             !invariants.is_empty(),
             "{eid}: invariants must not be empty"
@@ -252,17 +252,17 @@ fn all_entries_have_required_wave_metadata() {
 
         let rollback = entry["rollback_instructions"]
             .as_object()
-            .unwrap_or_else(|| panic!("{eid}: missing rollback_instructions"));
+            .ok_or_else(|| format!("{eid}: missing rollback_instructions"))?;
         let rollback_command = rollback["command"]
             .as_str()
-            .unwrap_or_else(|| panic!("{eid}: missing rollback command"));
+            .ok_or_else(|| format!("{eid}: missing rollback command"))?;
         assert!(
             rollback_command.contains("git revert"),
             "{eid}: rollback command must use git revert"
         );
         let regeneration_commands = rollback["artifact_regeneration_commands"]
             .as_array()
-            .unwrap_or_else(|| panic!("{eid}: missing artifact_regeneration_commands"));
+            .ok_or_else(|| format!("{eid}: missing artifact_regeneration_commands"))?;
         assert!(
             !regeneration_commands.is_empty(),
             "{eid}: artifact_regeneration_commands must not be empty"
@@ -284,7 +284,7 @@ fn all_entries_have_required_wave_metadata() {
 
         let attribution = entry["attribution_metadata"]
             .as_object()
-            .unwrap_or_else(|| panic!("{eid}: missing attribution_metadata"));
+            .ok_or_else(|| format!("{eid}: missing attribution_metadata"))?;
         assert!(
             attribution["selection_basis"]
                 .as_str()
@@ -295,12 +295,12 @@ fn all_entries_have_required_wave_metadata() {
         for field in ["baseline_artifacts", "profile_artifacts"] {
             let refs = attribution[field]
                 .as_array()
-                .unwrap_or_else(|| panic!("{eid}: missing {field}"));
+                .ok_or_else(|| format!("{eid}: missing {field}"))?;
             assert!(!refs.is_empty(), "{eid}: {field} must not be empty");
             for artifact in refs {
                 let artifact = artifact
                     .as_str()
-                    .unwrap_or_else(|| panic!("{eid}: {field} entries must be strings"));
+                    .ok_or_else(|| format!("{eid}: {field} entries must be strings"))?;
                 assert!(
                     root.join(artifact).exists(),
                     "{eid}: referenced {field} artifact does not exist: {artifact}"
@@ -315,6 +315,7 @@ fn all_entries_have_required_wave_metadata() {
             "{eid}: opportunity_owner must be non-empty"
         );
     }
+    Ok(())
 }
 
 #[test]
