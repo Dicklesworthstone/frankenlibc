@@ -196,8 +196,8 @@ pub struct ProtocolEntry {
 /// Parse a single line from /etc/protocols.
 ///
 /// Format: `<protocol-name> <number> [<alias>...]`
-/// Comments (`#`) and blank lines yield `None`. The number is parsed as
-/// signed decimal — glibc's protoent uses `int p_proto`.
+/// Comments (`#`) and blank lines yield `None`. The number is parsed from
+/// ASCII decimal digits and stored as `int p_proto`.
 pub fn parse_protocols_line(line: &[u8]) -> Option<ProtocolEntry> {
     let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
         &line[..pos]
@@ -209,7 +209,7 @@ pub fn parse_protocols_line(line: &[u8]) -> Option<ProtocolEntry> {
         .filter(|f| !f.is_empty());
     let name = fields.next()?;
     let number_str = core::str::from_utf8(fields.next()?).ok()?;
-    let number: i32 = number_str.parse().ok()?;
+    let number = i32::try_from(parse_ascii_decimal_u32(number_str)?).ok()?;
     let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
     Some(ProtocolEntry {
         name: name.to_vec(),
@@ -299,7 +299,7 @@ pub fn parse_network_number(s: &str) -> Option<u32> {
         return None;
     }
     if !s.contains('.') {
-        return s.parse().ok();
+        return parse_ascii_decimal_u32(s);
     }
     let mut octets = [0u32; 4];
     let mut count = 0usize;
@@ -307,7 +307,7 @@ pub fn parse_network_number(s: &str) -> Option<u32> {
         if count >= 4 {
             return None;
         }
-        let v: u32 = part.parse().ok()?;
+        let v = parse_ascii_decimal_u32(part)?;
         if v > 255 {
             return None;
         }
@@ -321,6 +321,13 @@ pub fn parse_network_number(s: &str) -> Option<u32> {
         4 => (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3],
         _ => return None,
     })
+}
+
+fn parse_ascii_decimal_u32(s: &str) -> Option<u32> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
 }
 
 fn network_name_matches(entry: &NetworkEntry, name: &[u8]) -> bool {
@@ -1788,6 +1795,12 @@ mod tests {
     }
 
     #[test]
+    fn protocol_rejects_signed_number() {
+        assert!(parse_protocols_line(b"foo +6").is_none());
+        assert!(parse_protocols_line(b"foo -1").is_none());
+    }
+
+    #[test]
     fn protocol_lookup_by_name_case_insensitive() {
         let content = b"tcp 6 TCP\nudp 17 UDP\n";
         assert_eq!(lookup_protocol_by_name(content, b"TCP").unwrap().number, 6);
@@ -1855,6 +1868,19 @@ mod tests {
     fn netnum_rejects_non_numeric() {
         assert_eq!(parse_network_number("abc"), None);
         assert_eq!(parse_network_number("10.x.0.0"), None);
+    }
+
+    #[test]
+    fn netnum_rejects_signed_decimal() {
+        assert_eq!(parse_network_number("+10"), None);
+        assert_eq!(parse_network_number("-10"), None);
+    }
+
+    #[test]
+    fn netnum_rejects_signed_dotted_octets() {
+        assert_eq!(parse_network_number("+10.1"), None);
+        assert_eq!(parse_network_number("10.+1"), None);
+        assert_eq!(parse_network_number("10.-1"), None);
     }
 
     #[test]
