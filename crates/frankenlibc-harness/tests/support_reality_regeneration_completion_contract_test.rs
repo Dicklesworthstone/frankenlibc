@@ -5,13 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    Path::new(manifest)
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or_else(|| format!("crate directory has no workspace parent: {manifest}"))?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("workspace parent has no repo parent: {manifest}").into())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -97,7 +98,7 @@ fn string_values(value: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_conformance_completion_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -185,7 +186,7 @@ fn manifest_binds_conformance_completion_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_support_reality_regeneration_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -207,7 +208,7 @@ fn checker_validates_support_reality_regeneration_contract() -> TestResult {
 
 #[test]
 fn checker_emits_report_and_jsonl_with_conformance_rows() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -258,7 +259,7 @@ fn checker_emits_report_and_jsonl_with_conformance_rows() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_pair_artifact_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_pair")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["required_pair_contract"]["required_artifact_ids"] =
@@ -289,7 +290,7 @@ fn checker_rejects_missing_pair_artifact_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_source_test_ref() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_test_ref")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["test_sources"]["source_harness_test"]
@@ -326,7 +327,7 @@ fn checker_rejects_missing_source_test_ref() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_event() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_event")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["telemetry_contract"]["required_events"]
