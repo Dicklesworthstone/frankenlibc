@@ -75,6 +75,56 @@ mod tests {
     }
 
     #[test]
+    fn test_recognized_match_is_stable_when_token_table_is_extended() {
+        let tokens: &[&[u8]] = &[b"ro", b"rw"];
+        let extended_tokens: &[&[u8]] = &[b"ro", b"rw", b"size", b"sync"];
+        let input = b"rw=fast,ro";
+
+        let mut remaining = input.as_slice();
+        let base = getsubopt(&mut remaining, tokens);
+        let base_remaining = remaining;
+
+        let mut extended_remaining = input.as_slice();
+        let extended = getsubopt(&mut extended_remaining, extended_tokens);
+
+        assert_eq!(base, extended);
+        assert_eq!(base_remaining, extended_remaining);
+    }
+
+    #[test]
+    fn test_nul_terminator_stops_before_following_bytes() {
+        let tokens: &[&[u8]] = &[b"foo", b"bar"];
+        let mut remaining: &[u8] = b"foo=value\0,bar";
+
+        let (idx, value) = getsubopt(&mut remaining, tokens);
+        assert_eq!(idx, 0);
+        assert_eq!(value, b"value");
+        assert_eq!(remaining, b"\0,bar");
+
+        let before = remaining;
+        let (idx, value) = getsubopt(&mut remaining, tokens);
+        assert_eq!(idx, -1);
+        assert!(value.is_empty());
+        assert_eq!(remaining, before);
+    }
+
+    #[test]
+    fn test_empty_component_consumes_separator_before_next_option() {
+        let tokens: &[&[u8]] = &[b"foo"];
+        let mut remaining: &[u8] = b",foo=bar";
+
+        let (idx, value) = getsubopt(&mut remaining, tokens);
+        assert_eq!(idx, -1);
+        assert!(value.is_empty());
+        assert_eq!(remaining, b"foo=bar");
+
+        let (idx, value) = getsubopt(&mut remaining, tokens);
+        assert_eq!(idx, 0);
+        assert_eq!(value, b"bar");
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
     fn test_getsubopt_unknown() {
         let tokens: &[&[u8]] = &[b"foo", b"bar"];
         let mut remaining: &[u8] = b"baz";
