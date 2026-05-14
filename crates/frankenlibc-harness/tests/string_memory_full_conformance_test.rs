@@ -7,13 +7,15 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crate_dir = manifest_dir
         .parent()
-        .unwrap()
+        .ok_or_else(|| format!("{} has no parent directory", manifest_dir.display()))?;
+    let workspace_dir = crate_dir
         .parent()
-        .unwrap()
-        .to_path_buf()
+        .ok_or_else(|| format!("{} has no parent directory", crate_dir.display()))?;
+    Ok(workspace_dir.to_path_buf())
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,7 +47,7 @@ struct FixtureCase {
 }
 
 fn load_fixture(name: &str) -> Result<FixtureFile, String> {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
@@ -120,9 +122,10 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn string_memory_full_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/string_memory_full.json");
+fn string_memory_full_fixture_exists() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/string_memory_full.json");
     assert!(path.exists(), "string_memory_full.json fixture must exist");
+    Ok(())
 }
 
 #[test]
