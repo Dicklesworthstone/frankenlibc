@@ -832,6 +832,24 @@ enum Command {
     /// Convert a sparse-recovery boolean support vector over the six latent
     /// causes into a compact Grobner canonical class id via
     /// `frankenlibc_membrane::grobner::canonical_class_from_support`.
+    /// Generate ALL repair payloads for an epoch via
+    /// `frankenlibc_membrane::runtime_math::evidence::generate_repair_payloads_v1`.
+    /// Iterates esi from k_source..k_source+R-1 where R =
+    /// derive_repair_symbol_count_v1(k_source, overhead_percent).
+    GenerateRepairPayloads {
+        /// Epoch seed used by the per-repair schedule.
+        #[arg(long)]
+        epoch_seed: u64,
+        /// Binary input path with K concatenated 128-byte source symbols.
+        #[arg(long)]
+        source_payloads: PathBuf,
+        /// Repair overhead percent (e.g. 25 = 25% redundancy over k_source).
+        #[arg(long)]
+        overhead_percent: u16,
+        /// Output JSONL path: R per-symbol records + final summary record.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Encode a single XOR repair symbol via
     /// `frankenlibc_membrane::runtime_math::evidence::encode_xor_repair_payload_v1`.
     /// Source payloads are read from a binary file containing K concatenated
@@ -3294,6 +3312,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&output, body)?;
             eprintln!(
                 "recommend-healing-for-canonical-class: class_id={class_id} ({class_label}) -> action={action_label}"
+            );
+        }
+        Command::GenerateRepairPayloads {
+            epoch_seed,
+            source_payloads,
+            overhead_percent,
+            output,
+        } => {
+            use frankenlibc_membrane::runtime_math::evidence::{
+                EVIDENCE_SYMBOL_SIZE_T, generate_repair_payloads_v1,
+            };
+            let body = std::fs::read(&source_payloads)
+                .map_err(|e| format!("read {}: {e}", source_payloads.display()))?;
+            if !body.len().is_multiple_of(EVIDENCE_SYMBOL_SIZE_T) {
+                return Err(format!(
+                    "source_payloads length {} is not a multiple of {EVIDENCE_SYMBOL_SIZE_T}",
+                    body.len()
+                )
+                .into());
+            }
+            let k = body.len() / EVIDENCE_SYMBOL_SIZE_T;
+            if k == 0 {
+                return Err("source_payloads must contain at least one 128-byte symbol".into());
+            }
+            let k_u16 = u16::try_from(k)
+                .map_err(|_| format!("k_source={k} exceeds u16::MAX"))?;
+            let mut payloads: Vec<[u8; EVIDENCE_SYMBOL_SIZE_T]> = Vec::with_capacity(k);
+            for i in 0..k {
+                let start = i * EVIDENCE_SYMBOL_SIZE_T;
+                let mut arr = [0u8; EVIDENCE_SYMBOL_SIZE_T];
+                arr.copy_from_slice(&body[start..start + EVIDENCE_SYMBOL_SIZE_T]);
+                payloads.push(arr);
+            }
+            let repairs = generate_repair_payloads_v1(epoch_seed, &payloads, overhead_percent);
+            if let Some(parent) = output.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut out_body = String::new();
+            let mut esis: Vec<u16> = Vec::with_capacity(repairs.len());
+            for (esi, payload) in &repairs {
+                let payload_hex: String = payload.iter().map(|b| format!("{b:02x}")).collect();
+                let rec = serde_json::json!({
+                    "kind": "repair_payload",
+                    "epoch_seed": epoch_seed,
+                    "k_source": k_u16,
+                    "overhead_percent": overhead_percent,
+                    "repair_count": repairs.len(),
+                    "esi": *esi,
+                    "payload_hex": payload_hex,
+                });
+                out_body.push_str(&rec.to_string());
+                out_body.push('\n');
+                esis.push(*esi);
+            }
+            let summary = serde_json::json!({
+                "kind": "repair_payload_summary",
+                "epoch_seed": epoch_seed,
+                "k_source": k_u16,
+                "overhead_percent": overhead_percent,
+                "repair_count": repairs.len(),
+                "esis": esis,
+            });
+            out_body.push_str(&summary.to_string());
+            out_body.push('\n');
+            std::fs::write(&output, out_body)?;
+            eprintln!(
+                "generate-repair-payloads: epoch_seed={epoch_seed} k_source={k_u16} overhead_percent={overhead_percent} repair_count={}",
+                repairs.len()
             );
         }
         Command::EncodeXorRepairPayload {

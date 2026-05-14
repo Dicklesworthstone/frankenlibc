@@ -1,0 +1,62 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "generate-repair-payloads-cli-contract",
+  "bead": "bd-d5jjz",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "f5e055d9",
+  "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::evidence::generate_repair_payloads_v1(epoch_seed, &[[u8;128]], overhead_percent) -> Vec<(u16,[u8;128])>. Generates ALL repair payloads for an epoch by iterating esi over k_source..k_source+R-1 where R = derive_repair_symbol_count_v1(k_source, overhead_percent). Each repair payload is XOR-encoded via encode_xor_repair_payload_v1 using the per-esi schedule from derive_repair_schedule_v1. Reads source payloads from a binary file (K concatenated 128-byte symbols). Emits R per-repair records + one summary record. Pairs with bd-3nygl encode-xor-repair-payload (single repair) and bd-qxh1x derive-repair-math (sizing).",
+  "subcommand_name": "generate-repair-payloads",
+  "binary_target": "harness",
+  "required_flags": [
+    "--epoch-seed",
+    "--source-payloads",
+    "--overhead-percent",
+    "--output"
+  ],
+  "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::generate_repair_payloads_v1",
+  "jsonl_output_contract": {
+    "record_count": "R+1 (one per repair payload + summary)",
+    "per_repair_record_kind_marker": "repair_payload",
+    "summary_record_kind_marker": "repair_payload_summary",
+    "per_repair_required_fields": [
+      "kind",
+      "epoch_seed",
+      "k_source",
+      "overhead_percent",
+      "repair_count",
+      "esi",
+      "payload_hex"
+    ],
+    "summary_required_fields": [
+      "kind",
+      "epoch_seed",
+      "k_source",
+      "overhead_percent",
+      "repair_count",
+      "esis"
+    ]
+  },
+  "policy": {
+    "must_emit_one_record_per_repair_payload_plus_summary": true,
+    "echoes_inputs_into_records": true,
+    "deterministic_given_inputs": true,
+    "esis_are_contiguous_from_k_source": true,
+    "repair_count_matches_summary_esis_length": true,
+    "each_payload_hex_is_256_lowercase_hex_chars": true,
+    "non_multiple_of_128_input_file_is_rejected": true,
+    "k_zero_input_is_rejected": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_required_flag",
+    "wrong_record_kind",
+    "non_deterministic_output",
+    "non_contiguous_esi_sequence",
+    "repair_count_mismatch_with_emitted_records"
+  ],
+  "summary": {
+    "bead": "bd-d5jjz",
+    "subcommand": "generate-repair-payloads",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
