@@ -141,10 +141,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "json_sibling_includes_both_modes_with_their_safety_levels",
         "deterministic_seed_steps_microbench_iters_roundtrip_to_each_mode_block",
     ] {
-        require(
-            json_bool(policy, key)?,
-            format!("policy.{key} must be true (manifest pin)"),
-        )?;
+        require(json_bool(policy, key)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -234,20 +231,13 @@ fn cli_with_output_writes_markdown_and_json_sibling() -> TestResult {
     require(out_md.exists(), "markdown output must be written")?;
     let out_json = out_md.with_extension("json");
     require(out_json.exists(), "json sibling must be written")?;
-    let report: Value = serde_json::from_str(
-        &std::fs::read_to_string(&out_json).map_err(|e| format!("read json: {e}"))?,
-    )
-    .map_err(|e| format!("parse json: {e}"))?;
-    require(
-        report.get("strict").is_some(),
-        "report.strict block must be present",
-    )?;
-    require(
-        report.get("hardened").is_some(),
-        "report.hardened block must be present",
-    )?;
-    let strict = report.get("strict").unwrap();
-    let hardened = report.get("hardened").unwrap();
+    let report = load_json(&out_json)?;
+    let strict = report
+        .get("strict")
+        .ok_or("report.strict block must be present")?;
+    let hardened = report
+        .get("hardened")
+        .ok_or("report.hardened block must be present")?;
     require(
         json_string(strict, "mode")? == "strict",
         "report.strict.mode must be strict",
@@ -256,7 +246,6 @@ fn cli_with_output_writes_markdown_and_json_sibling() -> TestResult {
         json_string(hardened, "mode")? == "hardened",
         "report.hardened.mode must be hardened",
     )?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -270,22 +259,15 @@ fn cli_seed_roundtrips_to_each_mode_block() -> TestResult {
     let result = run_report(&bin, Some(&out_md), "0xCAFEBABE")?;
     require(result.status.success(), "harness exit failed")?;
     let out_json = out_md.with_extension("json");
-    let report: Value = serde_json::from_str(
-        &std::fs::read_to_string(&out_json).map_err(|e| format!("read: {e}"))?,
-    )
-    .map_err(|e| format!("parse: {e}"))?;
+    let report = load_json(&out_json)?;
     let expected_seed: u64 = 0xCAFEBABE;
     for mode in ["strict", "hardened"] {
-        let block = report.get(mode).ok_or(format!("missing {mode}"))?;
+        let block = report.get(mode).ok_or("mode block missing")?;
         let seed = block
             .get("seed")
             .and_then(Value::as_u64)
-            .ok_or(format!("{mode}.seed missing"))?;
-        require(
-            seed == expected_seed,
-            format!("{mode}.seed must roundtrip ({seed} != {expected_seed})"),
-        )?;
+            .ok_or("mode seed missing")?;
+        require(seed == expected_seed, "mode seed must roundtrip")?;
     }
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
