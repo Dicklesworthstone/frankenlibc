@@ -117,16 +117,37 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_inputs_into_output_record",
-        "safe_iff_headroom_at_or_above_zero",
-        "deterministic_given_inputs",
-        "exact_class_size_match_with_valid_membership_certified_safe",
-        "invalid_class_membership_violates_certificate",
-        "underflow_violation_when_mapped_smaller_than_requested",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_inputs_into_output_record",
+            "echoes_inputs_into_output_record must be true",
+        ),
+        (
+            "safe_iff_headroom_at_or_above_zero",
+            "safe_iff_headroom_at_or_above_zero must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "exact_class_size_match_with_valid_membership_certified_safe",
+            "exact_class_size_match_with_valid_membership_certified_safe must be true",
+        ),
+        (
+            "invalid_class_membership_violates_certificate",
+            "invalid_class_membership_violates_certificate must be true",
+        ),
+        (
+            "underflow_violation_when_mapped_smaller_than_requested",
+            "underflow_violation_when_mapped_smaller_than_requested must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -269,32 +290,24 @@ fn cli_safe_flag_matches_headroom_sign() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    for (i, (req, mapped, valid)) in [
-        (16usize, 16usize, true),
-        (32, 64, true), // 100% waste
-        (128, 128, false),
-        (1, 1, true),
-        (4096, 8192, true),
-    ]
-    .iter()
-    .enumerate()
-    {
-        let output = unique_tmp(&format!("sign_{i}"))?;
-        let out = run_cli(&bin, *req, *mapped, *valid, &output)?;
+    for (label, requested, mapped, valid) in [
+        ("sign_exact_valid", 16usize, 16usize, true),
+        ("sign_waste_valid", 32, 64, true),
+        ("sign_invalid_membership", 128, 128, false),
+        ("sign_minimal_valid", 1, 1, true),
+        ("sign_large_waste_valid", 4096, 8192, true),
+    ] {
+        let output = unique_tmp(label)?;
+        let out = run_cli(&bin, requested, mapped, valid, &output)?;
         if !out.status.success() {
-            return Err(format!(
-                "case {i} stderr={}",
-                String::from_utf8_lossy(&out.stderr)
-            ));
+            return Err("sign-case CLI invocation must succeed".into());
         }
         let parsed = read_record(&output)?;
         let headroom = json_i64(&parsed, "headroom")?;
         let safe = json_bool(&parsed, "safe")?;
         require(
             safe == (headroom >= 0),
-            format!(
-                "case {i} ({req},{mapped},{valid}): safe={safe} headroom={headroom}; safe iff headroom>=0 broken"
-            ),
+            "safe flag must match headroom sign for every sign-case input",
         )?;
     }
     Ok(())
