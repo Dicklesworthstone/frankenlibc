@@ -132,7 +132,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "risk_ppm_zero_yields_bucket_zero",
         "risk_ppm_999999_yields_bucket_15",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -152,7 +152,7 @@ fn harness_source_registers_derive_policy_key_subcommand() -> TestResult {
         "consistency_bucket_v1",
         "key_v1_index",
     ] {
-        require(src.contains(needle), format!("main() must import {needle}"))?;
+        require(src.contains(needle), "main() must import policy key helper")?;
     }
     require(
         src.contains("\"kind\": \"policy_key\""),
@@ -185,7 +185,22 @@ fn run_cli(
 
 fn read_record(out_path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
 #[test]
@@ -197,14 +212,12 @@ fn cli_baseline_strict_allocator_zero_risk_known_index() -> TestResult {
     let output = unique_tmp("baseline")?;
     let out = run_cli(&bin, "strict", "Allocator", 0, &[], &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "derive-policy-key failed: stderr={}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         json_string(&parsed, "kind")? == "policy_key",
         "kind must be policy_key",
@@ -257,14 +270,12 @@ fn cli_max_edge_hardened_poll_all_flags_max_consistency_yields_last_index() -> T
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "derive-policy-key failed: stderr={}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     // Known math: hardened=mode_idx 1, Poll=family_idx 19, all flags →
     // budget_bucket=7, consistency_faults=100 → bucket 3, risk 999999 → 15.
     // key_index = (((1*20+19)*16+15)*8+7)*4+3 = 20479.
@@ -313,8 +324,6 @@ fn cli_mode_off_and_strict_produce_identical_key_index() -> TestResult {
     )?;
     let pa = read_record(&a)?;
     let pb = read_record(&b)?;
-    let _ = std::fs::remove_file(&a);
-    let _ = std::fs::remove_file(&b);
     require(
         json_u64(&pa, "key_index")? == json_u64(&pb, "key_index")?,
         format!(
@@ -355,8 +364,6 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
     )?;
     let pa = read_record(&a)?;
     let pb = read_record(&b)?;
-    let _ = std::fs::remove_file(&a);
-    let _ = std::fs::remove_file(&b);
     require(pa == pb, "same inputs must produce identical output")
 }
 
@@ -368,7 +375,6 @@ fn cli_fails_closed_on_unknown_mode() -> TestResult {
     };
     let output = unique_tmp("bad_mode")?;
     let out = run_cli(&bin, "ludicrous", "Allocator", 0, &[], &output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "unknown --mode must yield non-zero exit",
@@ -387,7 +393,6 @@ fn cli_fails_closed_on_unknown_family() -> TestResult {
     };
     let output = unique_tmp("bad_family")?;
     let out = run_cli(&bin, "strict", "NotARealFamily", 0, &[], &output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "unknown --family must yield non-zero exit",
