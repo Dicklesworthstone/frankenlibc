@@ -25,13 +25,23 @@ const FIRST_WAVE_SYMBOLS: &[&str] = &[
 const REQUIRED_LOG_FIELDS: &[&str] = &["symbol", "mode", "expected", "actual", "failure_signature"];
 const AMBIENT_POLICY: &str = "forbid_pointer_locale_or_process_buffer_capture";
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    workspace_root
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "workspace root has no repository parent: {}",
+                workspace_root.display()
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,12 +99,12 @@ struct DifferentialExecution {
     note: Option<String>,
 }
 
-fn load_fixture() -> FixtureFile {
-    let path = repo_root().join("tests/conformance/fixtures/string_memory_hotpaths_wave06.json");
+fn load_fixture() -> Result<FixtureFile, String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/string_memory_hotpaths_wave06.json");
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -149,14 +159,14 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn string_memory_hotpaths_wave06_fixture_exists_and_names_campaign() {
-    let path = repo_root().join("tests/conformance/fixtures/string_memory_hotpaths_wave06.json");
+fn string_memory_hotpaths_wave06_fixture_exists_and_names_campaign() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/string_memory_hotpaths_wave06.json");
     assert!(
         path.exists(),
         "string_memory_hotpaths_wave06.json fixture must exist"
     );
 
-    let fixture = load_fixture();
+    let fixture = load_fixture()?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "string_memory_hotpaths_wave06");
     assert_eq!(fixture.campaign.bead, "pending-string-memory-wave06");
@@ -174,11 +184,12 @@ fn string_memory_hotpaths_wave06_fixture_exists_and_names_campaign() {
             && fixture.description.contains("process-global state"),
         "fixture description must reject ambient pointer/locale/errno/process capture"
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_hotpaths_wave06_covers_first_wave_in_both_modes() {
-    let fixture = load_fixture();
+fn string_memory_hotpaths_wave06_covers_first_wave_in_both_modes() -> Result<(), String> {
+    let fixture = load_fixture()?;
     let expected: BTreeSet<_> = FIRST_WAVE_SYMBOLS.iter().copied().collect();
     let declared: BTreeSet<_> = fixture
         .campaign
@@ -203,18 +214,19 @@ fn string_memory_hotpaths_wave06_covers_first_wave_in_both_modes() {
     for symbol in FIRST_WAVE_SYMBOLS {
         let modes = modes_by_symbol
             .get(symbol)
-            .unwrap_or_else(|| panic!("missing fixture cases for {symbol}"));
+            .ok_or_else(|| format!("missing fixture cases for {symbol}"))?;
         assert!(modes.contains("strict"), "missing strict case for {symbol}");
         assert!(
             modes.contains("hardened"),
             "missing hardened case for {symbol}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn string_memory_hotpaths_wave06_logs_without_ambient_leaks() {
-    let fixture = load_fixture();
+fn string_memory_hotpaths_wave06_logs_without_ambient_leaks() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert_eq!(
         fixture.structured_log_fields, REQUIRED_LOG_FIELDS,
         "structured log field contract drifted"
@@ -234,7 +246,7 @@ fn string_memory_hotpaths_wave06_logs_without_ambient_leaks() {
         let inputs = case
             .inputs
             .as_object()
-            .unwrap_or_else(|| panic!("case {} inputs must be an object", case.name));
+            .ok_or_else(|| format!("case {} inputs must be an object", case.name))?;
         for field in [
             "symbol",
             "scenario",
@@ -291,11 +303,12 @@ fn string_memory_hotpaths_wave06_logs_without_ambient_leaks() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn string_memory_hotpaths_wave06_spec_reference_names_required_surfaces() {
-    let fixture = load_fixture();
+fn string_memory_hotpaths_wave06_spec_reference_names_required_surfaces() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert!(
         fixture.spec_reference.contains("GNU libc")
             && fixture.spec_reference.contains("POSIX")
@@ -304,11 +317,12 @@ fn string_memory_hotpaths_wave06_spec_reference_names_required_surfaces() {
             && fixture.spec_reference.contains("argz"),
         "fixture must bind GNU, POSIX, conversion, strverscmp, and argz semantics"
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_hotpaths_wave06_executes_via_isolated_harness() {
-    let fixture = load_fixture();
+fn string_memory_hotpaths_wave06_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert_eq!(
         fixture.cases.len(),
         FIRST_WAVE_SYMBOLS.len() * 2,
@@ -316,13 +330,13 @@ fn string_memory_hotpaths_wave06_executes_via_isolated_harness() {
     );
 
     for case in &fixture.cases {
-        let result = execute_case_via_harness(&case.function, &case.inputs, &case.mode)
-            .unwrap_or_else(|err| {
-                panic!(
+        let result =
+            execute_case_via_harness(&case.function, &case.inputs, &case.mode).map_err(|err| {
+                format!(
                     "string/memory wave-06 case {} ({}) failed via harness: {err}",
                     case.name, case.mode
                 )
-            });
+            })?;
         assert_eq!(
             result.impl_output, case.expected_output,
             "fixture expected_output mismatch for {} ({})",
@@ -336,4 +350,5 @@ fn string_memory_hotpaths_wave06_executes_via_isolated_harness() {
         assert!(result.host_parity, "fixture executor reported failure");
         assert!(result.note.is_none(), "unexpected fixture note drift");
     }
+    Ok(())
 }
