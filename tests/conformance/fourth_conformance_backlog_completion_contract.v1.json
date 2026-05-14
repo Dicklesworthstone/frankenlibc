@@ -1,0 +1,360 @@
+{
+  "schema_version": "fourth_conformance_backlog_completion_contract.v1",
+  "bead_id": "bd-gmbqy.12",
+  "parent_bead": "bd-gmbqy",
+  "trace_id": "bd-gmbqy.12::fourth-conformance-backlog::completion::v1",
+  "generated_at_utc": "2026-05-14T02:45:00Z",
+  "source_commit": "38065bf5",
+  "purpose": "Completion contract for the bd-gmbqy fourth artifact-guided conformance wave backlog. It binds the closed child wave evidence, generated coverage artifact counts, current prioritizer advancement, base gates, and a dedicated harness test before bd-gmbqy.12 or parent bd-gmbqy can close.",
+  "source_artifacts": [
+    {
+      "id": "symbol_fixture_coverage",
+      "kind": "coverage_artifact",
+      "path": "tests/conformance/symbol_fixture_coverage.v1.json"
+    },
+    {
+      "id": "per_symbol_fixture_tests",
+      "kind": "coverage_artifact",
+      "path": "tests/conformance/per_symbol_fixture_tests.v1.json"
+    },
+    {
+      "id": "fixture_coverage_prioritizer",
+      "kind": "prioritizer_artifact",
+      "path": "tests/conformance/fixture_coverage_prioritizer.v1.json"
+    },
+    {
+      "id": "symbol_fixture_coverage_gate",
+      "kind": "gate",
+      "path": "scripts/check_symbol_fixture_coverage.sh"
+    },
+    {
+      "id": "per_symbol_fixture_tests_gate",
+      "kind": "gate",
+      "path": "scripts/check_per_symbol_fixture_tests.sh"
+    },
+    {
+      "id": "fixture_coverage_prioritizer_gate",
+      "kind": "gate",
+      "path": "scripts/check_fixture_coverage_prioritizer.sh"
+    },
+    {
+      "id": "completion_contract",
+      "kind": "completion_contract",
+      "path": "tests/conformance/fourth_conformance_backlog_completion_contract.v1.json"
+    },
+    {
+      "id": "completion_gate",
+      "kind": "completion_gate",
+      "path": "scripts/check_fourth_conformance_backlog_completion_contract.sh"
+    },
+    {
+      "id": "completion_harness_test",
+      "kind": "test",
+      "path": "crates/frankenlibc-harness/tests/fourth_conformance_backlog_completion_contract_test.rs"
+    }
+  ],
+  "tracker_snapshot": {
+    "source": ".beads/issues.jsonl no-db closeout snapshot",
+    "required_closed_child_count": 11,
+    "required_child_ids": [
+      "bd-gmbqy.1",
+      "bd-gmbqy.2",
+      "bd-gmbqy.3",
+      "bd-gmbqy.4",
+      "bd-gmbqy.5",
+      "bd-gmbqy.6",
+      "bd-gmbqy.7",
+      "bd-gmbqy.8",
+      "bd-gmbqy.9",
+      "bd-gmbqy.10",
+      "bd-gmbqy.11"
+    ],
+    "child_closeouts": [
+      {
+        "id": "bd-gmbqy.1",
+        "status": "closed",
+        "commit_refs": ["24f50e57", "1d7c944d"],
+        "fixture": "tests/conformance/fixtures/unistd_process_filesystem_wave10.json",
+        "evidence_fragments": ["scripts/check_symbol_fixture_coverage.sh", "scripts/check_per_symbol_fixture_tests.sh --validate-only", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+      },
+      {
+        "id": "bd-gmbqy.2",
+        "status": "closed",
+        "commit_refs": ["c3e4adb0"],
+        "fixture": "tests/conformance/fixtures/stdio_libio_wave06.json",
+        "evidence_fragments": ["stdio/libio wave-06", "coverage artifacts refreshed", "RCH remote"]
+      },
+      {
+        "id": "bd-gmbqy.3",
+        "status": "closed",
+        "commit_refs": ["00a31a03"],
+        "fixture": "tests/conformance/fixtures/pthread_sync_wave05.json",
+        "evidence_fragments": ["pthread sync wave-05", "coverage gates", "RCH remote"]
+      },
+      {
+        "id": "bd-gmbqy.4",
+        "status": "closed",
+        "commit_refs": ["bc3e1563"],
+        "fixture": "tests/conformance/fixtures/process_spawn_wait_tail.json",
+        "evidence_fragments": ["wait4/waitid fixtures", "coverage gates", "RCH remote"]
+      },
+      {
+        "id": "bd-gmbqy.5",
+        "status": "closed",
+        "commit_refs": ["b7ba5759", "745d4b58"],
+        "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave03.json",
+        "evidence_fragments": ["wchar locale wave-03", "covered_count=1061", "RCH remote"]
+      },
+      {
+        "id": "bd-gmbqy.6",
+        "status": "closed",
+        "commit_refs": ["b6f69d1d"],
+        "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json",
+        "evidence_fragments": ["fortify checked-wrapper wave-03", "covered_count=1073", "RCH remote"]
+      },
+      {
+        "id": "bd-gmbqy.7",
+        "status": "closed",
+        "commit_refs": ["35e6cf57"],
+        "fixture": "tests/conformance/fixtures/time_clock_calendar_wave02.json",
+        "evidence_fragments": ["time clock calendar wave-02", "coverage artifacts refreshed", "RCH remote"]
+      },
+      {
+        "id": "bd-gmbqy.8",
+        "status": "closed",
+        "commit_refs": ["abca131f"],
+        "fixture": "tests/conformance/fixtures/math_finite_special_wave03.json",
+        "evidence_fragments": ["math finite special wave-03", "coverage artifacts refreshed", "RCH remote"]
+      },
+      {
+        "id": "bd-gmbqy.9",
+        "status": "closed",
+        "commit_refs": ["8cabd3b0"],
+        "fixture": "tests/conformance/fixtures/signal_async_wave02.json",
+        "evidence_fragments": ["signal async wave-02", "coverage artifacts refreshed", "RCH remote"]
+      },
+      {
+        "id": "bd-gmbqy.10",
+        "status": "closed",
+        "commit_refs": ["cf3b2dcd", "8b54c5e2"],
+        "fixture": "tests/conformance/fixtures/glibc_internal_compat_wave03.json",
+        "evidence_fragments": ["glibc internal compatibility wave-03", "coverage artifact refresh", "RCH remote"]
+      },
+      {
+        "id": "bd-gmbqy.11",
+        "status": "closed",
+        "commit_refs": ["bac738dc"],
+        "fixture": "tests/conformance/fixtures/rpc_legacy_network_wave03.json",
+        "evidence_fragments": ["legacy RPC wave-03", "covered_count=1126", "2702 cases", "RCH remote"]
+      }
+    ]
+  },
+  "coverage_expectations": {
+    "symbol_fixture_coverage": {
+      "target_total_symbols": 4119,
+      "target_covered_symbols": 1126,
+      "target_uncovered_symbols": 2993,
+      "target_coverage_pct": 27.34
+    },
+    "per_symbol_fixture_tests": {
+      "total_symbols": 4119,
+      "symbols_with_fixtures": 1124,
+      "total_cases": 2702,
+      "uncovered_action_count": 2995,
+      "total_format_issues": 0
+    },
+    "fixture_coverage_prioritizer": {
+      "campaign_count": 8,
+      "selected_target_uncovered_symbols": 2639,
+      "all_uncovered_target_symbols": 2993,
+      "total_first_wave_fixture_count": 96,
+      "required_covered_modules": [
+        "fortify_abi",
+        "glibc_internal_abi",
+        "math_abi",
+        "pthread_abi",
+        "rpc_abi",
+        "stdio_abi",
+        "unistd_abi",
+        "wchar_abi"
+      ]
+    }
+  },
+  "completed_wave_fixtures": [
+    {
+      "bead": "bd-gmbqy.1",
+      "campaign_id": "fcq-unistd-process-filesystem",
+      "path": "tests/conformance/fixtures/unistd_process_filesystem_wave10.json",
+      "completed_symbols": ["fchdir", "fchmod", "fchmodat", "fchmodat2", "fchown", "fchownat", "fcntl64", "fcrypt", "fdatasync", "fexecve", "fgetgrent", "fgetgrent_r"]
+    },
+    {
+      "bead": "bd-gmbqy.2",
+      "campaign_id": "fcq-stdio-libio",
+      "path": "tests/conformance/fixtures/stdio_libio_wave06.json",
+      "completed_symbols": ["open_memstream", "pclose", "popen", "putc", "putc_unlocked", "putchar", "putchar_unlocked", "puts", "putw", "remove", "rewind", "scanf"]
+    },
+    {
+      "bead": "bd-gmbqy.3",
+      "campaign_id": "fcq-pthread-sync",
+      "path": "tests/conformance/fixtures/pthread_sync_wave05.json",
+      "completed_symbols": ["pthread_attr_setstacksize", "pthread_barrier_destroy", "pthread_barrier_init", "pthread_barrier_wait", "pthread_barrierattr_destroy", "pthread_barrierattr_getpshared", "pthread_barrierattr_init", "pthread_barrierattr_setpshared", "pthread_cancel", "pthread_condattr_destroy", "pthread_condattr_getclock", "pthread_condattr_getpshared"]
+    },
+    {
+      "bead": "bd-gmbqy.4",
+      "campaign_id": "fcq-process-spawn",
+      "path": "tests/conformance/fixtures/process_spawn_wait_tail.json",
+      "completed_symbols": ["wait4", "waitid"]
+    },
+    {
+      "bead": "bd-gmbqy.5",
+      "campaign_id": "fcq-wchar-locale-encoding",
+      "path": "tests/conformance/fixtures/wchar_locale_encoding_wave03.json",
+      "completed_symbols": ["__iswlower_l", "__iswprint_l", "__iswpunct_l", "__iswspace_l", "__iswupper_l", "__iswxdigit_l", "__toascii_l", "__tolower_l", "__toupper_l", "__towctrans_l", "__towlower_l", "__towupper_l"]
+    },
+    {
+      "bead": "bd-gmbqy.6",
+      "campaign_id": "fcq-fortify-bounds",
+      "path": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json",
+      "completed_symbols": ["__mbsrtowcs_chk", "__mbstowcs_chk", "__memcpy_chk", "__memmove_chk", "__memset_chk", "__open64_2", "__open_2", "__openat64_2", "__openat_2", "__poll_chk", "__ppoll_chk", "__pread64_chk"]
+    },
+    {
+      "bead": "bd-gmbqy.7",
+      "campaign_id": "fcq-time-clock-calendar",
+      "path": "tests/conformance/fixtures/time_clock_calendar_wave02.json",
+      "completed_symbols": ["gmtime_r", "localtime", "mktime", "nanosleep", "strptime", "timegm", "timespec_get", "timespec_getres", "timezone", "tzset"]
+    },
+    {
+      "bead": "bd-gmbqy.8",
+      "campaign_id": "fcq-math-special",
+      "path": "tests/conformance/fixtures/math_finite_special_wave03.json",
+      "completed_symbols": ["__asinl_finite", "__atan2_finite", "__atan2f128_finite", "__atan2f_finite", "__atan2l_finite", "__atanh_finite", "__atanhf128_finite", "__atanhf_finite", "__atanhl_finite", "__clog10", "__clog10f", "__clog10l"]
+    },
+    {
+      "bead": "bd-gmbqy.9",
+      "campaign_id": "fcq-signal-async",
+      "path": "tests/conformance/fixtures/signal_async_wave02.json",
+      "completed_symbols": ["sigisemptyset", "sigorset", "sigpending", "sigprocmask", "sigrelse", "sigsuspend", "sigwait"]
+    },
+    {
+      "bead": "bd-gmbqy.10",
+      "campaign_id": "fcq-glibc-internal-compat",
+      "path": "tests/conformance/fixtures/glibc_internal_compat_wave03.json",
+      "completed_symbols": ["__call_tls_dtors", "__check_rhosts_file", "__clock_gettime", "__clone", "__close", "__close_nocancel", "__close_nocancel_nostatus", "__cmsg_nxthdr", "__connect", "__copy_grp", "__ctype32_b", "__ctype32_tolower"]
+    },
+    {
+      "bead": "bd-gmbqy.11",
+      "campaign_id": "fcq-rpc-legacy-network",
+      "path": "tests/conformance/fixtures/rpc_legacy_network_wave03.json",
+      "completed_symbols": ["clnt_sperror", "clntraw_create", "clnttcp_create", "clntudp_bufcreate", "clntudp_create", "clntunix_create", "des_setparity", "ecb_crypt", "get_myaddress", "getnetname", "getpublickey", "getrpcport"]
+    }
+  ],
+  "prioritizer_advancement": {
+    "completed_wave_symbol_count": 115,
+    "retired_campaign_ids": [
+      "fcq-process-spawn",
+      "fcq-time-clock-calendar",
+      "fcq-signal-async"
+    ],
+    "current_campaign_first_wave": [
+      {
+        "campaign_id": "fcq-unistd-process-filesystem",
+        "first_wave_symbols": ["fgetpwent", "fgetpwent_r", "fgetspent", "fgetspent_r", "fgetxattr", "flistxattr", "flock", "fmtmsg", "forkpty", "fpathconf", "freeifaddrs", "fremovexattr"],
+        "current_coverage_pct": 22.51,
+        "target_covered": 167,
+        "target_uncovered": 575
+      },
+      {
+        "campaign_id": "fcq-stdio-libio",
+        "first_wave_symbols": ["setbuffer", "setlinebuf", "stderr", "stdin", "stdout", "tmpfile", "tmpfile64", "tmpnam", "vfprintf", "vfscanf", "vprintf", "vscanf"],
+        "current_coverage_pct": 89.68,
+        "target_covered": 113,
+        "target_uncovered": 13
+      },
+      {
+        "campaign_id": "fcq-pthread-sync",
+        "first_wave_symbols": ["pthread_condattr_init", "pthread_condattr_setclock", "pthread_condattr_setpshared", "pthread_exit", "pthread_getaffinity_np", "pthread_getattr_default_np", "pthread_getconcurrency", "pthread_getcpuclockid", "pthread_getname_np", "pthread_gettid_np", "pthread_kill", "pthread_mutex_clocklock"],
+        "current_coverage_pct": 61.7,
+        "target_covered": 87,
+        "target_uncovered": 54
+      },
+      {
+        "campaign_id": "fcq-wchar-locale-encoding",
+        "first_wave_symbols": ["__wcscasecmp_l", "__wcscoll_l", "__wcsftime_l", "__wcsncasecmp_l", "__wcstod_internal", "__wcstod_l", "__wcstof_internal", "__wcstof_l", "__wcstol_internal", "__wcstol_l", "__wcstold_internal", "__wcstold_l"],
+        "current_coverage_pct": 36.99,
+        "target_covered": 54,
+        "target_uncovered": 92
+      },
+      {
+        "campaign_id": "fcq-fortify-bounds",
+        "first_wave_symbols": ["__pread_chk", "__printf_chk", "__ptsname_r_chk", "__read_chk", "__readlink_chk", "__readlinkat_chk", "__realpath_chk", "__recv_chk", "__recvfrom_chk", "__snprintf_chk", "__sprintf_chk", "__stpcpy_chk"],
+        "current_coverage_pct": 46.15,
+        "target_covered": 36,
+        "target_uncovered": 42
+      },
+      {
+        "campaign_id": "fcq-math-special",
+        "first_wave_symbols": ["__cosh_finite", "__coshf128_finite", "__coshf_finite", "__coshl_finite", "__exp10_finite", "__exp10f128_finite", "__exp10f_finite", "__exp10l_finite", "__exp2_finite", "__exp2f128_finite", "__exp2f_finite", "__exp2l_finite"],
+        "current_coverage_pct": 4.35,
+        "target_covered": 55,
+        "target_uncovered": 1210
+      },
+      {
+        "campaign_id": "fcq-glibc-internal-compat",
+        "first_wave_symbols": ["__ctype32_toupper", "__ctype_init", "__curbrk", "__daylight", "__dcgettext", "__default_morecore", "__dgettext", "__dn_comp", "__dn_expand", "__dn_skipname", "__dup2", "__duplocale"],
+        "current_coverage_pct": 7.02,
+        "target_covered": 40,
+        "target_uncovered": 530
+      },
+      {
+        "campaign_id": "fcq-rpc-legacy-network",
+        "first_wave_symbols": ["getsecretkey", "host2netname", "key_decryptsession", "key_decryptsession_pk", "key_encryptsession", "key_encryptsession_pk", "key_gendes", "key_get_conv", "key_secretkey_is_set", "key_setnet", "key_setsecret", "netname2host"],
+        "current_coverage_pct": 22.64,
+        "target_covered": 36,
+        "target_uncovered": 123
+      }
+    ]
+  },
+  "base_gate_commands": [
+    "scripts/check_symbol_fixture_coverage.sh",
+    "scripts/check_per_symbol_fixture_tests.sh --validate-only",
+    "scripts/check_fixture_coverage_prioritizer.sh",
+    "br --no-db dep cycles --json"
+  ],
+  "telemetry_contract": {
+    "report_path": "target/conformance/fourth_conformance_backlog_completion_contract.report.json",
+    "log_path": "target/conformance/fourth_conformance_backlog_completion_contract.events.jsonl",
+    "required_events": [
+      "fourth_conformance_backlog.source_artifacts_validated",
+      "fourth_conformance_backlog.child_closeouts_validated",
+      "fourth_conformance_backlog.coverage_artifacts_validated",
+      "fourth_conformance_backlog.completed_wave_fixtures_validated",
+      "fourth_conformance_backlog.prioritizer_advancement_validated",
+      "fourth_conformance_backlog.base_gates_validated",
+      "fourth_conformance_backlog.test_surface_validated",
+      "fourth_conformance_backlog.completion_contract_validated"
+    ],
+    "failure_event": "fourth_conformance_backlog.completion_contract_failed",
+    "required_log_fields": ["schema_version", "timestamp", "trace_id", "event", "status", "bead_id", "parent_bead", "source_commit", "artifact_refs", "failure_signature"]
+  },
+  "required_test_functions": {
+    "positive": [
+      "contract_binds_fourth_conformance_backlog_closeout",
+      "checker_accepts_fourth_conformance_backlog_completion_contract",
+      "checker_emits_completion_telemetry"
+    ],
+    "negative": [
+      "checker_rejects_missing_child_commit_ref",
+      "checker_rejects_stale_completed_wave_symbol",
+      "checker_rejects_per_symbol_case_count_drift"
+    ]
+  },
+  "required_validation_commands": [
+    "jq empty tests/conformance/fourth_conformance_backlog_completion_contract.v1.json",
+    "bash -n scripts/check_fourth_conformance_backlog_completion_contract.sh",
+    "bash scripts/check_fourth_conformance_backlog_completion_contract.sh",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/fourth_conformance_backlog_completion_contract_test.rs",
+    "rch exec -- cargo test -p frankenlibc-harness --test fourth_conformance_backlog_completion_contract_test -- --nocapture",
+    "rch exec -- cargo check -p frankenlibc-harness --test fourth_conformance_backlog_completion_contract_test",
+    "rch exec -- cargo clippy -p frankenlibc-harness --test fourth_conformance_backlog_completion_contract_test -- -D warnings"
+  ]
+}
