@@ -1,0 +1,320 @@
+{
+  "version": "v1",
+  "family": "time/clock-calendar",
+  "captured_at": "2026-05-14T00:00:00Z",
+  "description": "Deterministic time/clock calendar fixture wave for fixed UTC caller-buffer conversions, UTC-only local calendar conversion, normalized epoch conversion, zero-duration sleep, ISO strptime field parsing, C TIME_UTC success classes, and timezone global shape without capturing host wall-clock values, raw timezone database text, raw TZ environment text, raw pointers, pids, tids, stdout, or stderr.",
+  "spec_reference": "POSIX gmtime_r, localtime, mktime, nanosleep, strptime, tzset; GNU timegm and timezone global; C11 timespec_get; C23 timespec_getres",
+  "campaign": {
+    "bead": "bd-gmbqy.7",
+    "campaign_id": "fcq-time-clock-calendar",
+    "wave_id": "wave-02-time-clock-calendar",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture",
+    "first_wave_symbols": [
+      "gmtime_r",
+      "localtime",
+      "mktime",
+      "nanosleep",
+      "strptime",
+      "timegm",
+      "timespec_get",
+      "timespec_getres",
+      "timezone",
+      "tzset"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "gmtime_r_fixed_epoch_utc_strict",
+      "function": "gmtime_r",
+      "spec_section": "POSIX gmtime_r fixed UTC caller-buffer calendar class",
+      "inputs": {
+        "symbol": "gmtime_r",
+        "scenario": "fixed_epoch_utc_caller_buffer",
+        "epoch": 951782400,
+        "expected": "GMTIME_R_UTC_2000-02-29T00:00:00Z",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=gmtime_r;mode=strict;expected=GMTIME_R_UTC_2000-02-29T00:00:00Z;actual=GMTIME_R_UTC_2000-02-29T00:00:00Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "gmtime_r_fixed_epoch_utc_hardened",
+      "function": "gmtime_r",
+      "spec_section": "POSIX gmtime_r fixed UTC caller-buffer calendar class",
+      "inputs": {
+        "symbol": "gmtime_r",
+        "scenario": "fixed_epoch_utc_caller_buffer",
+        "epoch": 951782400,
+        "expected": "GMTIME_R_UTC_2000-02-29T00:00:00Z",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=gmtime_r;mode=hardened;expected=GMTIME_R_UTC_2000-02-29T00:00:00Z;actual=GMTIME_R_UTC_2000-02-29T00:00:00Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "localtime_fixed_epoch_utc_strict",
+      "function": "localtime",
+      "spec_section": "POSIX localtime fixed UTC static-buffer calendar class",
+      "inputs": {
+        "symbol": "localtime",
+        "scenario": "fixed_epoch_utc_static_buffer",
+        "epoch": 951782400,
+        "expected": "LOCALTIME_UTC_2000-02-29T00:00:00Z",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=localtime;mode=strict;expected=LOCALTIME_UTC_2000-02-29T00:00:00Z;actual=LOCALTIME_UTC_2000-02-29T00:00:00Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "localtime_fixed_epoch_utc_hardened",
+      "function": "localtime",
+      "spec_section": "POSIX localtime fixed UTC static-buffer calendar class",
+      "inputs": {
+        "symbol": "localtime",
+        "scenario": "fixed_epoch_utc_static_buffer",
+        "epoch": 951782400,
+        "expected": "LOCALTIME_UTC_2000-02-29T00:00:00Z",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=localtime;mode=hardened;expected=LOCALTIME_UTC_2000-02-29T00:00:00Z;actual=LOCALTIME_UTC_2000-02-29T00:00:00Z;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "mktime_leap_day_epoch_strict",
+      "function": "mktime",
+      "spec_section": "POSIX mktime normalized broken-down UTC epoch class",
+      "inputs": {
+        "symbol": "mktime",
+        "scenario": "normalized_leap_day_epoch",
+        "expected": "MKTIME_LEAP_DAY_EPOCH",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=mktime;mode=strict;expected=MKTIME_LEAP_DAY_EPOCH;actual=MKTIME_LEAP_DAY_EPOCH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "mktime_leap_day_epoch_hardened",
+      "function": "mktime",
+      "spec_section": "POSIX mktime normalized broken-down UTC epoch class",
+      "inputs": {
+        "symbol": "mktime",
+        "scenario": "normalized_leap_day_epoch",
+        "expected": "MKTIME_LEAP_DAY_EPOCH",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=mktime;mode=hardened;expected=MKTIME_LEAP_DAY_EPOCH;actual=MKTIME_LEAP_DAY_EPOCH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "nanosleep_zero_duration_strict",
+      "function": "nanosleep",
+      "spec_section": "POSIX nanosleep zero-duration class",
+      "inputs": {
+        "symbol": "nanosleep",
+        "scenario": "zero_duration_sleep",
+        "expected": "NANOSLEEP_ZERO_RC_0",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=nanosleep;mode=strict;expected=NANOSLEEP_ZERO_RC_0;actual=NANOSLEEP_ZERO_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "nanosleep_zero_duration_hardened",
+      "function": "nanosleep",
+      "spec_section": "POSIX nanosleep zero-duration class",
+      "inputs": {
+        "symbol": "nanosleep",
+        "scenario": "zero_duration_sleep",
+        "expected": "NANOSLEEP_ZERO_RC_0",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=nanosleep;mode=hardened;expected=NANOSLEEP_ZERO_RC_0;actual=NANOSLEEP_ZERO_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strptime_iso_prefix_strict",
+      "function": "strptime",
+      "spec_section": "POSIX strptime fixed ISO datetime prefix parsing class",
+      "inputs": {
+        "symbol": "strptime",
+        "scenario": "iso_datetime_prefix_parse",
+        "expected": "STRPTIME_ISO_FIELDS_REST_Ztail",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=strptime;mode=strict;expected=STRPTIME_ISO_FIELDS_REST_Ztail;actual=STRPTIME_ISO_FIELDS_REST_Ztail;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strptime_iso_prefix_hardened",
+      "function": "strptime",
+      "spec_section": "POSIX strptime fixed ISO datetime prefix parsing class",
+      "inputs": {
+        "symbol": "strptime",
+        "scenario": "iso_datetime_prefix_parse",
+        "expected": "STRPTIME_ISO_FIELDS_REST_Ztail",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=strptime;mode=hardened;expected=STRPTIME_ISO_FIELDS_REST_Ztail;actual=STRPTIME_ISO_FIELDS_REST_Ztail;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "timegm_leap_day_epoch_strict",
+      "function": "timegm",
+      "spec_section": "GNU timegm normalized broken-down UTC epoch class",
+      "inputs": {
+        "symbol": "timegm",
+        "scenario": "normalized_leap_day_epoch",
+        "expected": "TIMEGM_LEAP_DAY_EPOCH",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=timegm;mode=strict;expected=TIMEGM_LEAP_DAY_EPOCH;actual=TIMEGM_LEAP_DAY_EPOCH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "timegm_leap_day_epoch_hardened",
+      "function": "timegm",
+      "spec_section": "GNU timegm normalized broken-down UTC epoch class",
+      "inputs": {
+        "symbol": "timegm",
+        "scenario": "normalized_leap_day_epoch",
+        "expected": "TIMEGM_LEAP_DAY_EPOCH",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=timegm;mode=hardened;expected=TIMEGM_LEAP_DAY_EPOCH;actual=TIMEGM_LEAP_DAY_EPOCH;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "timespec_get_time_utc_strict",
+      "function": "timespec_get",
+      "spec_section": "C11 timespec_get TIME_UTC success class",
+      "inputs": {
+        "symbol": "timespec_get",
+        "scenario": "time_utc_success_class",
+        "expected": "TIMESPEC_GET_TIME_UTC_OK",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=timespec_get;mode=strict;expected=TIMESPEC_GET_TIME_UTC_OK;actual=TIMESPEC_GET_TIME_UTC_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "timespec_get_time_utc_hardened",
+      "function": "timespec_get",
+      "spec_section": "C11 timespec_get TIME_UTC success class",
+      "inputs": {
+        "symbol": "timespec_get",
+        "scenario": "time_utc_success_class",
+        "expected": "TIMESPEC_GET_TIME_UTC_OK",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=timespec_get;mode=hardened;expected=TIMESPEC_GET_TIME_UTC_OK;actual=TIMESPEC_GET_TIME_UTC_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "timespec_getres_time_utc_strict",
+      "function": "timespec_getres",
+      "spec_section": "C23 timespec_getres TIME_UTC resolution class",
+      "inputs": {
+        "symbol": "timespec_getres",
+        "scenario": "time_utc_resolution_class",
+        "expected": "TIMESPEC_GETRES_TIME_UTC_OK",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=timespec_getres;mode=strict;expected=TIMESPEC_GETRES_TIME_UTC_OK;actual=TIMESPEC_GETRES_TIME_UTC_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "timespec_getres_time_utc_hardened",
+      "function": "timespec_getres",
+      "spec_section": "C23 timespec_getres TIME_UTC resolution class",
+      "inputs": {
+        "symbol": "timespec_getres",
+        "scenario": "time_utc_resolution_class",
+        "expected": "TIMESPEC_GETRES_TIME_UTC_OK",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=timespec_getres;mode=hardened;expected=TIMESPEC_GETRES_TIME_UTC_OK;actual=TIMESPEC_GETRES_TIME_UTC_OK;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "timezone_utc_global_offset_strict",
+      "function": "timezone",
+      "spec_section": "GNU timezone global UTC offset class",
+      "inputs": {
+        "symbol": "timezone",
+        "scenario": "utc_global_offset",
+        "expected": "TIMEZONE_GLOBAL_ZERO",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=timezone;mode=strict;expected=TIMEZONE_GLOBAL_ZERO;actual=TIMEZONE_GLOBAL_ZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "timezone_utc_global_offset_hardened",
+      "function": "timezone",
+      "spec_section": "GNU timezone global UTC offset class",
+      "inputs": {
+        "symbol": "timezone",
+        "scenario": "utc_global_offset",
+        "expected": "TIMEZONE_GLOBAL_ZERO",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=timezone;mode=hardened;expected=TIMEZONE_GLOBAL_ZERO;actual=TIMEZONE_GLOBAL_ZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "tzset_utc_noop_global_strict",
+      "function": "tzset",
+      "spec_section": "POSIX tzset UTC-only global shape class",
+      "inputs": {
+        "symbol": "tzset",
+        "scenario": "utc_noop_global_shape",
+        "expected": "TZSET_GLOBAL_ZERO",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=tzset;mode=strict;expected=TZSET_GLOBAL_ZERO;actual=TZSET_GLOBAL_ZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "tzset_utc_noop_global_hardened",
+      "function": "tzset",
+      "spec_section": "POSIX tzset UTC-only global shape class",
+      "inputs": {
+        "symbol": "tzset",
+        "scenario": "utc_noop_global_shape",
+        "expected": "TZSET_GLOBAL_ZERO",
+        "ambient_state_policy": "forbid_host_wall_clock_timestamp_timezone_database_raw_environ_text_raw_pointer_pid_tid_stdout_stderr_capture"
+      },
+      "expected_output": "symbol=tzset;mode=hardened;expected=TZSET_GLOBAL_ZERO;actual=TZSET_GLOBAL_ZERO;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
