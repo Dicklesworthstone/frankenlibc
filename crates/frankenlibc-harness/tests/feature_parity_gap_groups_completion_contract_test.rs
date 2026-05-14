@@ -5,13 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    Path::new(manifest)
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or_else(|| format!("crate directory has no workspace parent: {manifest}"))?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("workspace parent has no repo parent: {manifest}").into())
 }
 
 fn load_json(path: &Path) -> TestResult<Value> {
@@ -92,7 +93,7 @@ fn source_texts(root: &Path, manifest: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_unit_e2e_conformance_and_telemetry_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -157,7 +158,7 @@ fn manifest_binds_unit_e2e_conformance_and_telemetry_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_existing_feature_parity_gap_group_gate() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -189,7 +190,7 @@ fn checker_validates_existing_feature_parity_gap_group_gate() -> TestResult {
 
 #[test]
 fn checker_emits_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -238,7 +239,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_batch() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_batch")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_source_contract"]["required_batches"]
@@ -274,7 +275,7 @@ fn checker_rejects_missing_required_batch() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_event() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_event")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["telemetry_contract"]["required_events"]
