@@ -182,7 +182,22 @@ fn run_cli(
 
 fn read_record(out_path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "expected exactly one JSONL record in {}, got {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
 #[test]
@@ -194,14 +209,12 @@ fn cli_zero_k_source_yields_zero_degree_and_empty_indices() -> TestResult {
     let output = unique_tmp("zero")?;
     let out = run_cli(&bin, 42, 0, 0, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "derive-repair-schedule failed: stderr={}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         json_u64(&parsed, "degree")? == 0,
         "k_source=0 must yield degree=0",
@@ -221,14 +234,12 @@ fn cli_baseline_invariants_hold_for_k_source_16() -> TestResult {
     let output = unique_tmp("k16")?;
     let out = run_cli(&bin, 0xdeadbeef, 16, 7, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "derive-repair-schedule failed: stderr={}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         json_string(&parsed, "kind")? == "repair_schedule",
         "kind must be repair_schedule",
@@ -289,8 +300,6 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
     )?;
     let pa = read_record(&a)?;
     let pb = read_record(&b)?;
-    let _ = std::fs::remove_file(&a);
-    let _ = std::fs::remove_file(&b);
     require(
         pa == pb,
         format!("same inputs must produce identical output; got {pa:?} vs {pb:?}"),
