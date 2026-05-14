@@ -26,13 +26,23 @@ const FIRST_WAVE_SYMBOLS: &[&str] = &[
 const REQUIRED_LOG_FIELDS: &[&str] = &["symbol", "mode", "expected", "actual", "failure_signature"];
 const AMBIENT_POLICY: &str = "forbid_pointer_locale_or_process_buffer_capture";
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    workspace_root
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "workspace root has no repository parent: {}",
+                workspace_root.display()
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,20 +100,20 @@ struct DifferentialExecution {
     note: Option<String>,
 }
 
-fn load_fixture() -> FixtureFile {
-    let path = repo_root().join("tests/conformance/fixtures/string_memory_hotpaths_wave05.json");
+fn load_fixture() -> Result<FixtureFile, String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/string_memory_hotpaths_wave05.json");
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
-fn load_json_artifact(relative_path: &str) -> Value {
-    let path = repo_root().join(relative_path);
+fn load_json_artifact(relative_path: &str) -> Result<Value, String> {
+    let path = repo_root()?.join(relative_path);
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn json_array_has_str(value: &Value, expected: &str) -> bool {
@@ -112,31 +122,34 @@ fn json_array_has_str(value: &Value, expected: &str) -> bool {
         .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(expected)))
 }
 
-fn find_symbol_row<'a>(coverage: &'a Value, symbol: &str) -> &'a Value {
+fn find_symbol_row<'a>(coverage: &'a Value, symbol: &str) -> Result<&'a Value, String> {
     coverage["symbols"]
         .as_array()
-        .expect("coverage symbols must be an array")
+        .ok_or_else(|| String::from("coverage symbols must be an array"))?
         .iter()
         .find(|row| row["symbol"].as_str() == Some(symbol))
-        .unwrap_or_else(|| panic!("missing coverage row for {symbol}"))
+        .ok_or_else(|| format!("missing coverage row for {symbol}"))
 }
 
-fn find_per_symbol_row<'a>(per_symbol: &'a Value, symbol: &str) -> &'a Value {
+fn find_per_symbol_row<'a>(per_symbol: &'a Value, symbol: &str) -> Result<&'a Value, String> {
     per_symbol["per_symbol_report"]
         .as_array()
-        .expect("per_symbol_report must be an array")
+        .ok_or_else(|| String::from("per_symbol_report must be an array"))?
         .iter()
         .find(|row| row["symbol"].as_str() == Some(symbol))
-        .unwrap_or_else(|| panic!("missing per-symbol row for {symbol}"))
+        .ok_or_else(|| format!("missing per-symbol row for {symbol}"))
 }
 
-fn find_campaign_row<'a>(prioritizer: &'a Value, campaign_id: &str) -> &'a Value {
-    prioritizer["campaigns"]
+fn find_fully_covered_module_row<'a>(
+    prioritizer: &'a Value,
+    module: &str,
+) -> Result<&'a Value, String> {
+    prioritizer["fully_covered_workload_domain_sources"]
         .as_array()
-        .expect("prioritizer campaigns must be an array")
+        .ok_or_else(|| String::from("prioritizer covered-module sources must be an array"))?
         .iter()
-        .find(|row| row["campaign_id"].as_str() == Some(campaign_id))
-        .unwrap_or_else(|| panic!("missing prioritizer campaign {campaign_id}"))
+        .find(|row| row["module"].as_str() == Some(module))
+        .ok_or_else(|| format!("missing prioritizer covered-module source {module}"))
 }
 
 fn execute_case_via_harness(
@@ -191,14 +204,14 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn string_memory_hotpaths_wave05_fixture_exists_and_names_campaign() {
-    let path = repo_root().join("tests/conformance/fixtures/string_memory_hotpaths_wave05.json");
+fn string_memory_hotpaths_wave05_fixture_exists_and_names_campaign() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/string_memory_hotpaths_wave05.json");
     assert!(
         path.exists(),
         "string_memory_hotpaths_wave05.json fixture must exist"
     );
 
-    let fixture = load_fixture();
+    let fixture = load_fixture()?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "string_memory_hotpaths_wave05");
     assert_eq!(fixture.campaign.bead, "pending-string-memory-wave05");
@@ -216,11 +229,12 @@ fn string_memory_hotpaths_wave05_fixture_exists_and_names_campaign() {
             && fixture.description.contains("process-global state"),
         "fixture description must reject ambient pointer/locale/errno/process capture"
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_hotpaths_wave05_covers_first_wave_in_both_modes() {
-    let fixture = load_fixture();
+fn string_memory_hotpaths_wave05_covers_first_wave_in_both_modes() -> Result<(), String> {
+    let fixture = load_fixture()?;
     let expected: BTreeSet<_> = FIRST_WAVE_SYMBOLS.iter().copied().collect();
     let declared: BTreeSet<_> = fixture
         .campaign
@@ -245,18 +259,19 @@ fn string_memory_hotpaths_wave05_covers_first_wave_in_both_modes() {
     for symbol in FIRST_WAVE_SYMBOLS {
         let modes = modes_by_symbol
             .get(symbol)
-            .unwrap_or_else(|| panic!("missing fixture cases for {symbol}"));
+            .ok_or_else(|| format!("missing fixture cases for {symbol}"))?;
         assert!(modes.contains("strict"), "missing strict case for {symbol}");
         assert!(
             modes.contains("hardened"),
             "missing hardened case for {symbol}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn string_memory_hotpaths_wave05_logs_without_ambient_leaks() {
-    let fixture = load_fixture();
+fn string_memory_hotpaths_wave05_logs_without_ambient_leaks() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert_eq!(
         fixture.structured_log_fields, REQUIRED_LOG_FIELDS,
         "structured log field contract drifted"
@@ -276,7 +291,7 @@ fn string_memory_hotpaths_wave05_logs_without_ambient_leaks() {
         let inputs = case
             .inputs
             .as_object()
-            .unwrap_or_else(|| panic!("case {} inputs must be an object", case.name));
+            .ok_or_else(|| format!("case {} inputs must be an object", case.name))?;
         for field in [
             "symbol",
             "scenario",
@@ -333,11 +348,12 @@ fn string_memory_hotpaths_wave05_logs_without_ambient_leaks() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn string_memory_hotpaths_wave05_spec_reference_names_required_surfaces() {
-    let fixture = load_fixture();
+fn string_memory_hotpaths_wave05_spec_reference_names_required_surfaces() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert!(
         fixture.spec_reference.contains("GNU libc")
             && fixture.spec_reference.contains("POSIX")
@@ -346,15 +362,16 @@ fn string_memory_hotpaths_wave05_spec_reference_names_required_surfaces() {
             && fixture.spec_reference.contains("C numeric conversion"),
         "fixture must bind GNU, POSIX, and C conversion semantics"
     );
+    Ok(())
 }
 
 #[test]
-fn string_memory_hotpaths_wave05_coverage_artifacts_bind_first_wave() {
-    let coverage = load_json_artifact("tests/conformance/symbol_fixture_coverage.v1.json");
-    let per_symbol = load_json_artifact("tests/conformance/per_symbol_fixture_tests.v1.json");
+fn string_memory_hotpaths_wave05_coverage_artifacts_bind_first_wave() -> Result<(), String> {
+    let coverage = load_json_artifact("tests/conformance/symbol_fixture_coverage.v1.json")?;
+    let per_symbol = load_json_artifact("tests/conformance/per_symbol_fixture_tests.v1.json")?;
 
     for symbol in FIRST_WAVE_SYMBOLS {
-        let row = find_symbol_row(&coverage, symbol);
+        let row = find_symbol_row(&coverage, symbol)?;
         assert_eq!(
             row["covered"].as_bool(),
             Some(true),
@@ -379,7 +396,7 @@ fn string_memory_hotpaths_wave05_coverage_artifacts_bind_first_wave() {
             "{symbol} coverage must come from fixture JSON"
         );
 
-        let per_symbol_row = find_per_symbol_row(&per_symbol, symbol);
+        let per_symbol_row = find_per_symbol_row(&per_symbol, symbol)?;
         assert_eq!(
             per_symbol_row["has_fixtures"].as_bool(),
             Some(true),
@@ -404,45 +421,43 @@ fn string_memory_hotpaths_wave05_coverage_artifacts_bind_first_wave() {
         );
     }
 
-    let prioritizer = load_json_artifact("tests/conformance/fixture_coverage_prioritizer.v1.json");
-    let campaign = find_campaign_row(&prioritizer, "fcq-string-memory-hotpaths");
+    let prioritizer = load_json_artifact("tests/conformance/fixture_coverage_prioritizer.v1.json")?;
+    let active_campaigns = prioritizer["campaigns"]
+        .as_array()
+        .ok_or_else(|| String::from("prioritizer campaigns must be an array"))?;
     assert!(
-        campaign["current_coverage_pct"].as_f64().unwrap_or(0.0) >= 41.78,
-        "string/memory coverage percent must include wave-05 fixture rows"
-    );
-    assert!(
-        campaign["target_covered"].as_u64().unwrap_or(0) >= 61,
-        "string/memory target_covered must include wave-05 symbols"
-    );
-    assert!(
-        campaign["target_uncovered"].as_u64().unwrap_or(u64::MAX) <= 85,
-        "string/memory target_uncovered must shrink after wave-05 coverage"
-    );
-    assert!(
-        campaign["expected_coverage_after_first_wave_pct"]
-            .as_f64()
-            .unwrap_or(0.0)
-            >= 50.0,
-        "string/memory next-wave expected coverage must advance after wave-05"
+        !active_campaigns
+            .iter()
+            .any(|row| row["campaign_id"].as_str() == Some("fcq-string-memory-hotpaths")),
+        "completed string/memory campaign must not remain active in prioritizer campaigns"
     );
 
-    let next_wave: BTreeSet<_> = campaign["first_wave_symbols"]
-        .as_array()
-        .expect("campaign first_wave_symbols must be an array")
-        .iter()
-        .filter_map(Value::as_str)
-        .collect();
-    for symbol in FIRST_WAVE_SYMBOLS {
-        assert!(
-            !next_wave.contains(symbol),
-            "covered symbol {symbol} must not remain in the next prioritizer wave"
-        );
-    }
+    let string_module = find_fully_covered_module_row(&prioritizer, "string_abi")?;
+    assert_eq!(
+        string_module["coverage_state"].as_str(),
+        Some("covered"),
+        "string/memory module must be marked covered after fixture waves"
+    );
+    assert_eq!(
+        string_module["current_coverage_pct"].as_f64(),
+        Some(100.0),
+        "string/memory coverage percent must reflect full fixture coverage"
+    );
+    assert!(
+        string_module["target_covered"].as_u64().unwrap_or(0) >= 146,
+        "string/memory target_covered must include all implemented string symbols"
+    );
+    assert_eq!(
+        string_module["target_uncovered"].as_u64(),
+        Some(0),
+        "string/memory target_uncovered must be zero once covered"
+    );
+    Ok(())
 }
 
 #[test]
-fn string_memory_hotpaths_wave05_executes_via_isolated_harness() {
-    let fixture = load_fixture();
+fn string_memory_hotpaths_wave05_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert_eq!(
         fixture.cases.len(),
         FIRST_WAVE_SYMBOLS.len() * 2,
@@ -450,13 +465,13 @@ fn string_memory_hotpaths_wave05_executes_via_isolated_harness() {
     );
 
     for case in &fixture.cases {
-        let result = execute_case_via_harness(&case.function, &case.inputs, &case.mode)
-            .unwrap_or_else(|err| {
-                panic!(
+        let result =
+            execute_case_via_harness(&case.function, &case.inputs, &case.mode).map_err(|err| {
+                format!(
                     "string/memory wave-05 case {} ({}) failed via harness: {err}",
                     case.name, case.mode
                 )
-            });
+            })?;
         assert_eq!(
             result.impl_output, case.expected_output,
             "fixture expected_output mismatch for {} ({})",
@@ -470,4 +485,5 @@ fn string_memory_hotpaths_wave05_executes_via_isolated_harness() {
         assert!(result.host_parity, "fixture executor reported failure");
         assert!(result.note.is_none(), "unexpected fixture note drift");
     }
+    Ok(())
 }
