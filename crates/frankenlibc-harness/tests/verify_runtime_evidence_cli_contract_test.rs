@@ -137,14 +137,29 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "status_pass_iff_failure_count_zero",
-        "exit_non_zero_when_status_fail",
-        "fail_closed_when_expected_source_commit_blank",
-        "output_schema_must_be_runtime_evidence_verifier_v1",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "status_pass_iff_failure_count_zero",
+            "status_pass_iff_failure_count_zero must be true",
+        ),
+        (
+            "exit_non_zero_when_status_fail",
+            "exit_non_zero_when_status_fail must be true",
+        ),
+        (
+            "fail_closed_when_expected_source_commit_blank",
+            "fail_closed_when_expected_source_commit_blank must be true",
+        ),
+        (
+            "output_schema_must_be_runtime_evidence_verifier_v1",
+            "output_schema_must_be_runtime_evidence_verifier_v1 must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
