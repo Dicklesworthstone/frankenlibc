@@ -117,13 +117,25 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "fail_closed_when_input_row_missing_required_field",
-        "fail_closed_when_input_is_empty",
-        "must_emit_exactly_one_output_jsonl_record",
-        "output_must_round_trip_through_parse_minimized_trace_jsonl",
+    for (field, message) in [
+        (
+            "fail_closed_when_input_row_missing_required_field",
+            "policy.fail_closed_when_input_row_missing_required_field must be true",
+        ),
+        (
+            "fail_closed_when_input_is_empty",
+            "policy.fail_closed_when_input_is_empty must be true",
+        ),
+        (
+            "must_emit_exactly_one_output_jsonl_record",
+            "policy.must_emit_exactly_one_output_jsonl_record must be true",
+        ),
+        (
+            "output_must_round_trip_through_parse_minimized_trace_jsonl",
+            "policy.output_must_round_trip_through_parse_minimized_trace_jsonl must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -144,10 +156,19 @@ fn harness_source_registers_decision_trace_minimize_subcommand() -> TestResult {
     )
 }
 
+fn write_row_json_error(err: serde_json::Error) -> String {
+    format!("write row json: {err}")
+}
+
+fn write_row_newline_error(err: std::io::Error) -> String {
+    format!("write row newline: {err}")
+}
+
 fn write_jsonl(path: &Path, rows: &[Value]) -> TestResult {
     let mut f = std::fs::File::create(path).map_err(|e| format!("create temp: {e}"))?;
     for r in rows {
-        writeln!(f, "{r}").map_err(|e| format!("write row: {e}"))?;
+        serde_json::to_writer(&mut f, r).map_err(write_row_json_error)?;
+        f.write_all(b"\n").map_err(write_row_newline_error)?;
     }
     Ok(())
 }
@@ -181,9 +202,7 @@ fn cli_emits_round_trippable_minimized_trace_for_divergent_input() -> TestResult
         .arg(&output)
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
-    let _ = std::fs::remove_file(&input);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "decision-trace-minimize failed: status={:?} stderr={}",
             out.status,
@@ -191,21 +210,50 @@ fn cli_emits_round_trippable_minimized_trace_for_divergent_input() -> TestResult
         ));
     }
     let body = std::fs::read_to_string(&output).map_err(|e| format!("read jsonl: {e}"))?;
-    let _ = std::fs::remove_file(&output);
     let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    require(
-        lines.len() == 1,
-        format!("expected exactly 1 output record; got {}", lines.len()),
-    )?;
-    let parsed: Value = serde_json::from_str(lines[0]).map_err(|e| format!("parse output: {e}"))?;
-    for f in MINIMIZED_TRACE_REQUIRED_FIELDS {
+    require(lines.len() == 1, "expected exactly 1 output record")?;
+    let output_line = lines
+        .first()
+        .copied()
+        .ok_or_else(|| "missing output record".to_string())?;
+    let parsed: Value =
+        serde_json::from_str(output_line).map_err(|e| format!("parse output: {e}"))?;
+    for (index, (field, message)) in [
+        (
+            "expected_failure_signature",
+            "output record missing expected_failure_signature",
+        ),
+        ("replay_command", "output record missing replay_command"),
+        ("source_commit", "output record missing source_commit"),
+        (
+            "dropped_row_count",
+            "output record missing dropped_row_count",
+        ),
+        (
+            "dropped_row_rationale",
+            "output record missing dropped_row_rationale",
+        ),
+        (
+            "original_artifact_refs",
+            "output record missing original_artifact_refs",
+        ),
+        ("has_divergence", "output record missing has_divergence"),
+        (
+            "minimized_rows_len",
+            "output record missing minimized_rows_len",
+        ),
+    ]
+    .iter()
+    .enumerate()
+    {
         require(
-            parsed.get(*f).is_some(),
-            format!("output record missing required field `{f}`"),
+            MINIMIZED_TRACE_REQUIRED_FIELDS.get(index) == Some(field),
+            "required-field order drifted",
         )?;
+        require(parsed.get(*field).is_some(), *message)?;
     }
     // Round-trip back through the lib parser.
-    let summary = parse_minimized_trace_jsonl(lines[0])
+    let summary = parse_minimized_trace_jsonl(output_line)
         .map_err(|e| format!("parse_minimized_trace_jsonl: {e}"))?;
     require(
         summary.has_divergence,
@@ -233,7 +281,7 @@ fn cli_rejects_empty_input() -> TestResult {
         .as_nanos();
     let input = std::env::temp_dir().join(format!("bd_9y4c2_empty_{ts}.jsonl"));
     let output = std::env::temp_dir().join(format!("bd_9y4c2_empty_out_{ts}.jsonl"));
-    std::fs::write(&input, "").map_err(|e| format!("write: {e}"))?;
+    write_jsonl(&input, &[])?;
     let out = Command::new(&bin)
         .arg("decision-trace-minimize")
         .arg("--input")
@@ -242,8 +290,6 @@ fn cli_rejects_empty_input() -> TestResult {
         .arg(&output)
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
-    let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "decision-trace-minimize must exit non-zero on empty input",
@@ -287,8 +333,6 @@ fn cli_rejects_input_row_missing_required_field() -> TestResult {
         .arg(&output)
         .output()
         .map_err(|e| format!("spawn: {e}"))?;
-    let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "decision-trace-minimize must exit non-zero on missing field",
