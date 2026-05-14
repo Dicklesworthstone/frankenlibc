@@ -7,13 +7,23 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    workspace_root
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "workspace root has no repository parent: {}",
+                workspace_root.display()
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,12 +56,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,14 +135,15 @@ fn execute_case_via_harness(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn unistd_ops_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/unistd_ops.json");
+fn unistd_ops_fixture_exists() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/unistd_ops.json");
     assert!(path.exists(), "unistd_ops.json fixture must exist");
+    Ok(())
 }
 
 #[test]
-fn unistd_ops_fixture_valid_schema() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "unistd");
@@ -151,6 +162,7 @@ fn unistd_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,8 +170,8 @@ fn unistd_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn unistd_ops_covers_process_identity() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_covers_process_identity() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["getpid", "getppid"];
@@ -171,11 +183,12 @@ fn unistd_ops_covers_process_identity() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn unistd_ops_covers_user_identity() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_covers_user_identity() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["getuid", "getgid", "geteuid", "getegid"];
@@ -187,11 +200,12 @@ fn unistd_ops_covers_user_identity() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn unistd_ops_covers_file_ops() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_covers_file_ops() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["read", "write", "close", "lseek"];
@@ -203,11 +217,12 @@ fn unistd_ops_covers_file_ops() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn unistd_ops_covers_filesystem() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_covers_filesystem() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["getcwd", "access"];
@@ -219,28 +234,31 @@ fn unistd_ops_covers_filesystem() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn unistd_ops_covers_terminal() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_covers_terminal() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("isatty")),
         "Missing test coverage for isatty"
     );
+    Ok(())
 }
 
 #[test]
-fn unistd_ops_covers_pipe() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_covers_pipe() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("pipe")),
         "Missing test coverage for pipe"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -248,8 +266,8 @@ fn unistd_ops_covers_pipe() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn unistd_ops_error_codes_valid() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
 
     // Valid POSIX/Linux error codes for unistd functions
     let valid_errno_values = [
@@ -267,6 +285,7 @@ fn unistd_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -274,8 +293,8 @@ fn unistd_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn unistd_ops_modes_valid() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -285,6 +304,7 @@ fn unistd_ops_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -292,8 +312,8 @@ fn unistd_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn unistd_ops_case_count_stable() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 15;
 
@@ -305,6 +325,7 @@ fn unistd_ops_case_count_stable() {
     );
 
     eprintln!("unistd_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,8 +333,8 @@ fn unistd_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn unistd_ops_has_posix_references() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -323,6 +344,7 @@ fn unistd_ops_has_posix_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,8 +352,8 @@ fn unistd_ops_has_posix_references() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn unistd_ops_covers_error_paths() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // Must have error path tests
@@ -345,11 +367,12 @@ fn unistd_ops_covers_error_paths() {
         has_error_tests,
         "unistd_ops must have error path test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn unistd_ops_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("unistd_ops");
+fn unistd_ops_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("unistd_ops")?;
 
     for case in &fixture.cases {
         if case.inputs.get("fd").map(|v| v.as_str()) == Some(Some("pipe_write_end"))
@@ -361,7 +384,7 @@ fn unistd_ops_fixture_cases_match_execute_fixture_case() {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -369,13 +392,13 @@ fn unistd_ops_fixture_cases_match_execute_fixture_case() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "unistd_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -388,4 +411,5 @@ fn unistd_ops_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+    Ok(())
 }
