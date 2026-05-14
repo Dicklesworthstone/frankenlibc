@@ -148,9 +148,7 @@ fn manifest_underlying_lib_function_is_pinned() -> TestResult {
         .ok_or("underlying_lib_functions missing")?;
     let names: Vec<&str> = funcs.iter().filter_map(Value::as_str).collect();
     require(
-        names.contains(
-            &"frankenlibc_harness::runtime_math_determinism_proofs::run_and_write",
-        ),
+        names.contains(&"frankenlibc_harness::runtime_math_determinism_proofs::run_and_write"),
         "run_and_write not pinned",
     )?;
     Ok(())
@@ -215,17 +213,18 @@ fn cli_writes_structured_log_and_report_to_requested_paths() -> TestResult {
     require(log_path.exists(), "log path must be written")?;
     require(report_path.exists(), "report path must be written")?;
 
-    let (line_count, errors) =
-        frankenlibc_harness::structured_log::validate_log_file(&log_path)
-            .map_err(|err| format!("validate log: {err}"))?;
+    let (line_count, errors) = frankenlibc_harness::structured_log::validate_log_file(&log_path)
+        .map_err(|err| format!("validate log: {err}"))?;
     require(
         errors.is_empty(),
         format!("structured log validation errors: {errors:#?}"),
     )?;
-    require(line_count >= 6, format!("expected multiple log rows, got {line_count}"))?;
+    require(
+        line_count >= 6,
+        format!("expected multiple log rows, got {line_count}"),
+    )?;
 
-    let log_body =
-        std::fs::read_to_string(&log_path).map_err(|err| format!("read log: {err}"))?;
+    let log_body = std::fs::read_to_string(&log_path).map_err(|err| format!("read log: {err}"))?;
     let events: Vec<Value> = log_body
         .lines()
         .filter(|line| !line.trim().is_empty())
