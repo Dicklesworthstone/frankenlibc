@@ -3322,6 +3322,33 @@ fn inet_text_parsers_reject_tracked_unterminated_inputs() {
 }
 
 #[test]
+fn inet_nsap_addr_rejects_glibc_invalid_separators_at_abi_boundary() -> Result<(), &'static str> {
+    const CASES: [&[u8]; 5] = [
+        b"0.1 2.3 4 5\0",
+        b"01 23 45\0",
+        b"0.12345\0",
+        b"01.2.3\0",
+        b"0xab\0",
+    ];
+
+    for text in CASES {
+        let mut out = [0u8; 8];
+        let parsed = unsafe {
+            frankenlibc_abi::glibc_internal_abi::inet_nsap_addr(
+                text.as_ptr().cast(),
+                out.as_mut_ptr().cast(),
+                8,
+            )
+        };
+        if parsed != 0 {
+            return Err("glibc-invalid NSAP separator form should be rejected");
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn inet_nsap_helpers_cap_tracked_short_buffers() {
     unsafe {
         let text = CString::new("abcd").unwrap();
