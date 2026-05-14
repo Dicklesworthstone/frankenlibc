@@ -13,50 +13,50 @@ fn repo_root() -> std::path::PathBuf {
         .to_path_buf()
 }
 
-fn load_json(path: &Path) -> serde_json::Value {
+fn load_json(path: &Path) -> Result<serde_json::Value, String> {
     let content = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
-fn run_generator(extra_args: &[&str]) -> std::process::Output {
+fn run_generator(extra_args: &[&str]) -> Result<std::process::Output, String> {
     let root = repo_root();
     let report_path = root.join("tests/conformance/fixture_unit_tests.v1.json");
     let mut args = vec![
         root.join("scripts/generate_conformance_fixture_unit_tests.py")
-            .to_str()
-            .unwrap()
-            .to_string(),
+            .to_string_lossy()
+            .into_owned(),
         "-o".to_string(),
-        report_path.to_str().unwrap().to_string(),
+        report_path.to_string_lossy().into_owned(),
     ];
     args.extend(extra_args.iter().map(|value| value.to_string()));
     Command::new("python3")
         .args(args)
         .current_dir(&root)
         .output()
-        .expect("failed to execute fixture unit test generator")
+        .map_err(|err| format!("failed to execute fixture unit test generator: {err}"))
 }
 
 #[test]
-fn fixture_unit_report_generates_successfully() {
+fn fixture_unit_report_generates_successfully() -> Result<(), String> {
     let root = repo_root();
     let report_path = root.join("tests/conformance/fixture_unit_tests.v1.json");
-    let output = run_generator(&[]);
+    let output = run_generator(&[])?;
     assert!(
         output.status.success(),
         "Fixture unit test generator failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(report_path.exists());
+    Ok(())
 }
 
 #[test]
-fn fixture_unit_report_schema_complete() {
+fn fixture_unit_report_schema_complete() -> Result<(), String> {
     let root = repo_root();
     let report_path = root.join("tests/conformance/fixture_unit_tests.v1.json");
-    let data = load_json(&report_path);
+    let data = load_json(&report_path)?;
 
     assert_eq!(data["schema_version"].as_str(), Some("v1"));
     assert_eq!(data["bead"].as_str(), Some("bd-2hh.5"));
@@ -76,13 +76,14 @@ fn fixture_unit_report_schema_complete() {
     assert!(data["fixture_results"].is_array());
     assert!(data["regression_baseline"].is_object());
     assert!(data["fixture_hashes"].is_object());
+    Ok(())
 }
 
 #[test]
-fn fixture_unit_invalid_fixture_is_reported_deterministically() {
+fn fixture_unit_invalid_fixture_is_reported_deterministically() -> Result<(), String> {
     let root = repo_root();
     let report_path = root.join("tests/conformance/fixture_unit_tests.v1.json");
-    let data = load_json(&report_path);
+    let data = load_json(&report_path)?;
 
     let results = data["fixture_results"].as_array().unwrap();
     assert!(!results.is_empty(), "No fixture results");
@@ -98,32 +99,34 @@ fn fixture_unit_invalid_fixture_is_reported_deterministically() {
     let structured = results
         .iter()
         .find(|row| row["file"] == "setjmp_nested_edges.json")
-        .expect("expected setjmp_nested_edges.json to be tracked");
+        .ok_or_else(|| String::from("expected setjmp_nested_edges.json to be tracked"))?;
     assert!(structured["valid"].as_bool().unwrap());
     assert!(structured["issues"].as_array().unwrap().is_empty());
     assert!(
         structured["case_count"].as_u64().unwrap() >= 4,
         "structured fixture should synthesize regression cases"
     );
+    Ok(())
 }
 
 #[test]
-fn fixture_unit_determinism_verified() {
+fn fixture_unit_determinism_verified() -> Result<(), String> {
     let root = repo_root();
     let report_path = root.join("tests/conformance/fixture_unit_tests.v1.json");
-    let data = load_json(&report_path);
+    let data = load_json(&report_path)?;
 
     assert!(
         data["summary"]["determinism_verified"].as_bool().unwrap(),
         "Fixture parsing not deterministic"
     );
+    Ok(())
 }
 
 #[test]
-fn fixture_unit_regression_baseline_populated() {
+fn fixture_unit_regression_baseline_populated() -> Result<(), String> {
     let root = repo_root();
     let report_path = root.join("tests/conformance/fixture_unit_tests.v1.json");
-    let data = load_json(&report_path);
+    let data = load_json(&report_path)?;
 
     let baseline = &data["regression_baseline"];
     let symbol_count = baseline["symbol_count"].as_u64().unwrap();
@@ -143,13 +146,14 @@ fn fixture_unit_regression_baseline_populated() {
         .as_str()
         .unwrap();
     assert_eq!(digest.len(), 64, "baseline digest should be full sha256");
+    Ok(())
 }
 
 #[test]
-fn fixture_unit_all_have_hashes() {
+fn fixture_unit_all_have_hashes() -> Result<(), String> {
     let root = repo_root();
     let report_path = root.join("tests/conformance/fixture_unit_tests.v1.json");
-    let data = load_json(&report_path);
+    let data = load_json(&report_path)?;
 
     let hashes = data["fixture_hashes"].as_object().unwrap();
     let results = data["fixture_results"].as_array().unwrap();
@@ -164,18 +168,20 @@ fn fixture_unit_all_have_hashes() {
         let h = hash.as_str().unwrap();
         assert!(!h.is_empty(), "Empty hash for fixture {}", file);
     }
+    Ok(())
 }
 
 #[test]
-fn fixture_unit_log_emission_contains_required_fields() {
+fn fixture_unit_log_emission_contains_required_fields() -> Result<(), String> {
     let root = repo_root();
     let log_path = root.join("target/conformance/fixture_unit_tests.log.jsonl");
+    let log_path_arg = log_path.to_string_lossy().into_owned();
     let output = run_generator(&[
         "--timestamp",
         "2026-03-19T17:47:00Z",
         "--log",
-        log_path.to_str().unwrap(),
-    ]);
+        log_path_arg.as_str(),
+    ])?;
     assert!(
         output.status.success(),
         "Fixture unit test generator with log failed:\n{}",
@@ -183,11 +189,14 @@ fn fixture_unit_log_emission_contains_required_fields() {
     );
 
     let content = std::fs::read_to_string(&log_path)
-        .unwrap_or_else(|e| panic!("failed reading {}: {}", log_path.display(), e));
+        .map_err(|err| format!("failed reading {}: {err}", log_path.display()))?;
     let rows: Vec<serde_json::Value> = content
         .lines()
-        .map(|line| serde_json::from_str(line).expect("log row should be valid json"))
-        .collect();
+        .map(|line| {
+            serde_json::from_str(line)
+                .map_err(|err| format!("log row should be valid json: {err}; row={line}"))
+        })
+        .collect::<Result<_, _>>()?;
     assert!(
         rows.len() >= 2,
         "expected per-fixture rows plus summary row in log"
@@ -219,7 +228,8 @@ fn fixture_unit_log_emission_contains_required_fields() {
     let summary = rows
         .iter()
         .find(|row| row["event"] == "fixture_validation_summary")
-        .expect("summary row should be present");
+        .ok_or_else(|| String::from("summary row should be present"))?;
     assert_eq!(summary["outcome"], "clean");
     assert_eq!(summary["invalid_fixture_files"], 0);
+    Ok(())
 }
