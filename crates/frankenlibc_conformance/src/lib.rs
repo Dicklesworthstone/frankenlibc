@@ -688,6 +688,18 @@ pub fn execute_fixture_case(
         | "__backtrace_symbols"
         | "__backtrace_symbols_fd"
         | "__bsd_getpgrp" => execute_glibc_internal_compat_wave02_case(function, inputs, mode),
+        "__call_tls_dtors"
+        | "__check_rhosts_file"
+        | "__clock_gettime"
+        | "__clone"
+        | "__close"
+        | "__close_nocancel"
+        | "__close_nocancel_nostatus"
+        | "__cmsg_nxthdr"
+        | "__connect"
+        | "__copy_grp"
+        | "__ctype32_b"
+        | "__ctype32_tolower" => execute_glibc_internal_compat_wave03_case(function, inputs, mode),
         "__rpc_thread_createerr"
         | "__rpc_thread_svc_fdset"
         | "__rpc_thread_svc_max_pollfd"
@@ -1799,17 +1811,173 @@ fn glibc_internal_compat_wave02_actual(function: &str) -> Result<String, String>
     }
 }
 
+fn execute_glibc_internal_compat_wave03_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "glibc-internal compat wave03 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = glibc_internal_compat_wave03_actual(function)?;
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    Ok(non_host_execution(format!(
+        "symbol={function};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )))
+}
+
+fn glibc_internal_compat_wave03_actual(function: &str) -> Result<String, String> {
+    match function {
+        "__call_tls_dtors" => {
+            unsafe { frankenlibc_abi::glibc_internal_abi::__call_tls_dtors() };
+            Ok(String::from("CALL_TLS_DTORS_EMPTY_DRAIN_NOOP"))
+        }
+        "__check_rhosts_file" => {
+            let value = unsafe {
+                std::ptr::addr_of_mut!(frankenlibc_abi::glibc_internal_abi::__check_rhosts_file)
+                    .read()
+            };
+            Ok(format!("CHECK_RHOSTS_FILE_VALUE_{value}"))
+        }
+        "__clock_gettime" => {
+            let mut ts = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            glibc_internal_compat_reset_errno();
+            let rc = unsafe {
+                frankenlibc_abi::glibc_internal_abi::__clock_gettime(
+                    -1,
+                    (&mut ts as *mut libc::timespec).cast::<c_void>(),
+                )
+            };
+            let errno = glibc_internal_compat_errno_class(glibc_internal_compat_errno());
+            let ts_state = if ts.tv_sec == 0 && ts.tv_nsec == 0 {
+                "TS_ZERO"
+            } else {
+                "TS_CHANGED"
+            };
+            Ok(format!(
+                "CLOCK_GETTIME_INVALID_RC_{rc}_ERRNO_{errno}_{ts_state}"
+            ))
+        }
+        "__clone" => {
+            glibc_internal_compat_reset_errno();
+            glibc_internal_compat_reset_host_errno();
+            let rc = unsafe {
+                frankenlibc_abi::glibc_internal_abi::__clone(
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                )
+            };
+            let errno = glibc_internal_compat_errno_class(glibc_internal_compat_host_errno());
+            Ok(format!("CLONE_NULL_FN_STACK_RC_{rc}_ERRNO_{errno}"))
+        }
+        "__close" => {
+            glibc_internal_compat_reset_errno();
+            let rc = unsafe { frankenlibc_abi::glibc_internal_abi::__close(-1) };
+            let errno = glibc_internal_compat_errno_class(glibc_internal_compat_errno());
+            Ok(format!("CLOSE_INVALID_FD_RC_{rc}_ERRNO_{errno}"))
+        }
+        "__close_nocancel" => {
+            glibc_internal_compat_reset_errno();
+            let rc = unsafe { frankenlibc_abi::glibc_internal_abi::__close_nocancel(-1) };
+            let errno = glibc_internal_compat_errno_class(glibc_internal_compat_errno());
+            Ok(format!("CLOSE_NOCANCEL_INVALID_FD_RC_{rc}_ERRNO_{errno}"))
+        }
+        "__close_nocancel_nostatus" => {
+            glibc_internal_compat_reset_errno();
+            unsafe { frankenlibc_abi::glibc_internal_abi::__close_nocancel_nostatus(-1) };
+            let errno = glibc_internal_compat_errno_class(glibc_internal_compat_errno());
+            Ok(format!("CLOSE_NOCANCEL_NOSTATUS_INVALID_FD_ERRNO_{errno}"))
+        }
+        "__cmsg_nxthdr" => {
+            let ptr = unsafe {
+                frankenlibc_abi::glibc_internal_abi::__cmsg_nxthdr(
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            if ptr.is_null() {
+                Ok(String::from("CMSG_NXTHDR_NULL_INPUTS_NULL"))
+            } else {
+                Ok(String::from("CMSG_NXTHDR_NULL_INPUTS_NONNULL"))
+            }
+        }
+        "__connect" => {
+            glibc_internal_compat_reset_errno();
+            let rc =
+                unsafe { frankenlibc_abi::glibc_internal_abi::__connect(-1, std::ptr::null(), 0) };
+            let errno = glibc_internal_compat_errno_class(glibc_internal_compat_errno());
+            Ok(format!("CONNECT_INVALID_FD_RC_{rc}_ERRNO_{errno}"))
+        }
+        "__copy_grp" => {
+            glibc_internal_compat_reset_errno();
+            let rc = unsafe {
+                frankenlibc_abi::glibc_internal_abi::__copy_grp(
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                )
+            };
+            let errno = glibc_internal_compat_errno_class(glibc_internal_compat_errno());
+            Ok(format!("COPY_GRP_NULL_ARGS_RC_{rc}_ERRNO_{errno}"))
+        }
+        "__ctype32_b" => {
+            let ptr = unsafe { frankenlibc_abi::glibc_internal_abi::__ctype32_b() };
+            if ptr.is_null() {
+                return Ok(String::from("CTYPE32_B_NULL"));
+            }
+            let mask = unsafe { *ptr.cast::<u16>().add(usize::from(b'A')) };
+            Ok(format!("CTYPE32_B_A_MASK_{mask:04X}"))
+        }
+        "__ctype32_tolower" => {
+            let ptr = unsafe { frankenlibc_abi::glibc_internal_abi::__ctype32_tolower() };
+            if ptr.is_null() {
+                return Ok(String::from("CTYPE32_TOLOWER_NULL"));
+            }
+            let lowered = unsafe { *ptr.add(usize::from(b'A')) };
+            Ok(format!("CTYPE32_TOLOWER_A_{lowered}"))
+        }
+        other => Err(format!(
+            "unsupported glibc-internal compat wave03 fixture: {other}"
+        )),
+    }
+}
+
 fn glibc_internal_compat_reset_errno() {
     unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
+}
+
+fn glibc_internal_compat_reset_host_errno() {
+    unsafe { *libc::__errno_location() = 0 };
 }
 
 fn glibc_internal_compat_errno() -> i32 {
     unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
 }
 
+fn glibc_internal_compat_host_errno() -> i32 {
+    unsafe { *libc::__errno_location() }
+}
+
 fn glibc_internal_compat_errno_class(errno: i32) -> &'static str {
     match errno {
         0 => "NONE",
+        libc::EBADF => "EBADF",
         libc::EFAULT => "EFAULT",
         libc::EINVAL => "EINVAL",
         libc::ENOSYS => "ENOSYS",
@@ -30681,6 +30849,48 @@ mod tests {
             include_str!("../../../tests/conformance/fixtures/glibc_internal_compat_wave02.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("glibc/internal compat wave02 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn glibc_internal_compat_wave03_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/glibc_internal_compat_wave03.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("glibc/internal compat wave03 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

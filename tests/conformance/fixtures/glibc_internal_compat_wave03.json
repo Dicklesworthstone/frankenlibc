@@ -1,0 +1,466 @@
+{
+  "version": "v1",
+  "family": "glibc/internal-compat",
+  "captured_at": "2026-05-14T03:10:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the third glibc-internal compatibility wave. The cases cover TLS destructor empty-drain behavior, static global state, invalid syscall errno classes, nocancel wrappers, null CMSG navigation, group-copy null guards, and ctype32 table probes without recording pointer values, stack frames, host paths, stderr bytes, pid values, timing, or process-global diagnostic text. Each row names an explicit oracle kind and divergence policy to avoid overclaiming internal compatibility.",
+  "spec_reference": "glibc internal compatibility surface for __call_tls_dtors, __check_rhosts_file, __clock_gettime, __clone, __close, __close_nocancel, __close_nocancel_nostatus, __cmsg_nxthdr, __connect, __copy_grp, __ctype32_b, and __ctype32_tolower",
+  "campaign": {
+    "bead": "bd-gmbqy.10",
+    "campaign_id": "fcq-glibc-internal-compat",
+    "wave_id": "wave-03-glibc-internal-compat-syscall-table-state",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture",
+    "symbol_groups": {
+      "supported": [
+        "__call_tls_dtors",
+        "__check_rhosts_file",
+        "__close_nocancel_nostatus",
+        "__cmsg_nxthdr",
+        "__ctype32_b",
+        "__ctype32_tolower"
+      ],
+      "deterministic_fallback": [
+        "__clock_gettime",
+        "__clone",
+        "__close",
+        "__close_nocancel",
+        "__connect",
+        "__copy_grp"
+      ],
+      "claim_blocked": []
+    },
+    "first_wave_symbols": [
+      "__call_tls_dtors",
+      "__check_rhosts_file",
+      "__clock_gettime",
+      "__clone",
+      "__close",
+      "__close_nocancel",
+      "__close_nocancel_nostatus",
+      "__cmsg_nxthdr",
+      "__connect",
+      "__copy_grp",
+      "__ctype32_b",
+      "__ctype32_tolower"
+    ],
+    "residual_symbols": [],
+    "deferred_ambient_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "call_tls_dtors_empty_drain_strict",
+      "function": "__call_tls_dtors",
+      "spec_section": "glibc TLS destructor empty-list drain compatibility",
+      "inputs": {
+        "symbol": "__call_tls_dtors",
+        "scenario": "empty_tls_destructor_list_drain",
+        "expected": "CALL_TLS_DTORS_EMPTY_DRAIN_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_native_empty_state_contract",
+        "divergence_policy": "allow_internal_contract_no_host_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__call_tls_dtors;mode=strict;expected=CALL_TLS_DTORS_EMPTY_DRAIN_NOOP;actual=CALL_TLS_DTORS_EMPTY_DRAIN_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "call_tls_dtors_empty_drain_hardened",
+      "function": "__call_tls_dtors",
+      "spec_section": "glibc TLS destructor empty-list drain compatibility",
+      "inputs": {
+        "symbol": "__call_tls_dtors",
+        "scenario": "empty_tls_destructor_list_drain",
+        "expected": "CALL_TLS_DTORS_EMPTY_DRAIN_NOOP",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_native_empty_state_contract",
+        "divergence_policy": "allow_internal_contract_no_host_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__call_tls_dtors;mode=hardened;expected=CALL_TLS_DTORS_EMPTY_DRAIN_NOOP;actual=CALL_TLS_DTORS_EMPTY_DRAIN_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "check_rhosts_file_default_state_strict",
+      "function": "__check_rhosts_file",
+      "spec_section": "glibc rhosts-check global default-state compatibility",
+      "inputs": {
+        "symbol": "__check_rhosts_file",
+        "scenario": "static_rhosts_check_default_value",
+        "expected": "CHECK_RHOSTS_FILE_VALUE_0",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_static_global_state_contract",
+        "divergence_policy": "allow_static_state_only_no_pointer_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__check_rhosts_file;mode=strict;expected=CHECK_RHOSTS_FILE_VALUE_0;actual=CHECK_RHOSTS_FILE_VALUE_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "check_rhosts_file_default_state_hardened",
+      "function": "__check_rhosts_file",
+      "spec_section": "glibc rhosts-check global default-state compatibility",
+      "inputs": {
+        "symbol": "__check_rhosts_file",
+        "scenario": "static_rhosts_check_default_value",
+        "expected": "CHECK_RHOSTS_FILE_VALUE_0",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_static_global_state_contract",
+        "divergence_policy": "allow_static_state_only_no_pointer_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__check_rhosts_file;mode=hardened;expected=CHECK_RHOSTS_FILE_VALUE_0;actual=CHECK_RHOSTS_FILE_VALUE_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "clock_gettime_invalid_clock_strict",
+      "function": "__clock_gettime",
+      "spec_section": "glibc internal clock_gettime alias invalid-clock errno class",
+      "inputs": {
+        "symbol": "__clock_gettime",
+        "scenario": "invalid_clock_id_error_class_without_time_capture",
+        "expected": "CLOCK_GETTIME_INVALID_RC_-1_ERRNO_EINVAL_TS_ZERO",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "linux_syscall_errno_class",
+        "divergence_policy": "allow_errno_class_only_no_time_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__clock_gettime;mode=strict;expected=CLOCK_GETTIME_INVALID_RC_-1_ERRNO_EINVAL_TS_ZERO;actual=CLOCK_GETTIME_INVALID_RC_-1_ERRNO_EINVAL_TS_ZERO;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "clock_gettime_invalid_clock_hardened",
+      "function": "__clock_gettime",
+      "spec_section": "glibc internal clock_gettime alias invalid-clock errno class",
+      "inputs": {
+        "symbol": "__clock_gettime",
+        "scenario": "invalid_clock_id_error_class_without_time_capture",
+        "expected": "CLOCK_GETTIME_INVALID_RC_-1_ERRNO_EINVAL_TS_ZERO",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "linux_syscall_errno_class",
+        "divergence_policy": "allow_errno_class_only_no_time_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__clock_gettime;mode=hardened;expected=CLOCK_GETTIME_INVALID_RC_-1_ERRNO_EINVAL_TS_ZERO;actual=CLOCK_GETTIME_INVALID_RC_-1_ERRNO_EINVAL_TS_ZERO;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "clone_null_fn_stack_strict",
+      "function": "__clone",
+      "spec_section": "glibc internal clone alias null-entry errno class",
+      "inputs": {
+        "symbol": "__clone",
+        "scenario": "null_function_and_stack_rejected_before_syscall",
+        "expected": "CLONE_NULL_FN_STACK_RC_-1_ERRNO_EINVAL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_native_guard_errno_class",
+        "divergence_policy": "allow_guard_class_only_no_child_thread_spawn",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__clone;mode=strict;expected=CLONE_NULL_FN_STACK_RC_-1_ERRNO_EINVAL;actual=CLONE_NULL_FN_STACK_RC_-1_ERRNO_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "clone_null_fn_stack_hardened",
+      "function": "__clone",
+      "spec_section": "glibc internal clone alias null-entry errno class",
+      "inputs": {
+        "symbol": "__clone",
+        "scenario": "null_function_and_stack_rejected_before_syscall",
+        "expected": "CLONE_NULL_FN_STACK_RC_-1_ERRNO_EINVAL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_native_guard_errno_class",
+        "divergence_policy": "allow_guard_class_only_no_child_thread_spawn",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__clone;mode=hardened;expected=CLONE_NULL_FN_STACK_RC_-1_ERRNO_EINVAL;actual=CLONE_NULL_FN_STACK_RC_-1_ERRNO_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "close_invalid_fd_strict",
+      "function": "__close",
+      "spec_section": "glibc internal close alias invalid-fd errno class",
+      "inputs": {
+        "symbol": "__close",
+        "scenario": "invalid_fd_minus_one_error_class",
+        "expected": "CLOSE_INVALID_FD_RC_-1_ERRNO_EBADF",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "linux_syscall_errno_class",
+        "divergence_policy": "allow_errno_class_only_no_fd_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__close;mode=strict;expected=CLOSE_INVALID_FD_RC_-1_ERRNO_EBADF;actual=CLOSE_INVALID_FD_RC_-1_ERRNO_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "close_invalid_fd_hardened",
+      "function": "__close",
+      "spec_section": "glibc internal close alias invalid-fd errno class",
+      "inputs": {
+        "symbol": "__close",
+        "scenario": "invalid_fd_minus_one_error_class",
+        "expected": "CLOSE_INVALID_FD_RC_-1_ERRNO_EBADF",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "linux_syscall_errno_class",
+        "divergence_policy": "allow_errno_class_only_no_fd_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__close;mode=hardened;expected=CLOSE_INVALID_FD_RC_-1_ERRNO_EBADF;actual=CLOSE_INVALID_FD_RC_-1_ERRNO_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "close_nocancel_invalid_fd_strict",
+      "function": "__close_nocancel",
+      "spec_section": "glibc nocancel close wrapper invalid-fd errno class",
+      "inputs": {
+        "symbol": "__close_nocancel",
+        "scenario": "nocancel_invalid_fd_minus_one_error_class",
+        "expected": "CLOSE_NOCANCEL_INVALID_FD_RC_-1_ERRNO_EBADF",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "linux_syscall_errno_class",
+        "divergence_policy": "allow_errno_class_only_no_cancellation_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__close_nocancel;mode=strict;expected=CLOSE_NOCANCEL_INVALID_FD_RC_-1_ERRNO_EBADF;actual=CLOSE_NOCANCEL_INVALID_FD_RC_-1_ERRNO_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "close_nocancel_invalid_fd_hardened",
+      "function": "__close_nocancel",
+      "spec_section": "glibc nocancel close wrapper invalid-fd errno class",
+      "inputs": {
+        "symbol": "__close_nocancel",
+        "scenario": "nocancel_invalid_fd_minus_one_error_class",
+        "expected": "CLOSE_NOCANCEL_INVALID_FD_RC_-1_ERRNO_EBADF",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "linux_syscall_errno_class",
+        "divergence_policy": "allow_errno_class_only_no_cancellation_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__close_nocancel;mode=hardened;expected=CLOSE_NOCANCEL_INVALID_FD_RC_-1_ERRNO_EBADF;actual=CLOSE_NOCANCEL_INVALID_FD_RC_-1_ERRNO_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "close_nocancel_nostatus_invalid_fd_strict",
+      "function": "__close_nocancel_nostatus",
+      "spec_section": "glibc nocancel close no-status wrapper invalid-fd ignore contract",
+      "inputs": {
+        "symbol": "__close_nocancel_nostatus",
+        "scenario": "nocancel_nostatus_invalid_fd_ignored",
+        "expected": "CLOSE_NOCANCEL_NOSTATUS_INVALID_FD_ERRNO_NONE",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_raw_syscall_ignore_status_contract",
+        "divergence_policy": "allow_no_status_no_errno_contract",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__close_nocancel_nostatus;mode=strict;expected=CLOSE_NOCANCEL_NOSTATUS_INVALID_FD_ERRNO_NONE;actual=CLOSE_NOCANCEL_NOSTATUS_INVALID_FD_ERRNO_NONE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "close_nocancel_nostatus_invalid_fd_hardened",
+      "function": "__close_nocancel_nostatus",
+      "spec_section": "glibc nocancel close no-status wrapper invalid-fd ignore contract",
+      "inputs": {
+        "symbol": "__close_nocancel_nostatus",
+        "scenario": "nocancel_nostatus_invalid_fd_ignored",
+        "expected": "CLOSE_NOCANCEL_NOSTATUS_INVALID_FD_ERRNO_NONE",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_raw_syscall_ignore_status_contract",
+        "divergence_policy": "allow_no_status_no_errno_contract",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__close_nocancel_nostatus;mode=hardened;expected=CLOSE_NOCANCEL_NOSTATUS_INVALID_FD_ERRNO_NONE;actual=CLOSE_NOCANCEL_NOSTATUS_INVALID_FD_ERRNO_NONE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "cmsg_nxthdr_null_inputs_strict",
+      "function": "__cmsg_nxthdr",
+      "spec_section": "glibc CMSG_NXTHDR internal alias null-input contract",
+      "inputs": {
+        "symbol": "__cmsg_nxthdr",
+        "scenario": "null_msghdr_and_cmsghdr_return_null",
+        "expected": "CMSG_NXTHDR_NULL_INPUTS_NULL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_native_null_guard_contract",
+        "divergence_policy": "allow_null_state_only_no_pointer_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__cmsg_nxthdr;mode=strict;expected=CMSG_NXTHDR_NULL_INPUTS_NULL;actual=CMSG_NXTHDR_NULL_INPUTS_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "cmsg_nxthdr_null_inputs_hardened",
+      "function": "__cmsg_nxthdr",
+      "spec_section": "glibc CMSG_NXTHDR internal alias null-input contract",
+      "inputs": {
+        "symbol": "__cmsg_nxthdr",
+        "scenario": "null_msghdr_and_cmsghdr_return_null",
+        "expected": "CMSG_NXTHDR_NULL_INPUTS_NULL",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_native_null_guard_contract",
+        "divergence_policy": "allow_null_state_only_no_pointer_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__cmsg_nxthdr;mode=hardened;expected=CMSG_NXTHDR_NULL_INPUTS_NULL;actual=CMSG_NXTHDR_NULL_INPUTS_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "connect_invalid_fd_strict",
+      "function": "__connect",
+      "spec_section": "glibc internal connect alias invalid-fd errno class",
+      "inputs": {
+        "symbol": "__connect",
+        "scenario": "invalid_fd_minus_one_null_addr_error_class",
+        "expected": "CONNECT_INVALID_FD_RC_-1_ERRNO_EBADF",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "linux_syscall_errno_class",
+        "divergence_policy": "allow_errno_class_only_no_socket_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__connect;mode=strict;expected=CONNECT_INVALID_FD_RC_-1_ERRNO_EBADF;actual=CONNECT_INVALID_FD_RC_-1_ERRNO_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "connect_invalid_fd_hardened",
+      "function": "__connect",
+      "spec_section": "glibc internal connect alias invalid-fd errno class",
+      "inputs": {
+        "symbol": "__connect",
+        "scenario": "invalid_fd_minus_one_null_addr_error_class",
+        "expected": "CONNECT_INVALID_FD_RC_-1_ERRNO_EBADF",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "linux_syscall_errno_class",
+        "divergence_policy": "allow_errno_class_only_no_socket_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__connect;mode=hardened;expected=CONNECT_INVALID_FD_RC_-1_ERRNO_EBADF;actual=CONNECT_INVALID_FD_RC_-1_ERRNO_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "copy_grp_null_args_strict",
+      "function": "__copy_grp",
+      "spec_section": "glibc group-copy helper null-argument guard contract",
+      "inputs": {
+        "symbol": "__copy_grp",
+        "scenario": "null_group_copy_arguments_return_einval",
+        "expected": "COPY_GRP_NULL_ARGS_RC_22_ERRNO_NONE",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_native_guard_return_code",
+        "divergence_policy": "allow_return_code_only_no_group_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__copy_grp;mode=strict;expected=COPY_GRP_NULL_ARGS_RC_22_ERRNO_NONE;actual=COPY_GRP_NULL_ARGS_RC_22_ERRNO_NONE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "copy_grp_null_args_hardened",
+      "function": "__copy_grp",
+      "spec_section": "glibc group-copy helper null-argument guard contract",
+      "inputs": {
+        "symbol": "__copy_grp",
+        "scenario": "null_group_copy_arguments_return_einval",
+        "expected": "COPY_GRP_NULL_ARGS_RC_22_ERRNO_NONE",
+        "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "oracle_kind": "frankenlibc_native_guard_return_code",
+        "divergence_policy": "allow_return_code_only_no_group_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__copy_grp;mode=hardened;expected=COPY_GRP_NULL_ARGS_RC_22_ERRNO_NONE;actual=COPY_GRP_NULL_ARGS_RC_22_ERRNO_NONE;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ctype32_b_ascii_a_mask_strict",
+      "function": "__ctype32_b",
+      "spec_section": "glibc ctype32 classification table ASCII A mask",
+      "inputs": {
+        "symbol": "__ctype32_b",
+        "scenario": "ascii_A_classification_mask_low16",
+        "expected": "CTYPE32_B_A_MASK_D508",
+        "oracle_source": "crates/frankenlibc-abi/src/ctype_abi.rs",
+        "oracle_kind": "frankenlibc_static_table_contract",
+        "divergence_policy": "allow_table_value_only_no_pointer_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__ctype32_b;mode=strict;expected=CTYPE32_B_A_MASK_D508;actual=CTYPE32_B_A_MASK_D508;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ctype32_b_ascii_a_mask_hardened",
+      "function": "__ctype32_b",
+      "spec_section": "glibc ctype32 classification table ASCII A mask",
+      "inputs": {
+        "symbol": "__ctype32_b",
+        "scenario": "ascii_A_classification_mask_low16",
+        "expected": "CTYPE32_B_A_MASK_D508",
+        "oracle_source": "crates/frankenlibc-abi/src/ctype_abi.rs",
+        "oracle_kind": "frankenlibc_static_table_contract",
+        "divergence_policy": "allow_table_value_only_no_pointer_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__ctype32_b;mode=hardened;expected=CTYPE32_B_A_MASK_D508;actual=CTYPE32_B_A_MASK_D508;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ctype32_tolower_ascii_a_strict",
+      "function": "__ctype32_tolower",
+      "spec_section": "glibc ctype32 lowercase conversion table ASCII A mapping",
+      "inputs": {
+        "symbol": "__ctype32_tolower",
+        "scenario": "ascii_A_tolower_table_mapping",
+        "expected": "CTYPE32_TOLOWER_A_97",
+        "oracle_source": "crates/frankenlibc-abi/src/ctype_abi.rs",
+        "oracle_kind": "frankenlibc_static_table_contract",
+        "divergence_policy": "allow_table_value_only_no_pointer_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__ctype32_tolower;mode=strict;expected=CTYPE32_TOLOWER_A_97;actual=CTYPE32_TOLOWER_A_97;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ctype32_tolower_ascii_a_hardened",
+      "function": "__ctype32_tolower",
+      "spec_section": "glibc ctype32 lowercase conversion table ASCII A mapping",
+      "inputs": {
+        "symbol": "__ctype32_tolower",
+        "scenario": "ascii_A_tolower_table_mapping",
+        "expected": "CTYPE32_TOLOWER_A_97",
+        "oracle_source": "crates/frankenlibc-abi/src/ctype_abi.rs",
+        "oracle_kind": "frankenlibc_static_table_contract",
+        "divergence_policy": "allow_table_value_only_no_pointer_capture",
+        "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
+      },
+      "expected_output": "symbol=__ctype32_tolower;mode=hardened;expected=CTYPE32_TOLOWER_A_97;actual=CTYPE32_TOLOWER_A_97;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
