@@ -46,12 +46,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,8 +132,8 @@ fn termios_ops_fixture_exists() {
 }
 
 #[test]
-fn termios_ops_fixture_valid_schema() {
-    let fixture = load_fixture("termios_ops");
+fn termios_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("termios_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "termios_ops");
@@ -152,6 +152,7 @@ fn termios_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,8 +160,8 @@ fn termios_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn termios_ops_covers_tcgetattr() {
-    let fixture = load_fixture("termios_ops");
+fn termios_ops_covers_tcgetattr() -> Result<(), String> {
+    let fixture = load_fixture("termios_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -171,6 +172,7 @@ fn termios_ops_covers_tcgetattr() {
             >= 2,
         "tcgetattr needs at least 2 test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,8 +180,8 @@ fn termios_ops_covers_tcgetattr() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn termios_ops_covers_speed_functions() {
-    let fixture = load_fixture("termios_ops");
+fn termios_ops_covers_speed_functions() -> Result<(), String> {
+    let fixture = load_fixture("termios_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["cfgetispeed", "cfgetospeed", "cfsetispeed", "cfsetospeed"];
@@ -191,6 +193,7 @@ fn termios_ops_covers_speed_functions() {
             pattern
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -198,8 +201,8 @@ fn termios_ops_covers_speed_functions() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn termios_ops_error_codes_valid() {
-    let fixture = load_fixture("termios_ops");
+fn termios_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("termios_ops")?;
 
     // Valid POSIX/Linux error codes for termios functions
     let valid_errno_values = [
@@ -218,6 +221,7 @@ fn termios_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,17 +229,18 @@ fn termios_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn termios_ops_modes_valid() {
-    let fixture = load_fixture("termios_ops");
+fn termios_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("termios_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,8 +248,8 @@ fn termios_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn termios_ops_covers_both_modes() {
-    let fixture = load_fixture("termios_ops");
+fn termios_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("termios_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
@@ -254,6 +259,7 @@ fn termios_ops_covers_both_modes() {
         has_hardened,
         "termios_ops must have hardened mode test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -261,8 +267,8 @@ fn termios_ops_covers_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn termios_ops_case_count_stable() {
-    let fixture = load_fixture("termios_ops");
+fn termios_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("termios_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 6;
 
@@ -274,6 +280,7 @@ fn termios_ops_case_count_stable() {
     );
 
     eprintln!("termios_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -281,14 +288,15 @@ fn termios_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn termios_ops_covers_error_paths() {
-    let fixture = load_fixture("termios_ops");
+fn termios_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("termios_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|n| n.contains("invalid")),
         "termios_ops must test invalid fd handling"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,8 +304,8 @@ fn termios_ops_covers_error_paths() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn termios_ops_has_posix_references() {
-    let fixture = load_fixture("termios_ops");
+fn termios_ops_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("termios_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -307,17 +315,18 @@ fn termios_ops_has_posix_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn termios_ops_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("termios_ops");
+fn termios_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("termios_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
-            .clone()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .as_deref()
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -325,13 +334,13 @@ fn termios_ops_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "termios_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity,
                 "termios_ops case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -344,4 +353,6 @@ fn termios_ops_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+
+    Ok(())
 }
