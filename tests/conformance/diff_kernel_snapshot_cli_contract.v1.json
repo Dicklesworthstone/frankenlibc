@@ -1,0 +1,76 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "diff-kernel-snapshot-cli-contract",
+  "bead": "bd-24jo1",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "71b09cfc5e13a25d9b5cac3686240210e961fd74",
+  "purpose": "Pin the harness binary subcommand that compares runtime_math kernel snapshot fixtures produced by snapshot-kernel. The command reads a golden RuntimeKernelSnapshotFixtureV1 and either reads or synthesizes a current fixture, selects strict or hardened mode, diffs key snapshot fields by default, optionally expands to all fields, and renders a deterministic plain/FTUI report for review.",
+  "subcommand_name": "diff-kernel-snapshot",
+  "binary_target": "harness",
+  "required_flags": [
+    "--golden",
+    "--current"
+  ],
+  "optional_flags": [
+    "--mode",
+    "--all",
+    "--ansi",
+    "--width"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::snapshot_diff::diff_kernel_snapshots",
+    "frankenlibc_harness::snapshot_diff::DiffMode::from_str_loose",
+    "frankenlibc_harness::snapshot_diff::render_plain",
+    "frankenlibc_harness::snapshot_diff::render_ftui",
+    "frankenlibc_harness::kernel_snapshot::build_kernel_snapshot_fixture"
+  ],
+  "io_pattern": "stdout_plain_report_no_output_file",
+  "plain_report_contract": {
+    "header_prefix": "runtime_math snapshot diff",
+    "required_columns": [
+      "field",
+      "golden",
+      "current",
+      "delta",
+      "status"
+    ],
+    "status_markers": [
+      "OK",
+      "CHG",
+      "ALERT"
+    ],
+    "default_key_field_sample": [
+      "schema_version",
+      "full_validation_trigger_ppm",
+      "repair_trigger_ppm",
+      "hji_safety_value"
+    ]
+  },
+  "mode_enum": [
+    "strict",
+    "hardened"
+  ],
+  "default_mode": "strict",
+  "policy": {
+    "identical_fixtures_must_render_ok_rows": true,
+    "changed_threshold_field_must_render_alert": true,
+    "unknown_mode_must_fail_closed": true,
+    "missing_selected_mode_must_fail_closed": true,
+    "missing_current_fixture_may_be_synthesized_from_golden_scenario": true,
+    "plain_output_must_include_mode_and_scenario": true
+  },
+  "rejected_evidence_kinds": [
+    "unknown_mode_accepted",
+    "missing_mode_accepted",
+    "changed_snapshot_rendered_all_ok",
+    "missing_report_header",
+    "wrong_status_columns",
+    "diff_command_not_bound_to_snapshot_diff_module"
+  ],
+  "summary": {
+    "bead": "bd-24jo1",
+    "subcommand": "diff-kernel-snapshot",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
