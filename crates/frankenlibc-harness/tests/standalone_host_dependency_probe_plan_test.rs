@@ -383,7 +383,7 @@ fn assert_forge_blocker_value_snapshot(
 
     let version_needs = json_field(snapshot, "version_needs")?
         .as_object()
-        .ok_or_else(|| "snapshot version_needs must be object".to_string())?;
+        .ok_or("snapshot version_needs must be object")?;
     require(
         version_needs.len() == FORGE_BLOCKER_SNAPSHOT_VERSION_NEEDS.len(),
         "snapshot version_needs provider count",
@@ -391,16 +391,12 @@ fn assert_forge_blocker_value_snapshot(
     for (provider, expected_versions) in FORGE_BLOCKER_SNAPSHOT_VERSION_NEEDS {
         let versions = version_needs
             .get(*provider)
-            .ok_or_else(|| "snapshot version_needs missing provider".to_string())?;
+            .ok_or("snapshot version_needs missing provider")?;
         let actual_versions = versions
             .as_array()
-            .ok_or_else(|| "snapshot version_needs provider must be an array".to_string())?
+            .ok_or("snapshot version_needs provider must be an array")?
             .iter()
-            .map(|item| {
-                item.as_str().ok_or_else(|| {
-                    "snapshot version_needs provider must contain only strings".to_string()
-                })
-            })
+            .map(|item| json_item_string(item, "snapshot version_needs provider"))
             .collect::<TestResult<Vec<_>>>()?;
         require(
             actual_versions.as_slice().eq(*expected_versions),
@@ -464,6 +460,92 @@ fn require(condition: bool, message: impl Into<String>) -> TestResult {
     } else {
         Err(message.into())
     }
+}
+
+fn require_projection_field(
+    projected_fields: &HashSet<String>,
+    standalone_report_fields: &HashSet<String>,
+    field: &str,
+) -> TestResult {
+    require(
+        projected_fields.contains(field),
+        format!("projection missing field {field}"),
+    )?;
+    require(
+        standalone_report_fields.contains(field),
+        format!("projection field is not in standalone report contract: {field}"),
+    )
+}
+
+fn require_blocking_reason_mapping(
+    reason_map: &serde_json::Map<String, Value>,
+    probe_ids: &HashSet<String>,
+    reason: &str,
+    probe_id: &str,
+) -> TestResult {
+    require(
+        reason_map.get(reason).and_then(Value::as_str) == Some(probe_id),
+        format!("blocking reason {reason} must map to {probe_id}"),
+    )?;
+    require(
+        probe_ids.contains(probe_id),
+        format!("mapped probe id missing: {probe_id}"),
+    )
+}
+
+fn require_blocker_catalog_row(
+    catalog_rows: &serde_json::Map<String, Value>,
+    standalone_catalog_definitions: &serde_json::Map<String, Value>,
+    reason: &str,
+) -> TestResult {
+    let row = catalog_rows
+        .get(reason)
+        .ok_or_else(|| format!("blocker catalog missing {reason}"))?;
+    require(
+        json_string(row, "severity")? == "claim_blocking",
+        format!("blocker catalog row {reason} must be claim_blocking"),
+    )?;
+    require(
+        !json_string(row, "owner_surface")?.is_empty(),
+        format!("blocker catalog row {reason} must name owner_surface"),
+    )?;
+    require(
+        !json_string(row, "next_action")?.is_empty(),
+        format!("blocker catalog row {reason} must include next_action"),
+    )?;
+    require(
+        !json_array(row, "evidence_fields")?.is_empty(),
+        format!("blocker catalog row {reason} must cite evidence_fields"),
+    )?;
+    let expected_row = standalone_catalog_definitions
+        .get(reason)
+        .ok_or_else(|| format!("standalone manifest missing catalog row {reason}"))?;
+    require(
+        row == expected_row,
+        format!("blocker catalog row {reason} must match standalone manifest contract"),
+    )
+}
+
+fn require_failure_mapping(
+    failure_map: &serde_json::Map<String, Value>,
+    standalone_failure_signatures: &HashSet<String>,
+    negative_test_ids: &HashSet<String>,
+    failure: &str,
+    test_id: &str,
+) -> TestResult {
+    let mapped_test_id = failure_map.get(failure).and_then(Value::as_str);
+    require(
+        mapped_test_id.is_some_and(|actual| actual.eq(test_id)),
+        format!("failure entry {failure} must map to {test_id}"),
+    )?;
+    require(
+        standalone_failure_signatures.contains(failure),
+        format!("mapped failure entry missing from standalone manifest: {failure}"),
+    )?;
+    require(
+        negative_test_ids.contains(test_id),
+        format!("mapped negative test missing: {test_id}"),
+    )
 }
 
 fn assert_repo_relative_existing_path(root: &Path, rel: &str, context: &str) -> TestResult {
@@ -675,28 +757,14 @@ fn plan_has_required_shape_and_probe_coverage() -> TestResult {
     )?;
     let projected_fields = string_set(projection, "projected_report_fields")?;
     for field in FORGE_PROJECTION_FIELDS {
-        require(
-            projected_fields.contains(*field),
-            format!("projection missing field {field}"),
-        )?;
-        require(
-            standalone_report_fields.contains(*field),
-            format!("projection field is not in standalone report contract: {field}"),
-        )?;
+        require_projection_field(&projected_fields, &standalone_report_fields, field)?;
     }
 
     let reason_map = json_field(projection, "blocking_reason_to_probe_id")?
         .as_object()
         .ok_or_else(|| "blocking_reason_to_probe_id must be object".to_string())?;
     for (reason, probe_id) in FORGE_BLOCKING_REASON_MAPPINGS {
-        require(
-            reason_map.get(*reason).and_then(Value::as_str) == Some(*probe_id),
-            format!("blocking reason {reason} must map to {probe_id}"),
-        )?;
-        require(
-            probe_ids.contains(*probe_id),
-            format!("mapped probe id missing: {probe_id}"),
-        )?;
+        require_blocking_reason_mapping(reason_map, &probe_ids, reason, probe_id)?;
     }
     require(
         reason_map.len() == FORGE_BLOCKING_REASON_MAPPINGS.len(),
@@ -711,50 +779,19 @@ fn plan_has_required_shape_and_probe_coverage() -> TestResult {
         "blocker catalog must have one row per projected blocking reason",
     )?;
     for (reason, _) in FORGE_BLOCKING_REASON_MAPPINGS {
-        let row = catalog_rows
-            .get(*reason)
-            .ok_or_else(|| format!("blocker catalog missing {reason}"))?;
-        require(
-            json_string(row, "severity")? == "claim_blocking",
-            format!("blocker catalog row {reason} must be claim_blocking"),
-        )?;
-        require(
-            !json_string(row, "owner_surface")?.is_empty(),
-            format!("blocker catalog row {reason} must name owner_surface"),
-        )?;
-        require(
-            !json_string(row, "next_action")?.is_empty(),
-            format!("blocker catalog row {reason} must include next_action"),
-        )?;
-        require(
-            !json_array(row, "evidence_fields")?.is_empty(),
-            format!("blocker catalog row {reason} must cite evidence_fields"),
-        )?;
-        let expected_row = standalone_catalog_definitions
-            .get(*reason)
-            .ok_or_else(|| format!("standalone manifest missing catalog row {reason}"))?;
-        require(
-            row == expected_row,
-            format!("blocker catalog row {reason} must match standalone manifest contract"),
-        )?;
+        require_blocker_catalog_row(catalog_rows, standalone_catalog_definitions, reason)?;
     }
 
     let failure_map = json_field(projection, "failure_signature_to_negative_test")?
         .as_object()
         .ok_or_else(|| "failure_signature_to_negative_test must be object".to_string())?;
     for (failure, test_id) in FORGE_FAILURE_SIGNATURE_MAPPINGS {
-        let mapped_test_id = failure_map.get(*failure).and_then(Value::as_str);
-        require(
-            mapped_test_id.is_some_and(|actual| actual.eq(*test_id)),
-            format!("failure entry {failure} must map to {test_id}"),
-        )?;
-        require(
-            standalone_failure_signatures.contains(*failure),
-            format!("mapped failure entry missing from standalone manifest: {failure}"),
-        )?;
-        require(
-            negative_test_ids.contains(*test_id),
-            format!("mapped negative test missing: {test_id}"),
+        require_failure_mapping(
+            failure_map,
+            &standalone_failure_signatures,
+            &negative_test_ids,
+            failure,
+            test_id,
         )?;
     }
     let expected_snapshot_reason_set: HashSet<String> = FORGE_BLOCKING_REASON_MAPPINGS
@@ -984,7 +1021,7 @@ fn checker_emits_report_and_required_jsonl_rows() -> TestResult {
     require(rows.len() == 14, "expected one JSONL row per probe")?;
     for row in rows {
         for field in REQUIRED_LOG_FIELDS {
-            require(row.get(*field).is_some(), "log row missing required field")?;
+            json_field(&row, field)?;
         }
     }
     Ok(())
