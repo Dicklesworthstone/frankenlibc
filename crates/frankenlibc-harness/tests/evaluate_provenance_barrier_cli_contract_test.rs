@@ -122,15 +122,33 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "echoes_inputs_into_output_record",
-        "safe_iff_headroom_at_or_above_zero",
-        "deterministic_given_inputs",
-        "low_risk_full_validation_certified_safe",
-        "high_risk_fast_path_with_bad_bloom_violates_certificate",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "echoes_inputs_into_output_record",
+            "echoes_inputs_into_output_record must be true",
+        ),
+        (
+            "safe_iff_headroom_at_or_above_zero",
+            "safe_iff_headroom_at_or_above_zero must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "low_risk_full_validation_certified_safe",
+            "low_risk_full_validation_certified_safe must be true",
+        ),
+        (
+            "high_risk_fast_path_with_bad_bloom_violates_certificate",
+            "high_risk_fast_path_with_bad_bloom_violates_certificate must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -254,31 +272,41 @@ fn cli_safe_flag_matches_headroom_sign() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    for (i, (r, v, b, p)) in [
-        (50_000u32, 1_000_000u32, 1_000u32, 100_000u32),
-        (200_000, 500_000, 100_000, 500_000),
-        (500_000, 200_000, 500_000, 800_000),
-        (1_000_000, 1_000_000, 0, 0),
-    ]
-    .iter()
-    .enumerate()
-    {
-        let output = unique_tmp(&format!("sign_{i}"))?;
-        let out = run_cli(&bin, *r, *v, *b, *p, &output)?;
+    for (label, risk, validation_depth, bloom, arena) in [
+        (
+            "sign_full_validation_low_pressure",
+            50_000u32,
+            1_000_000u32,
+            1_000u32,
+            100_000u32,
+        ),
+        (
+            "sign_balanced_validation",
+            200_000,
+            500_000,
+            100_000,
+            500_000,
+        ),
+        (
+            "sign_stressed_fast_path",
+            500_000,
+            200_000,
+            500_000,
+            800_000,
+        ),
+        ("sign_clean_full_validation", 1_000_000, 1_000_000, 0, 0),
+    ] {
+        let output = unique_tmp(label)?;
+        let out = run_cli(&bin, risk, validation_depth, bloom, arena, &output)?;
         if !out.status.success() {
-            return Err(format!(
-                "case {i} stderr={}",
-                String::from_utf8_lossy(&out.stderr)
-            ));
+            return Err("sign-case CLI invocation must succeed".into());
         }
         let parsed = read_record(&output)?;
         let headroom = json_i64(&parsed, "headroom")?;
         let safe = json_bool(&parsed, "safe")?;
         require(
             safe == (headroom >= 0),
-            format!(
-                "case {i} ({r},{v},{b},{p}): safe={safe} headroom={headroom}; safe iff headroom>=0 broken"
-            ),
+            "safe flag must match headroom sign for every sign-case input",
         )?;
     }
     Ok(())
