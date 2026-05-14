@@ -127,17 +127,30 @@ fn manifest_anchors_to_b5gfg_with_subcommand_name() -> TestResult {
 fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
-    let policy = m
-        .get("policy")
-        .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "ok_true_iff_parse_and_intrinsic_both_pass",
-        "exit_non_zero_when_ok_false",
-        "intrinsic_errors_must_be_empty_array_when_ok_true",
-        "canonical_artifact_must_pass_validate_intrinsic",
+    let policy = m.get("policy").ok_or("missing policy")?;
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "ok_true_iff_parse_and_intrinsic_both_pass",
+            "ok_true_iff_parse_and_intrinsic_both_pass must be true",
+        ),
+        (
+            "exit_non_zero_when_ok_false",
+            "exit_non_zero_when_ok_false must be true",
+        ),
+        (
+            "intrinsic_errors_must_be_empty_array_when_ok_true",
+            "intrinsic_errors_must_be_empty_array_when_ok_true must be true",
+        ),
+        (
+            "canonical_artifact_must_pass_validate_intrinsic",
+            "canonical_artifact_must_pass_validate_intrinsic must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
