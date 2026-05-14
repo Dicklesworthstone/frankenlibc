@@ -27,13 +27,23 @@ const REQUIRED_LOG_FIELDS: &[&str] = &["symbol", "mode", "expected", "actual", "
 const AMBIENT_POLICY: &str =
     "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture";
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    workspace_root
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "workspace root has no repository parent: {}",
+                workspace_root.display()
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,20 +101,21 @@ struct DifferentialExecution {
     note: Option<String>,
 }
 
-fn load_fixture() -> FixtureFile {
-    let path = repo_root().join("tests/conformance/fixtures/unistd_process_filesystem_wave09.json");
+fn load_fixture() -> Result<FixtureFile, String> {
+    let path =
+        repo_root()?.join("tests/conformance/fixtures/unistd_process_filesystem_wave09.json");
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
-fn load_json_artifact(relative_path: &str) -> Value {
-    let path = repo_root().join(relative_path);
+fn load_json_artifact(relative_path: &str) -> Result<Value, String> {
+    let path = repo_root()?.join(relative_path);
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn json_array_has_str(value: &Value, expected: &str) -> bool {
@@ -113,22 +124,22 @@ fn json_array_has_str(value: &Value, expected: &str) -> bool {
         .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(expected)))
 }
 
-fn find_symbol_row<'a>(coverage: &'a Value, symbol: &str) -> &'a Value {
+fn find_symbol_row<'a>(coverage: &'a Value, symbol: &str) -> Result<&'a Value, String> {
     coverage["symbols"]
         .as_array()
-        .expect("coverage symbols must be an array")
+        .ok_or_else(|| String::from("coverage symbols must be an array"))?
         .iter()
         .find(|row| row["symbol"].as_str() == Some(symbol))
-        .unwrap_or_else(|| panic!("missing coverage row for {symbol}"))
+        .ok_or_else(|| format!("missing coverage row for {symbol}"))
 }
 
-fn find_campaign_row<'a>(prioritizer: &'a Value, campaign_id: &str) -> &'a Value {
+fn find_campaign_row<'a>(prioritizer: &'a Value, campaign_id: &str) -> Result<&'a Value, String> {
     prioritizer["campaigns"]
         .as_array()
-        .expect("prioritizer campaigns must be an array")
+        .ok_or_else(|| String::from("prioritizer campaigns must be an array"))?
         .iter()
         .find(|row| row["campaign_id"].as_str() == Some(campaign_id))
-        .unwrap_or_else(|| panic!("missing prioritizer campaign {campaign_id}"))
+        .ok_or_else(|| format!("missing prioritizer campaign {campaign_id}"))
 }
 
 fn execute_case_via_harness(
@@ -183,14 +194,15 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn unistd_process_filesystem_wave09_fixture_exists_and_names_campaign() {
-    let path = repo_root().join("tests/conformance/fixtures/unistd_process_filesystem_wave09.json");
+fn unistd_process_filesystem_wave09_fixture_exists_and_names_campaign() -> Result<(), String> {
+    let path =
+        repo_root()?.join("tests/conformance/fixtures/unistd_process_filesystem_wave09.json");
     assert!(
         path.exists(),
         "unistd_process_filesystem_wave09.json fixture must exist"
     );
 
-    let fixture = load_fixture();
+    let fixture = load_fixture()?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "unistd/process-filesystem");
     assert_eq!(fixture.campaign.bead, "bd-vm6j0.1");
@@ -218,11 +230,12 @@ fn unistd_process_filesystem_wave09_fixture_exists_and_names_campaign() {
             && fixture.description.contains("ambient file state"),
         "fixture description must reject ambient fd/path/pid/env/user/program/counter/file capture"
     );
+    Ok(())
 }
 
 #[test]
-fn unistd_process_filesystem_wave09_covers_first_wave_in_both_modes() {
-    let fixture = load_fixture();
+fn unistd_process_filesystem_wave09_covers_first_wave_in_both_modes() -> Result<(), String> {
+    let fixture = load_fixture()?;
     let expected: BTreeSet<_> = FIRST_WAVE_SYMBOLS.iter().copied().collect();
     let declared: BTreeSet<_> = fixture
         .campaign
@@ -247,18 +260,19 @@ fn unistd_process_filesystem_wave09_covers_first_wave_in_both_modes() {
     for symbol in FIRST_WAVE_SYMBOLS {
         let modes = modes_by_symbol
             .get(symbol)
-            .unwrap_or_else(|| panic!("missing fixture cases for {symbol}"));
+            .ok_or_else(|| format!("missing fixture cases for {symbol}"))?;
         assert!(modes.contains("strict"), "missing strict case for {symbol}");
         assert!(
             modes.contains("hardened"),
             "missing hardened case for {symbol}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn unistd_process_filesystem_wave09_logs_without_ambient_leaks() {
-    let fixture = load_fixture();
+fn unistd_process_filesystem_wave09_logs_without_ambient_leaks() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert_eq!(
         fixture.structured_log_fields, REQUIRED_LOG_FIELDS,
         "structured log field contract drifted"
@@ -283,7 +297,7 @@ fn unistd_process_filesystem_wave09_logs_without_ambient_leaks() {
         let inputs = case
             .inputs
             .as_object()
-            .unwrap_or_else(|| panic!("case {} inputs must be an object", case.name));
+            .ok_or_else(|| format!("case {} inputs must be an object", case.name))?;
         for field in [
             "symbol",
             "scenario",
@@ -345,11 +359,12 @@ fn unistd_process_filesystem_wave09_logs_without_ambient_leaks() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn unistd_process_filesystem_wave09_spec_reference_names_required_surfaces() {
-    let fixture = load_fixture();
+fn unistd_process_filesystem_wave09_spec_reference_names_required_surfaces() -> Result<(), String> {
+    let fixture = load_fixture()?;
     for token in [
         "euidaccess",
         "eventfd2",
@@ -365,13 +380,14 @@ fn unistd_process_filesystem_wave09_spec_reference_names_required_surfaces() {
             "spec reference must mention {token}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn unistd_process_filesystem_wave09_coverage_artifacts_bind_first_wave() {
-    let coverage = load_json_artifact("tests/conformance/symbol_fixture_coverage.v1.json");
+fn unistd_process_filesystem_wave09_coverage_artifacts_bind_first_wave() -> Result<(), String> {
+    let coverage = load_json_artifact("tests/conformance/symbol_fixture_coverage.v1.json")?;
     for symbol in FIRST_WAVE_SYMBOLS {
-        let row = find_symbol_row(&coverage, symbol);
+        let row = find_symbol_row(&coverage, symbol)?;
         assert_eq!(
             row["covered"].as_bool(),
             Some(true),
@@ -400,8 +416,8 @@ fn unistd_process_filesystem_wave09_coverage_artifacts_bind_first_wave() {
         );
     }
 
-    let prioritizer = load_json_artifact("tests/conformance/fixture_coverage_prioritizer.v1.json");
-    let campaign = find_campaign_row(&prioritizer, "fcq-unistd-process-filesystem");
+    let prioritizer = load_json_artifact("tests/conformance/fixture_coverage_prioritizer.v1.json")?;
+    let campaign = find_campaign_row(&prioritizer, "fcq-unistd-process-filesystem")?;
     assert!(
         campaign["current_coverage_pct"].as_f64().unwrap_or(0.0) >= 20.0,
         "unistd/process coverage percent must include wave-09 fixture rows"
@@ -417,7 +433,7 @@ fn unistd_process_filesystem_wave09_coverage_artifacts_bind_first_wave() {
 
     let next_wave: BTreeSet<_> = campaign["first_wave_symbols"]
         .as_array()
-        .expect("campaign first_wave_symbols must be an array")
+        .ok_or_else(|| String::from("campaign first_wave_symbols must be an array"))?
         .iter()
         .filter_map(Value::as_str)
         .collect();
@@ -427,24 +443,25 @@ fn unistd_process_filesystem_wave09_coverage_artifacts_bind_first_wave() {
             "covered symbol {symbol} must not remain in the next prioritizer wave"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn unistd_process_filesystem_wave09_executes_via_isolated_harness() {
-    let fixture = load_fixture();
+fn unistd_process_filesystem_wave09_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture()?;
     assert!(
         fixture.cases.len() >= FIRST_WAVE_SYMBOLS.len() * 2,
         "fixture should include strict+hardened rows for every first-wave symbol"
     );
 
     for case in &fixture.cases {
-        let result = execute_case_via_harness(&case.function, &case.inputs, &case.mode)
-            .unwrap_or_else(|err| {
-                panic!(
+        let result =
+            execute_case_via_harness(&case.function, &case.inputs, &case.mode).map_err(|err| {
+                format!(
                     "unistd process/filesystem wave-09 case {} ({}) failed via harness: {err}",
                     case.name, case.mode
                 )
-            });
+            })?;
         assert_eq!(
             result.impl_output, case.expected_output,
             "fixture expected_output mismatch for {} ({})",
@@ -458,4 +475,5 @@ fn unistd_process_filesystem_wave09_executes_via_isolated_harness() {
         assert!(result.host_parity, "fixture executor reported failure");
         assert!(result.note.is_none(), "unexpected fixture note drift");
     }
+    Ok(())
 }
