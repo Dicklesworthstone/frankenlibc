@@ -61,12 +61,12 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -131,8 +131,8 @@ fn pwd_ops_fixture_exists() {
 }
 
 #[test]
-fn pwd_ops_fixture_valid_schema() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "pwd_ops");
@@ -160,6 +160,7 @@ fn pwd_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,14 +168,15 @@ fn pwd_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pwd_ops_covers_getpwnam() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_covers_getpwnam() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("getpwnam")).count() >= 2,
         "getpwnam needs at least 2 test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,14 +184,15 @@ fn pwd_ops_covers_getpwnam() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pwd_ops_covers_getpwuid() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_covers_getpwuid() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().filter(|n| n.contains("getpwuid")).count() >= 2,
         "getpwuid needs at least 2 test cases"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -197,8 +200,8 @@ fn pwd_ops_covers_getpwuid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pwd_ops_covers_enumeration() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_covers_enumeration() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -207,6 +210,7 @@ fn pwd_ops_covers_enumeration() {
             .any(|name| name.contains("setpwent") || name.contains("endpwent")),
         "Missing test coverage for setpwent/endpwent"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,8 +218,8 @@ fn pwd_ops_covers_enumeration() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pwd_ops_error_codes_valid() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
 
     // pwd functions typically return NULL without setting errno for "not found"
     let valid_errno_values = [0];
@@ -228,6 +232,7 @@ fn pwd_ops_error_codes_valid() {
             case.expected_errno,
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -235,17 +240,18 @@ fn pwd_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pwd_ops_modes_valid() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,14 +259,15 @@ fn pwd_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pwd_ops_covers_both_modes() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
 
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
 
     assert!(has_strict, "pwd_ops must have strict mode test cases");
     assert!(has_hardened, "pwd_ops must have hardened mode test cases");
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,8 +275,8 @@ fn pwd_ops_covers_both_modes() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pwd_ops_case_count_stable() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 8;
 
@@ -281,6 +288,7 @@ fn pwd_ops_case_count_stable() {
     );
 
     eprintln!("pwd_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -288,14 +296,15 @@ fn pwd_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pwd_ops_covers_error_paths() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_covers_error_paths() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|n| n.contains("nonexistent")),
         "pwd_ops must test nonexistent user handling"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -303,8 +312,8 @@ fn pwd_ops_covers_error_paths() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pwd_ops_covers_root_user() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_covers_root_user() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
@@ -313,6 +322,7 @@ fn pwd_ops_covers_root_user() {
             .any(|n| n.contains("root") || n.contains("zero")),
         "pwd_ops must test root user (UID 0) lookup"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -320,8 +330,8 @@ fn pwd_ops_covers_root_user() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pwd_ops_has_posix_references() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -331,17 +341,18 @@ fn pwd_ops_has_posix_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn pwd_ops_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture("pwd_ops");
+fn pwd_ops_fixture_executes_via_isolated_harness() -> Result<(), String> {
+    let fixture = load_fixture("pwd_ops")?;
 
     for case in fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -349,13 +360,13 @@ fn pwd_ops_fixture_executes_via_isolated_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute through harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -368,4 +379,5 @@ fn pwd_ops_fixture_executes_via_isolated_harness() {
             );
         }
     }
+    Ok(())
 }
