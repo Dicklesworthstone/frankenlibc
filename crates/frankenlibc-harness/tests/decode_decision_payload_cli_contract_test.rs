@@ -36,6 +36,26 @@ fn require(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
+fn read_record(out_path: &Path) -> TestResult<Value> {
+    let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
+}
+
 fn json_string<'a>(value: &'a Value, field: &str) -> TestResult<&'a str> {
     value
         .get(field)
@@ -117,7 +137,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "zero_bytes_payload_must_fail_with_BadMagic",
         "missing_payload_file_must_fail_closed",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -163,14 +183,11 @@ fn cli_wrong_payload_size_fails_closed() -> TestResult {
     // 64 bytes — half the expected 128.
     std::fs::write(&payload, vec![0_u8; 64]).map_err(|e| format!("write: {e}"))?;
     let out = run_cli(&bin, &payload, &output)?;
-    let _ = std::fs::remove_file(&payload);
     require(
         !out.status.success(),
         "wrong payload size must yield non-zero exit",
     )?;
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(
         json_string(&parsed, "kind")? == "decision_payload_decode",
         "kind must be decision_payload_decode",
@@ -192,21 +209,15 @@ fn cli_zero_bytes_yields_bad_magic_error() -> TestResult {
     let output = unique_tmp("zero128", "jsonl")?;
     std::fs::write(&payload, vec![0_u8; 128]).map_err(|e| format!("write: {e}"))?;
     let out = run_cli(&bin, &payload, &output)?;
-    let _ = std::fs::remove_file(&payload);
     require(
         !out.status.success(),
         "128 zero bytes must yield non-zero exit (BadMagic)",
     )?;
-    let body = std::fs::read_to_string(&output).map_err(|e| format!("read: {e}"))?;
-    let _ = std::fs::remove_file(&output);
-    let parsed: Value = serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))?;
+    let parsed = read_record(&output)?;
     require(!json_bool(&parsed, "ok")?, "zero bytes must yield ok=false")?;
     require(
         json_string(&parsed, "error")?.contains("BadMagic"),
-        format!(
-            "zero bytes must produce BadMagic error; got {:?}",
-            parsed.get("error")
-        ),
+        "zero bytes must produce BadMagic error",
     )
 }
 
@@ -220,7 +231,6 @@ fn cli_fails_closed_on_missing_payload_file() -> TestResult {
     let output = unique_tmp("missing", "jsonl")?;
     // payload deliberately not created.
     let out = run_cli(&bin, &payload, &output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         "missing payload file must yield non-zero exit",
