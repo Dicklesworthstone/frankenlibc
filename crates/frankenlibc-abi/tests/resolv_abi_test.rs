@@ -814,6 +814,33 @@ fn getaddrinfo_resolves_service_name_from_overridden_services_backend() {
 }
 
 #[test]
+fn getaddrinfo_resolves_crlf_hosts_and_services_backend_rows() {
+    with_resolver_backends(
+        Some(b"203.0.113.10 fixture-host\r\n"),
+        Some(b"fixture-svc 4242/tcp fixturealias\r\n"),
+        |_| {
+            let node = CString::new("fixture-host").unwrap();
+            let service = CString::new("fixturealias").unwrap();
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, libc::AF_INET);
+            let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_port, 4242u16.to_be());
+            assert_eq!(sin.sin_addr.s_addr, u32::from_ne_bytes([203, 0, 113, 10]));
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
 fn getaddrinfo_service_name_respects_udp_socktype_hint() {
     with_resolver_backends(
         Some(b"203.0.113.10 fixture-host\n"),

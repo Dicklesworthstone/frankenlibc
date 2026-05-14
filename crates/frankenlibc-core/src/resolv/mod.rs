@@ -75,6 +75,10 @@ pub struct ServiceEntry {
     pub aliases: Vec<Vec<u8>>,
 }
 
+fn is_resolver_field_separator(b: u8) -> bool {
+    b.is_ascii_whitespace()
+}
+
 /// Parse a single line from /etc/hosts.
 ///
 /// Format: `<address> <hostname> [<alias>...]`
@@ -88,7 +92,7 @@ pub fn parse_hosts_line(line: &[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
     };
 
     let mut fields = line
-        .split(|&b| b == b' ' || b == b'\t')
+        .split(|&b| is_resolver_field_separator(b))
         .filter(|f| !f.is_empty());
 
     let addr_field = fields.next()?;
@@ -151,7 +155,7 @@ pub fn parse_services_line(line: &[u8]) -> Option<ServiceEntry> {
     };
 
     let mut fields = line
-        .split(|&b| b == b' ' || b == b'\t')
+        .split(|&b| is_resolver_field_separator(b))
         .filter(|f| !f.is_empty());
 
     let name = fields.next()?;
@@ -205,7 +209,7 @@ pub fn parse_protocols_line(line: &[u8]) -> Option<ProtocolEntry> {
         line
     };
     let mut fields = line
-        .split(|&b| b == b' ' || b == b'\t')
+        .split(|&b| is_resolver_field_separator(b))
         .filter(|f| !f.is_empty());
     let name = fields.next()?;
     let number_str = core::str::from_utf8(fields.next()?).ok()?;
@@ -276,7 +280,7 @@ pub fn parse_networks_line(line: &[u8]) -> Option<NetworkEntry> {
         line
     };
     let mut fields = line
-        .split(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
+        .split(|&b| is_resolver_field_separator(b))
         .filter(|f| !f.is_empty());
     let name = fields.next()?;
     let num_str = core::str::from_utf8(fields.next()?).ok()?;
@@ -778,6 +782,13 @@ mod tests {
     }
 
     #[test]
+    fn parse_hosts_strips_crlf_line_ending() {
+        let (addr, names) = parse_hosts_line(b"127.0.0.1 localhost\r").unwrap();
+        assert_eq!(addr, b"127.0.0.1");
+        assert_eq!(names, vec![b"localhost".to_vec()]);
+    }
+
+    #[test]
     fn parse_hosts_comment_line() {
         assert!(parse_hosts_line(b"# This is a comment").is_none());
     }
@@ -835,6 +846,13 @@ mod tests {
         assert_eq!(addrs.len(), 2);
     }
 
+    #[test]
+    fn lookup_hosts_matches_crlf_database_rows() {
+        let content = b"127.0.0.1 localhost\r\n192.0.2.10 fixture\r\n";
+        let addrs = lookup_hosts(content, b"fixture");
+        assert_eq!(addrs, vec![b"192.0.2.10".to_vec()]);
+    }
+
     // ---- reverse_lookup_hosts ----
 
     #[test]
@@ -869,6 +887,15 @@ mod tests {
         assert_eq!(entry.port, 53);
         assert_eq!(entry.protocol, b"udp");
         assert_eq!(entry.aliases, vec![b"domain".to_vec()]);
+    }
+
+    #[test]
+    fn parse_services_strips_crlf_line_ending() {
+        let entry = parse_services_line(b"http 80/tcp\r").unwrap();
+        assert_eq!(entry.name, b"http");
+        assert_eq!(entry.port, 80);
+        assert_eq!(entry.protocol, b"tcp");
+        assert!(entry.aliases.is_empty());
     }
 
     #[test]
@@ -927,6 +954,15 @@ mod tests {
     fn lookup_service_matches_alias() {
         let content = b"http\t80/tcp\twww";
         assert_eq!(lookup_service(content, b"www", Some(b"tcp")), Some(80));
+    }
+
+    #[test]
+    fn lookup_service_matches_crlf_database_rows() {
+        let content = b"http 80/tcp\r\nfixture-svc 4242/tcp fixture\r\n";
+        assert_eq!(
+            lookup_service(content, b"fixture", Some(b"tcp")),
+            Some(4242)
+        );
     }
 
     // ---- getaddrinfo ----
@@ -1777,6 +1813,14 @@ mod tests {
         assert_eq!(e.name, b"ip");
         assert_eq!(e.number, 0);
         assert_eq!(e.aliases, vec![b"IP".to_vec()]);
+    }
+
+    #[test]
+    fn protocol_strips_crlf_line_ending() {
+        let e = parse_protocols_line(b"tcp 6 TCP\r").unwrap();
+        assert_eq!(e.name, b"tcp");
+        assert_eq!(e.number, 6);
+        assert_eq!(e.aliases, vec![b"TCP".to_vec()]);
     }
 
     #[test]
