@@ -1,0 +1,114 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "posix-obligation-report-cli-contract",
+  "bead": "bd-2tq.4",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "98a2b3f1cb2f78e39c375eabff75ffcac229db7f",
+  "purpose": "Pin the harness binary `posix-obligation-report` subcommand that builds the bd-2tq.4 POSIX obligation traceability matrix from support_matrix.json, fixture JSON, conformance_matrix.v1.json, and c_fixture_spec.json. The command must write a v1 JSON report with summary counts, per-obligation rows, gap rows, execution counts, repo-relative artifact references, and fail-closed diagnostics for missing or invalid required inputs.",
+  "subcommand_name": "posix-obligation-report",
+  "binary_target": "harness",
+  "required_flags": [],
+  "optional_flags": [
+    "--support-matrix",
+    "--fixture",
+    "--conformance-matrix",
+    "--c-fixture-spec",
+    "--output"
+  ],
+  "default_support_matrix": "support_matrix.json",
+  "default_fixture": "tests/conformance/fixtures",
+  "default_conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+  "default_c_fixture_spec": "tests/conformance/c_fixture_spec.json",
+  "default_output": "target/conformance/posix_obligation_matrix.current.v1.json",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::report::PosixObligationMatrixReport::from_paths",
+    "frankenlibc_harness::report::PosixObligationMatrixReport::to_json"
+  ],
+  "io_pattern": "support_matrix_plus_fixture_catalog_plus_conformance_matrix_plus_c_fixture_spec_to_posix_obligation_json_report",
+  "report_contract": {
+    "schema_version": "v1",
+    "bead": "bd-2tq.4",
+    "required_summary_fields": [
+      "total_exported",
+      "tracked_symbols",
+      "total_obligations",
+      "covered_obligations",
+      "mapped_without_execution",
+      "obligations_with_execution_failures",
+      "error_condition_obligations",
+      "async_concurrency_obligations",
+      "symbols_missing_any_mapping",
+      "symbols_missing_execution_evidence",
+      "symbols_missing_error_conditions",
+      "symbols_missing_async_concurrency"
+    ],
+    "required_obligation_fields": [
+      "obligation_id",
+      "posix_ref",
+      "symbol",
+      "symbol_family",
+      "owner",
+      "support_status",
+      "coverage_state",
+      "obligation_kinds",
+      "modes",
+      "test_refs",
+      "artifact_refs",
+      "execution"
+    ],
+    "required_gap_fields": [
+      "symbol",
+      "symbol_family",
+      "owner",
+      "support_status",
+      "mapped_posix_refs",
+      "test_refs",
+      "gap_reasons"
+    ],
+    "required_execution_fields": [
+      "total",
+      "pass",
+      "fail",
+      "error",
+      "timeout",
+      "crash"
+    ],
+    "obligations_must_be_non_empty_for_canonical_inputs": true,
+    "obligations_must_be_sorted_by_symbol_then_posix_ref": true,
+    "test_refs_must_be_non_empty": true,
+    "artifact_refs_must_be_repo_relative": true,
+    "gap_reasons_must_be_non_empty": true
+  },
+  "policy": {
+    "must_create_parent_directories_for_output": true,
+    "must_write_pretty_json_report": true,
+    "must_preserve_bd_2tq_4_report_bead": true,
+    "must_reject_missing_support_matrix_with_nonzero_exit": true,
+    "must_reject_unreadable_fixture_dir_with_nonzero_exit": true,
+    "must_reject_invalid_conformance_matrix_with_nonzero_exit": true,
+    "must_reject_missing_c_fixture_spec_with_nonzero_exit": true,
+    "must_keep_artifact_refs_repo_relative": true,
+    "must_keep_obligations_sorted": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_report",
+    "wrong_schema_version",
+    "wrong_report_bead",
+    "empty_obligations_for_canonical_inputs",
+    "unsorted_obligation_rows",
+    "absolute_artifact_ref",
+    "empty_test_refs",
+    "empty_gap_reasons",
+    "missing_summary_field",
+    "missing_obligation_field",
+    "missing_gap_field",
+    "missing_execution_field",
+    "missing_input_silently_passed"
+  ],
+  "summary": {
+    "bead": "bd-2tq.4",
+    "subcommand": "posix-obligation-report",
+    "report_only": true,
+    "claim_status": "code_only_pending_tracker_closeout"
+  }
+}
