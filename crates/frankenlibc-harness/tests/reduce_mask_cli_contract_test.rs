@@ -136,7 +136,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "canonical_full_support_reduces_to_disjoint_class_union",
         "step_limit_exceeded_preserves_input_mask_and_flags_error",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -183,7 +183,22 @@ fn run_cli(
 
 fn read_record(out_path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
 fn run_and_parse(
@@ -196,14 +211,10 @@ fn run_and_parse(
     let rules_path = write_rules(label, rules_body)?;
     let output = unique_tmp(label, "jsonl")?;
     let out = run_cli(bin, mask, &rules_path, step_limit, &output)?;
-    let _ = std::fs::remove_file(&rules_path);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
-    let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
-    Ok(parsed)
+    read_record(&output)
 }
 
 #[test]
@@ -307,7 +318,10 @@ fn cli_step_limit_exceeded_preserves_input_and_flags_error() -> TestResult {
         .get("error")
         .and_then(Value::as_str)
         .ok_or_else(|| "error field must be a string on step_limit_exceeded".to_string())?;
-    require(err == "step_limit_exceeded", format!("error={err}"))
+    require(
+        err == "step_limit_exceeded",
+        "error must be step_limit_exceeded",
+    )
 }
 
 #[test]
