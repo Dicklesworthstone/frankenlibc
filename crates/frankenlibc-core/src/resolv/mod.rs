@@ -162,7 +162,7 @@ pub fn parse_services_line(line: &[u8]) -> Option<ServiceEntry> {
     let port_str = core::str::from_utf8(&port_proto[..slash_pos]).ok()?;
     let port: u16 = port_str.parse().ok()?;
     let proto = &port_proto[slash_pos + 1..];
-    if proto.is_empty() {
+    if proto.is_empty() || proto.contains(&b'/') {
         return None;
     }
 
@@ -877,6 +877,11 @@ mod tests {
     #[test]
     fn parse_services_invalid_port() {
         assert!(parse_services_line(b"bad abc/tcp").is_none());
+    }
+
+    #[test]
+    fn parse_services_rejects_extra_protocol_separator() {
+        assert!(parse_services_line(b"bad 80/tcp/garbage").is_none());
     }
 
     // ---- lookup_service ----
