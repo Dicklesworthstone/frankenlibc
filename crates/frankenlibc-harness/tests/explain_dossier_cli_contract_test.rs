@@ -104,18 +104,34 @@ fn manifest_anchors_to_hk1t2_with_subcommand_name() -> TestResult {
 fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
-    let policy = m
-        .get("policy")
-        .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record_on_jsonl_path",
-        "must_write_markdown_starting_with_dossier_header",
-        "fail_closed_when_expected_commit_not_40_char_sha",
-        "fail_closed_on_load_error",
-        "fail_closed_on_dossier_error",
-        "all_five_evidence_rows_present_when_success",
+    let policy = m.get("policy").ok_or("missing policy")?;
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record_on_jsonl_path",
+            "must_emit_exactly_one_jsonl_record_on_jsonl_path must be true",
+        ),
+        (
+            "must_write_markdown_starting_with_dossier_header",
+            "must_write_markdown_starting_with_dossier_header must be true",
+        ),
+        (
+            "fail_closed_when_expected_commit_not_40_char_sha",
+            "fail_closed_when_expected_commit_not_40_char_sha must be true",
+        ),
+        (
+            "fail_closed_on_load_error",
+            "fail_closed_on_load_error must be true",
+        ),
+        (
+            "fail_closed_on_dossier_error",
+            "fail_closed_on_dossier_error must be true",
+        ),
+        (
+            "all_five_evidence_rows_present_when_success",
+            "all_five_evidence_rows_present_when_success must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
