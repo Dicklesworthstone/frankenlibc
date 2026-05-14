@@ -140,21 +140,45 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
     let policy = m.get("policy").ok_or("missing policy")?;
-    for key in [
-        "must_create_out_dir_inputs_subdir",
-        "must_emit_three_jsonl_input_files",
-        "must_emit_five_dashboard_bundle_artifacts",
-        "seed_sample_renders_deterministic_inputs_modulo_timestamps_and_latency",
-        "unknown_mode_rejected_with_nonzero_exit",
-        "mode_label_in_inputs_matches_cli_mode",
-        "bead_id_recorded_in_jsonl_rows",
-        "run_id_recorded_in_jsonl_rows",
-        "default_invocation_succeeds_when_input_dir_writable",
+    for (key, message) in [
+        (
+            "must_create_out_dir_inputs_subdir",
+            "policy.must_create_out_dir_inputs_subdir must be true (manifest pin)",
+        ),
+        (
+            "must_emit_three_jsonl_input_files",
+            "policy.must_emit_three_jsonl_input_files must be true (manifest pin)",
+        ),
+        (
+            "must_emit_five_dashboard_bundle_artifacts",
+            "policy.must_emit_five_dashboard_bundle_artifacts must be true (manifest pin)",
+        ),
+        (
+            "seed_sample_renders_deterministic_inputs_modulo_timestamps_and_latency",
+            "policy.seed_sample_renders_deterministic_inputs_modulo_timestamps_and_latency must be true (manifest pin)",
+        ),
+        (
+            "unknown_mode_rejected_with_nonzero_exit",
+            "policy.unknown_mode_rejected_with_nonzero_exit must be true (manifest pin)",
+        ),
+        (
+            "mode_label_in_inputs_matches_cli_mode",
+            "policy.mode_label_in_inputs_matches_cli_mode must be true (manifest pin)",
+        ),
+        (
+            "bead_id_recorded_in_jsonl_rows",
+            "policy.bead_id_recorded_in_jsonl_rows must be true (manifest pin)",
+        ),
+        (
+            "run_id_recorded_in_jsonl_rows",
+            "policy.run_id_recorded_in_jsonl_rows must be true (manifest pin)",
+        ),
+        (
+            "default_invocation_succeeds_when_input_dir_writable",
+            "policy.default_invocation_succeeds_when_input_dir_writable must be true (manifest pin)",
+        ),
     ] {
-        require(
-            json_bool(policy, key)?,
-            format!("policy.{key} must be true (manifest pin)"),
-        )?;
+        require(json_bool(policy, key)?, message)?;
     }
     Ok(())
 }
@@ -210,17 +234,18 @@ fn cli_emits_inputs_subdir_and_three_jsonl_files() -> TestResult {
     )?;
     let inputs = dir.join("inputs");
     require(inputs.exists(), "inputs subdir must exist")?;
-    for name in [
-        "membrane_metrics.jsonl",
-        "allocator_metrics.jsonl",
-        "runtime_math.jsonl",
-    ] {
-        require(
-            inputs.join(name).exists(),
-            format!("inputs/{name} must exist"),
-        )?;
-    }
-    let _ = std::fs::remove_dir_all(&dir);
+    require(
+        inputs.join("membrane_metrics.jsonl").exists(),
+        "inputs/membrane_metrics.jsonl must exist",
+    )?;
+    require(
+        inputs.join("allocator_metrics.jsonl").exists(),
+        "inputs/allocator_metrics.jsonl must exist",
+    )?;
+    require(
+        inputs.join("runtime_math.jsonl").exists(),
+        "inputs/runtime_math.jsonl must exist",
+    )?;
     Ok(())
 }
 
@@ -232,16 +257,26 @@ fn cli_emits_five_dashboard_bundle_artifacts() -> TestResult {
     let dir = tmp_dir()?;
     let result = run_capture(&bin, &dir, "bd-wn47r-gate", "gate_run", "hardened", true)?;
     require(result.status.success(), "harness exit failed")?;
-    for name in [
-        "observability_dashboard.current.v1.json",
-        "observability_dashboard.prom",
-        "observability_dashboard.statsd",
-        "observability_dashboard.grafana.json",
-        "observability_dashboard.alerts.yaml",
-    ] {
-        require(dir.join(name).exists(), format!("{name} must be written"))?;
-    }
-    let _ = std::fs::remove_dir_all(&dir);
+    require(
+        dir.join("observability_dashboard.current.v1.json").exists(),
+        "observability_dashboard.current.v1.json must be written",
+    )?;
+    require(
+        dir.join("observability_dashboard.prom").exists(),
+        "observability_dashboard.prom must be written",
+    )?;
+    require(
+        dir.join("observability_dashboard.statsd").exists(),
+        "observability_dashboard.statsd must be written",
+    )?;
+    require(
+        dir.join("observability_dashboard.grafana.json").exists(),
+        "observability_dashboard.grafana.json must be written",
+    )?;
+    require(
+        dir.join("observability_dashboard.alerts.yaml").exists(),
+        "observability_dashboard.alerts.yaml must be written",
+    )?;
     Ok(())
 }
 
@@ -256,7 +291,6 @@ fn cli_unknown_mode_rejected_with_nonzero_exit() -> TestResult {
         !result.status.success(),
         "harness must exit non-zero on unknown mode",
     )?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -287,24 +321,32 @@ fn cli_seed_sample_renders_deterministic_inputs_modulo_timestamps_and_latency() 
     let b = tmp_dir()?;
     let _ = run_capture(&bin, &a, "bd-wn47r-det", "gate_det", "strict", true)?;
     let _ = run_capture(&bin, &b, "bd-wn47r-det", "gate_det", "strict", true)?;
-    for name in [
-        "membrane_metrics.jsonl",
-        "allocator_metrics.jsonl",
-        "runtime_math.jsonl",
-    ] {
-        let body_a = std::fs::read_to_string(a.join("inputs").join(name))
-            .map_err(|e| format!("read a/{name}: {e}"))?;
-        let body_b = std::fs::read_to_string(b.join("inputs").join(name))
-            .map_err(|e| format!("read b/{name}: {e}"))?;
-        require(
-            strip_volatile_fields(&body_a) == strip_volatile_fields(&body_b),
-            format!(
-                "seeded inputs/{name} must be byte-identical across runs modulo timestamps + latency"
-            ),
-        )?;
-    }
-    let _ = std::fs::remove_dir_all(&a);
-    let _ = std::fs::remove_dir_all(&b);
+    let body_a = std::fs::read_to_string(a.join("inputs").join("membrane_metrics.jsonl"))
+        .map_err(|e| format!("read a/membrane_metrics.jsonl: {e}"))?;
+    let body_b = std::fs::read_to_string(b.join("inputs").join("membrane_metrics.jsonl"))
+        .map_err(|e| format!("read b/membrane_metrics.jsonl: {e}"))?;
+    require(
+        strip_volatile_fields(&body_a) == strip_volatile_fields(&body_b),
+        "seeded inputs/membrane_metrics.jsonl must be byte-identical across runs modulo timestamps + latency",
+    )?;
+
+    let body_a = std::fs::read_to_string(a.join("inputs").join("allocator_metrics.jsonl"))
+        .map_err(|e| format!("read a/allocator_metrics.jsonl: {e}"))?;
+    let body_b = std::fs::read_to_string(b.join("inputs").join("allocator_metrics.jsonl"))
+        .map_err(|e| format!("read b/allocator_metrics.jsonl: {e}"))?;
+    require(
+        strip_volatile_fields(&body_a) == strip_volatile_fields(&body_b),
+        "seeded inputs/allocator_metrics.jsonl must be byte-identical across runs modulo timestamps + latency",
+    )?;
+
+    let body_a = std::fs::read_to_string(a.join("inputs").join("runtime_math.jsonl"))
+        .map_err(|e| format!("read a/runtime_math.jsonl: {e}"))?;
+    let body_b = std::fs::read_to_string(b.join("inputs").join("runtime_math.jsonl"))
+        .map_err(|e| format!("read b/runtime_math.jsonl: {e}"))?;
+    require(
+        strip_volatile_fields(&body_a) == strip_volatile_fields(&body_b),
+        "seeded inputs/runtime_math.jsonl must be byte-identical across runs modulo timestamps + latency",
+    )?;
     Ok(())
 }
 
@@ -327,6 +369,5 @@ fn cli_bead_id_and_run_id_recorded_in_membrane_jsonl() -> TestResult {
         body.contains(run),
         format!("membrane_metrics.jsonl must contain run_id={run}"),
     )?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
