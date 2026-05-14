@@ -15,13 +15,15 @@ const ERR_SYMBOLS: [&str; 12] = [
     "warnx",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates_dir = manifest_dir
         .parent()
-        .unwrap()
+        .ok_or_else(|| format!("{} has no parent directory", manifest_dir.display()))?;
+    let repo_root = crates_dir
         .parent()
-        .unwrap()
-        .to_path_buf()
+        .ok_or_else(|| format!("{} has no parent directory", crates_dir.display()))?;
+    Ok(repo_root.to_path_buf())
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,7 +65,7 @@ struct ExpectedOutput {
 }
 
 fn load_fixture() -> Result<FixtureFile, String> {
-    let path = repo_root().join("tests/conformance/fixtures/err_ops.json");
+    let path = repo_root()?.join("tests/conformance/fixtures/err_ops.json");
     let content = std::fs::read_to_string(&path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
@@ -71,7 +73,7 @@ fn load_fixture() -> Result<FixtureFile, String> {
 }
 
 fn load_json(path: &str) -> Result<serde_json::Value, String> {
-    let path = repo_root().join(path);
+    let path = repo_root()?.join(path);
     let content = std::fs::read_to_string(&path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
@@ -80,7 +82,7 @@ fn load_json(path: &str) -> Result<serde_json::Value, String> {
 
 #[test]
 fn err_ops_fixture_exists_and_names_scope() -> Result<(), String> {
-    let fixture_path = repo_root().join("tests/conformance/fixtures/err_ops.json");
+    let fixture_path = repo_root()?.join("tests/conformance/fixtures/err_ops.json");
     assert!(fixture_path.exists(), "err_ops.json fixture must exist");
 
     let fixture = load_fixture()?;
@@ -175,7 +177,7 @@ fn err_ops_fixture_cases_are_deterministic_and_mode_paired() -> Result<(), Strin
 
 #[test]
 fn err_ops_fixture_is_backed_by_existing_diff_and_unit_tests() -> Result<(), String> {
-    let root = repo_root();
+    let root = repo_root()?;
     let diff_test = std::fs::read_to_string(
         root.join("crates/frankenlibc-abi/tests/conformance_diff_err_h.rs"),
     )
