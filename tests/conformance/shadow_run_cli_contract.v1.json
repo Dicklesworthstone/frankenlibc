@@ -1,0 +1,109 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "shadow-run-cli-contract",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "079468c8940c9ef8ce2bff23f70f9446365ae539",
+  "purpose": "Pin the harness binary `shadow-run` subcommand that executes manifest-driven real-workload differential runs against host glibc and FrankenLibC candidate environments.",
+  "subcommand_name": "shadow-run",
+  "binary_target": "harness",
+  "required_flags": [
+    "--manifest"
+  ],
+  "optional_flags": [
+    "--workspace-root",
+    "--out-dir",
+    "--report",
+    "--log",
+    "--artifact-index",
+    "--lib-path",
+    "--reference",
+    "--mode",
+    "--timeout-ms",
+    "--no-syscall-trace",
+    "--fail-on-mismatch"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::shadow_run::ShadowRunManifest::from_path",
+    "frankenlibc_harness::shadow_run::run_shadow_manifest_with_executor",
+    "frankenlibc_harness::shadow_run::ProcessShadowExecutor"
+  ],
+  "input_contract": {
+    "manifest_schema": "frankenlibc_harness::shadow_run::ShadowRunManifest",
+    "scenario_selector": "shadow_scenarios filters descriptions/labels/classes that identify shadow-run scenarios",
+    "mode_values": [
+      "strict",
+      "hardened",
+      "both"
+    ],
+    "default_mode": "both",
+    "default_reference": "glibc"
+  },
+  "output_contract": {
+    "report_schema_version": "v1",
+    "report_required_fields": [
+      "schema_version",
+      "bead",
+      "generated_at_utc",
+      "manifest_id",
+      "reference",
+      "summary",
+      "scenarios"
+    ],
+    "summary_required_fields": [
+      "total_runs",
+      "passed",
+      "diverged",
+      "skipped",
+      "errors"
+    ],
+    "scenario_required_fields": [
+      "trace_id",
+      "scenario_id",
+      "label",
+      "scenario_class",
+      "mode",
+      "status",
+      "diverged",
+      "reference_run",
+      "candidate_run",
+      "replay",
+      "artifact_refs"
+    ],
+    "structured_log_events": [
+      "conformance.shadow_run_match",
+      "conformance.shadow_run_divergence",
+      "conformance.shadow_run_skip",
+      "conformance.shadow_run_expectation_failed"
+    ],
+    "sidecar_artifacts": [
+      "markdown_report",
+      "artifact_index",
+      "per_scenario_stdout_stderr_exit_code_artifacts"
+    ],
+    "writes_report_before_fail_on_mismatch_exit": true
+  },
+  "policy": {
+    "must_register_shadow_run_subcommand": true,
+    "must_require_manifest_path": true,
+    "must_reject_unknown_mode_before_writing_outputs": true,
+    "must_write_report_log_markdown_and_artifact_index": true,
+    "must_preserve_manifest_reference_and_runtime_mode_metadata": true,
+    "must_emit_structured_shadow_run_log_rows": true,
+    "fail_on_mismatch_must_exit_nonzero_after_artifacts": true,
+    "no_syscall_trace_must_disable_strace_dependency": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_manifest_flag",
+    "missing_subcommand_registration",
+    "missing_report",
+    "missing_structured_log",
+    "missing_artifact_index",
+    "accepts_unknown_mode",
+    "fail_on_mismatch_returns_success"
+  ],
+  "summary": {
+    "subcommand": "shadow-run",
+    "claim_status": "cli-contract",
+    "evidence_scope": "public CLI contract plus minimal real process shadow-run execution"
+  }
+}
