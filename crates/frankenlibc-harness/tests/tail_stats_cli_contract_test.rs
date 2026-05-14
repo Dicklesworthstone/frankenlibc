@@ -50,6 +50,13 @@ fn json_bool(value: &Value, field: &str) -> TestResult<bool> {
         .ok_or_else(|| format!("missing or non-bool `{field}`"))
 }
 
+fn json_u64(value: &Value, field: &str) -> TestResult<u64> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("missing or non-u64 `{field}`"))
+}
+
 fn json_array<'a>(value: &'a Value, field: &str) -> TestResult<&'a Vec<Value>> {
     value
         .get(field)
@@ -103,7 +110,11 @@ fn read_single_record(path: &Path) -> TestResult<Value> {
         lines.len() == 1,
         format!("expected exactly 1 JSONL record; got {}", lines.len()),
     )?;
-    serde_json::from_str(lines[0]).map_err(|e| format!("parse output record: {e}"))
+    let line = lines
+        .first()
+        .copied()
+        .ok_or_else(|| "missing output JSONL record".to_string())?;
+    serde_json::from_str(line).map_err(|e| format!("parse output record: {e}"))
 }
 
 fn assert_failure_kind(record: &Value, expected: &str) -> TestResult {
@@ -150,18 +161,45 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "ok_true_iff_error_kind_is_null",
-        "exit_non_zero_when_ok_false",
-        "missing_file_must_fail_closed",
-        "invalid_json_must_fail_closed",
-        "non_array_root_must_fail_closed",
-        "empty_samples_must_fail_closed",
-        "non_numeric_samples_must_fail_closed",
-        "same_samples_and_seed_must_be_deterministic",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "ok_true_iff_error_kind_is_null",
+            "ok_true_iff_error_kind_is_null must be true",
+        ),
+        (
+            "exit_non_zero_when_ok_false",
+            "exit_non_zero_when_ok_false must be true",
+        ),
+        (
+            "missing_file_must_fail_closed",
+            "missing_file_must_fail_closed must be true",
+        ),
+        (
+            "invalid_json_must_fail_closed",
+            "invalid_json_must_fail_closed must be true",
+        ),
+        (
+            "non_array_root_must_fail_closed",
+            "non_array_root_must_fail_closed must be true",
+        ),
+        (
+            "empty_samples_must_fail_closed",
+            "empty_samples_must_fail_closed must be true",
+        ),
+        (
+            "non_numeric_samples_must_fail_closed",
+            "non_numeric_samples_must_fail_closed must be true",
+        ),
+        (
+            "same_samples_and_seed_must_be_deterministic",
+            "same_samples_and_seed_must_be_deterministic must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -175,12 +213,15 @@ fn harness_source_registers_tail_stats_subcommand() -> TestResult {
         src.contains("TailStats {"),
         "harness.rs must declare TailStats Command variant",
     )?;
-    for field in ["samples_json", "seed", "output"] {
-        let anchor = format!("        {field}");
-        require(
-            src.contains(&anchor),
-            format!("TailStats variant missing field `{field}`"),
-        )?;
+    for (anchor, message) in [
+        (
+            "        samples_json",
+            "TailStats variant missing field `samples_json`",
+        ),
+        ("        seed", "TailStats variant missing field `seed`"),
+        ("        output", "TailStats variant missing field `output`"),
+    ] {
+        require(src.contains(anchor), message)?;
     }
     require(
         src.contains("tail_stats::compute"),
@@ -197,19 +238,22 @@ fn manifest_error_enum_covers_parser_and_compute_errors() -> TestResult {
             .ok_or_else(|| "missing output contract".to_string())?,
         "error_kind_enum",
     )?;
-    for expected in [
-        "io",
-        "json",
-        "root",
-        "invalid_sample",
-        "non_finite_sample",
-        "empty",
-        "invalid_quantile",
+    for (expected, message) in [
+        ("io", "error_kind_enum missing io"),
+        ("json", "error_kind_enum missing json"),
+        ("root", "error_kind_enum missing root"),
+        ("invalid_sample", "error_kind_enum missing invalid_sample"),
+        (
+            "non_finite_sample",
+            "error_kind_enum missing non_finite_sample",
+        ),
+        ("empty", "error_kind_enum missing empty"),
+        (
+            "invalid_quantile",
+            "error_kind_enum missing invalid_quantile",
+        ),
     ] {
-        require(
-            kinds.iter().any(|v| v.as_str() == Some(expected)),
-            format!("error_kind_enum missing {expected}"),
-        )?;
+        require(kinds.iter().any(|v| v.as_str() == Some(expected)), message)?;
     }
     Ok(())
 }
@@ -241,9 +285,9 @@ fn cli_emits_tail_stats_for_valid_samples() -> TestResult {
         parsed.get("error_kind").is_some_and(Value::is_null),
         "ok=true must carry error_kind=null",
     )?;
-    require(parsed["n"].as_u64() == Some(5), "n must be 5")?;
+    require(json_u64(&parsed, "n")? == 5, "n must be 5")?;
     require(
-        parsed["sample_count"].as_u64() == Some(5),
+        json_u64(&parsed, "sample_count")? == 5,
         "sample_count must be 5",
     )?;
     require(approx_eq(json_f64(&parsed, "p50")?, 30.0), "p50")?;
@@ -255,11 +299,11 @@ fn cli_emits_tail_stats_for_valid_samples() -> TestResult {
         "p99 CI must be ordered",
     )?;
     require(
-        parsed["sufficient_for_p99"].as_bool() == Some(false),
+        !json_bool(&parsed, "sufficient_for_p99")?,
         "small sample must not be sufficient_for_p99",
     )?;
     require(
-        parsed["bootstrap_iters"].as_u64() == Some(1000),
+        json_u64(&parsed, "bootstrap_iters")? == 1000,
         "bootstrap_iters",
     )
 }
