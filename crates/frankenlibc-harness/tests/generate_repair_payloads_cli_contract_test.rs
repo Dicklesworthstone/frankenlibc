@@ -201,17 +201,41 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_one_record_per_repair_payload_plus_summary",
-        "echoes_inputs_into_records",
-        "deterministic_given_inputs",
-        "esis_are_contiguous_from_k_source",
-        "repair_count_matches_summary_esis_length",
-        "each_payload_hex_is_256_lowercase_hex_chars",
-        "non_multiple_of_128_input_file_is_rejected",
-        "k_zero_input_is_rejected",
+    for (field, message) in [
+        (
+            "must_emit_one_record_per_repair_payload_plus_summary",
+            "must_emit_one_record_per_repair_payload_plus_summary must be true",
+        ),
+        (
+            "echoes_inputs_into_records",
+            "echoes_inputs_into_records must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "deterministic_given_inputs must be true",
+        ),
+        (
+            "esis_are_contiguous_from_k_source",
+            "esis_are_contiguous_from_k_source must be true",
+        ),
+        (
+            "repair_count_matches_summary_esis_length",
+            "repair_count_matches_summary_esis_length must be true",
+        ),
+        (
+            "each_payload_hex_is_256_lowercase_hex_chars",
+            "each_payload_hex_is_256_lowercase_hex_chars must be true",
+        ),
+        (
+            "non_multiple_of_128_input_file_is_rejected",
+            "non_multiple_of_128_input_file_is_rejected must be true",
+        ),
+        (
+            "k_zero_input_is_rejected",
+            "k_zero_input_is_rejected must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -248,7 +272,7 @@ fn cli_esis_are_contiguous_from_k_source() -> TestResult {
     let output = unique_tmp("contig", "jsonl")?;
     let out = run_cli(&bin, 1, &srcs_path, 100, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("generate-repair-payloads CLI invocation must succeed".into());
     }
     let recs = read_records(&output)?;
     let (payloads, summary) = split_payload_records(&recs)?;
@@ -286,7 +310,7 @@ fn cli_repair_count_matches_summary_esis_length() -> TestResult {
     let output = unique_tmp("count", "jsonl")?;
     let out = run_cli(&bin, 42, &srcs_path, 50, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("generate-repair-payloads CLI invocation must succeed".into());
     }
     let recs = read_records(&output)?;
     let (payloads, summary) = split_payload_records(&recs)?;
@@ -314,7 +338,7 @@ fn cli_each_payload_hex_is_256_lowercase_hex_chars() -> TestResult {
     let output = unique_tmp("hex", "jsonl")?;
     let out = run_cli(&bin, 999, &srcs_path, 100, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("generate-repair-payloads CLI invocation must succeed".into());
     }
     let recs = read_records(&output)?;
     let (payloads, _) = split_payload_records(&recs)?;
