@@ -1,0 +1,85 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "verify-cli-contract",
+  "bead": "pending-tracker-verify-cli-contract",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "51ae9a50ac816f2ca55289a4c41a39c2677014c8",
+  "purpose": "Pin the harness binary `verify` subcommand that runs fixture JSON files through the conformance runner and emits deterministic markdown, JSON, and asupersync suite artifacts. The command must sort fixture inputs, load valid FixtureSet JSON, reject empty or fully invalid fixture directories, run strict+hardened verification for `mode: both` cases, write paired markdown and JSON reports when --report is provided, preserve a caller-supplied timestamp, and fail closed on any fixture mismatch.",
+  "subcommand_name": "verify",
+  "binary_target": "harness",
+  "required_flags": [
+    "--fixture"
+  ],
+  "optional_flags": [
+    "--report",
+    "--timestamp"
+  ],
+  "io_pattern": "fixture_directory_to_markdown_json_and_suite_conformance_report",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::FixtureSet::from_file",
+    "frankenlibc_harness::asupersync_orchestrator::run_fixture_verification",
+    "frankenlibc_harness::TestRunner::run",
+    "frankenlibc_harness::verify::VerificationSummary::from_results",
+    "frankenlibc_harness::ConformanceReport::to_markdown",
+    "frankenlibc_harness::ConformanceReport::to_json"
+  ],
+  "output_contract": {
+    "markdown_heading": "# frankenlibc Conformance Report",
+    "json_top_level_fields": [
+      "title",
+      "mode",
+      "timestamp",
+      "summary"
+    ],
+    "summary_fields": [
+      "total",
+      "passed",
+      "failed",
+      "results"
+    ],
+    "result_fields": [
+      "trace_id",
+      "campaign",
+      "family",
+      "symbol",
+      "mode",
+      "case_name",
+      "spec_section",
+      "passed",
+      "expected",
+      "actual",
+      "diff"
+    ],
+    "paired_json_path_rule": "report_path.with_extension(\"json\")",
+    "asupersync_suite_path_rule": "report_path.with_extension(\"suite.json\") when asupersync-tooling is enabled"
+  },
+  "policy": {
+    "must_sort_fixture_json_paths": true,
+    "must_skip_malformed_fixture_json_with_diagnostic": true,
+    "must_reject_empty_or_fully_invalid_fixture_directory": true,
+    "must_run_mode_both_cases_under_strict_and_hardened": true,
+    "must_preserve_caller_timestamp": true,
+    "must_write_markdown_report_when_report_flag_is_present": true,
+    "must_write_paired_json_report_when_report_flag_is_present": true,
+    "must_write_asupersync_suite_report_when_feature_enabled": true,
+    "must_emit_nonzero_exit_when_any_case_fails": true,
+    "must_preserve_failure_rows_in_report_before_exit": true
+  },
+  "rejected_evidence_kinds": [
+    "verify_command_unpinned",
+    "empty_fixture_dir_accepted",
+    "malformed_fixture_silently_accepted_as_success",
+    "mode_both_executed_only_once",
+    "missing_markdown_report",
+    "missing_json_report",
+    "caller_timestamp_ignored",
+    "mismatch_returned_success",
+    "mismatch_report_omitted_failure_row"
+  ],
+  "summary": {
+    "bead": "pending-tracker-verify-cli-contract",
+    "subcommand": "verify",
+    "report_only": true,
+    "claim_status": "code_only_pending_tracker_closeout"
+  }
+}
