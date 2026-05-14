@@ -62,6 +62,13 @@ fn ensure(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
+fn require_log_field(entry: &Value, field: &str, line_count: usize) -> TestResult {
+    ensure(
+        entry.get(field).is_some(),
+        format!("structured log line {line_count} missing required field `{field}`"),
+    )
+}
+
 fn ensure_eq<T>(actual: T, expected: T, context: impl Into<String>) -> TestResult
 where
     T: std::fmt::Debug + PartialEq,
@@ -468,10 +475,7 @@ fn gate_script_passes_and_emits_structured_artifacts() -> TestResult {
         let entry: Value = serde_json::from_str(line)
             .map_err(|_| test_error("structured log entry should parse"))?;
         for field_name in REQUIRED_LOG_FIELDS {
-            ensure(
-                entry.get(*field_name).is_some(),
-                "structured log entry is missing a required field",
-            )?;
+            require_log_field(&entry, field_name, line_count)?;
         }
     }
     ensure_eq(
