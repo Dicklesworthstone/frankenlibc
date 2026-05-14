@@ -119,6 +119,18 @@ fn assert_gate_fails_with(output: &Output, signature: &str) -> serde_json::Value
     report
 }
 
+fn assert_report_error_contains(report: &serde_json::Value, signature: &str) {
+    assert!(
+        report["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|error| error.as_str().unwrap_or_default().contains(signature)),
+        "errors should mention {signature}: {}",
+        report["errors"]
+    );
+}
+
 #[test]
 fn schema_declares_required_rules_replays_and_log_contract() {
     let root = workspace_root();
@@ -279,7 +291,14 @@ fn unknown_semantic_or_support_status_fails() {
     let fixture = write_json_fixture("support-overlay-unknown-status", &overlay);
 
     let output = run_gate_with_env(&[("FLC_SUPPORT_SEMANTIC_OVERLAY", &fixture)]);
-    let report = assert_gate_fails_with(&output, "unknown");
+    let report = assert_gate_fails_with(
+        &output,
+        "sem-elf-relocation-support: unknown semantic_class imaginary_semantics",
+    );
+    assert_report_error_contains(
+        &report,
+        "sem-pthread-cancel-private: unknown support_matrix_status DefinitelySupported",
+    );
     assert_eq!(report["checks"]["overlay_rows"].as_str(), Some("fail"));
 }
 
@@ -292,7 +311,10 @@ fn duplicate_symbol_version_node_fails() {
     let fixture = write_json_fixture("support-overlay-duplicate-symbol", &overlay);
 
     let output = run_gate_with_env(&[("FLC_SUPPORT_SEMANTIC_OVERLAY", &fixture)]);
-    let report = assert_gate_fails_with(&output, "duplicate symbol/version");
+    let report = assert_gate_fails_with(
+        &output,
+        "sem-libcrypt-des: duplicate symbol/version __pthread_register_cancel@unversioned",
+    );
     assert_eq!(report["checks"]["overlay_rows"].as_str(), Some("fail"));
     assert_eq!(
         report["summary"]["duplicate_symbol_version_count"].as_u64(),
@@ -308,7 +330,10 @@ fn stale_source_ref_fails() {
     let fixture = write_json_fixture("support-overlay-stale-source", &overlay);
 
     let output = run_gate_with_env(&[("FLC_SUPPORT_SEMANTIC_OVERLAY", &fixture)]);
-    let report = assert_gate_fails_with(&output, "stale source ref");
+    let report = assert_gate_fails_with(
+        &output,
+        "sem-elf-relocation-support: stale source ref crates/frankenlibc-core/src/elf/mod.rs:999999999",
+    );
     assert_eq!(report["checks"]["overlay_rows"].as_str(), Some("fail"));
     assert_eq!(
         report["summary"]["stale_source_ref_count"].as_u64(),
@@ -325,7 +350,10 @@ fn incompatible_replacement_level_fails_for_blocked_semantics() {
     let fixture = write_json_fixture("support-overlay-incompatible-level", &schema);
 
     let output = run_gate_with_env(&[("FLC_SUPPORT_SEMANTIC_SCHEMA", &fixture)]);
-    let report = assert_gate_fails_with(&output, "replacement level");
+    let report = assert_gate_fails_with(
+        &output,
+        "sem-elf-relocation-support: blocked semantic row cannot claim replacement level L3",
+    );
     assert_eq!(report["checks"]["overlay_rows"].as_str(), Some("fail"));
 }
 
