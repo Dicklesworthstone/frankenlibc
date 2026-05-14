@@ -140,11 +140,9 @@ fn run_and_parse(bin: &Path, paths: &DiagPaths, label: &str) -> TestResult<Value
     let output = unique_tmp(label, "jsonl")?;
     let out = run_cli(bin, paths, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     Ok(parsed)
 }
 
@@ -155,18 +153,6 @@ fn full_sample_paths(manifest: &Value) -> TestResult<DiagPaths> {
         ebr: Some(write_json("ebr", object_field(sample, "ebr")?)?),
         fc: Some(write_json("fc", object_field(sample, "flat_combining")?)?),
     })
-}
-
-fn cleanup_paths(paths: &DiagPaths) {
-    if let Some(path) = &paths.seqlock {
-        let _ = std::fs::remove_file(path);
-    }
-    if let Some(path) = &paths.ebr {
-        let _ = std::fs::remove_file(path);
-    }
-    if let Some(path) = &paths.fc {
-        let _ = std::fs::remove_file(path);
-    }
 }
 
 #[test]
@@ -191,17 +177,41 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let policy = m
         .get("policy")
         .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "all_diagnostics_are_optional",
-        "score_zero_when_no_diagnostics_present",
-        "concepts_present_flags_match_inputs",
-        "breakdown_matches_library_formulas",
-        "score_is_mean_of_present_components",
-        "deterministic_given_inputs",
-        "invalid_diagnostic_json_is_rejected",
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "policy.must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "all_diagnostics_are_optional",
+            "policy.all_diagnostics_are_optional must be true",
+        ),
+        (
+            "score_zero_when_no_diagnostics_present",
+            "policy.score_zero_when_no_diagnostics_present must be true",
+        ),
+        (
+            "concepts_present_flags_match_inputs",
+            "policy.concepts_present_flags_match_inputs must be true",
+        ),
+        (
+            "breakdown_matches_library_formulas",
+            "policy.breakdown_matches_library_formulas must be true",
+        ),
+        (
+            "score_is_mean_of_present_components",
+            "policy.score_is_mean_of_present_components must be true",
+        ),
+        (
+            "deterministic_given_inputs",
+            "policy.deterministic_given_inputs must be true",
+        ),
+        (
+            "invalid_diagnostic_json_is_rejected",
+            "policy.invalid_diagnostic_json_is_rejected must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
@@ -259,24 +269,35 @@ fn cli_full_sample_matches_manifest_breakdown_and_score() -> TestResult {
     let manifest = load_json(&manifest_path(&root))?;
     let paths = full_sample_paths(&manifest)?;
     let parsed = run_and_parse(&bin, &paths, "full")?;
-    cleanup_paths(&paths);
 
     let sample = object_field(&manifest, "expected_full_sample")?;
     let expected_breakdown = object_field(sample, "expected_breakdown")?;
     let actual_breakdown = object_field(&parsed, "breakdown")?;
-    for field in [
-        "seqlock_cache_miss_ratio",
-        "seqlock_contention_per_write",
-        "ebr_pinned_fraction",
-        "flat_combining_ops_per_pass",
-        "flat_combining_efficiency_loss",
+    for (field, message) in [
+        (
+            "seqlock_cache_miss_ratio",
+            "seqlock_cache_miss_ratio drifted",
+        ),
+        (
+            "seqlock_contention_per_write",
+            "seqlock_contention_per_write drifted",
+        ),
+        ("ebr_pinned_fraction", "ebr_pinned_fraction drifted"),
+        (
+            "flat_combining_ops_per_pass",
+            "flat_combining_ops_per_pass drifted",
+        ),
+        (
+            "flat_combining_efficiency_loss",
+            "flat_combining_efficiency_loss drifted",
+        ),
     ] {
         require(
             approx_eq(
                 json_f64(actual_breakdown, field)?,
                 json_f64(expected_breakdown, field)?,
             ),
-            format!("{field} drifted"),
+            message,
         )?;
     }
     require(
@@ -313,7 +334,6 @@ fn cli_optional_subset_sets_only_present_concept_flags() -> TestResult {
         fc: None,
     };
     let parsed = run_and_parse(&bin, &paths, "subset")?;
-    cleanup_paths(&paths);
     let concepts = object_field(&parsed, "concepts_present")?;
     require(
         json_bool(concepts, "seqlock")?
@@ -344,8 +364,6 @@ fn cli_invalid_diagnostic_json_is_rejected() -> TestResult {
         fc: None,
     };
     let out = run_cli(&bin, &paths, &output)?;
-    let _ = std::fs::remove_file(&bad);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         format!(
@@ -366,7 +384,6 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
     let paths = full_sample_paths(&manifest)?;
     let a = run_and_parse(&bin, &paths, "det_a")?;
     let b = run_and_parse(&bin, &paths, "det_b")?;
-    cleanup_paths(&paths);
     require(a == b, "same diagnostics must produce identical output")
 }
 
