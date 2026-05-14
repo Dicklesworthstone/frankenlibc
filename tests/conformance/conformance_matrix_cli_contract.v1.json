@@ -1,0 +1,102 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "conformance-matrix-cli-contract",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "874ea99b98463c60fd35499b0907c44d6cbe10ec",
+  "purpose": "Pin the harness binary `conformance-matrix` subcommand that turns fixture JSON directories into differential host-vs-FrankenLibC report artifacts and structured conformance JSONL logs.",
+  "subcommand_name": "conformance-matrix",
+  "binary_target": "harness",
+  "required_flags": [
+    "--fixture"
+  ],
+  "optional_flags": [
+    "--output",
+    "--log",
+    "--mode",
+    "--campaign",
+    "--isolate",
+    "--case-timeout-ms",
+    "--perf-budget-ms",
+    "--fail-on-mismatch"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::conformance_matrix::build_conformance_matrix",
+    "frankenlibc_harness::conformance_matrix::build_conformance_matrix_with_executor",
+    "harness::emit_conformance_matrix_logs"
+  ],
+  "input_contract": {
+    "fixture_source": "directory containing fixture JSON files",
+    "fixture_schema": "frankenlibc_harness::FixtureSet",
+    "mode_values": [
+      "strict",
+      "hardened",
+      "both"
+    ],
+    "default_mode": "both",
+    "default_campaign": "franken_shadow"
+  },
+  "output_contract": {
+    "matrix_schema_version": "v1",
+    "matrix_required_fields": [
+      "schema_version",
+      "bead",
+      "generated_at_utc",
+      "campaign",
+      "mode",
+      "total_fixture_sets",
+      "summary",
+      "symbol_matrix",
+      "cases"
+    ],
+    "summary_required_fields": [
+      "total_cases",
+      "passed",
+      "failed",
+      "errors",
+      "pass_rate_percent"
+    ],
+    "case_required_fields": [
+      "trace_id",
+      "family",
+      "symbol",
+      "mode",
+      "case_name",
+      "spec_section",
+      "input_hex",
+      "expected_output",
+      "actual_output",
+      "status",
+      "passed"
+    ],
+    "structured_log_events": [
+      "conformance.runtime_mode_startup",
+      "conformance.fixture_execution",
+      "conformance.shadow_run_divergence",
+      "conformance.fixture_summary",
+      "conformance.benchmark_result"
+    ],
+    "writes_report_before_fail_on_mismatch_exit": true
+  },
+  "policy": {
+    "must_register_conformance_matrix_subcommand": true,
+    "must_require_fixture_directory": true,
+    "must_reject_unknown_mode_before_writing_outputs": true,
+    "must_write_report_and_log_paths": true,
+    "must_preserve_campaign_and_mode_metadata": true,
+    "must_emit_structured_conformance_log_rows": true,
+    "fail_on_mismatch_must_exit_nonzero_after_artifacts": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_fixture_flag",
+    "missing_subcommand_registration",
+    "missing_matrix_report",
+    "missing_structured_log",
+    "accepts_unknown_mode",
+    "fail_on_mismatch_returns_success"
+  ],
+  "summary": {
+    "subcommand": "conformance-matrix",
+    "claim_status": "cli-contract",
+    "evidence_scope": "public CLI contract plus minimal differential fixture execution"
+  }
+}
