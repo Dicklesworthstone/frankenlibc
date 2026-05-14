@@ -53,6 +53,20 @@ fn json_bool(value: &Value, field: &str) -> TestResult<bool> {
         .ok_or_else(|| format!("missing or non-bool `{field}`"))
 }
 
+fn json_u64(value: &Value, field: &str) -> TestResult<u64> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("missing or non-u64 `{field}`"))
+}
+
+fn json_array<'a>(value: &'a Value, field: &str) -> TestResult<&'a Vec<Value>> {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("missing or non-array `{field}`"))
+}
+
 fn cargo_target_dir_for_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_TARGET_DIR") {
         PathBuf::from(p)
@@ -120,20 +134,41 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
     let policy = m.get("policy").ok_or("missing policy")?;
-    for key in [
-        "must_write_structured_jsonl_log_at_log_path",
-        "must_write_json_report_at_report_path",
-        "uses_workspace_root_for_source_paths",
-        "runs_strict_and_hardened_modes",
-        "report_summary_failed_zero_on_success",
-        "report_summary_modes_equals_two",
-        "log_contains_required_determinism_events",
-        "nonzero_exit_when_any_mode_fails",
+    for (key, message) in [
+        (
+            "must_write_structured_jsonl_log_at_log_path",
+            "must_write_structured_jsonl_log_at_log_path must be true",
+        ),
+        (
+            "must_write_json_report_at_report_path",
+            "must_write_json_report_at_report_path must be true",
+        ),
+        (
+            "uses_workspace_root_for_source_paths",
+            "uses_workspace_root_for_source_paths must be true",
+        ),
+        (
+            "runs_strict_and_hardened_modes",
+            "runs_strict_and_hardened_modes must be true",
+        ),
+        (
+            "report_summary_failed_zero_on_success",
+            "report_summary_failed_zero_on_success must be true",
+        ),
+        (
+            "report_summary_modes_equals_two",
+            "report_summary_modes_equals_two must be true",
+        ),
+        (
+            "log_contains_required_determinism_events",
+            "log_contains_required_determinism_events must be true",
+        ),
+        (
+            "nonzero_exit_when_any_mode_fails",
+            "nonzero_exit_when_any_mode_fails must be true",
+        ),
     ] {
-        require(
-            json_bool(policy, key)?,
-            format!("policy.{key} must be true (manifest pin)"),
-        )?;
+        require(json_bool(policy, key)?, message)?;
     }
     Ok(())
 }
@@ -230,17 +265,29 @@ fn cli_writes_structured_log_and_report_to_requested_paths() -> TestResult {
         .filter(|line| !line.trim().is_empty())
         .map(|line| serde_json::from_str(line).map_err(|err| format!("parse log row: {err}")))
         .collect::<Result<_, _>>()?;
-    for expected in [
-        "runtime_math.determinism.proof_step",
-        "runtime_math.determinism.gram_eigenvalue_check",
-        "runtime_math.determinism.boundary_assumption",
-        "runtime_math.determinism.mode_finish",
+    for (expected, message) in [
+        (
+            "runtime_math.determinism.proof_step",
+            "missing required log event runtime_math.determinism.proof_step",
+        ),
+        (
+            "runtime_math.determinism.gram_eigenvalue_check",
+            "missing required log event runtime_math.determinism.gram_eigenvalue_check",
+        ),
+        (
+            "runtime_math.determinism.boundary_assumption",
+            "missing required log event runtime_math.determinism.boundary_assumption",
+        ),
+        (
+            "runtime_math.determinism.mode_finish",
+            "missing required log event runtime_math.determinism.mode_finish",
+        ),
     ] {
         require(
             events
                 .iter()
-                .any(|entry| entry["event"].as_str() == Some(expected)),
-            format!("missing required log event {expected}"),
+                .any(|entry| entry.get("event").and_then(Value::as_str) == Some(expected)),
+            message,
         )?;
     }
 
@@ -253,16 +300,16 @@ fn cli_writes_structured_log_and_report_to_requested_paths() -> TestResult {
         json_string(&report, "bead")? == "bd-1fk1",
         "underlying proof report bead must remain bd-1fk1",
     )?;
+    let summary = report
+        .get("summary")
+        .ok_or_else(|| "missing summary".to_string())?;
+    require(json_u64(summary, "modes")? == 2, "summary.modes must be 2")?;
     require(
-        report["summary"]["modes"].as_u64() == Some(2),
-        "summary.modes must be 2",
-    )?;
-    require(
-        report["summary"]["failed"].as_u64() == Some(0),
+        json_u64(summary, "failed")? == 0,
         "summary.failed must be 0",
     )?;
     require(
-        report["modes"].as_array().map(Vec::len) == Some(2),
+        json_array(&report, "modes")?.len() == 2,
         "report must include strict and hardened mode rows",
     )?;
     Ok(())
