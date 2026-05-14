@@ -93,28 +93,28 @@ struct ExpectedOutput {
     saved_rounding_mode: Option<String>,
 }
 
-fn load_fixture() -> FixtureFile {
+fn load_fixture() -> Result<FixtureFile, String> {
     let path = repo_root().join("tests/conformance/fixtures/fenv_ops.json");
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
-fn load_json(path: &str) -> serde_json::Value {
+fn load_json(path: &str) -> Result<serde_json::Value, String> {
     let path = repo_root().join(path);
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|err| panic!("invalid JSON in {}: {err}", path.display()))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[test]
-fn fenv_ops_fixture_exists_and_names_scope() {
+fn fenv_ops_fixture_exists_and_names_scope() -> Result<(), String> {
     let fixture_path = repo_root().join("tests/conformance/fixtures/fenv_ops.json");
     assert!(fixture_path.exists(), "fenv_ops.json fixture must exist");
 
-    let fixture = load_fixture();
+    let fixture = load_fixture()?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "fenv_ops");
     assert!(
@@ -128,11 +128,12 @@ fn fenv_ops_fixture_exists_and_names_scope() {
             && fixture.spec_reference.contains("IEEE-754"),
         "fixture must cite POSIX, glibc, and IEEE-754 fenv behavior"
     );
+    Ok(())
 }
 
 #[test]
-fn fenv_ops_fixture_covers_every_exported_fenv_symbol() {
-    let fixture = load_fixture();
+fn fenv_ops_fixture_covers_every_exported_fenv_symbol() -> Result<(), String> {
+    let fixture = load_fixture()?;
     let declared: BTreeSet<&str> = fixture
         .cases
         .iter()
@@ -148,11 +149,12 @@ fn fenv_ops_fixture_covers_every_exported_fenv_symbol() {
         FENV_SYMBOLS.len(),
         "fenv_ops should bind one deterministic case per exported symbol"
     );
+    Ok(())
 }
 
 #[test]
-fn fenv_ops_fixture_cases_are_deterministic_and_mode_paired() {
-    let fixture = load_fixture();
+fn fenv_ops_fixture_cases_are_deterministic_and_mode_paired() -> Result<(), String> {
+    let fixture = load_fixture()?;
     for case in &fixture.cases {
         assert!(!case.name.is_empty(), "case name must not be empty");
         assert!(
@@ -204,14 +206,15 @@ fn fenv_ops_fixture_cases_are_deterministic_and_mode_paired() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn fenv_ops_fixture_is_backed_by_existing_diff_and_unit_tests() {
+fn fenv_ops_fixture_is_backed_by_existing_diff_and_unit_tests() -> Result<(), String> {
     let root = repo_root();
     let diff_test =
         std::fs::read_to_string(root.join("crates/frankenlibc-abi/tests/conformance_diff_fenv.rs"))
-            .expect("read fenv differential test");
+            .map_err(|err| format!("failed to read fenv differential test: {err}"))?;
     for needle in [
         "diff_round_modes_roundtrip",
         "diff_exception_flags_roundtrip",
@@ -226,7 +229,7 @@ fn fenv_ops_fixture_is_backed_by_existing_diff_and_unit_tests() {
 
     let unit_test =
         std::fs::read_to_string(root.join("crates/frankenlibc-abi/tests/fenv_abi_test.rs"))
-            .expect("read fenv_abi unit test");
+            .map_err(|err| format!("failed to read fenv_abi unit test: {err}"))?;
     for needle in [
         "exception_flags_raise_and_clear",
         "exceptflag_round_trip_restores_flag_bits",
@@ -241,27 +244,28 @@ fn fenv_ops_fixture_is_backed_by_existing_diff_and_unit_tests() {
             "missing fenv_abi test anchor {needle}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn symbol_fixture_coverage_counts_fenv_ops_fixture() {
-    let matrix = load_json("tests/conformance/symbol_fixture_coverage.v1.json");
+fn symbol_fixture_coverage_counts_fenv_ops_fixture() -> Result<(), String> {
+    let matrix = load_json("tests/conformance/symbol_fixture_coverage.v1.json")?;
     let symbols = matrix["symbols"]
         .as_array()
-        .expect("symbol_fixture_coverage.symbols must be an array");
+        .ok_or_else(|| "symbol_fixture_coverage.symbols must be an array".to_string())?;
 
     for symbol in FENV_SYMBOLS {
         let row = symbols
             .iter()
             .find(|row| row["module"] == "fenv_abi" && row["symbol"] == symbol)
-            .unwrap_or_else(|| panic!("missing fenv_abi symbol row for {symbol}"));
+            .ok_or_else(|| format!("missing fenv_abi symbol row for {symbol}"))?;
         assert!(
             row["fixture_case_count"].as_u64().unwrap_or(0) >= 1,
             "symbol_fixture_coverage must count fenv_ops fixture case for {symbol}"
         );
         let fixture_files = row["fixture_files"]
             .as_array()
-            .unwrap_or_else(|| panic!("fixture_files missing for {symbol}"));
+            .ok_or_else(|| format!("fixture_files missing for {symbol}"))?;
         assert!(
             fixture_files.iter().any(|file| file == "fenv_ops.json"),
             "symbol_fixture_coverage must cite fenv_ops.json for {symbol}"
@@ -270,11 +274,12 @@ fn symbol_fixture_coverage_counts_fenv_ops_fixture() {
 
     let uncovered = matrix["uncovered_target_families"]
         .as_array()
-        .expect("uncovered_target_families must be an array");
+        .ok_or_else(|| "uncovered_target_families must be an array".to_string())?;
     assert!(
         uncovered
             .iter()
             .all(|family| family["module"].as_str() != Some("fenv_abi")),
         "fenv_abi should not remain a critical uncovered target family after fenv_ops fixture"
     );
+    Ok(())
 }
