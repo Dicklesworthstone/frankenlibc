@@ -200,6 +200,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn suffix_case_does_not_change_scale() {
+        for (lower, upper) in [
+            (b"3k".as_slice(), b"3K".as_slice()),
+            (b"4m".as_slice(), b"4M".as_slice()),
+            (b"5g".as_slice(), b"5G".as_slice()),
+            (b"6t".as_slice(), b"6T".as_slice()),
+            (b"7p".as_slice(), b"7P".as_slice()),
+            (b"8e".as_slice(), b"8E".as_slice()),
+            (b"1.5k".as_slice(), b"1.5K".as_slice()),
+        ] {
+            assert_eq!(parse(lower), parse(upper), "{lower:?} vs {upper:?}");
+        }
+    }
+
+    #[test]
+    fn zero_fraction_preserves_suffixed_whole_value() {
+        for (whole, suffixed) in [("0", "0k"), ("1", "1K"), ("42", "42M"), ("15", "15E")] {
+            let expanded = format!("{whole}.0{}", &suffixed[suffixed.len() - 1..]);
+            assert_eq!(parse(expanded.as_bytes()), parse(suffixed.as_bytes()));
+        }
+    }
+
+    #[test]
+    fn trailing_fractional_zeros_do_not_change_value() {
+        for (short, padded) in [
+            ("1.5K", "1.50K"),
+            ("2.25M", "2.2500M"),
+            ("0.5G", "0.500G"),
+            ("3.125T", "3.125000T"),
+        ] {
+            assert_eq!(parse(short.as_bytes()), parse(padded.as_bytes()));
+        }
+    }
+
     // ---- invalid input ----
 
     #[test]
