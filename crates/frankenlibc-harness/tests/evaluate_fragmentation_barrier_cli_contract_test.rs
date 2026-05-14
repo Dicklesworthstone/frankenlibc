@@ -175,7 +175,22 @@ fn run_cli(
 
 fn read_record(out_path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(out_path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "expected exactly one JSONL record in {}, got {}",
+            out_path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
 #[test]
@@ -187,14 +202,12 @@ fn cli_all_zero_inputs_certified_safe() -> TestResult {
     let output = unique_tmp("safe")?;
     let out = run_cli(&bin, 0, 0, 0, 0, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "evaluate-fragmentation-barrier failed: stderr={}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         json_string(&parsed, "kind")? == "fragmentation_barrier",
         "kind must be fragmentation_barrier",
@@ -223,14 +236,12 @@ fn cli_max_stress_inputs_violate_certificate() -> TestResult {
     // + max arena utilization → certificate violation.
     let out = run_cli(&bin, 1_000_000, 0, 1_000_000, 1_000_000, &output)?;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!(
             "evaluate-fragmentation-barrier failed: stderr={}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         !json_bool(&parsed, "safe")?,
         "max-stress inputs must yield safe=false",
@@ -263,14 +274,12 @@ fn cli_safe_flag_matches_headroom_sign() -> TestResult {
         let output = unique_tmp(&format!("sign_{i}"))?;
         let out = run_cli(&bin, *alloc, *free, *size, *arena, &output)?;
         if !out.status.success() {
-            let _ = std::fs::remove_file(&output);
             return Err(format!(
                 "case {i} failed: stderr={}",
                 String::from_utf8_lossy(&out.stderr)
             ));
         }
         let parsed = read_record(&output)?;
-        let _ = std::fs::remove_file(&output);
         let headroom = json_i64(&parsed, "headroom")?;
         let safe = json_bool(&parsed, "safe")?;
         require(
@@ -299,8 +308,6 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
     )?;
     let pa = read_record(&a)?;
     let pb = read_record(&b)?;
-    let _ = std::fs::remove_file(&a);
-    let _ = std::fs::remove_file(&b);
     require(pa == pb, "same inputs must produce identical output")
 }
 
@@ -320,7 +327,6 @@ fn cli_echoes_inputs_into_record() -> TestResult {
         ),
     )?;
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     require(
         parsed.get("allocation_count").and_then(Value::as_u64) == Some(100),
         "allocation_count must echo",
