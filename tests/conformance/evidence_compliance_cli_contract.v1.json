@@ -1,0 +1,73 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "evidence-compliance-cli-contract",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "168a110cde6b353bc314c08299ae8616271b4daa",
+  "purpose": "Pin the harness binary `evidence-compliance` subcommand that validates a structured-log plus artifact-index evidence bundle and emits deterministic triage JSON before returning success or failure.",
+  "subcommand_name": "evidence-compliance",
+  "binary_target": "harness",
+  "required_flags": [
+    "--log",
+    "--artifact-index"
+  ],
+  "optional_flags": [
+    "--workspace-root",
+    "--output"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::evidence_compliance::validate_evidence_bundle",
+    "harness::evidence_report_to_triage_json"
+  ],
+  "input_contract": {
+    "structured_log_schema": "structured_log::LogEntry JSONL",
+    "artifact_index_schema": "structured_log::ArtifactIndex JSON",
+    "workspace_root_resolution": "relative artifacts resolve from the run root first, then from the supplied workspace root fallback"
+  },
+  "output_contract": {
+    "format": "json",
+    "stdout_when_output_omitted": true,
+    "writes_output_before_failure_exit": true,
+    "creates_output_parent_directories": true,
+    "fails_nonzero_on_violations": true,
+    "json_required_fields": [
+      "ok",
+      "violation_count",
+      "log_path",
+      "artifact_index_path",
+      "violations"
+    ],
+    "violation_required_fields": [
+      "violation_code",
+      "offending_event",
+      "expected_fields",
+      "remediation_hint",
+      "artifact_pointer",
+      "line_number",
+      "message"
+    ]
+  },
+  "policy": {
+    "must_register_evidence_compliance_subcommand": true,
+    "must_require_log_and_artifact_index": true,
+    "must_accept_workspace_root_for_artifact_resolution": true,
+    "must_emit_triage_json_to_stdout_without_output": true,
+    "must_create_output_parent_directories": true,
+    "must_write_output_before_failure_exit": true,
+    "must_fail_nonzero_on_violations": true,
+    "must_include_required_violation_triage_fields": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_log_flag",
+    "missing_artifact_index_flag",
+    "missing_subcommand_registration",
+    "missing_triage_json_fields",
+    "missing_violation_triage_fields",
+    "failure_without_written_output_artifact",
+    "success_exit_on_violations"
+  ],
+  "summary": {
+    "subcommand": "evidence-compliance",
+    "claim_status": "cli-contract",
+    "evidence_scope": "structured-log and artifact-index compliance triage"
+  }
+}
