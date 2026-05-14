@@ -103,11 +103,15 @@ fn parse_single_stdout_record(output: &Output) -> TestResult<Value> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    require(
-        lines.len() == 1,
-        format!("expected exactly one JSONL record; got {}", lines.len()),
-    )?;
-    serde_json::from_str(lines[0]).map_err(|err| format!("parse stdout JSONL: {err}"))
+    match lines.as_slice() {
+        [record] => {
+            serde_json::from_str(record).map_err(|err| format!("parse stdout JSONL: {err}"))
+        }
+        _ => Err(format!(
+            "expected exactly one JSONL record; got {}",
+            lines.len()
+        )),
+    }
 }
 
 #[test]
