@@ -44,12 +44,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,8 +126,8 @@ fn backtrace_ops_fixture_exists() {
 }
 
 #[test]
-fn backtrace_ops_fixture_valid_schema() {
-    let fixture = load_fixture("backtrace_ops");
+fn backtrace_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("backtrace_ops")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "backtrace_ops");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -140,11 +140,12 @@ fn backtrace_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn backtrace_ops_covers_backtrace() {
-    let fixture = load_fixture("backtrace_ops");
+fn backtrace_ops_covers_backtrace() -> Result<(), String> {
+    let fixture = load_fixture("backtrace_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -154,31 +155,34 @@ fn backtrace_ops_covers_backtrace() {
             >= 2,
         "backtrace needs at least 2 test cases (strict and hardened)"
     );
+    Ok(())
 }
 
 #[test]
-fn backtrace_ops_covers_backtrace_symbols() {
-    let fixture = load_fixture("backtrace_ops");
+fn backtrace_ops_covers_backtrace_symbols() -> Result<(), String> {
+    let fixture = load_fixture("backtrace_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|name| name.contains("symbols")),
         "Missing test coverage for backtrace_symbols"
     );
+    Ok(())
 }
 
 #[test]
-fn backtrace_ops_covers_backtrace_symbols_fd() {
-    let fixture = load_fixture("backtrace_ops");
+fn backtrace_ops_covers_backtrace_symbols_fd() -> Result<(), String> {
+    let fixture = load_fixture("backtrace_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|name| name.contains("symbols_fd")),
         "Missing test coverage for backtrace_symbols_fd"
     );
+    Ok(())
 }
 
 #[test]
-fn backtrace_ops_modes_valid() {
-    let fixture = load_fixture("backtrace_ops");
+fn backtrace_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("backtrace_ops")?;
     for case in &fixture.cases {
         assert!(
             case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
@@ -187,11 +191,12 @@ fn backtrace_ops_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn backtrace_ops_covers_both_modes() {
-    let fixture = load_fixture("backtrace_ops");
+fn backtrace_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("backtrace_ops")?;
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
     assert!(has_strict, "backtrace_ops must have strict mode test cases");
@@ -199,11 +204,12 @@ fn backtrace_ops_covers_both_modes() {
         has_hardened,
         "backtrace_ops must have hardened mode test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn backtrace_ops_case_count_stable() {
-    let fixture = load_fixture("backtrace_ops");
+fn backtrace_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("backtrace_ops")?;
     assert!(
         fixture.cases.len() >= 4,
         "backtrace_ops fixture has {} cases, expected at least 4",
@@ -213,11 +219,12 @@ fn backtrace_ops_case_count_stable() {
         "backtrace_ops fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn backtrace_ops_has_spec_references() {
-    let fixture = load_fixture("backtrace_ops");
+fn backtrace_ops_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("backtrace_ops")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("GNU")
@@ -228,17 +235,18 @@ fn backtrace_ops_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn backtrace_ops_fixture_executes_via_harness() {
-    let fixture = load_fixture("backtrace_ops");
+fn backtrace_ops_fixture_executes_via_harness() -> Result<(), String> {
+    let fixture = load_fixture("backtrace_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -246,13 +254,13 @@ fn backtrace_ops_fixture_executes_via_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "backtrace_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -265,4 +273,5 @@ fn backtrace_ops_fixture_executes_via_harness() {
             );
         }
     }
+    Ok(())
 }
