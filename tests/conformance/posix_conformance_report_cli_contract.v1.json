@@ -1,0 +1,100 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "posix-conformance-report-cli-contract",
+  "bead": "bd-s1amj",
+  "generated_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "41a180b3077d2eea4759fd35440d584b62e5c565",
+  "purpose": "Pin the harness binary `posix-conformance-report` subcommand that builds the bd-18qq.7 POSIX conformance coverage report from support_matrix.json, fixture JSON, and conformance_matrix.v1.json. The command must write a v1 JSON report with summary counts, per-symbol category and execution counts, sorted symbol rows, and quality flags, and must fail closed when any required input cannot be read or parsed.",
+  "subcommand_name": "posix-conformance-report",
+  "binary_target": "harness",
+  "required_flags": [],
+  "optional_flags": [
+    "--support-matrix",
+    "--fixture",
+    "--conformance-matrix",
+    "--output"
+  ],
+  "default_support_matrix": "support_matrix.json",
+  "default_fixture": "tests/conformance/fixtures",
+  "default_conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+  "default_output": "target/conformance/posix_conformance_report.current.v1.json",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::report::PosixConformanceReport::from_paths",
+    "frankenlibc_harness::report::PosixConformanceReport::to_json"
+  ],
+  "io_pattern": "support_matrix_plus_fixture_catalog_plus_conformance_matrix_to_posix_coverage_json_report",
+  "report_contract": {
+    "schema_version": "v1",
+    "bead": "bd-18qq.7",
+    "required_summary_fields": [
+      "total_exported",
+      "eligible_symbols",
+      "symbols_with_cases",
+      "symbols_with_all_core_categories",
+      "symbols_with_errno_case",
+      "symbols_with_missing_spec_traceability",
+      "symbols_with_execution_failures",
+      "total_fixture_cases",
+      "total_execution_cases"
+    ],
+    "required_symbol_fields": [
+      "symbol",
+      "status",
+      "module",
+      "case_count",
+      "strict_cases",
+      "hardened_cases",
+      "has_errno_case",
+      "spec_sections",
+      "categories",
+      "execution",
+      "quality_flags"
+    ],
+    "required_category_fields": [
+      "normal",
+      "boundary",
+      "error",
+      "other"
+    ],
+    "required_execution_fields": [
+      "total",
+      "pass",
+      "fail",
+      "error",
+      "timeout",
+      "crash"
+    ],
+    "symbols_must_be_non_empty_for_canonical_inputs": true,
+    "symbols_must_be_sorted_ascending": true,
+    "case_count_must_equal_category_total": true
+  },
+  "policy": {
+    "must_create_parent_directories_for_output": true,
+    "must_write_pretty_json_report": true,
+    "must_preserve_bd_18qq_7_report_bead": true,
+    "must_reject_missing_support_matrix_with_nonzero_exit": true,
+    "must_reject_unreadable_fixture_dir_with_nonzero_exit": true,
+    "must_reject_invalid_conformance_matrix_with_nonzero_exit": true,
+    "must_keep_symbols_sorted_by_name": true,
+    "must_preserve_case_count_category_accounting": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_report",
+    "wrong_schema_version",
+    "wrong_report_bead",
+    "empty_symbols_for_canonical_inputs",
+    "unsorted_symbol_rows",
+    "missing_summary_field",
+    "missing_symbol_field",
+    "missing_category_field",
+    "missing_execution_field",
+    "case_count_category_total_mismatch",
+    "missing_input_silently_passed"
+  ],
+  "summary": {
+    "bead": "bd-s1amj",
+    "subcommand": "posix-conformance-report",
+    "report_only": true,
+    "claim_status": "in_progress"
+  }
+}
