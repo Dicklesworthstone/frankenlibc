@@ -121,7 +121,22 @@ fn run_cli(
 
 fn read_record(path: &Path) -> TestResult<Value> {
     let body = std::fs::read_to_string(path).map_err(|e| format!("read: {e}"))?;
-    serde_json::from_str(body.trim()).map_err(|e| format!("parse: {e}"))
+    let records: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    require(
+        records.len() == 1,
+        format!(
+            "{} must contain exactly one JSONL record, found {}",
+            path.display(),
+            records.len()
+        ),
+    )?;
+    let record = records
+        .first()
+        .ok_or_else(|| "missing JSONL record after record-count check".to_string())?;
+    serde_json::from_str(record).map_err(|e| format!("parse: {e}"))
 }
 
 fn run_and_parse(
@@ -134,13 +149,10 @@ fn run_and_parse(
     let m_path = write_matrix(label, matrix)?;
     let output = unique_tmp(label, "jsonl")?;
     let out = run_cli(bin, &m_path, monomial_degree, barrier_budget_milli, &output)?;
-    let _ = std::fs::remove_file(&m_path);
     if !out.status.success() {
-        let _ = std::fs::remove_file(&output);
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
     }
     let parsed = read_record(&output)?;
-    let _ = std::fs::remove_file(&output);
     Ok(parsed)
 }
 
@@ -184,7 +196,7 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "non_square_matrix_is_rejected",
         "d4_anchor_hash_matches_expected",
     ] {
-        require(json_bool(policy, f)?, format!("{f} must be true"))?;
+        require(json_bool(policy, f)?, "policy invariant must be true")?;
     }
     Ok(())
 }
@@ -219,11 +231,15 @@ fn cli_d4_anchor_hash_matches_expected() -> TestResult {
     let anchor = manifest
         .get("expected_d4_anchor")
         .ok_or_else(|| "missing expected_d4_anchor".to_string())?;
-    let matrix = anchor.get("gram_matrix").unwrap();
-    let monomial_degree = anchor
+    let matrix = anchor
+        .get("gram_matrix")
+        .ok_or_else(|| "missing gram_matrix".to_string())?;
+    let monomial_degree_u64 = anchor
         .get("monomial_degree")
         .and_then(Value::as_u64)
-        .ok_or_else(|| "missing monomial_degree".to_string())? as u32;
+        .ok_or_else(|| "missing monomial_degree".to_string())?;
+    let monomial_degree = u32::try_from(monomial_degree_u64)
+        .map_err(|_| "monomial_degree out of u32 range".to_string())?;
     let budget = anchor
         .get("barrier_budget_milli")
         .and_then(Value::as_i64)
@@ -300,18 +316,27 @@ fn cli_supported_dims_2_through_8_succeed() -> TestResult {
     for d in 2..=8 {
         let mut rows = Vec::with_capacity(d);
         for i in 0..d {
-            let mut row = vec![0i64; d];
-            row[i] = 1;
+            let row: Vec<i64> = (0..d).map(|j| if i == j { 1i64 } else { 0i64 }).collect();
             rows.push(row);
         }
         let m: Value = serde_json::json!(rows);
-        let parsed = run_and_parse(&bin, &m, 2, 0, &format!("d_{d}"))?;
+        let label = match d {
+            2 => "d_2",
+            3 => "d_3",
+            4 => "d_4",
+            5 => "d_5",
+            6 => "d_6",
+            7 => "d_7",
+            8 => "d_8",
+            _ => "d_unknown",
+        };
+        let parsed = run_and_parse(&bin, &m, 2, 0, label)?;
         require(
             json_u64(&parsed, "dim")? as usize == d,
-            format!("dim must echo {d}"),
+            "dim must echo input dimension",
         )?;
         let h = json_string(&parsed, "hash_hex")?;
-        require(h.len() == 64, format!("d={d} hash len must be 64"))?;
+        require(h.len() == 64, "hash len must be 64")?;
     }
     Ok(())
 }
@@ -326,8 +351,6 @@ fn cli_unsupported_dim_is_rejected() -> TestResult {
     let m_path = write_matrix("d1", &m)?;
     let output = unique_tmp("d1", "jsonl")?;
     let out = run_cli(&bin, &m_path, 2, 0, &output)?;
-    let _ = std::fs::remove_file(&m_path);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         format!(
@@ -353,8 +376,6 @@ fn cli_non_square_matrix_is_rejected() -> TestResult {
     let m_path = write_matrix("nonsq", &m)?;
     let output = unique_tmp("nonsq", "jsonl")?;
     let out = run_cli(&bin, &m_path, 2, 0, &output)?;
-    let _ = std::fs::remove_file(&m_path);
-    let _ = std::fs::remove_file(&output);
     require(
         !out.status.success(),
         format!(
