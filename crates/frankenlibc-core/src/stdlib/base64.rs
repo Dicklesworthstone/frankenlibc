@@ -97,9 +97,40 @@ mod tests {
     }
 
     #[test]
+    fn test_l64a_depends_only_on_low_32_bits() {
+        let high_bit = 1i64 << 32;
+
+        for val in [0i64, 1, 42, 123_456, i32::MAX as i64, u32::MAX as i64] {
+            assert_eq!(l64a(val), l64a(val + high_bit), "high bits changed {val}");
+        }
+        assert_eq!(l64a(-1), l64a(u32::MAX as i64));
+        assert_eq!(a64l(&l64a(-1)), u32::MAX as i64);
+    }
+
+    #[test]
     fn test_a64l_empty_string() {
         assert_eq!(a64l(b""), 0);
         assert_eq!(a64l(b"\0"), 0);
+    }
+
+    #[test]
+    fn test_a64l_stop_boundaries_preserve_prefix_value() {
+        for prefix in [
+            b"0".as_slice(),
+            b"Az".as_slice(),
+            b"abc".as_slice(),
+            b"//////".as_slice(),
+        ] {
+            let expected = a64l(prefix);
+
+            let mut invalid_terminated = prefix.to_vec();
+            invalid_terminated.extend_from_slice(b"!zzzz");
+            assert_eq!(a64l(&invalid_terminated), expected);
+
+            let mut nul_terminated = prefix.to_vec();
+            nul_terminated.extend_from_slice(b"\0zzzz");
+            assert_eq!(a64l(&nul_terminated), expected);
+        }
     }
 
     #[test]
