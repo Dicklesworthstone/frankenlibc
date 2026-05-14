@@ -61,6 +61,11 @@ fn json_u64(value: &Value, field: &str) -> TestResult<u64> {
         .ok_or_else(|| format!("missing or non-u64 `{field}`"))
 }
 
+fn json_usize(value: &Value, field: &str) -> TestResult<usize> {
+    let raw = json_u64(value, field)?;
+    usize::try_from(raw).map_err(|_| format!("`{field}` does not fit usize"))
+}
+
 fn cargo_target_dir_for_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_TARGET_DIR") {
         PathBuf::from(p)
@@ -148,23 +153,53 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
     let policy = m.get("policy").ok_or("missing policy")?;
-    for key in [
-        "must_write_json_report_file",
-        "must_write_jsonl_log_file",
-        "report_mode_field_reflects_cli_mode",
-        "report_campaign_field_reflects_cli_campaign",
-        "summary_total_cases_equals_rows_length_per_active_mode",
-        "mode_both_runs_strict_and_hardened_passes",
-        "fail_on_mismatch_promotes_any_case_failure_to_nonzero_exit",
-        "default_invocation_succeeds_with_zero_failed_cases",
-        "unknown_mode_rejected_with_nonzero_exit",
-        "deterministic_given_same_mode_campaign",
-        "all_cases_pass_under_canonical_suite",
+    for (key, message) in [
+        (
+            "must_write_json_report_file",
+            "policy.must_write_json_report_file must be true (manifest pin)",
+        ),
+        (
+            "must_write_jsonl_log_file",
+            "policy.must_write_jsonl_log_file must be true (manifest pin)",
+        ),
+        (
+            "report_mode_field_reflects_cli_mode",
+            "policy.report_mode_field_reflects_cli_mode must be true (manifest pin)",
+        ),
+        (
+            "report_campaign_field_reflects_cli_campaign",
+            "policy.report_campaign_field_reflects_cli_campaign must be true (manifest pin)",
+        ),
+        (
+            "summary_total_cases_equals_rows_length_per_active_mode",
+            "policy.summary_total_cases_equals_rows_length_per_active_mode must be true (manifest pin)",
+        ),
+        (
+            "mode_both_runs_strict_and_hardened_passes",
+            "policy.mode_both_runs_strict_and_hardened_passes must be true (manifest pin)",
+        ),
+        (
+            "fail_on_mismatch_promotes_any_case_failure_to_nonzero_exit",
+            "policy.fail_on_mismatch_promotes_any_case_failure_to_nonzero_exit must be true (manifest pin)",
+        ),
+        (
+            "default_invocation_succeeds_with_zero_failed_cases",
+            "policy.default_invocation_succeeds_with_zero_failed_cases must be true (manifest pin)",
+        ),
+        (
+            "unknown_mode_rejected_with_nonzero_exit",
+            "policy.unknown_mode_rejected_with_nonzero_exit must be true (manifest pin)",
+        ),
+        (
+            "deterministic_given_same_mode_campaign",
+            "policy.deterministic_given_same_mode_campaign must be true (manifest pin)",
+        ),
+        (
+            "all_cases_pass_under_canonical_suite",
+            "policy.all_cases_pass_under_canonical_suite must be true (manifest pin)",
+        ),
     ] {
-        require(
-            json_bool(policy, key)?,
-            format!("policy.{key} must be true (manifest pin)"),
-        )?;
+        require(json_bool(policy, key)?, message)?;
     }
     Ok(())
 }
@@ -178,12 +213,21 @@ fn manifest_underlying_lib_functions_are_pinned() -> TestResult {
         .and_then(Value::as_array)
         .ok_or("underlying_lib_functions missing")?;
     let names: Vec<&str> = funcs.iter().filter_map(Value::as_str).collect();
-    for expected in [
-        "frankenlibc_harness::healing_oracle::HealingOracleMode::from_str_loose",
-        "frankenlibc_harness::healing_oracle::HealingOracleSuite::canonical",
-        "frankenlibc_harness::healing_oracle::build_healing_oracle_report",
+    for (expected, message) in [
+        (
+            "frankenlibc_harness::healing_oracle::HealingOracleMode::from_str_loose",
+            "HealingOracleMode::from_str_loose not pinned",
+        ),
+        (
+            "frankenlibc_harness::healing_oracle::HealingOracleSuite::canonical",
+            "HealingOracleSuite::canonical not pinned",
+        ),
+        (
+            "frankenlibc_harness::healing_oracle::build_healing_oracle_report",
+            "build_healing_oracle_report not pinned",
+        ),
     ] {
-        require(names.contains(&expected), format!("{expected} not pinned"))?;
+        require(names.contains(&expected), message)?;
     }
     Ok(())
 }
@@ -250,10 +294,9 @@ fn cli_default_invocation_succeeds_with_zero_failures() -> TestResult {
         .and_then(Value::as_array)
         .ok_or("missing cases array")?;
     require(
-        cases.len() as u64 == json_u64(summary, "total_cases")?,
+        cases.len() == json_usize(summary, "total_cases")?,
         "summary.total_cases must equal cases length",
     )?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -284,7 +327,6 @@ fn cli_mode_strict_only_passes_strict_rows() -> TestResult {
             "every case row must have mode=strict",
         )?;
     }
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -315,7 +357,6 @@ fn cli_mode_hardened_only_passes_hardened_rows() -> TestResult {
             "every case row must have mode=hardened",
         )?;
     }
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -332,7 +373,6 @@ fn cli_unknown_mode_rejected_with_nonzero_exit() -> TestResult {
         !result.status.success(),
         "harness must exit non-zero on unknown mode",
     )?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -364,7 +404,6 @@ fn cli_deterministic_given_same_mode_campaign() -> TestResult {
         strip(a) == strip(b),
         "report bodies must match across runs (ignoring generated_at_utc)",
     )?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -386,9 +425,8 @@ fn cli_summary_total_cases_equals_rows_length() -> TestResult {
         .and_then(Value::as_array)
         .ok_or("missing cases")?;
     require(
-        cases.len() as u64 == json_u64(summary, "total_cases")?,
+        cases.len() == json_usize(summary, "total_cases")?,
         "summary.total_cases must equal cases length",
     )?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
