@@ -413,27 +413,18 @@ fn lookup_hosts_ipv4_by_name(name: &[u8]) -> Option<Ipv4Addr> {
     None
 }
 
-fn service_protocol_filter(hints: Option<&libc::addrinfo>) -> Option<&'static [u8]> {
-    let hints = hints?;
-    match hints.ai_socktype {
-        libc::SOCK_STREAM => Some(b"tcp"),
-        libc::SOCK_DGRAM => Some(b"udp"),
-        _ if hints.ai_protocol == libc::IPPROTO_TCP => Some(b"tcp"),
-        _ if hints.ai_protocol == libc::IPPROTO_UDP => Some(b"udp"),
-        _ => None,
-    }
-}
-
-fn lookup_service_port(service: &[u8], hints: Option<&libc::addrinfo>) -> Option<u16> {
-    let content = read_services_backend().ok()?;
-    frankenlibc_core::resolv::lookup_service(&content, service, service_protocol_filter(hints))
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NumericService {
     Port(u16),
     InvalidNumeric,
     NotNumeric,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AddrinfoProfile {
+    port: u16,
+    socktype: c_int,
+    protocol: c_int,
 }
 
 fn parse_numeric_service_port(text: &str) -> NumericService {
@@ -463,18 +454,209 @@ fn parse_numeric_service_port(text: &str) -> NumericService {
     NumericService::Port(narrowed as u16)
 }
 
-fn parse_port(
+fn profiles_for_port(
+    port: u16,
+    hints: Option<&libc::addrinfo>,
+    service_present: bool,
+) -> Result<Vec<AddrinfoProfile>, c_int> {
+    let (socktype, protocol) = hints
+        .map(|h| (h.ai_socktype, h.ai_protocol))
+        .unwrap_or((0, 0));
+
+    let mut profiles = Vec::new();
+    match socktype {
+        0 => match protocol {
+            0 => {
+                profiles.push(AddrinfoProfile {
+                    port,
+                    socktype: libc::SOCK_STREAM,
+                    protocol: libc::IPPROTO_TCP,
+                });
+                profiles.push(AddrinfoProfile {
+                    port,
+                    socktype: libc::SOCK_DGRAM,
+                    protocol: libc::IPPROTO_UDP,
+                });
+                profiles.push(AddrinfoProfile {
+                    port,
+                    socktype: libc::SOCK_RAW,
+                    protocol: 0,
+                });
+            }
+            libc::IPPROTO_TCP => profiles.push(AddrinfoProfile {
+                port,
+                socktype: libc::SOCK_STREAM,
+                protocol,
+            }),
+            libc::IPPROTO_UDP => profiles.push(AddrinfoProfile {
+                port,
+                socktype: libc::SOCK_DGRAM,
+                protocol,
+            }),
+            _ if !service_present => profiles.push(AddrinfoProfile {
+                port,
+                socktype: libc::SOCK_RAW,
+                protocol,
+            }),
+            _ => return Err(libc::EAI_SERVICE),
+        },
+        libc::SOCK_STREAM => match protocol {
+            0 | libc::IPPROTO_TCP => profiles.push(AddrinfoProfile {
+                port,
+                socktype,
+                protocol: libc::IPPROTO_TCP,
+            }),
+            _ => return Err(libc::EAI_SOCKTYPE),
+        },
+        libc::SOCK_DGRAM => match protocol {
+            0 | libc::IPPROTO_UDP => profiles.push(AddrinfoProfile {
+                port,
+                socktype,
+                protocol: libc::IPPROTO_UDP,
+            }),
+            _ => return Err(libc::EAI_SOCKTYPE),
+        },
+        libc::SOCK_RAW => {
+            if service_present {
+                return Err(libc::EAI_SERVICE);
+            }
+            profiles.push(AddrinfoProfile {
+                port,
+                socktype,
+                protocol,
+            });
+        }
+        _ => return Err(libc::EAI_SOCKTYPE),
+    }
+
+    Ok(profiles)
+}
+
+fn service_entry_profile(
+    entry: &frankenlibc_core::resolv::ServiceEntry,
+    hints: Option<&libc::addrinfo>,
+) -> Result<Option<AddrinfoProfile>, c_int> {
+    let (socktype, protocol) = hints
+        .map(|h| (h.ai_socktype, h.ai_protocol))
+        .unwrap_or((0, 0));
+    let is_tcp = entry.protocol.eq_ignore_ascii_case(b"tcp");
+    let is_udp = entry.protocol.eq_ignore_ascii_case(b"udp");
+
+    match socktype {
+        0 => match protocol {
+            0 => {
+                if is_tcp {
+                    Ok(Some(AddrinfoProfile {
+                        port: entry.port,
+                        socktype: libc::SOCK_STREAM,
+                        protocol: libc::IPPROTO_TCP,
+                    }))
+                } else if is_udp {
+                    Ok(Some(AddrinfoProfile {
+                        port: entry.port,
+                        socktype: libc::SOCK_DGRAM,
+                        protocol: libc::IPPROTO_UDP,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            libc::IPPROTO_TCP if is_tcp => Ok(Some(AddrinfoProfile {
+                port: entry.port,
+                socktype: libc::SOCK_STREAM,
+                protocol,
+            })),
+            libc::IPPROTO_UDP if is_udp => Ok(Some(AddrinfoProfile {
+                port: entry.port,
+                socktype: libc::SOCK_DGRAM,
+                protocol,
+            })),
+            libc::IPPROTO_TCP | libc::IPPROTO_UDP => Ok(None),
+            _ => Err(libc::EAI_SERVICE),
+        },
+        libc::SOCK_STREAM => match protocol {
+            0 | libc::IPPROTO_TCP => {
+                if is_tcp {
+                    Ok(Some(AddrinfoProfile {
+                        port: entry.port,
+                        socktype,
+                        protocol: libc::IPPROTO_TCP,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Err(libc::EAI_SOCKTYPE),
+        },
+        libc::SOCK_DGRAM => match protocol {
+            0 | libc::IPPROTO_UDP => {
+                if is_udp {
+                    Ok(Some(AddrinfoProfile {
+                        port: entry.port,
+                        socktype,
+                        protocol: libc::IPPROTO_UDP,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Err(libc::EAI_SOCKTYPE),
+        },
+        libc::SOCK_RAW => Err(libc::EAI_SERVICE),
+        _ => Err(libc::EAI_SOCKTYPE),
+    }
+}
+
+fn service_entry_matches(entry: &frankenlibc_core::resolv::ServiceEntry, service: &[u8]) -> bool {
+    entry.name.eq_ignore_ascii_case(service)
+        || entry
+            .aliases
+            .iter()
+            .any(|alias| alias.eq_ignore_ascii_case(service))
+}
+
+fn lookup_service_profiles(
+    service: &[u8],
+    hints: Option<&libc::addrinfo>,
+) -> Result<Option<Vec<AddrinfoProfile>>, c_int> {
+    let content = match read_services_backend() {
+        Ok(content) => content,
+        Err(_) => return Ok(None),
+    };
+    let mut profiles = Vec::new();
+    for line in content.split(|&b| b == b'\n') {
+        let Some(entry) = frankenlibc_core::resolv::parse_services_line(line) else {
+            continue;
+        };
+        if !service_entry_matches(&entry, service) {
+            continue;
+        }
+        if let Some(profile) = service_entry_profile(&entry, hints)?
+            && !profiles.contains(&profile)
+        {
+            profiles.push(profile);
+        }
+    }
+
+    if profiles.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(profiles))
+    }
+}
+
+fn resolve_addrinfo_profiles(
     service: Option<&CStr>,
     hints: Option<&libc::addrinfo>,
     repair: bool,
-) -> Result<u16, c_int> {
+) -> Result<Vec<AddrinfoProfile>, c_int> {
     let Some(service) = service else {
-        return Ok(0);
+        return profiles_for_port(0, hints, false);
     };
 
     if let Ok(text) = service.to_str() {
         match parse_numeric_service_port(text) {
-            NumericService::Port(port) => return Ok(port),
+            NumericService::Port(port) => return profiles_for_port(port, hints, true),
             NumericService::InvalidNumeric => return Err(libc::EAI_SERVICE),
             NumericService::NotNumeric => {}
         }
@@ -486,13 +668,13 @@ fn parse_port(
         return Err(libc::EAI_NONAME);
     }
 
-    if let Some(port) = lookup_service_port(service.to_bytes(), hints) {
-        return Ok(port);
+    if let Some(profiles) = lookup_service_profiles(service.to_bytes(), hints)? {
+        return Ok(profiles);
     }
 
     if repair {
         global_healing_policy().record(&HealingAction::ReturnSafeDefault);
-        Ok(0)
+        profiles_for_port(0, hints, false)
     } else {
         Err(libc::EAI_SERVICE)
     }
@@ -723,12 +905,10 @@ struct ContiguousAddrinfoV4 {
 
 unsafe fn build_addrinfo_v4(
     ip: Ipv4Addr,
-    port: u16,
+    profile: AddrinfoProfile,
     hints: Option<&libc::addrinfo>,
 ) -> *mut libc::addrinfo {
-    let (flags, socktype, protocol) = hints
-        .map(|h| (h.ai_flags, h.ai_socktype, h.ai_protocol))
-        .unwrap_or((0, 0, 0));
+    let flags = hints.map(|h| h.ai_flags).unwrap_or(0);
 
     // Allocate contiguously so freeaddrinfo can use a single free().
     let layout = std::alloc::Layout::new::<ContiguousAddrinfoV4>();
@@ -745,7 +925,7 @@ unsafe fn build_addrinfo_v4(
             sockaddr_ptr,
             libc::sockaddr_in {
                 sin_family: libc::AF_INET as u16,
-                sin_port: port.to_be(),
+                sin_port: profile.port.to_be(),
                 sin_addr: libc::in_addr {
                     // s_addr must be in network byte order (big-endian bytes in memory).
                     // ip.octets() = [127,0,0,1]. We need memory bytes [0x7f,0x00,0x00,0x01].
@@ -765,8 +945,8 @@ unsafe fn build_addrinfo_v4(
             libc::addrinfo {
                 ai_flags: flags,
                 ai_family: libc::AF_INET,
-                ai_socktype: socktype,
-                ai_protocol: protocol,
+                ai_socktype: profile.socktype,
+                ai_protocol: profile.protocol,
                 ai_addrlen: size_of::<libc::sockaddr_in>() as libc::socklen_t,
                 ai_addr: sockaddr_ptr.cast::<libc::sockaddr>(),
                 ai_canonname: ptr::null_mut(),
@@ -789,12 +969,10 @@ struct ContiguousAddrinfoV6 {
 
 unsafe fn build_addrinfo_v6(
     ip: Ipv6Addr,
-    port: u16,
+    profile: AddrinfoProfile,
     hints: Option<&libc::addrinfo>,
 ) -> *mut libc::addrinfo {
-    let (flags, socktype, protocol) = hints
-        .map(|h| (h.ai_flags, h.ai_socktype, h.ai_protocol))
-        .unwrap_or((0, 0, 0));
+    let flags = hints.map(|h| h.ai_flags).unwrap_or(0);
 
     // Allocate contiguously so freeaddrinfo can use a single free().
     let layout = std::alloc::Layout::new::<ContiguousAddrinfoV6>();
@@ -811,7 +989,7 @@ unsafe fn build_addrinfo_v6(
             sockaddr_ptr,
             libc::sockaddr_in6 {
                 sin6_family: libc::AF_INET6 as u16,
-                sin6_port: port.to_be(),
+                sin6_port: profile.port.to_be(),
                 sin6_flowinfo: 0,
                 sin6_addr: libc::in6_addr {
                     s6_addr: ip.octets(),
@@ -829,8 +1007,8 @@ unsafe fn build_addrinfo_v6(
             libc::addrinfo {
                 ai_flags: flags,
                 ai_family: libc::AF_INET6,
-                ai_socktype: socktype,
-                ai_protocol: protocol,
+                ai_socktype: profile.socktype,
+                ai_protocol: profile.protocol,
                 ai_addrlen: size_of::<libc::sockaddr_in6>() as libc::socklen_t,
                 ai_addr: sockaddr_ptr.cast::<libc::sockaddr>(),
                 ai_canonname: ptr::null_mut(),
@@ -839,6 +1017,28 @@ unsafe fn build_addrinfo_v6(
         );
     }
     ai_ptr
+}
+
+fn push_addrinfo_v4_nodes(
+    nodes: &mut Vec<*mut libc::addrinfo>,
+    ip: Ipv4Addr,
+    profiles: &[AddrinfoProfile],
+    hints: Option<&libc::addrinfo>,
+) {
+    for &profile in profiles {
+        nodes.push(unsafe { build_addrinfo_v4(ip, profile, hints) });
+    }
+}
+
+fn push_addrinfo_v6_nodes(
+    nodes: &mut Vec<*mut libc::addrinfo>,
+    ip: Ipv6Addr,
+    profiles: &[AddrinfoProfile],
+    hints: Option<&libc::addrinfo>,
+) {
+    for &profile in profiles {
+        nodes.push(unsafe { build_addrinfo_v6(ip, profile, hints) });
+    }
 }
 
 unsafe fn free_addrinfo_node(node: *mut libc::addrinfo) {
@@ -1233,8 +1433,8 @@ pub unsafe extern "C" fn getaddrinfo(
         return libc::EAI_NONAME;
     }
 
-    let port = match parse_port(service_cstr, hints_ref, repair) {
-        Ok(port) => port,
+    let profiles = match resolve_addrinfo_profiles(service_cstr, hints_ref, repair) {
+        Ok(profiles) => profiles,
         Err(err) => {
             record_resolver_stage_outcome(
                 &ordering,
@@ -1271,7 +1471,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 numeric_host = true;
                 match family {
                     libc::AF_UNSPEC | libc::AF_INET => {
-                        nodes.push(unsafe { build_addrinfo_v4(v4, port, hints_ref) });
+                        push_addrinfo_v4_nodes(&mut nodes, v4, &profiles, hints_ref);
                     }
                     libc::AF_INET6 => {
                         record_resolver_stage_outcome(
@@ -1298,7 +1498,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 numeric_host = true;
                 match family {
                     libc::AF_UNSPEC | libc::AF_INET6 => {
-                        nodes.push(unsafe { build_addrinfo_v6(v6, port, hints_ref) });
+                        push_addrinfo_v6_nodes(&mut nodes, v6, &profiles, hints_ref);
                     }
                     libc::AF_INET => {
                         record_resolver_stage_outcome(
@@ -1341,11 +1541,11 @@ pub unsafe extern "C" fn getaddrinfo(
                         if (family == libc::AF_UNSPEC || family == libc::AF_INET)
                             && let Ok(v4) = c_text.parse::<Ipv4Addr>()
                         {
-                            nodes.push(unsafe { build_addrinfo_v4(v4, port, hints_ref) });
+                            push_addrinfo_v4_nodes(&mut nodes, v4, &profiles, hints_ref);
                         } else if (family == libc::AF_UNSPEC || family == libc::AF_INET6)
                             && let Ok(v6) = c_text.parse::<Ipv6Addr>()
                         {
-                            nodes.push(unsafe { build_addrinfo_v6(v6, port, hints_ref) });
+                            push_addrinfo_v6_nodes(&mut nodes, v6, &profiles, hints_ref);
                         }
                     }
                 }
@@ -1361,21 +1561,24 @@ pub unsafe extern "C" fn getaddrinfo(
 
                 for v4 in &dns_result.ipv4 {
                     if family == libc::AF_UNSPEC || family == libc::AF_INET {
-                        nodes.push(unsafe { build_addrinfo_v4(*v4, port, hints_ref) });
+                        push_addrinfo_v4_nodes(&mut nodes, *v4, &profiles, hints_ref);
                     }
                 }
                 for v6 in &dns_result.ipv6 {
                     if family == libc::AF_UNSPEC || family == libc::AF_INET6 {
-                        nodes.push(unsafe { build_addrinfo_v6(*v6, port, hints_ref) });
+                        push_addrinfo_v6_nodes(&mut nodes, *v6, &profiles, hints_ref);
                     }
                 }
 
                 if nodes.is_empty() {
                     if repair {
                         global_healing_policy().record(&HealingAction::ReturnSafeDefault);
-                        nodes.push(unsafe {
-                            build_addrinfo_v4(Ipv4Addr::LOCALHOST, port, hints_ref)
-                        });
+                        push_addrinfo_v4_nodes(
+                            &mut nodes,
+                            Ipv4Addr::LOCALHOST,
+                            &profiles,
+                            hints_ref,
+                        );
                     } else {
                         record_resolver_stage_outcome(
                             &ordering,
@@ -1398,7 +1601,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 } else {
                     Ipv6Addr::LOCALHOST
                 };
-                nodes.push(unsafe { build_addrinfo_v6(addr, port, hints_ref) });
+                push_addrinfo_v6_nodes(&mut nodes, addr, &profiles, hints_ref);
             }
             libc::AF_INET => {
                 let addr = if (flags & libc::AI_PASSIVE) != 0 {
@@ -1406,7 +1609,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 } else {
                     Ipv4Addr::LOCALHOST
                 };
-                nodes.push(unsafe { build_addrinfo_v4(addr, port, hints_ref) });
+                push_addrinfo_v4_nodes(&mut nodes, addr, &profiles, hints_ref);
             }
             libc::AF_UNSPEC => {
                 let passive = (flags & libc::AI_PASSIVE) != 0;
@@ -1421,11 +1624,11 @@ pub unsafe extern "C" fn getaddrinfo(
                     Ipv6Addr::LOCALHOST
                 };
                 if passive {
-                    nodes.push(unsafe { build_addrinfo_v4(v4_addr, port, hints_ref) });
-                    nodes.push(unsafe { build_addrinfo_v6(v6_addr, port, hints_ref) });
+                    push_addrinfo_v4_nodes(&mut nodes, v4_addr, &profiles, hints_ref);
+                    push_addrinfo_v6_nodes(&mut nodes, v6_addr, &profiles, hints_ref);
                 } else {
-                    nodes.push(unsafe { build_addrinfo_v6(v6_addr, port, hints_ref) });
-                    nodes.push(unsafe { build_addrinfo_v4(v4_addr, port, hints_ref) });
+                    push_addrinfo_v6_nodes(&mut nodes, v6_addr, &profiles, hints_ref);
+                    push_addrinfo_v4_nodes(&mut nodes, v4_addr, &profiles, hints_ref);
                 }
             }
             _ => {

@@ -137,10 +137,36 @@ unsafe fn collect_addrinfo_families(mut node: *mut libc::addrinfo) -> Vec<c_int>
     while !node.is_null() {
         // SAFETY: caller provides a valid addrinfo chain returned by getaddrinfo.
         let ai = unsafe { &*node };
-        families.push(ai.ai_family);
+        if !families.contains(&ai.ai_family) {
+            families.push(ai.ai_family);
+        }
         node = ai.ai_next;
     }
     families
+}
+
+unsafe fn collect_addrinfo_profiles(mut node: *mut libc::addrinfo) -> Vec<(c_int, c_int, u16)> {
+    let mut profiles = Vec::new();
+    while !node.is_null() {
+        // SAFETY: caller provides a valid addrinfo chain returned by getaddrinfo.
+        let ai = unsafe { &*node };
+        let port = match ai.ai_family {
+            libc::AF_INET => {
+                // SAFETY: AF_INET records carry a sockaddr_in address.
+                let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+                u16::from_be(sin.sin_port)
+            }
+            libc::AF_INET6 => {
+                // SAFETY: AF_INET6 records carry a sockaddr_in6 address.
+                let sin6 = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in6) };
+                u16::from_be(sin6.sin6_port)
+            }
+            _ => 0,
+        };
+        profiles.push((ai.ai_socktype, ai.ai_protocol, port));
+        node = ai.ai_next;
+    }
+    profiles
 }
 
 fn services_alias_fixture() -> Option<(CString, CString, u16)> {
@@ -925,6 +951,134 @@ fn getaddrinfo_null_service_uses_port_zero() {
     assert_eq!(sin.sin_port, 0);
 
     unsafe { resolv_abi::freeaddrinfo(res) };
+}
+
+#[test]
+fn getaddrinfo_unspecified_socktype_expands_numeric_service_profiles() {
+    let node = CString::new("127.0.0.1").unwrap();
+    let service = CString::new("80").unwrap();
+    let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+    hints.ai_family = libc::AF_INET;
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res) };
+    assert_eq!(rc, 0);
+    assert!(!res.is_null());
+
+    let profiles = unsafe { collect_addrinfo_profiles(res) };
+    assert_eq!(
+        profiles,
+        vec![
+            (libc::SOCK_STREAM, libc::IPPROTO_TCP, 80),
+            (libc::SOCK_DGRAM, libc::IPPROTO_UDP, 80),
+            (libc::SOCK_RAW, 0, 80),
+        ]
+    );
+
+    unsafe { resolv_abi::freeaddrinfo(res) };
+}
+
+#[test]
+fn getaddrinfo_unspecified_socktype_protocol_filters_profiles() {
+    let cases = [
+        (
+            libc::IPPROTO_TCP,
+            0,
+            vec![(libc::SOCK_STREAM, libc::IPPROTO_TCP, 80)],
+        ),
+        (
+            libc::IPPROTO_UDP,
+            0,
+            vec![(libc::SOCK_DGRAM, libc::IPPROTO_UDP, 80)],
+        ),
+        (libc::IPPROTO_ICMP, libc::EAI_SERVICE, Vec::new()),
+    ];
+
+    for (protocol, expected_rc, expected_profiles) in cases {
+        let node = CString::new("127.0.0.1").unwrap();
+        let service = CString::new("80").unwrap();
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        hints.ai_protocol = protocol;
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res) };
+        assert_eq!(rc, expected_rc, "protocol {protocol}");
+        if expected_rc == 0 {
+            assert!(!res.is_null());
+            let profiles = unsafe { collect_addrinfo_profiles(res) };
+            assert_eq!(profiles, expected_profiles, "protocol {protocol}");
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        } else {
+            assert!(res.is_null());
+        }
+    }
+}
+
+#[test]
+fn getaddrinfo_raw_socktype_rejects_service_but_allows_null_service() {
+    let node = CString::new("127.0.0.1").unwrap();
+    let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+    hints.ai_family = libc::AF_INET;
+    hints.ai_socktype = libc::SOCK_RAW;
+    hints.ai_protocol = libc::IPPROTO_ICMP;
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), &hints, &mut res) };
+    assert_eq!(rc, 0);
+    assert!(!res.is_null());
+    let profiles = unsafe { collect_addrinfo_profiles(res) };
+    assert_eq!(profiles, vec![(libc::SOCK_RAW, libc::IPPROTO_ICMP, 0)]);
+    unsafe { resolv_abi::freeaddrinfo(res) };
+
+    let service = CString::new("0").unwrap();
+    let mut rejected: *mut libc::addrinfo = ptr::null_mut();
+    let rc =
+        unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut rejected) };
+    assert_eq!(rc, libc::EAI_SERVICE);
+    assert!(rejected.is_null());
+}
+
+#[test]
+fn getaddrinfo_service_name_uses_service_protocol_profiles() {
+    with_resolver_backends(
+        None,
+        Some(b"dual 4242/tcp\ndual 4242/udp\nsingle 8080/tcp\n"),
+        |_| {
+            let node = CString::new("127.0.0.1").unwrap();
+            let service = CString::new("dual").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let profiles = unsafe { collect_addrinfo_profiles(res) };
+            assert_eq!(
+                profiles,
+                vec![
+                    (libc::SOCK_STREAM, libc::IPPROTO_TCP, 4242),
+                    (libc::SOCK_DGRAM, libc::IPPROTO_UDP, 4242),
+                ]
+            );
+            unsafe { resolv_abi::freeaddrinfo(res) };
+
+            hints.ai_protocol = libc::IPPROTO_UDP;
+            let mut udp_only: *mut libc::addrinfo = ptr::null_mut();
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut udp_only)
+            };
+            assert_eq!(rc, 0);
+            assert!(!udp_only.is_null());
+            let profiles = unsafe { collect_addrinfo_profiles(udp_only) };
+            assert_eq!(profiles, vec![(libc::SOCK_DGRAM, libc::IPPROTO_UDP, 4242)]);
+            unsafe { resolv_abi::freeaddrinfo(udp_only) };
+        },
+    );
 }
 
 #[test]
