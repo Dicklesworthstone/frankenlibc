@@ -780,10 +780,7 @@ fn checker_emits_report_and_mode_specific_jsonl_rows() -> TestResult {
             REQUIRED_LOG_FIELDS
         };
         for field_name in required_fields {
-            ensure(
-                row.get(*field_name).is_some(),
-                "log row should include required field",
-            )?;
+            field(row, field_name, "log_row")?;
         }
         modes.insert(string_field(row, "runtime_mode", "log_row")?);
     }
