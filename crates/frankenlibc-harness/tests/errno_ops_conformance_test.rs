@@ -47,12 +47,12 @@ struct FixtureCase {
     notes: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,12 +122,16 @@ fn execute_case_via_harness(
     }
 }
 
-fn expected_contract_text(case: &FixtureCase) -> String {
-    case.expected_output.clone().unwrap_or_else(|| {
-        case.expected_return
-            .expect("errno_ops cases must have expected_output or expected_return")
-            .to_string()
-    })
+fn expected_contract_text(case: &FixtureCase) -> Result<String, String> {
+    case.expected_output
+        .clone()
+        .or_else(|| case.expected_return.map(|value| value.to_string()))
+        .ok_or_else(|| {
+            format!(
+                "errno_ops case {} must have expected_output or expected_return",
+                case.name
+            )
+        })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -141,8 +145,8 @@ fn errno_ops_fixture_exists() {
 }
 
 #[test]
-fn errno_ops_fixture_valid_schema() {
-    let fixture = load_fixture("errno_ops");
+fn errno_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("errno_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "errno_ops");
@@ -161,6 +165,7 @@ fn errno_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,8 +173,8 @@ fn errno_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn errno_ops_covers_errno_location() {
-    let fixture = load_fixture("errno_ops");
+fn errno_ops_covers_errno_location() -> Result<(), String> {
+    let fixture = load_fixture("errno_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = [
@@ -186,11 +191,12 @@ fn errno_ops_covers_errno_location() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn errno_ops_covers_strerror() {
-    let fixture = load_fixture("errno_ops");
+fn errno_ops_covers_strerror() -> Result<(), String> {
+    let fixture = load_fixture("errno_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = [
@@ -209,11 +215,12 @@ fn errno_ops_covers_strerror() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn errno_ops_covers_strerror_r() {
-    let fixture = load_fixture("errno_ops");
+fn errno_ops_covers_strerror_r() -> Result<(), String> {
+    let fixture = load_fixture("errno_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = [
@@ -229,11 +236,12 @@ fn errno_ops_covers_strerror_r() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn errno_ops_covers_perror() {
-    let fixture = load_fixture("errno_ops");
+fn errno_ops_covers_perror() -> Result<(), String> {
+    let fixture = load_fixture("errno_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["perror_prefix", "perror_null", "perror_empty"];
@@ -245,6 +253,7 @@ fn errno_ops_covers_perror() {
             pattern
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -252,8 +261,8 @@ fn errno_ops_covers_perror() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn errno_ops_error_codes_valid() {
-    let fixture = load_fixture("errno_ops");
+fn errno_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("errno_ops")?;
 
     // Valid POSIX/Linux error codes that should appear
     let valid_errno_values = [
@@ -275,6 +284,7 @@ fn errno_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -282,8 +292,8 @@ fn errno_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn errno_ops_function_distribution() {
-    let fixture = load_fixture("errno_ops");
+fn errno_ops_function_distribution() -> Result<(), String> {
+    let fixture = load_fixture("errno_ops")?;
 
     let mut errno_location_count = 0;
     let mut strerror_count = 0;
@@ -302,7 +312,7 @@ fn errno_ops_function_distribution() {
             "perror" => perror_count += 1,
             "errno_constants" => constants_count += 1,
             "errno_preservation" => preservation_count += 1,
-            f => panic!("Unexpected function in fixture: {}", f),
+            function => return Err(format!("unexpected function in fixture: {function}")),
         }
     }
 
@@ -338,6 +348,7 @@ fn errno_ops_function_distribution() {
         constants_count,
         preservation_count
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -345,17 +356,18 @@ fn errno_ops_function_distribution() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn errno_ops_modes_valid() {
-    let fixture = load_fixture("errno_ops");
+fn errno_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("errno_ops")?;
 
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {} (expected 'both', 'strict', or 'hardened')",
             case.name,
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -363,8 +375,8 @@ fn errno_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn errno_ops_case_count_stable() {
-    let fixture = load_fixture("errno_ops");
+fn errno_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("errno_ops")?;
 
     // This test ensures we don't accidentally remove test cases
     // Update this count when intentionally adding/removing cases
@@ -379,6 +391,7 @@ fn errno_ops_case_count_stable() {
     );
 
     eprintln!("errno_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -386,8 +399,8 @@ fn errno_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn errno_ops_has_spec_references() {
-    let fixture = load_fixture("errno_ops");
+fn errno_ops_has_spec_references() -> Result<(), String> {
+    let fixture = load_fixture("errno_ops")?;
 
     assert!(
         !fixture.spec_reference.is_empty(),
@@ -401,13 +414,15 @@ fn errno_ops_has_spec_references() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn errno_ops_fixture_executes_via_harness() {
-    let fixture = load_fixture("errno_ops");
+fn errno_ops_fixture_executes_via_harness() -> Result<(), String> {
+    let fixture = load_fixture("errno_ops")?;
 
     for case in &fixture.cases {
+        let expected_output = expected_contract_text(case)?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -415,16 +430,15 @@ fn errno_ops_fixture_executes_via_harness() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "errno_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
-                result.impl_output,
-                expected_contract_text(case),
+                result.impl_output, expected_output,
                 "fixture contract mismatch for {} ({mode})",
                 case.name
             );
@@ -438,4 +452,5 @@ fn errno_ops_fixture_executes_via_harness() {
             );
         }
     }
+    Ok(())
 }
