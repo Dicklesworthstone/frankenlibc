@@ -847,19 +847,54 @@ fn getaddrinfo_numeric_ipv6_resolves() {
 }
 
 #[test]
-fn getaddrinfo_null_node_returns_unspecified() {
-    let service = CString::new("8080").unwrap();
-    let mut res: *mut libc::addrinfo = ptr::null_mut();
+fn getaddrinfo_null_node_respects_ai_passive_and_family() {
+    let mut v6_loopback = [0; 16];
+    v6_loopback[15] = 1;
+    let cases = [
+        (libc::AF_INET, 0, 0, Some([127, 0, 0, 1]), None),
+        (libc::AF_INET, libc::AI_PASSIVE, 0, Some([0, 0, 0, 0]), None),
+        (libc::AF_INET6, 0, 0, None, Some(v6_loopback)),
+        (libc::AF_INET6, libc::AI_PASSIVE, 0, None, Some([0; 16])),
+        (libc::AF_UNIX, 0, libc::EAI_FAMILY, None, None),
+        (
+            libc::AF_UNIX,
+            libc::AI_PASSIVE,
+            libc::EAI_FAMILY,
+            None,
+            None,
+        ),
+    ];
 
-    let rc =
-        unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), ptr::null(), &mut res) };
-    assert_eq!(
-        rc, 0,
-        "getaddrinfo(NULL node) should return unspecified address"
-    );
-    assert!(!res.is_null());
+    for (family, flags, expected_rc, expected_v4, expected_v6) in cases {
+        let service = CString::new("8080").unwrap();
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = family;
+        hints.ai_socktype = libc::SOCK_STREAM;
+        hints.ai_flags = flags;
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
 
-    unsafe { resolv_abi::freeaddrinfo(res) };
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
+        assert_eq!(rc, expected_rc, "family {family}, flags {flags}");
+
+        if let Some(addr) = expected_v4 {
+            assert!(!res.is_null());
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, libc::AF_INET);
+            let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_addr.s_addr.to_ne_bytes(), addr);
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        } else if let Some(addr) = expected_v6 {
+            assert!(!res.is_null());
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, libc::AF_INET6);
+            let sin6 = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in6) };
+            assert_eq!(sin6.sin6_addr.s6_addr, addr);
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        } else {
+            assert!(res.is_null());
+        }
+    }
 }
 
 #[test]

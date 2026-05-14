@@ -1372,14 +1372,50 @@ pub unsafe extern "C" fn getaddrinfo(
         }
         None => match family {
             libc::AF_INET6 => {
-                nodes.push(unsafe { build_addrinfo_v6(Ipv6Addr::UNSPECIFIED, port, hints_ref) });
+                let addr = if (flags & libc::AI_PASSIVE) != 0 {
+                    Ipv6Addr::UNSPECIFIED
+                } else {
+                    Ipv6Addr::LOCALHOST
+                };
+                nodes.push(unsafe { build_addrinfo_v6(addr, port, hints_ref) });
             }
             libc::AF_INET => {
-                nodes.push(unsafe { build_addrinfo_v4(Ipv4Addr::UNSPECIFIED, port, hints_ref) });
+                let addr = if (flags & libc::AI_PASSIVE) != 0 {
+                    Ipv4Addr::UNSPECIFIED
+                } else {
+                    Ipv4Addr::LOCALHOST
+                };
+                nodes.push(unsafe { build_addrinfo_v4(addr, port, hints_ref) });
+            }
+            libc::AF_UNSPEC => {
+                let passive = (flags & libc::AI_PASSIVE) != 0;
+                let v4_addr = if passive {
+                    Ipv4Addr::UNSPECIFIED
+                } else {
+                    Ipv4Addr::LOCALHOST
+                };
+                let v6_addr = if passive {
+                    Ipv6Addr::UNSPECIFIED
+                } else {
+                    Ipv6Addr::LOCALHOST
+                };
+                if passive {
+                    nodes.push(unsafe { build_addrinfo_v4(v4_addr, port, hints_ref) });
+                    nodes.push(unsafe { build_addrinfo_v6(v6_addr, port, hints_ref) });
+                } else {
+                    nodes.push(unsafe { build_addrinfo_v6(v6_addr, port, hints_ref) });
+                    nodes.push(unsafe { build_addrinfo_v4(v4_addr, port, hints_ref) });
+                }
             }
             _ => {
-                nodes.push(unsafe { build_addrinfo_v4(Ipv4Addr::UNSPECIFIED, port, hints_ref) });
-                nodes.push(unsafe { build_addrinfo_v6(Ipv6Addr::UNSPECIFIED, port, hints_ref) });
+                record_resolver_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                return libc::EAI_FAMILY;
             }
         },
     }
