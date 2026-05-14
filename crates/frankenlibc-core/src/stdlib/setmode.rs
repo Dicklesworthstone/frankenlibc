@@ -334,6 +334,44 @@ mod tests {
         assert_eq!(am(&ops, 0o644), 0o544);
     }
 
+    #[test]
+    fn disjoint_who_clauses_commute() {
+        for mode in [0o000, 0o022, 0o644, 0o755, 0o1755, 0o100644] {
+            assert_eq!(
+                am(&parse(b"u+x,g-w,o=r").unwrap(), mode),
+                am(&parse(b"o=r,g-w,u+x").unwrap(), mode)
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_add_and_clear_are_idempotent() {
+        for mode in [0o000, 0o111, 0o644, 0o755, 0o4755] {
+            assert_eq!(
+                am(&parse(b"u+x,u+x,g+r,g+r").unwrap(), mode),
+                am(&parse(b"u+x,g+r").unwrap(), mode)
+            );
+            assert_eq!(
+                am(&parse(b"o-w,o-w,g-x,g-x").unwrap(), mode),
+                am(&parse(b"o-w,g-x").unwrap(), mode)
+            );
+        }
+    }
+
+    #[test]
+    fn later_set_for_same_who_dominates_prior_ops() {
+        for mode in [0o000, 0o123, 0o644, 0o777, 0o4777] {
+            assert_eq!(
+                am(&parse(b"u+x,u=rw").unwrap(), mode),
+                am(&parse(b"u=rw").unwrap(), mode)
+            );
+            assert_eq!(
+                am(&parse(b"g-w,g=r").unwrap(), mode),
+                am(&parse(b"g=r").unwrap(), mode)
+            );
+        }
+    }
+
     // ---- setuid / setgid / sticky ----
 
     #[test]
