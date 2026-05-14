@@ -8,13 +8,23 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    workspace_root
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "workspace root has no repository parent: {}",
+                workspace_root.display()
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,7 +73,7 @@ struct DifferentialExecution {
 }
 
 fn load_fixture(name: &str) -> Result<FixtureFile, String> {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
@@ -126,9 +136,10 @@ fn execute_case_via_harness(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn ctype_ops_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/ctype_ops.json");
+fn ctype_ops_fixture_exists() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/ctype_ops.json");
     assert!(path.exists(), "ctype_ops.json fixture must exist");
+    Ok(())
 }
 
 #[test]
