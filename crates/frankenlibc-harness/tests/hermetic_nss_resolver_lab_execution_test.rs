@@ -139,6 +139,17 @@ fn string_field<'a>(value: &'a Value, key: &str, context: &str) -> TestResult<&'
         .ok_or_else(|| test_error(format!("{context}.{key} must be a string")))
 }
 
+fn require_json_field(value: &Value, key: &str, context: &str) -> TestResult {
+    ensure(
+        value.get(key).is_some(),
+        format!("{context}.{key} is missing"),
+    )
+}
+
+fn same_text(left: &str, right: &str) -> bool {
+    left.chars().eq(right.chars())
+}
+
 fn as_array<'a>(value: &'a Value, context: &str) -> TestResult<&'a Vec<Value>> {
     value
         .as_array()
@@ -297,8 +308,9 @@ fn manifest_points_to_runner_and_skip_contract() -> TestResult {
     )?;
     ensure(
         skips.iter().any(|skip| {
-            skip.get("skip_id").and_then(Value::as_str)
-                == Some("real-network-probe-disabled-by-default")
+            skip.get("skip_id")
+                .and_then(Value::as_str)
+                .is_some_and(|skip_id| same_text(skip_id, "real-network-probe-disabled-by-default"))
         }),
         "manifest should record the default real-network skip condition",
     )?;
@@ -354,9 +366,10 @@ fn runner_passes_and_emits_current_jsonl_evidence() -> TestResult {
         Some(8),
         "semantic kernel count",
     )?;
-    ensure(
-        field(&report, "real_network_observed", "report")?.as_bool() == Some(false),
-        "runner must report no real-network observation",
+    ensure_eq(
+        field(&report, "real_network_observed", "report")?.as_bool(),
+        Some(false),
+        "runner real_network_observed",
     )?;
     ensure(
         field(&report, "source_commit", "report")?
@@ -371,9 +384,13 @@ fn runner_passes_and_emits_current_jsonl_evidence() -> TestResult {
     )?;
     ensure(
         skips.iter().any(|skip| {
-            skip.get("skip_id").and_then(Value::as_str)
-                == Some("real-network-probe-disabled-by-default")
-                && skip.get("status").and_then(Value::as_str) == Some("skipped")
+            skip.get("skip_id")
+                .and_then(Value::as_str)
+                .is_some_and(|skip_id| same_text(skip_id, "real-network-probe-disabled-by-default"))
+                && skip
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| same_text(status, "skipped"))
         }),
         "runner should record the real-network skip condition",
     )?;
@@ -402,21 +419,20 @@ fn runner_passes_and_emits_current_jsonl_evidence() -> TestResult {
         let entry: Value = serde_json::from_str(line)
             .map_err(|_err| test_error("structured log row should parse"))?;
         for field_name in REQUIRED_LOG_FIELDS {
-            ensure(
-                entry.get(*field_name).is_some(),
-                "structured log row missing required field",
-            )?;
+            require_json_field(&entry, field_name, "structured log row")?;
         }
         let scenario = required_scenario_label(string_field(&entry, "scenario_id", "entry")?)?;
         let mode = required_mode_label(string_field(&entry, "runtime_mode", "entry")?)?;
         modes_by_scenario.entry(scenario).or_default().insert(mode);
         ensure(
-            string_field(&entry, "bead_id", "entry")? == "bd-b92jd.5.5",
+            same_text(string_field(&entry, "bead_id", "entry")?, "bd-b92jd.5.5"),
             "row bead_id should identify execution bead",
         )?;
         ensure(
-            string_field(&entry, "source_commit", "entry")?
-                == string_field(&report, "source_commit", "report")?,
+            same_text(
+                string_field(&entry, "source_commit", "entry")?,
+                string_field(&report, "source_commit", "report")?,
+            ),
             "row source_commit should match report",
         )?;
         ensure(
@@ -490,7 +506,12 @@ fn runner_fails_closed_for_missing_fake_root_file() -> TestResult {
         .and_then(|layout| layout.get_mut("files"))
         .and_then(Value::as_array_mut)
         .ok_or_else(|| test_error("fake_root_layout.files should be mutable"))?;
-    files.retain(|entry| entry.get("relative_path").and_then(Value::as_str) != Some("etc/hosts"));
+    files.retain(|entry| {
+        entry
+            .get("relative_path")
+            .and_then(Value::as_str)
+            .is_none_or(|path| !same_text(path, "etc/hosts"))
+    });
     let report = run_lab_with_manifest(&root, "missing_fake_root_file", &manifest)?;
     expect_error_signature(&report, "nss_lab_missing_fake_root_file")
 }

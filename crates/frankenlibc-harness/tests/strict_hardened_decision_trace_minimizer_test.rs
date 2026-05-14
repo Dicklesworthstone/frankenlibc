@@ -68,6 +68,13 @@ fn string_field<'a>(value: &'a Value, key: &str, context: &str) -> TestResult<&'
         .ok_or_else(|| test_error(format!("{context}.{key} must be a string")))
 }
 
+fn require_json_field(value: &Value, key: &str, context: &str) -> TestResult {
+    ensure(
+        value.get(key).is_some(),
+        format!("{context}.{key} is missing"),
+    )
+}
+
 fn same_text(left: &str, right: &str) -> bool {
     left.chars().eq(right.chars())
 }
@@ -240,7 +247,7 @@ fn checker_passes_and_emits_minimized_bundles() -> TestResult {
             bundle
                 .get("case_id")
                 .and_then(Value::as_str)
-                .is_some_and(|case_id| case_id == "synthetic_strict_hardened_divergence")
+                .is_some_and(|case_id| same_text(case_id, "synthetic_strict_hardened_divergence"))
         })
         .ok_or_else(|| test_error("missing divergent bundle"))?;
     let minimized = divergent
@@ -259,7 +266,7 @@ fn checker_passes_and_emits_minimized_bundles() -> TestResult {
         first_key
             .get("decision_path")
             .and_then(Value::as_str)
-            .is_some_and(|value| value == "validate.pointer.full"),
+            .is_some_and(|value| same_text(value, "validate.pointer.full")),
         "first divergent decision_path should be preserved",
     )?;
     let signature = divergent
@@ -284,10 +291,7 @@ fn checker_passes_and_emits_minimized_bundles() -> TestResult {
         "latency_ns",
         "artifact_refs",
     ] {
-        ensure(
-            log_row.get(field).is_some(),
-            "log row missing required field",
-        )?;
+        require_json_field(&log_row, field, "log row")?;
     }
     Ok(())
 }
