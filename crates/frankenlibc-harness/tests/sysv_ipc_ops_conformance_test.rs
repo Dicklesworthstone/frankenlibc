@@ -44,12 +44,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,18 +120,18 @@ fn execute_case_via_harness(
     }
 }
 
-fn expected_output_text(case: &FixtureCase) -> String {
+fn expected_output_text(case: &FixtureCase) -> Result<String, String> {
     match case
         .expected_output
         .as_ref()
-        .unwrap_or_else(|| panic!("case {} missing expected_output", case.name))
+        .ok_or_else(|| format!("case {} missing expected_output", case.name))?
     {
-        serde_json::Value::String(value) => value.clone(),
-        serde_json::Value::Number(value) => value.to_string(),
-        other => panic!(
+        serde_json::Value::String(value) => Ok(value.clone()),
+        serde_json::Value::Number(value) => Ok(value.to_string()),
+        other => Err(format!(
             "case {} has unsupported expected_output value: {}",
             case.name, other
-        ),
+        )),
     }
 }
 
@@ -142,8 +142,8 @@ fn sysv_ipc_ops_fixture_exists() {
 }
 
 #[test]
-fn sysv_ipc_ops_fixture_valid_schema() {
-    let fixture = load_fixture("sysv_ipc_ops");
+fn sysv_ipc_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("sysv_ipc_ops")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "sysv_ipc_ops");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -156,11 +156,13 @@ fn sysv_ipc_ops_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn sysv_ipc_ops_covers_semaphores() {
-    let fixture = load_fixture("sysv_ipc_ops");
+fn sysv_ipc_ops_covers_semaphores() -> Result<(), String> {
+    let fixture = load_fixture("sysv_ipc_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("semget")),
@@ -174,11 +176,13 @@ fn sysv_ipc_ops_covers_semaphores() {
         case_names.iter().any(|n| n.contains("semctl")),
         "Missing test coverage for semctl"
     );
+
+    Ok(())
 }
 
 #[test]
-fn sysv_ipc_ops_covers_shared_memory() {
-    let fixture = load_fixture("sysv_ipc_ops");
+fn sysv_ipc_ops_covers_shared_memory() -> Result<(), String> {
+    let fixture = load_fixture("sysv_ipc_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("shmget")),
@@ -192,34 +196,40 @@ fn sysv_ipc_ops_covers_shared_memory() {
         case_names.iter().any(|n| n.contains("shmdt")),
         "Missing test coverage for shmdt"
     );
+
+    Ok(())
 }
 
 #[test]
-fn sysv_ipc_ops_covers_message_queues() {
-    let fixture = load_fixture("sysv_ipc_ops");
+fn sysv_ipc_ops_covers_message_queues() -> Result<(), String> {
+    let fixture = load_fixture("sysv_ipc_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("msgget")),
         "Missing test coverage for msgget"
     );
+
+    Ok(())
 }
 
 #[test]
-fn sysv_ipc_ops_modes_valid() {
-    let fixture = load_fixture("sysv_ipc_ops");
+fn sysv_ipc_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("sysv_ipc_ops")?;
     for case in &fixture.cases {
         assert!(
-            case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
+            matches!(case.mode.as_str(), "both" | "strict" | "hardened"),
             "Case {} has invalid mode: {}",
             case.name,
             case.mode
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn sysv_ipc_ops_covers_both_modes() {
-    let fixture = load_fixture("sysv_ipc_ops");
+fn sysv_ipc_ops_covers_both_modes() -> Result<(), String> {
+    let fixture = load_fixture("sysv_ipc_ops")?;
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
     assert!(has_strict, "sysv_ipc_ops must have strict mode test cases");
@@ -227,11 +237,13 @@ fn sysv_ipc_ops_covers_both_modes() {
         has_hardened,
         "sysv_ipc_ops must have hardened mode test cases"
     );
+
+    Ok(())
 }
 
 #[test]
-fn sysv_ipc_ops_case_count_stable() {
-    let fixture = load_fixture("sysv_ipc_ops");
+fn sysv_ipc_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("sysv_ipc_ops")?;
     assert!(
         fixture.cases.len() >= 7,
         "sysv_ipc_ops fixture has {} cases, expected at least 7",
@@ -241,11 +253,13 @@ fn sysv_ipc_ops_case_count_stable() {
         "sysv_ipc_ops fixture has {} test cases",
         fixture.cases.len()
     );
+
+    Ok(())
 }
 
 #[test]
-fn sysv_ipc_ops_has_posix_references() {
-    let fixture = load_fixture("sysv_ipc_ops");
+fn sysv_ipc_ops_has_posix_references() -> Result<(), String> {
+    let fixture = load_fixture("sysv_ipc_ops")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("POSIX"),
@@ -254,11 +268,13 @@ fn sysv_ipc_ops_has_posix_references() {
             case.spec_section
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn sysv_ipc_ops_error_codes_valid() {
-    let fixture = load_fixture("sysv_ipc_ops");
+fn sysv_ipc_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("sysv_ipc_ops")?;
 
     // Valid error codes for System V IPC operations
     let valid_errno_values = [
@@ -275,14 +291,16 @@ fn sysv_ipc_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn sysv_ipc_ops_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("sysv_ipc_ops");
+fn sysv_ipc_ops_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("sysv_ipc_ops")?;
 
     for case in &fixture.cases {
-        let expected_output = expected_output_text(case);
+        let expected_output = expected_output_text(case)?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -290,13 +308,13 @@ fn sysv_ipc_ops_fixture_cases_match_execute_fixture_case() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "sysv_ipc_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -309,4 +327,6 @@ fn sysv_ipc_ops_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+
+    Ok(())
 }
