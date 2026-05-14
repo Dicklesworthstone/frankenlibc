@@ -134,19 +134,38 @@ fn manifest_anchors_to_38wu3_with_subcommand_name() -> TestResult {
 fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
-    let policy = m
-        .get("policy")
-        .ok_or_else(|| "missing policy".to_string())?;
-    for f in [
-        "must_emit_exactly_one_jsonl_record",
-        "all_contract_fields_must_be_booleans",
-        "has_asupersync_dependency_must_be_true_in_default_build",
-        "asupersync_feature_present_must_be_true",
-        "default_enables_asupersync_tooling_must_be_true",
-        "frankentui_feature_present_must_be_true",
-        "frankentui_dependency_set_complete_must_be_true",
+    let policy = m.get("policy").ok_or("missing policy")?;
+    for (field, message) in [
+        (
+            "must_emit_exactly_one_jsonl_record",
+            "must_emit_exactly_one_jsonl_record must be true",
+        ),
+        (
+            "all_contract_fields_must_be_booleans",
+            "all_contract_fields_must_be_booleans must be true",
+        ),
+        (
+            "has_asupersync_dependency_must_be_true_in_default_build",
+            "has_asupersync_dependency_must_be_true_in_default_build must be true",
+        ),
+        (
+            "asupersync_feature_present_must_be_true",
+            "asupersync_feature_present_must_be_true must be true",
+        ),
+        (
+            "default_enables_asupersync_tooling_must_be_true",
+            "default_enables_asupersync_tooling_must_be_true must be true",
+        ),
+        (
+            "frankentui_feature_present_must_be_true",
+            "frankentui_feature_present_must_be_true must be true",
+        ),
+        (
+            "frankentui_dependency_set_complete_must_be_true",
+            "frankentui_dependency_set_complete_must_be_true must be true",
+        ),
     ] {
-        require(json_bool(policy, f)?, "policy invariant must be true")?;
+        require(json_bool(policy, field)?, message)?;
     }
     Ok(())
 }
