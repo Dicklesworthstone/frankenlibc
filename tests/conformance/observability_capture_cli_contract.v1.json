@@ -1,0 +1,72 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "observability-capture-cli-contract",
+  "bead": "bd-wn47r",
+  "generated_utc": "2026-05-13T00:00:00Z",
+  "source_commit": "944deed4",
+  "purpose": "Pin the harness binary 'observability-capture' subcommand which exposes frankenlibc_harness::observability_dashboard::capture_bundle as a single CLI invocation. The bridge synthesizes 3 exporter-driven JSONL input files under <out-dir>/inputs/ (membrane_metrics.jsonl, allocator_metrics.jsonl, runtime_math.jsonl), then writes the dashboard bundle (JSON report + prometheus text + statsd text + grafana dashboard json + alert rules yaml) into <out-dir>. With --seed-sample, the produced inputs are deterministic across runs for a given (bead-id, run-id, mode) triple. Used as a smoke + lock for the dashboard pipeline end-to-end.",
+  "subcommand_name": "observability-capture",
+  "binary_target": "harness",
+  "required_flags": [],
+  "optional_flags": [
+    "--out-dir",
+    "--bead-id",
+    "--run-id",
+    "--mode",
+    "--seed-sample"
+  ],
+  "underlying_lib_functions": [
+    "frankenlibc_harness::observability_dashboard::capture_bundle"
+  ],
+  "io_pattern": "out_dir_bundle_no_stdout_jsonl",
+  "out_dir_layout": {
+    "inputs_subdir": "inputs",
+    "input_files": [
+      "membrane_metrics.jsonl",
+      "allocator_metrics.jsonl",
+      "runtime_math.jsonl"
+    ],
+    "output_files": [
+      "observability_dashboard.current.v1.json",
+      "observability_dashboard.prom",
+      "observability_dashboard.statsd",
+      "observability_dashboard.grafana.json",
+      "observability_dashboard.alerts.yaml"
+    ]
+  },
+  "mode_enum": [
+    "strict",
+    "hardened",
+    "off"
+  ],
+  "default_mode": "hardened",
+  "default_bead_id": "bd-282v",
+  "default_run_id": "capture",
+  "policy": {
+    "must_create_out_dir_inputs_subdir": true,
+    "must_emit_three_jsonl_input_files": true,
+    "must_emit_five_dashboard_bundle_artifacts": true,
+    "seed_sample_renders_deterministic_inputs_modulo_timestamps_and_latency": true,
+    "unknown_mode_rejected_with_nonzero_exit": true,
+    "mode_label_in_inputs_matches_cli_mode": true,
+    "bead_id_recorded_in_jsonl_rows": true,
+    "run_id_recorded_in_jsonl_rows": true,
+    "default_invocation_succeeds_when_input_dir_writable": true
+  },
+  "rejected_evidence_kinds": [
+    "missing_inputs_subdir",
+    "missing_input_file",
+    "missing_dashboard_artifact",
+    "unknown_mode_accepted",
+    "non_deterministic_seed_sample_inputs_modulo_timestamps_and_latency",
+    "mode_label_drift",
+    "bead_id_missing_from_jsonl",
+    "run_id_missing_from_jsonl"
+  ],
+  "summary": {
+    "bead": "bd-wn47r",
+    "subcommand": "observability-capture",
+    "report_only": true,
+    "claim_status": "report_only"
+  }
+}
