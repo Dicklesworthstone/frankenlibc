@@ -151,11 +151,40 @@ mod tests {
     }
 
     #[test]
+    fn parse_leading_zero_padding_preserves_value() {
+        for (plain, padded) in [
+            (b"0".as_slice(), b"0000".as_slice()),
+            (b"42".as_slice(), b"00042".as_slice()),
+            (b"+42".as_slice(), b"+00042".as_slice()),
+            (b"-42".as_slice(), b"-00042".as_slice()),
+            (b"2147483647".as_slice(), b"0002147483647".as_slice()),
+        ] {
+            assert_eq!(parse_decimal_pid(plain), parse_decimal_pid(padded));
+        }
+    }
+
+    #[test]
     fn parse_rejects_trailing_junk() {
         assert_eq!(parse_decimal_pid(b"42\n"), None);
         assert_eq!(parse_decimal_pid(b"42 "), None);
         assert_eq!(parse_decimal_pid(b"42a"), None);
         assert_eq!(parse_decimal_pid(b"42 trailing"), None);
+    }
+
+    #[test]
+    fn parse_rejects_any_non_digit_after_valid_pid() {
+        for valid in [
+            b"0".as_slice(),
+            b"+42".as_slice(),
+            b"-42".as_slice(),
+            b"2147483647".as_slice(),
+        ] {
+            for suffix in [b'\0', b'\n', b'\t', b' ', b'a', b','] {
+                let mut candidate = valid.to_vec();
+                candidate.push(suffix);
+                assert_eq!(parse_decimal_pid(&candidate), None, "{candidate:?}");
+            }
+        }
     }
 
     #[test]
@@ -204,6 +233,21 @@ mod tests {
         let n = render_pid_decimal(2147483647, &mut buf);
         assert_eq!(n, 5);
         assert_eq!(&buf[..n], b"21474");
+    }
+
+    #[test]
+    fn truncated_render_is_prefix_of_full_render() {
+        for pid in [0i64, 1, 42, i32::MAX as i64, i64::MAX, i64::MIN] {
+            let mut full = [0u8; 24];
+            let full_len = render_pid_decimal(pid, &mut full);
+
+            for prefix_len in 0..full_len {
+                let mut truncated = vec![0u8; prefix_len];
+                let written = render_pid_decimal(pid, &mut truncated);
+                assert_eq!(written, prefix_len);
+                assert_eq!(&truncated[..written], &full[..prefix_len]);
+            }
+        }
     }
 
     #[test]
