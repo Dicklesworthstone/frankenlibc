@@ -140,7 +140,7 @@ fn run_and_parse(bin: &Path, paths: &DiagPaths, label: &str) -> TestResult<Value
     let output = unique_tmp(label, "jsonl")?;
     let out = run_cli(bin, paths, &output)?;
     if !out.status.success() {
-        return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
+        return Err("compute-contention-score CLI invocation must succeed".into());
     }
     let parsed = read_record(&output)?;
     Ok(parsed)
@@ -174,9 +174,7 @@ fn manifest_anchors_to_rnlv2_with_subcommand_name() -> TestResult {
 fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
-    let policy = m
-        .get("policy")
-        .ok_or_else(|| "missing policy".to_string())?;
+    let policy = m.get("policy").ok_or("missing policy")?;
     for (field, message) in [
         (
             "must_emit_exactly_one_jsonl_record",
@@ -364,13 +362,7 @@ fn cli_invalid_diagnostic_json_is_rejected() -> TestResult {
         fc: None,
     };
     let out = run_cli(&bin, &paths, &output)?;
-    require(
-        !out.status.success(),
-        format!(
-            "invalid diagnostic JSON must fail; stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        ),
-    )
+    require(!out.status.success(), "invalid diagnostic JSON must fail")
 }
 
 #[test]
