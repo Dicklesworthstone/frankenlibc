@@ -218,13 +218,98 @@ fn conformance_getopt_long_basic() {
             (b'f' as c_int, Some("test.txt".to_string()))
         ]
     );
+}
 
-    let _ = OPTIONAL_ARGUMENT;
+#[test]
+fn conformance_getopt_long_optional_arg_and_flag_return() {
+    let _g = OPT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let name_color = CString::new("color").unwrap();
+    let name_verbose = CString::new("verbose").unwrap();
+    let mut verbose_flag: c_int = 0;
+    let opts = [
+        LongOpt {
+            name: name_color.as_ptr(),
+            has_arg: OPTIONAL_ARGUMENT,
+            flag: std::ptr::null_mut(),
+            val: b'c' as c_int,
+        },
+        LongOpt {
+            name: name_verbose.as_ptr(),
+            has_arg: NO_ARGUMENT,
+            flag: &mut verbose_flag,
+            val: 77,
+        },
+        LongOpt {
+            name: std::ptr::null(),
+            has_arg: 0,
+            flag: std::ptr::null_mut(),
+            val: 0,
+        },
+    ];
+    let optstr = CString::new("").unwrap();
+
+    let mut run = |args: &[&str]| -> (Vec<(c_int, Option<String>, c_int)>, c_int) {
+        verbose_flag = 0;
+        let (_keep, argv) = build_argv(args);
+        let argc = (argv.len() - 1) as c_int;
+        unsafe {
+            optind = 1;
+            optarg = std::ptr::null_mut();
+            opterr = 0;
+        }
+        let mut out = Vec::new();
+        loop {
+            let mut idx: c_int = -1;
+            let r = unsafe {
+                fl::getopt_long(
+                    argc,
+                    argv.as_ptr(),
+                    optstr.as_ptr(),
+                    opts.as_ptr() as *const _,
+                    &mut idx,
+                )
+            };
+            if r == -1 {
+                break;
+            }
+            let arg = unsafe { optarg };
+            let s = if arg.is_null() {
+                None
+            } else {
+                Some(
+                    unsafe { CStr::from_ptr(arg) }
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            };
+            out.push((r, s, idx));
+            if out.len() > 32 {
+                break;
+            }
+        }
+        (out, verbose_flag)
+    };
+
+    let (out, flag) = run(&["prog", "--color=always", "--verbose", "--color"]);
+    assert_eq!(
+        out,
+        vec![
+            (b'c' as c_int, Some("always".to_string()), 0),
+            (0, None, 1),
+            (b'c' as c_int, None, 0),
+        ]
+    );
+    assert_eq!(flag, 77);
+
+    let (out, flag) = run(&["prog", "--color", "never"]);
+    assert_eq!(out, vec![(b'c' as c_int, None, 0)]);
+    assert_eq!(flag, 0);
 }
 
 #[test]
 fn getopt_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"unistd.h(getopt+getopt_long)\",\"reference\":\"POSIX\",\"functions\":2,\"test_type\":\"conformance\"}}",
+        "{{\"family\":\"unistd.h(getopt+getopt_long)\",\"reference\":\"POSIX/GNU\",\"functions\":2,\"test_type\":\"conformance\",\"long_option_cases\":5}}",
     );
 }
