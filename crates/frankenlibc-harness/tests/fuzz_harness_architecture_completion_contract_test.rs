@@ -5,13 +5,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = crate_dir
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?;
+    let root = workspace
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -91,7 +93,7 @@ fn string_values(value: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_unit_e2e_and_fuzz_completion_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -140,17 +142,17 @@ fn manifest_binds_unit_e2e_and_fuzz_completion_evidence() -> TestResult {
     let source_report =
         load_json(&root.join("tests/conformance/fuzz_harness_architecture.v1.json"))?;
     assert_eq!(source_report["bead"].as_str(), Some("bd-1oz.5"));
-    assert_eq!(source_report["summary"]["total_targets"].as_u64(), Some(55));
+    assert_eq!(source_report["summary"]["total_targets"].as_u64(), Some(66));
     assert_eq!(
         source_report["summary"]["functional_targets"].as_u64(),
-        Some(55)
+        Some(66)
     );
     assert_eq!(source_report["summary"]["stub_targets"].as_u64(), Some(0));
     assert_eq!(
         source_report["summary"]["checks_passed"].as_u64(),
-        Some(275)
+        Some(330)
     );
-    assert_eq!(source_report["summary"]["checks_total"].as_u64(), Some(275));
+    assert_eq!(source_report["summary"]["checks_total"].as_u64(), Some(330));
     assert!(
         source_report["corpus_strategy"]["manifests"]
             .as_array()
@@ -165,7 +167,7 @@ fn manifest_binds_unit_e2e_and_fuzz_completion_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_fuzz_harness_architecture_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -175,10 +177,10 @@ fn checker_validates_fuzz_harness_architecture_contract() -> TestResult {
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["source_bead"].as_str(), Some("bd-1oz.5"));
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-1oz.5.1"));
-    assert_eq!(report["summary"]["total_targets"].as_u64(), Some(55));
-    assert_eq!(report["summary"]["functional_targets"].as_u64(), Some(55));
-    assert_eq!(report["summary"]["checks_passed"].as_u64(), Some(275));
-    assert_eq!(report["summary"]["seed_corpus"].as_u64(), Some(22779));
+    assert_eq!(report["summary"]["total_targets"].as_u64(), Some(66));
+    assert_eq!(report["summary"]["functional_targets"].as_u64(), Some(66));
+    assert_eq!(report["summary"]["checks_passed"].as_u64(), Some(330));
+    assert_eq!(report["summary"]["seed_corpus"].as_u64(), Some(22987));
     assert_eq!(report["summary"]["unique_cwes"].as_u64(), Some(17));
 
     Ok(())
@@ -186,7 +188,7 @@ fn checker_validates_fuzz_harness_architecture_contract() -> TestResult {
 
 #[test]
 fn checker_emits_completion_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -236,7 +238,7 @@ fn checker_emits_completion_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_fuzz_target_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_target")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["required_architecture_contract"]["required_targets"]
@@ -272,7 +274,7 @@ fn checker_rejects_missing_fuzz_target_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_source_test_ref() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_test_ref")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["test_sources"]["source_harness_test"]
@@ -309,7 +311,7 @@ fn checker_rejects_missing_source_test_ref() -> TestResult {
 
 #[test]
 fn checker_rejects_unimplemented_telemetry_event() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_event")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["telemetry_contract"]["required_events"]

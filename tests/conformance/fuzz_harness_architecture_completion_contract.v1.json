@@ -17,8 +17,8 @@
     "required_architecture_contract": {
       "schema_version": "v1",
       "generated_by_bead": "bd-1oz.5",
-      "minimum_total_targets": 55,
-      "required_functional_targets": 55,
+      "minimum_total_targets": 66,
+      "required_functional_targets": 66,
       "required_stub_targets": 0,
       "required_quality_score_pct": 100.0,
       "minimum_seed_corpus": 1,
