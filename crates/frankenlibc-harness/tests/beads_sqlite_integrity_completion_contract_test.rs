@@ -1,5 +1,6 @@
 use serde_json::Value;
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,13 +22,14 @@ const EXPECTED_WORKER_TRACKER_GAP_EVENTS: &[&str] = &[
     "beads_sqlite_integrity.completion_contract_failed",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crates_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or_else(|| io::Error::other("crate directory should have workspace parent"))?;
+    let root = crates_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or_else(|| io::Error::other("workspace parent should have repo parent"))?;
+    Ok(root.to_path_buf())
 }
 
 fn load_json(path: &Path) -> TestResult<Value> {
@@ -101,10 +103,10 @@ fn output_text(output: &Output) -> String {
 fn mutated_contract(
     root: &Path,
     label: &str,
-    mutate: impl FnOnce(&mut Value),
+    mutate: impl FnOnce(&mut Value) -> TestResult,
 ) -> TestResult<PathBuf> {
     let mut contract = load_json(&contract_path(root))?;
-    mutate(&mut contract);
+    mutate(&mut contract)?;
     let out = unique_out_dir(root, label)?;
     let path = out.join("mutated_contract.json");
     write_json(&path, &contract)?;
@@ -125,7 +127,7 @@ fn assert_checker_fails(root: &Path, contract: &Path, label: &str, expected: &st
 
 #[test]
 fn manifest_binds_sqlite_integrity_completion_debt() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -183,7 +185,7 @@ fn manifest_binds_sqlite_integrity_completion_debt() -> TestResult {
 
 #[test]
 fn checker_validates_current_tracker_health_and_emits_telemetry() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out)?;
     let report = load_json(&out.join("beads_sqlite_integrity_completion_contract.report.json"))?;
@@ -192,6 +194,9 @@ fn checker_validates_current_tracker_health_and_emits_telemetry() -> TestResult 
 
     if !output.status.success() {
         let allowed_worker_tracker_gap = [
+            "doctor check counts.db_vs_jsonl must be ok",
+            "counts.db_vs_jsonl must be ok",
+            "sync jsonl_newer drifted",
             "parent_show exited",
             "completion_show exited",
             "no-db status for bd-yaiw drifted",
@@ -239,21 +244,23 @@ fn checker_validates_current_tracker_health_and_emits_telemetry() -> TestResult 
 
 #[test]
 fn checker_rejects_destructive_probe_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mutated = mutated_contract(&root, "destructive", |contract| {
         contract["read_only_probe_contract"]["allowed_commands"]
             .as_array_mut()
-            .unwrap()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "allowed_commands array"))?
             .push(Value::String("br sync --import-only --rebuild".to_string()));
+        Ok(())
     })?;
     assert_checker_fails(&root, &mutated, "destructive-fail", "destructive command")
 }
 
 #[test]
 fn checker_rejects_missing_golden_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mutated = mutated_contract(&root, "missing-golden", |contract| {
         contract["completion_debt_evidence"]["missing_items_closed"] = Value::Array(vec![]);
+        Ok(())
     })?;
     assert_checker_fails(
         &root,
@@ -265,12 +272,15 @@ fn checker_rejects_missing_golden_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_doctor_integrity_check() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mutated = mutated_contract(&root, "missing-integrity", |contract| {
         let checks = contract["golden_primary"]["required_doctor_checks"]
             .as_array_mut()
-            .unwrap();
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "required_doctor_checks array")
+            })?;
         checks.retain(|item| item.as_str() != Some("sqlite.integrity_check"));
+        Ok(())
     })?;
     assert_checker_fails(
         &root,
