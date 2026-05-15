@@ -228,8 +228,14 @@ fn contract_binds_unit_pack_families_and_existing_tests() -> TestResult {
     }
 
     let policy = &evidence["closure_pack_policy"];
-    assert_eq!(policy["required_families"].as_array().unwrap().len(), 12);
-    assert_eq!(policy["new_pack_files"].as_array().unwrap().len(), 7);
+    let required_families = policy["required_families"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "required_families array"))?;
+    assert_eq!(required_families.len(), 12);
+    let new_pack_files = policy["new_pack_files"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "new_pack_files array"))?;
+    assert_eq!(new_pack_files.len(), 7);
     assert!(
         policy["minimum_fixture_files"].as_u64().unwrap_or(0) >= 48,
         "fixture threshold should preserve original closure count"
