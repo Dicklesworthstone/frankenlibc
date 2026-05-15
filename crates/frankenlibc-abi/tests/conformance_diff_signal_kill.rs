@@ -18,8 +18,10 @@ use frankenlibc_abi::signal_abi as fl_sig;
 
 unsafe extern "C" {
     fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
+    fn killpg(pgrp: libc::pid_t, sig: c_int) -> c_int;
     fn raise(sig: c_int) -> c_int;
     fn getpid() -> libc::pid_t;
+    fn getpgrp() -> libc::pid_t;
     fn sigaction(signum: c_int, act: *const libc::sigaction, oldact: *mut libc::sigaction)
     -> c_int;
     fn tgkill(tgid: c_int, tid: c_int, sig: c_int) -> c_int;
@@ -231,10 +233,45 @@ fn diff_raise_invalid_sig() {
 }
 
 #[test]
+fn diff_reserved_kill_signal_zero_for_self() {
+    let _g = SIGNAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let pid = unsafe { getpid() };
+    let r_fl = unsafe { fl_sig::__kill(pid, 0) };
+    let r_lc = unsafe { kill(pid, 0) };
+    assert_eq!(
+        r_fl, r_lc,
+        "__kill(self, 0) return divergence: fl={r_fl}, lc={r_lc}"
+    );
+}
+
+#[test]
+fn diff_reserved_killpg_signal_zero_for_current_group() {
+    let _g = SIGNAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let pgrp = unsafe { getpgrp() };
+    let r_fl = unsafe { fl_sig::__killpg(pgrp, 0) };
+    let r_lc = unsafe { killpg(pgrp, 0) };
+    assert_eq!(
+        r_fl, r_lc,
+        "__killpg(current_group, 0) return divergence: fl={r_fl}, lc={r_lc}"
+    );
+}
+
+#[test]
+fn diff_reserved_raise_invalid_sig() {
+    let _g = SIGNAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let r_fl = unsafe { fl_sig::__raise(9999) };
+    let r_lc = unsafe { raise(9999) };
+    assert_eq!(
+        r_fl, r_lc,
+        "__raise(invalid_sig) return divergence: fl={r_fl}, lc={r_lc}"
+    );
+}
+
+#[test]
 fn signal_kill_diff_coverage_report() {
     let _ = unsafe { tgkill(0, 0, 0) };
     let _ = unsafe { gettid() };
     eprintln!(
-        "{{\"family\":\"signal.h(kill/raise)\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",
+        "{{\"family\":\"signal.h(kill/raise)\",\"reference\":\"glibc\",\"functions\":5,\"divergences\":0}}",
     );
 }
