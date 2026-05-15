@@ -18,6 +18,8 @@ use frankenlibc_abi::dirent_abi as fl;
 unsafe extern "C" {
     #[link_name = "alphasort"]
     fn host_alphasort(a: *mut *const libc::dirent, b: *mut *const libc::dirent) -> c_int;
+    #[link_name = "alphasort64"]
+    fn host_alphasort64(a: *mut *const libc::dirent64, b: *mut *const libc::dirent64) -> c_int;
     #[link_name = "dirfd"]
     fn host_dirfd(dirp: *mut libc::DIR) -> c_int;
     #[link_name = "fdopendir"]
@@ -397,10 +399,14 @@ fn scandir_names_lc(
     Ok(names)
 }
 
-fn scandir64_names_fl(dir: &std::path::Path) -> Result<Vec<Vec<u8>>, String> {
+fn scandir64_names_fl(
+    dir: &std::path::Path,
+    filter: Option<unsafe extern "C" fn(*const c_void) -> c_int>,
+    compar: Option<unsafe extern "C" fn(*mut *const c_void, *mut *const c_void) -> c_int>,
+) -> Result<Vec<Vec<u8>>, String> {
     let cp = cstr_path(dir);
     let mut namelist: *mut *mut c_void = std::ptr::null_mut();
-    let count = unsafe { fl::scandir64(cp.as_ptr(), &mut namelist, None, None) };
+    let count = unsafe { fl::scandir64(cp.as_ptr(), &mut namelist, filter, compar) };
     if count < 0 {
         return Err(format!("scandir64 returned {count}"));
     }
@@ -423,14 +429,22 @@ fn scandir64_names_fl(dir: &std::path::Path) -> Result<Vec<Vec<u8>>, String> {
             names.push(name);
         }
     }
-    names.sort();
+    if compar.is_none() {
+        names.sort();
+    }
     Ok(names)
 }
 
-fn scandir64_names_lc(dir: &std::path::Path) -> Result<Vec<Vec<u8>>, String> {
+fn scandir64_names_lc(
+    dir: &std::path::Path,
+    filter: Option<unsafe extern "C" fn(*const libc::dirent64) -> c_int>,
+    compar: Option<
+        unsafe extern "C" fn(*mut *const libc::dirent64, *mut *const libc::dirent64) -> c_int,
+    >,
+) -> Result<Vec<Vec<u8>>, String> {
     let cp = cstr_path(dir);
     let mut namelist: *mut *mut libc::dirent64 = std::ptr::null_mut();
-    let count = unsafe { scandir64(cp.as_ptr(), &mut namelist, None, None) };
+    let count = unsafe { scandir64(cp.as_ptr(), &mut namelist, filter, compar) };
     if count < 0 {
         return Err(format!("scandir64 returned {count}"));
     }
@@ -453,7 +467,9 @@ fn scandir64_names_lc(dir: &std::path::Path) -> Result<Vec<Vec<u8>>, String> {
             names.push(name);
         }
     }
-    names.sort();
+    if compar.is_none() {
+        names.sort();
+    }
     Ok(names)
 }
 
@@ -550,12 +566,60 @@ fn diff_scandir64_mixed_directory() {
     std::fs::create_dir(dir.join("subdir_scan64")).expect("subdir");
     std::os::unix::fs::symlink("zeta.txt", dir.join("link64_to_zeta")).expect("symlink");
 
-    let fl_names = scandir64_names_fl(&dir).expect("fl scandir64 names");
-    let lc_names = scandir64_names_lc(&dir).expect("lc scandir64 names");
+    let fl_names = scandir64_names_fl(&dir, None, None).expect("fl scandir64 names");
+    let lc_names = scandir64_names_lc(&dir, None, None).expect("lc scandir64 names");
 
     assert_eq!(
         fl_names, lc_names,
         "scandir64 name-set divergence:\n  fl: {fl_names:?}\n  lc: {lc_names:?}"
+    );
+}
+
+unsafe extern "C" fn keep_a_prefix64_void(entry: *const c_void) -> c_int {
+    if entry.is_null() {
+        return 0;
+    }
+    let entry = entry as *const libc::dirent64;
+    let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()).to_bytes() };
+    c_int::from(name.first() == Some(&b'a'))
+}
+
+unsafe extern "C" fn keep_a_prefix64(entry: *const libc::dirent64) -> c_int {
+    if entry.is_null() {
+        return 0;
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()).to_bytes() };
+    c_int::from(name.first() == Some(&b'a'))
+}
+
+#[test]
+fn diff_scandir64_filter_alphasort_order() {
+    let dir = temp_dir("scan64_filter_sort");
+    for name in ["zeta", "alpha", "aardvark", "beta", "a10", "a2"] {
+        write_file(&dir.join(name), name.as_bytes());
+    }
+    std::fs::create_dir(dir.join("adir64")).expect("subdir");
+
+    let fl_names = scandir64_names_fl(
+        &dir,
+        Some(keep_a_prefix64_void),
+        Some(frankenlibc_abi::unistd_abi::alphasort64),
+    )
+    .expect("fl scandir64");
+    let lc_names = scandir64_names_lc(&dir, Some(keep_a_prefix64), Some(host_alphasort64))
+        .expect("lc scandir64");
+
+    assert!(
+        !fl_names.is_empty(),
+        "filtered scandir64 should retain a-prefix entries"
+    );
+    assert!(
+        fl_names.iter().all(|name| name.first() == Some(&b'a')),
+        "FrankenLibC scandir64 filter leaked non-matching entries: {fl_names:?}"
+    );
+    assert_eq!(
+        fl_names, lc_names,
+        "scandir64 filter + alphasort64 order divergence:\n  fl: {fl_names:?}\n  lc: {lc_names:?}"
     );
 }
 
@@ -1000,6 +1064,6 @@ fn diff_opendir_missing_path() {
 fn dirent_diff_coverage_report() {
     let _ = c_int::from(1);
     eprintln!(
-        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":11,\"divergences\":0}}",
+        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":12,\"divergences\":0}}",
     );
 }
