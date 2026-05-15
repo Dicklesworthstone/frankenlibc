@@ -1,18 +1,21 @@
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates_dir = manifest
         .parent()
-        .expect("crate directory has workspace parent")
-        .parent()
-        .expect("workspace parent has repo root")
-        .to_path_buf()
+        .ok_or_else(|| io::Error::other("frankenlibc-harness manifest should have a parent"))?;
+    let root = crates_dir.parent().ok_or_else(|| {
+        io::Error::other("frankenlibc-harness manifest should live below workspace root")
+    })?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -90,13 +93,13 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
-    value
-        .as_array()
-        .expect("expected array")
-        .iter()
-        .map(|item| item.as_str().expect("expected string").to_string())
-        .collect()
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    let items = value.as_array().ok_or("expected array")?;
+    let mut strings = BTreeSet::new();
+    for item in items {
+        strings.insert(item.as_str().ok_or("expected string")?.to_string());
+    }
+    Ok(strings)
 }
 
 fn assert_checker_failed(output: &Output) {
@@ -109,7 +112,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_release_claim_control_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -170,7 +173,7 @@ fn manifest_binds_release_claim_control_completion_items() -> TestResult {
         Some(false)
     );
     assert_eq!(
-        string_set(&release["release_claim_gate"]["fail_closed_signatures"]),
+        string_set(&release["release_claim_gate"]["fail_closed_signatures"])?,
         BTreeSet::from([
             "release_claim_missing_l2_evidence".to_string(),
             "release_claim_missing_l3_evidence".to_string(),
@@ -182,7 +185,7 @@ fn manifest_binds_release_claim_control_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_release_claim_control_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "valid")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -218,10 +221,10 @@ fn checker_validates_release_claim_control_contract_and_emits_report_log() -> Te
     );
 
     let rows = read_jsonl(&out_dir.join("release_claim_control_completion_contract.log.jsonl"))?;
-    let events: BTreeSet<_> = rows
-        .iter()
-        .map(|row| row["event"].as_str().expect("event").to_string())
-        .collect();
+    let mut events = BTreeSet::new();
+    for row in &rows {
+        events.insert(row["event"].as_str().ok_or("event")?.to_string());
+    }
     for event in [
         "release_claim_control_manifest_verified",
         "replacement_levels_policy_verified",
@@ -263,7 +266,7 @@ fn checker_validates_release_claim_control_contract_and_emits_report_log() -> Te
 
 #[test]
 fn checker_rejects_missing_required_test_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-test")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let refs = manifest["missing_item_bindings"][0]["required_test_refs"]
@@ -292,7 +295,7 @@ fn checker_rejects_missing_required_test_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_non_rch_cargo_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "bare-cargo")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["missing_item_bindings"][0]["required_commands"][0] = json!(
@@ -318,7 +321,7 @@ fn checker_rejects_non_rch_cargo_command() -> TestResult {
 
 #[test]
 fn checker_rejects_wrong_current_level_expectation() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "wrong-level")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_release_control_contract"]["replacement_levels"]["current_level"] =
@@ -343,7 +346,7 @@ fn checker_rejects_wrong_current_level_expectation() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_release_claim_log_field_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-log-field")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let fields =
