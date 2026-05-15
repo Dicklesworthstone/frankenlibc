@@ -23,9 +23,9 @@
     "implementation_refs": [
       "crates/frankenlibc-membrane/src/ptr_validator.rs:2066",
       "crates/frankenlibc-membrane/src/ptr_validator.rs:2195",
-      "crates/frankenlibc-membrane/src/ptr_validator.rs:2225",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2226",
       "crates/frankenlibc-membrane/src/ptr_validator.rs:2234",
-      "crates/frankenlibc-membrane/src/ptr_validator.rs:2246",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs:2247",
       "crates/frankenlibc-membrane/src/ptr_validator.rs:2328"
     ],
     "adversarial_cases": [
@@ -48,7 +48,7 @@
         "requirement": "Freeing a non-owned pointer reports FreeResult::ForeignPointer instead of treating it as an owned allocation.",
         "source": "ptr_validator_unit",
         "test": "foreign_free_reported",
-        "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2225",
+        "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2226",
         "required_tokens": [
           "FreeResult::ForeignPointer"
         ]
@@ -83,7 +83,7 @@
         "requirement": "Trailing canary corruption is reported on free and the pointer remains non-readable and non-writable afterward.",
         "source": "ptr_validator_unit",
         "test": "canary_corruption_detected_via_pipeline_free",
-        "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2246",
+        "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2247",
         "required_tokens": [
           "inject_trailing_canary_corruption",
           "FreeResult::FreedWithCanaryCorruption",

@@ -21,7 +21,7 @@
       "contract_harness": "crates/frankenlibc-harness/tests/allocator_membrane_deterministic_sequence_completion_contract_test.rs"
     },
     "implementation_refs": [
-      "crates/frankenlibc-membrane/src/arena.rs:267",
+      "crates/frankenlibc-membrane/src/arena.rs:268",
       "crates/frankenlibc-membrane/src/arena.rs:286",
       "crates/frankenlibc-membrane/src/arena.rs:340",
       "crates/frankenlibc-membrane/src/ptr_validator.rs:1799",
