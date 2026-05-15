@@ -64,6 +64,8 @@ struct PrintfAdversarialFuzzInput {
     dst_size: u16,
     /// Archetype selector.
     op: u8,
+    /// Case selector for the fixed overflow-width format table.
+    overflow_case: u8,
     /// String argument for `%s` archetypes.
     str_arg: Vec<u8>,
 }
@@ -246,7 +248,9 @@ fn adv_overflow_width_literal(input: &PrintfAdversarialFuzzInput) {
     let mut buf = make_dst(dst_size);
     // Each of these exercises a width larger than i32 / usize on 32-bit
     // hosts; the parser must clamp or refuse rather than wrap.
-    let rc = match input.op & 0b11 {
+    // Do not reuse `op`: this function is only reached when `op % 8 == 5`,
+    // which pins `op & 0b11` to one value and leaves most cases unreachable.
+    let rc = match input.overflow_case & 0b11 {
         0 => unsafe {
             snprintf(
                 buf[GUARD_BYTES..].as_mut_ptr().cast::<c_char>(),
