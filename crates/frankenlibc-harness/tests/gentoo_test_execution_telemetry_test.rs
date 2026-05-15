@@ -89,15 +89,15 @@ fn require_fields(value: &Value, required: &HashSet<String>, context: &str) -> T
     Ok(())
 }
 
-fn unique_output_dir(root: &Path) -> PathBuf {
+fn unique_output_dir(root: &Path) -> TestResult<PathBuf> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .expect("system time should be after unix epoch")
+        .map_err(|err| format!("system time should be after unix epoch: {err}"))?
         .as_nanos();
-    root.join("target").join("conformance").join(format!(
+    Ok(root.join("target").join("conformance").join(format!(
         "gentoo-test-execution-telemetry-{}-{nanos}",
         std::process::id()
-    ))
+    )))
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn dry_run_runner_emits_required_telemetry_fields() -> TestResult {
     let probe = m
         .get("dry_run_probe")
         .ok_or_else(|| "missing dry_run_probe".to_string())?;
-    let output_dir = unique_output_dir(&root);
+    let output_dir = unique_output_dir(&root)?;
     let package = json_string(probe, "package")?;
 
     let output = Command::new("python3")
