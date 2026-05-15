@@ -346,11 +346,32 @@ def validate_coverage(completion: dict[str, Any]) -> None:
         if expected.get(key) != actual:
             add_error("coverage_accounting_drift", f"{key}: expected {expected.get(key)} actual {actual}")
     campaigns = as_array(prioritizer.get("campaigns"), "fixture_coverage_prioritizer.campaigns", "coverage_accounting_drift")
-    campaign = next((row for row in campaigns if isinstance(row, dict) and row.get("campaign_id") == CAMPAIGN_ID), {})
-    next_symbols = set(as_array(campaign.get("first_wave_symbols"), "string prioritizer first_wave_symbols", "coverage_accounting_drift"))
-    overlap = sorted(required_symbols & next_symbols)
-    if overlap:
-        add_error("completed_symbol_still_claimed", f"completed wave-10 symbols still listed as next work: {overlap}")
+    campaign = next((row for row in campaigns if isinstance(row, dict) and row.get("campaign_id") == CAMPAIGN_ID), None)
+    if campaign is not None:
+        next_symbols = string_set(
+            campaign.get("first_wave_symbols"),
+            "string prioritizer first_wave_symbols",
+            "coverage_accounting_drift",
+        )
+        overlap = sorted(required_symbols & next_symbols)
+        if overlap:
+            add_error("completed_symbol_still_claimed", f"completed wave-10 symbols still listed as next work: {overlap}")
+    else:
+        covered_sources = as_array(
+            prioritizer.get("fully_covered_workload_domain_sources"),
+            "fixture_coverage_prioritizer.fully_covered_workload_domain_sources",
+            "coverage_accounting_drift",
+        )
+        covered_string = next((row for row in covered_sources if isinstance(row, dict) and row.get("module") == "string_abi"), None)
+        if covered_string is None:
+            add_error("coverage_accounting_drift", "string_abi missing from active campaigns and fully covered prioritizer sources")
+        else:
+            if covered_string.get("target_covered") != expected.get("string_target_covered"):
+                add_error("coverage_accounting_drift", "fully covered string_abi target_covered drifted")
+            if covered_string.get("target_uncovered") != expected.get("string_target_uncovered"):
+                add_error("coverage_accounting_drift", "fully covered string_abi target_uncovered drifted")
+            if covered_string.get("current_coverage_pct") != expected.get("string_current_coverage_pct"):
+                add_error("coverage_accounting_drift", "fully covered string_abi current_coverage_pct drifted")
     mark_check(
         start_errors,
         "coverage_accounting_validated",
