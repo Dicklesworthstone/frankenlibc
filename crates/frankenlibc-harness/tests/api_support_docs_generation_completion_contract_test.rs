@@ -28,13 +28,15 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "failure_signature",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_dir = crate_dir
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?;
+    let repo_dir = workspace_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?;
+    Ok(repo_dir.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -105,7 +107,7 @@ fn output_text(output: &Output) -> String {
 
 #[test]
 fn manifest_binds_live_docs_generation_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -149,10 +151,11 @@ fn manifest_binds_live_docs_generation_evidence() -> TestResult {
         .as_array()
         .ok_or("docs array")?
     {
-        let text = match doc["id"].as_str() {
-            Some("readme") => &readme,
-            Some("feature_parity") => &feature,
-            other => panic!("unexpected doc id {other:?}"),
+        let doc_id = doc["id"].as_str().ok_or("doc id string")?;
+        let text = match doc_id {
+            "readme" => &readme,
+            "feature_parity" => &feature,
+            other => return Err(format!("unexpected doc id {other:?}").into()),
         };
         for needle in doc["required_text"]
             .as_array()
@@ -179,7 +182,7 @@ fn manifest_binds_live_docs_generation_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_contract_and_emits_report() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "valid")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -197,7 +200,7 @@ fn checker_validates_contract_and_emits_report() -> TestResult {
 
 #[test]
 fn checker_emits_jsonl_rows_with_required_fields() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -221,7 +224,7 @@ fn checker_emits_jsonl_rows_with_required_fields() -> TestResult {
 
 #[test]
 fn checker_rejects_reality_snapshot_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["expected_reality_snapshot"]["total_exported"] = json!(4120);
 
@@ -241,7 +244,7 @@ fn checker_rejects_reality_snapshot_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_fuzzed_unknown_support_status() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     let mut support = load_json(&root.join("support_matrix.json"))?;
     support["symbols"][0]["status"] = json!("ExperimentalFuzzedStatus");
@@ -265,7 +268,7 @@ fn checker_rejects_fuzzed_unknown_support_status() -> TestResult {
 
 #[test]
 fn checker_rejects_bare_cargo_required_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["missing_item_bindings"][0]["required_commands"]
         .as_array_mut()
