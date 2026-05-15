@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 
-//! Differential conformance harness for libresolv `__p_class` / `__p_type`.
+//! Differential conformance harness for libresolv DNS formatter helpers:
+//! `__p_type`, `__p_class`, `__p_rcode`, `__p_time`, and `__p_option`.
 //!
 //! These are DNS RR symbol-name lookups. fl previously stubbed both to
 //! "IN" / "A" regardless of input; replaced with proper RFC-mapped
@@ -253,6 +254,6 @@ fn diff_p_option_known_and_unknown() {
 #[test]
 fn p_type_class_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libresolv __p_type/__p_class\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",
+        "{{\"family\":\"libresolv DNS formatter helpers\",\"reference\":\"glibc\",\"functions\":5,\"divergences\":0}}",
     );
 }
