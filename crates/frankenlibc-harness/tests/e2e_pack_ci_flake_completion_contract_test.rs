@@ -1,5 +1,6 @@
 //! Completion contract tests for bd-b5a.3.1.
 
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -38,9 +39,15 @@ const REQUIRED_REPORT_FIELDS: [&str; 17] = [
     "failure_signature",
 ];
 
-fn workspace_root() -> PathBuf {
+fn workspace_root() -> TestResult<PathBuf> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest.parent().unwrap().parent().unwrap().to_path_buf()
+    let crates_dir = manifest
+        .parent()
+        .ok_or_else(|| io::Error::other("frankenlibc-harness manifest should have a parent"))?;
+    let root = crates_dir.parent().ok_or_else(|| {
+        io::Error::other("frankenlibc-harness manifest should live below workspace root")
+    })?;
+    Ok(root.to_path_buf())
 }
 
 fn load_json(path: &Path) -> TestResult<Value> {
@@ -115,7 +122,7 @@ fn source_text(root: &Path, source_paths: &Value, source: &str) -> TestResult<St
 
 #[test]
 fn manifest_binds_unit_and_e2e_audit_items() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = load_manifest(&root)?;
     assert_eq!(
         manifest["schema_version"],
@@ -191,7 +198,7 @@ fn manifest_binds_unit_and_e2e_audit_items() -> TestResult {
 
 #[test]
 fn source_refs_and_named_tests_exist() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = load_manifest(&root)?;
     let source_paths = &manifest["source_paths"];
 
@@ -246,7 +253,7 @@ fn source_refs_and_named_tests_exist() -> TestResult {
 
 #[test]
 fn checker_emits_report_log_and_runs_flake_policy_unit_tests() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let contract = root.join(CONTRACT_REL);
     let (output, report_path, log_path) = run_checker(&root, &contract, "positive")?;
     assert!(
@@ -297,7 +304,7 @@ fn checker_emits_report_log_and_runs_flake_policy_unit_tests() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_unit_binding_or_ci_gate() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut manifest = load_manifest(&root)?;
     let coverage = manifest["completion_coverage"]
         .as_array_mut()
@@ -364,7 +371,7 @@ fn checker_rejects_missing_unit_binding_or_ci_gate() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_e2e_artifact_contract() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut manifest = load_manifest(&root)?;
     manifest["gate_contract"]["required_artifacts"]
         .as_array_mut()
