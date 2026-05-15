@@ -1,18 +1,19 @@
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or_else(|| invalid_data("crate directory has workspace parent"))?
         .parent()
-        .expect("workspace parent has repo root")
-        .to_path_buf()
+        .ok_or_else(|| invalid_data("workspace parent has repo root"))?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -83,13 +84,35 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
+fn invalid_data(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
+fn json_array<'a>(value: &'a Value, name: &str) -> TestResult<&'a [Value]> {
     value
         .as_array()
-        .expect("expected array")
-        .iter()
-        .map(|item| item.as_str().expect("expected string").to_string())
-        .collect()
+        .map(Vec::as_slice)
+        .ok_or_else(|| invalid_data(format!("{name} must be array")).into())
+}
+
+fn json_array_mut<'a>(value: &'a mut Value, name: &str) -> TestResult<&'a mut Vec<Value>> {
+    value
+        .as_array_mut()
+        .ok_or_else(|| invalid_data(format!("{name} must be array")).into())
+}
+
+fn json_str<'a>(value: &'a Value, name: &str) -> TestResult<&'a str> {
+    value
+        .as_str()
+        .ok_or_else(|| invalid_data(format!("{name} must be string")).into())
+}
+
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    let mut items = BTreeSet::new();
+    for item in json_array(value, "expected array")? {
+        items.insert(json_str(item, "expected string")?.to_owned());
+    }
+    Ok(items)
 }
 
 fn assert_checker_failed(output: &Output) {
@@ -102,7 +125,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_verification_matrix_schema_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -112,7 +135,7 @@ fn manifest_binds_verification_matrix_schema_evidence() -> TestResult {
     assert_eq!(manifest["original_bead"].as_str(), Some("bd-1s7"));
     assert_eq!(manifest["completion_debt_bead"].as_str(), Some("bd-1s7.1"));
     assert_eq!(
-        string_set(&manifest["completion_debt_evidence"]["missing_items_closed"]),
+        string_set(&manifest["completion_debt_evidence"]["missing_items_closed"])?,
         BTreeSet::from([
             "tests.e2e.primary".to_string(),
             "tests.conformance.primary".to_string()
@@ -121,7 +144,7 @@ fn manifest_binds_verification_matrix_schema_evidence() -> TestResult {
 
     let artifacts = manifest["source_artifacts"]
         .as_object()
-        .expect("source artifacts");
+        .ok_or_else(|| invalid_data("source_artifacts must be object"))?;
     for key in [
         "verification_matrix",
         "verification_matrix_gate",
@@ -130,7 +153,10 @@ fn manifest_binds_verification_matrix_schema_evidence() -> TestResult {
         "completion_harness",
     ] {
         assert!(artifacts.contains_key(key), "missing artifact {key}");
-        let path = artifacts[key].as_str().expect("artifact path");
+        let artifact = artifacts
+            .get(key)
+            .ok_or_else(|| invalid_data(format!("missing artifact {key}")))?;
+        let path = json_str(artifact, "artifact path")?;
         assert!(root.join(path).exists(), "artifact should exist: {path}");
     }
 
@@ -138,7 +164,7 @@ fn manifest_binds_verification_matrix_schema_evidence() -> TestResult {
     assert_eq!(contract["matrix_version"].as_u64(), Some(1));
     assert_eq!(contract["row_schema_version"].as_str(), Some("v1"));
     assert_eq!(
-        string_set(&contract["required_stream_examples"]),
+        string_set(&contract["required_stream_examples"])?,
         BTreeSet::from([
             "docs".to_string(),
             "e2e".to_string(),
@@ -149,14 +175,15 @@ fn manifest_binds_verification_matrix_schema_evidence() -> TestResult {
         ])
     );
 
-    let e2e_refs = manifest["completion_debt_evidence"]["e2e_primary"]["required_test_refs"]
-        .as_array()
-        .expect("e2e refs");
+    let e2e_refs = json_array(
+        &manifest["completion_debt_evidence"]["e2e_primary"]["required_test_refs"],
+        "e2e refs",
+    )?;
     assert!(e2e_refs.len() >= 7, "expected e2e refs: {e2e_refs:?}");
-    let conformance_refs =
-        manifest["completion_debt_evidence"]["conformance_primary"]["required_test_refs"]
-            .as_array()
-            .expect("conformance refs");
+    let conformance_refs = json_array(
+        &manifest["completion_debt_evidence"]["conformance_primary"]["required_test_refs"],
+        "conformance refs",
+    )?;
     assert!(
         conformance_refs.len() >= 8,
         "expected conformance refs: {conformance_refs:?}"
@@ -167,7 +194,7 @@ fn manifest_binds_verification_matrix_schema_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_schema_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -181,7 +208,7 @@ fn checker_validates_schema_contract_and_emits_report_log() -> TestResult {
         Some("v1")
     );
     assert_eq!(
-        string_set(&report["schema_summary"]["stream_examples"]),
+        string_set(&report["schema_summary"]["stream_examples"])?,
         BTreeSet::from([
             "docs".to_string(),
             "e2e".to_string(),
@@ -191,9 +218,15 @@ fn checker_validates_schema_contract_and_emits_report_log() -> TestResult {
             "perf".to_string()
         ])
     );
-    assert_eq!(report["e2e_bindings"].as_array().unwrap().len(), 7);
-    assert_eq!(report["conformance_bindings"].as_array().unwrap().len(), 8);
-    let errors = report["errors"].as_array().ok_or("report errors array")?;
+    assert_eq!(
+        json_array(&report["e2e_bindings"], "e2e_bindings")?.len(),
+        7
+    );
+    assert_eq!(
+        json_array(&report["conformance_bindings"], "conformance_bindings")?.len(),
+        8
+    );
+    let errors = json_array(&report["errors"], "errors")?;
     assert!(errors.is_empty());
 
     let events = read_jsonl(&log_path)?;
@@ -235,7 +268,7 @@ fn checker_validates_schema_contract_and_emits_report_log() -> TestResult {
 
 #[test]
 fn checker_replays_verification_matrix_schema_gate() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "gate")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -252,13 +285,14 @@ fn checker_replays_verification_matrix_schema_gate() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_stream_example() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-stream")?;
     let mut manifest = read_json(&contract_path(&root))?;
-    manifest["required_schema_contract"]["required_stream_examples"]
-        .as_array_mut()
-        .expect("required stream array")
-        .push(json!("impossible_stream"));
+    json_array_mut(
+        &mut manifest["required_schema_contract"]["required_stream_examples"],
+        "required_stream_examples",
+    )?
+    .push(json!("impossible_stream"));
     let mutated = out_dir.join("verification_matrix_schema_missing_stream.json");
     write_json(&mutated, &manifest)?;
 
@@ -279,15 +313,16 @@ fn checker_rejects_missing_stream_example() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_gate_token() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-token")?;
     let mut manifest = read_json(&contract_path(&root))?;
-    manifest["required_schema_contract"]["required_source_text"]["verification_matrix_gate"]
-        .as_array_mut()
-        .expect("gate needles array")
-        .push(json!(
-            "verification matrix gate must emit this intentionally missing schema token"
-        ));
+    json_array_mut(
+        &mut manifest["required_schema_contract"]["required_source_text"]["verification_matrix_gate"],
+        "verification_matrix_gate needles",
+    )?
+    .push(json!(
+        "verification matrix gate must emit this intentionally missing schema token"
+    ));
     let mutated = out_dir.join("verification_matrix_schema_missing_token.json");
     write_json(&mutated, &manifest)?;
 
@@ -308,7 +343,7 @@ fn checker_rejects_missing_gate_token() -> TestResult {
 
 #[test]
 fn checker_rejects_local_cargo_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "local-cargo")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["e2e_primary"]["required_commands"] =
