@@ -122,10 +122,10 @@ fn mutated_contract(
     root: &Path,
     out_dir: &Path,
     label: &str,
-    mutate: impl FnOnce(&mut Value),
+    mutate: impl FnOnce(&mut Value) -> TestResult,
 ) -> TestResult<PathBuf> {
     let mut manifest = read_json(&contract_path(root))?;
-    mutate(&mut manifest);
+    mutate(&mut manifest)?;
     let path = out_dir.join(format!(
         "rlimit_standard_resources_completion_contract.{label}.json"
     ));
@@ -210,7 +210,10 @@ fn manifest_binds_rlimit_standard_resource_unit_item() -> TestResult {
         Some("(RLIMIT_CPU..=RLIMIT_MAX_VALID).contains(&resource)")
     );
 
-    for artifact in manifest["source_artifacts"].as_array().unwrap() {
+    let artifacts = manifest["source_artifacts"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source_artifacts array"))?;
+    for artifact in artifacts {
         let path = artifact["path"]
             .as_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "artifact path missing"))?;
@@ -247,7 +250,10 @@ fn checker_validates_rlimit_standard_resources_completion_contract() -> TestResu
         Some(9)
     );
     assert_eq!(report["summary"]["unit_group_count"].as_u64(), Some(3));
-    assert!(report["errors"].as_array().unwrap().is_empty());
+    let errors = report["errors"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "report errors array"))?;
+    assert!(errors.is_empty());
 
     let rows = read_jsonl(&log_path(&out_dir))?;
     let events: BTreeSet<String> = rows
@@ -267,6 +273,7 @@ fn checker_rejects_missing_unit_binding() -> TestResult {
     let out_dir = unique_output_dir(&root, "missing-unit")?;
     let contract = mutated_contract(&root, &out_dir, "missing-unit", |manifest| {
         manifest["completion_debt_evidence"]["missing_item_bindings"] = json!([]);
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -286,8 +293,14 @@ fn checker_rejects_missing_formerly_rejected_resource() -> TestResult {
         let resources =
             manifest["rlimit_standard_resource_contract"]["formerly_rejected_resources"]
                 .as_array_mut()
-                .expect("formerly rejected resources array");
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "formerly_rejected_resources array",
+                    )
+                })?;
         resources.retain(|resource| resource.as_str() != Some("RLIMIT_RTTIME"));
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -306,6 +319,7 @@ fn checker_rejects_unit_test_binding_drift() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "unit-drift", |manifest| {
         manifest["rlimit_standard_resource_contract"]["required_unit_test_groups"][0]["tests"][0] =
             json!("missing_valid_resource_test");
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
