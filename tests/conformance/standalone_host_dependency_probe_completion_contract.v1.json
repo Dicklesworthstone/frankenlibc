@@ -93,25 +93,25 @@
     {
       "kind": "test_stale_policy",
       "path": "crates/frankenlibc-harness/tests/standalone_host_dependency_probe_plan_test.rs",
-      "line": 830,
+      "line": 867,
       "anchor": "fn stale_source_commit_policy_blocks_host_dependency_probe_evidence"
     },
     {
       "kind": "test_stale_helper",
       "path": "crates/frankenlibc-harness/tests/standalone_host_dependency_probe_plan_test.rs",
-      "line": 862,
+      "line": 899,
       "anchor": "fn stale_recorded_source_commit_helper_rejects_host_dependency_probe_evidence"
     },
     {
       "kind": "test_checker_report",
       "path": "crates/frankenlibc-harness/tests/standalone_host_dependency_probe_plan_test.rs",
-      "line": 879,
+      "line": 916,
       "anchor": "fn checker_emits_report_and_required_jsonl_rows"
     },
     {
       "kind": "test_checker_missing_freshness",
       "path": "crates/frankenlibc-harness/tests/standalone_host_dependency_probe_plan_test.rs",
-      "line": 1009,
+      "line": 1046,
       "anchor": "fn checker_rejects_missing_source_commit_freshness_policy"
     }
   ],
