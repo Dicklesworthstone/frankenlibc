@@ -1,6 +1,6 @@
 //! Completion contract tests for bd-1gg.4.1 aarch64 arch regression evidence.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::path::{Path, PathBuf};

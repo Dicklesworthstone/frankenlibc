@@ -12539,13 +12539,13 @@ fn nss_database_get_and_disable_nscd_safe() {
 fn nss_hash_computes_fnv1a() {
     use frankenlibc_abi::unistd_abi::__nss_hash;
     let name = b"alice";
-    
+
     let mut h: u32 = 0x811c9dc5;
     for &b in name {
         h ^= b as u32;
         h = h.wrapping_mul(0x01000193);
     }
-    
+
     assert_eq!(
         unsafe { __nss_hash(name.as_ptr() as *const c_void, name.len()) },
         h

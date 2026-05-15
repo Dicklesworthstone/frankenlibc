@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::io;
@@ -246,11 +246,13 @@ fn manifest_binds_all_bd3ot4_missing_items() -> TestResult {
         string_set(&evidence["fuzz_primary"]["required_targets"])?,
         BTreeSet::from(["fuzz_runtime_math".to_string()])
     );
-    assert!(evidence["fuzz_primary"]["required_cargo_fuzz_command"]
-        .as_str()
-        .is_some_and(|command| command.starts_with("rch exec -- ")
-            && command.contains("cargo fuzz run")
-            && command.contains("fuzz_runtime_math")));
+    assert!(
+        evidence["fuzz_primary"]["required_cargo_fuzz_command"]
+            .as_str()
+            .is_some_and(|command| command.starts_with("rch exec -- ")
+                && command.contains("cargo fuzz run")
+                && command.contains("fuzz_runtime_math"))
+    );
     Ok(())
 }
 

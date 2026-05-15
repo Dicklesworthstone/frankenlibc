@@ -1,5 +1,5 @@
 use frankenlibc_harness::structured_log::validate_log_line;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -331,8 +331,8 @@ fn checker_rejects_understated_fixture_inventory() -> TestResult {
     let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "inventory")?;
     let mut manifest = read_json(&contract_path(&root))?;
-    manifest["completion_debt_evidence"]["required_per_symbol_contract"]
-        ["minimum_fixture_json_cases"] = json!(9_999_999);
+    manifest["completion_debt_evidence"]["required_per_symbol_contract"]["minimum_fixture_json_cases"] =
+        json!(9_999_999);
     let mutated = out_dir.join("understated_inventory_contract.json");
     write_json(&mutated, &manifest)?;
 
@@ -356,8 +356,7 @@ fn checker_rejects_missing_source_test_ref() -> TestResult {
     let out_dir = unique_out_dir(&root, "missing-test")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let refs = json_array_mut(
-        &mut manifest["completion_debt_evidence"]["test_sources"]["completion_harness"]
-            ["required_test_refs"],
+        &mut manifest["completion_debt_evidence"]["test_sources"]["completion_harness"]["required_test_refs"],
         "completion harness refs",
     )?;
     refs.push(json!("not_a_real_test_name"));

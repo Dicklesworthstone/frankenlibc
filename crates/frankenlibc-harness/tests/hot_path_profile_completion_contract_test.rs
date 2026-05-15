@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -172,12 +172,16 @@ fn checker_validates_profile_pipeline_contract() -> TestResult {
         report["profile_artifacts"]["per_target_pattern_count"].as_u64(),
         Some(3)
     );
-    assert!(report["profile_report_summary"]["profile_record_count"]
-        .as_u64()
-        .is_some_and(|count| count > 0));
-    assert!(report["opportunity_matrix"]["entry_count"]
-        .as_u64()
-        .is_some_and(|count| count > 0));
+    assert!(
+        report["profile_report_summary"]["profile_record_count"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+    assert!(
+        report["opportunity_matrix"]["entry_count"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
 
     Ok(())
 }

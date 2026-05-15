@@ -2020,7 +2020,7 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
     let mut adverse = false;
-    
+
     let safe_dst_len = if repair {
         match known_remaining(dst as usize) {
             Some(b) if b < n => {
@@ -2073,11 +2073,7 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
     unsafe {
         let mut i = 0usize;
         while i < safe_dst_len {
-            let ch = if i < safe_src_len {
-                *src.add(i)
-            } else {
-                0
-            };
+            let ch = if i < safe_src_len { *src.add(i) } else { 0 };
             *dst.add(i) = ch;
             i += 1;
             if ch == 0 {

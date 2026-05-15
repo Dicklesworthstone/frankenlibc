@@ -1,7 +1,7 @@
 //! Contract tests for bd-bp8fl.2.9.1 dependency-edge completion evidence.
 
-use serde_json::json;
 use serde_json::Value;
+use serde_json::json;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::io;
@@ -344,9 +344,11 @@ fn manifest_binds_dependency_edges_and_completion_items() -> TestResult {
     let commands = string_set(&e2e_binding["required_commands"])?;
     assert!(commands.contains("br dep cycles --no-db --json"));
     assert!(commands.contains("bv --robot-insights"));
-    assert!(commands
-        .iter()
-        .any(|command| command.starts_with("rch exec --") && command.contains("cargo test")));
+    assert!(
+        commands
+            .iter()
+            .any(|command| command.starts_with("rch exec --") && command.contains("cargo test"))
+    );
 
     Ok(())
 }

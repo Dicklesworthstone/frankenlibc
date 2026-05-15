@@ -261,12 +261,16 @@ fn checker_validates_dual_mode_logging_completion_contract() -> TestResult {
     assert_eq!(report["original_bead"].as_str(), Some("bd-oai.6"));
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-oai.6.1"));
     assert_eq!(report["summary"]["missing_item_count"].as_u64(), Some(3));
-    assert!(report["summary"]["logging_event_count"]
-        .as_u64()
-        .is_some_and(|count| count >= 8));
-    assert!(report["summary"]["resolved_test_ref_count"]
-        .as_u64()
-        .is_some_and(|count| count >= 9));
+    assert!(
+        report["summary"]["logging_event_count"]
+            .as_u64()
+            .is_some_and(|count| count >= 8)
+    );
+    assert!(
+        report["summary"]["resolved_test_ref_count"]
+            .as_u64()
+            .is_some_and(|count| count >= 9)
+    );
 
     let records = log_records(&out_dir.join("dual_mode_logging_completion_contract.log.jsonl"))?;
     let events: BTreeSet<_> = records

@@ -953,15 +953,13 @@ fn pthread_sigqueue_preserves_siginfo_and_ucontext_after_deferred_replay() {
     let sigval = libc::sigval {
         sival_ptr: payload as *mut std::ffi::c_void,
     };
-    let rc = unsafe {
-        libc::pthread_sigqueue(
-            worker_tid as libc::pthread_t,
-            libc::SIGUSR1,
-            sigval,
-        )
-    };
+    let rc =
+        unsafe { libc::pthread_sigqueue(worker_tid as libc::pthread_t, libc::SIGUSR1, sigval) };
     if rc != 0 {
-        panic!("pthread_sigqueue failed with rc={}. worker_tid={:?}", rc, worker_tid);
+        panic!(
+            "pthread_sigqueue failed with rc={}. worker_tid={:?}",
+            rc, worker_tid
+        );
     }
     assert_eq!(
         rc, 0,

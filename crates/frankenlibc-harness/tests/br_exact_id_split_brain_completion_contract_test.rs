@@ -1,5 +1,5 @@
 use frankenlibc_harness::structured_log::validate_log_line;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -117,13 +117,13 @@ fn manifest_binds_exact_id_commands_and_missing_items() -> TestResult {
         assert!(probe_ids.contains(&required), "missing probe id {required}");
     }
 
-    let exact_commands: Vec<&str> = manifest["live_read_only_probe_contract"]
-        ["exact_id_probe_commands"]
-        .as_array()
-        .ok_or("exact_id_probe_commands must be array")?
-        .iter()
-        .filter_map(|command| command.as_str())
-        .collect();
+    let exact_commands: Vec<&str> =
+        manifest["live_read_only_probe_contract"]["exact_id_probe_commands"]
+            .as_array()
+            .ok_or("exact_id_probe_commands must be array")?
+            .iter()
+            .filter_map(|command| command.as_str())
+            .collect();
     assert!(exact_commands.contains(&"br show <id> --json"));
     assert!(exact_commands.contains(&"br --no-db show <id> --json"));
 

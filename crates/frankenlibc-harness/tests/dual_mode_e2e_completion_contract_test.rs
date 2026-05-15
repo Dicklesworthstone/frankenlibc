@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -177,19 +177,19 @@ fn manifest_binds_dual_mode_e2e_completion_items() -> TestResult {
         assert!(fields.contains(field), "missing structured field {field}");
     }
 
-    let e2e_names: BTreeSet<_> = manifest["completion_debt_evidence"]["e2e_primary"]
-        ["required_test_refs"]
-        .as_array()
-        .ok_or("e2e required test refs must be array")?
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| -> TestResult<String> {
-            Ok(entry["name"]
-                .as_str()
-                .ok_or_else(|| format!("e2e required test refs[{index}].name must be string"))?
-                .to_string())
-        })
-        .collect::<TestResult<_>>()?;
+    let e2e_names: BTreeSet<_> =
+        manifest["completion_debt_evidence"]["e2e_primary"]["required_test_refs"]
+            .as_array()
+            .ok_or("e2e required test refs must be array")?
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| -> TestResult<String> {
+                Ok(entry["name"]
+                    .as_str()
+                    .ok_or_else(|| format!("e2e required test refs[{index}].name must be string"))?
+                    .to_string())
+            })
+            .collect::<TestResult<_>>()?;
     for name in [
         "e2e_deterministic_replay_emits_identical_decisions_and_logs",
         "e2e_mode_behavioral_divergence_is_stable_and_structured",
