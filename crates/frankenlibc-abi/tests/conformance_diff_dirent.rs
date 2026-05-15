@@ -25,6 +25,12 @@ unsafe extern "C" {
     #[link_name = "fdopendir"]
     fn host_fdopendir(fd: c_int) -> *mut libc::DIR;
     fn readdir64(dirp: *mut libc::DIR) -> *mut libc::dirent64;
+    #[link_name = "readdir_r"]
+    fn host_readdir_r(
+        dirp: *mut libc::DIR,
+        entry: *mut libc::dirent,
+        result: *mut *mut libc::dirent,
+    ) -> c_int;
     #[link_name = "scandir"]
     fn host_scandir(
         path: *const c_char,
@@ -173,6 +179,84 @@ fn walk_lc(dir: &std::path::Path) -> Result<BTreeSet<(Vec<u8>, u8)>, String> {
         let d_type = unsafe { (*entry).d_type };
         entries.insert((name, d_type));
     }
+    let rc = unsafe { libc::closedir(dirp) };
+    if rc != 0 {
+        return Err(format!("closedir returned {}", rc));
+    }
+    Ok(entries)
+}
+
+fn walk_readdir_r_fl(dir: &std::path::Path) -> Result<DirEntrySet, String> {
+    let cp = cstr_path(dir);
+    let mut entries = BTreeSet::new();
+    let dirp = unsafe { fl::opendir(cp.as_ptr()) };
+    if dirp.is_null() {
+        return Err("opendir returned NULL".into());
+    }
+
+    loop {
+        let mut entry: libc::dirent = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::dirent = std::ptr::null_mut();
+        let rc = unsafe { fl::readdir_r(dirp, &mut entry, &mut result) };
+        if rc != 0 {
+            unsafe {
+                fl::closedir(dirp);
+            }
+            return Err(format!("readdir_r returned {rc}"));
+        }
+        if result.is_null() {
+            break;
+        }
+        let name = unsafe {
+            std::ffi::CStr::from_ptr(entry.d_name.as_ptr())
+                .to_bytes()
+                .to_vec()
+        };
+        if name == b"." || name == b".." {
+            continue;
+        }
+        entries.insert((name, entry.d_type));
+    }
+
+    let rc = unsafe { fl::closedir(dirp) };
+    if rc != 0 {
+        return Err(format!("closedir returned {}", rc));
+    }
+    Ok(entries)
+}
+
+fn walk_readdir_r_lc(dir: &std::path::Path) -> Result<DirEntrySet, String> {
+    let cp = cstr_path(dir);
+    let mut entries = BTreeSet::new();
+    let dirp = unsafe { libc::opendir(cp.as_ptr()) };
+    if dirp.is_null() {
+        return Err("opendir returned NULL".into());
+    }
+
+    loop {
+        let mut entry: libc::dirent = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::dirent = std::ptr::null_mut();
+        let rc = unsafe { host_readdir_r(dirp, &mut entry, &mut result) };
+        if rc != 0 {
+            unsafe {
+                libc::closedir(dirp);
+            }
+            return Err(format!("readdir_r returned {rc}"));
+        }
+        if result.is_null() {
+            break;
+        }
+        let name = unsafe {
+            std::ffi::CStr::from_ptr(entry.d_name.as_ptr())
+                .to_bytes()
+                .to_vec()
+        };
+        if name == b"." || name == b".." {
+            continue;
+        }
+        entries.insert((name, entry.d_type));
+    }
+
     let rc = unsafe { libc::closedir(dirp) };
     if rc != 0 {
         return Err(format!("closedir returned {}", rc));
@@ -665,6 +749,27 @@ fn diff_readdir64_mixed_directory() {
         divs.is_empty(),
         "readdir64 mixed dir divergences:\n{}",
         render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_readdir_r_mixed_directory() {
+    let dir = temp_dir("readdir_r");
+    write_file(&dir.join("alpha.txt"), b"alpha");
+    write_file(&dir.join("beta.bin"), b"beta");
+    std::fs::create_dir(dir.join("subdir_readdir_r")).expect("subdir");
+    std::os::unix::fs::symlink("alpha.txt", dir.join("link_to_alpha_r")).expect("symlink");
+
+    let fl_set = walk_readdir_r_fl(&dir).expect("fl readdir_r walk");
+    let lc_set = walk_readdir_r_lc(&dir).expect("lc readdir_r walk");
+
+    assert!(
+        !fl_set.is_empty(),
+        "FrankenLibC readdir_r walk should see fixture entries"
+    );
+    assert_eq!(
+        fl_set, lc_set,
+        "readdir_r mixed dir divergence:\n  fl: {fl_set:?}\n  lc: {lc_set:?}"
     );
 }
 
@@ -1203,6 +1308,6 @@ fn diff_opendir_missing_path() {
 fn dirent_diff_coverage_report() {
     let _ = c_int::from(1);
     eprintln!(
-        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":14,\"divergences\":0}}",
+        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":15,\"divergences\":0}}",
     );
 }
