@@ -336,7 +336,11 @@ fn healthy_fixture_produces_valid_dossier_with_cited_artifacts() -> TestResult {
 fn stale_fixture_is_rejected_with_kind_label() -> TestResult {
     let commit = "1".repeat(40);
     let mut inputs = healthy_inputs(&commit);
-    inputs.runtime_decision_log.as_mut().unwrap().source_commit = "stale".into();
+    inputs
+        .runtime_decision_log
+        .as_mut()
+        .ok_or_else(|| "healthy fixture must include runtime_decision_log".to_string())?
+        .source_commit = "stale".into();
     match build_dossier(&inputs, &commit) {
         Err(DossierError::StaleSourceCommit {
             kind: "runtime_decision_log",
@@ -368,7 +372,7 @@ fn support_taxonomy_promotion_is_rejected_when_unbacked() -> TestResult {
     inputs
         .semantic_overlay
         .as_mut()
-        .unwrap()
+        .ok_or_else(|| "healthy fixture must include semantic_overlay".to_string())?
         .artifact_refs
         .clear();
     match build_dossier(&inputs, &commit) {
@@ -385,7 +389,8 @@ fn support_taxonomy_promotion_is_rejected_when_unbacked() -> TestResult {
 #[test]
 fn dossier_is_serializable_to_deterministic_json_and_optional_markdown() -> TestResult {
     let commit = "1".repeat(40);
-    let dossier = build_dossier(&healthy_inputs(&commit), &commit).unwrap();
+    let dossier = build_dossier(&healthy_inputs(&commit), &commit)
+        .map_err(|err| format!("healthy fixture must build dossier: {err}"))?;
     // JSON: serde_json on an explicit struct of the public dossier
     // shape — we don't currently derive Serialize on Dossier, but the
     // contract requires the OUTPUT to be serializable as JSON. We
@@ -464,8 +469,9 @@ fn helpers_extract_dashboard_level_and_first_claim_blocker() -> TestResult {
             }
         ]
     });
+    let blocker = extract_first_failing_blocker(&standalone);
     require(
-        extract_first_failing_blocker(&standalone) == "host_libc_dependency",
+        matches!(blocker.as_str(), "host_libc_dependency"),
         "first claim_blocked row",
     )
 }
