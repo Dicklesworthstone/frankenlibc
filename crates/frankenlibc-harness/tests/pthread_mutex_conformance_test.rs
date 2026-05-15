@@ -7,13 +7,20 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+type TestResult = Result<(), String>;
+
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest_dir
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .and_then(Path::parent)
+        .ok_or_else(|| {
+            format!(
+                "failed to derive workspace root from {}",
+                manifest_dir.display()
+            )
+        })?;
+    Ok(root.to_path_buf())
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,12 +68,12 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 fn execute_case_via_harness(
@@ -125,14 +132,15 @@ fn execute_case_via_harness(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_mutex_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/pthread_mutex.json");
+fn pthread_mutex_fixture_exists() -> TestResult {
+    let path = repo_root()?.join("tests/conformance/fixtures/pthread_mutex.json");
     assert!(path.exists(), "pthread_mutex.json fixture must exist");
+    Ok(())
 }
 
 #[test]
-fn pthread_mutex_fixture_valid_schema() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_fixture_valid_schema() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "pthread/mutex");
@@ -159,6 +167,7 @@ fn pthread_mutex_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,8 +175,8 @@ fn pthread_mutex_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_mutex_covers_init() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_covers_init() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["mutex_init"];
@@ -179,11 +188,12 @@ fn pthread_mutex_covers_init() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn pthread_mutex_covers_lock() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_covers_lock() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["mutex_lock"];
@@ -195,11 +205,12 @@ fn pthread_mutex_covers_lock() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn pthread_mutex_covers_trylock() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_covers_trylock() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["mutex_trylock_unlocked", "mutex_trylock_locked"];
@@ -211,11 +222,12 @@ fn pthread_mutex_covers_trylock() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn pthread_mutex_covers_unlock() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_covers_unlock() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["mutex_unlock"];
@@ -227,11 +239,12 @@ fn pthread_mutex_covers_unlock() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn pthread_mutex_covers_destroy() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_covers_destroy() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = ["mutex_destroy"];
@@ -243,6 +256,7 @@ fn pthread_mutex_covers_destroy() {
             pattern
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -250,8 +264,8 @@ fn pthread_mutex_covers_destroy() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_mutex_error_codes_valid() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_error_codes_valid() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
 
     // Valid POSIX/Linux error codes for pthread_mutex functions
     let valid_errno_values = [
@@ -270,6 +284,7 @@ fn pthread_mutex_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,8 +292,8 @@ fn pthread_mutex_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_mutex_function_distribution() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_function_distribution() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
 
     let mut init_count = 0;
     let mut lock_count = 0;
@@ -328,6 +343,7 @@ fn pthread_mutex_function_distribution() {
         "pthread_mutex coverage: init={}, lock={}, trylock={}, unlock={}, destroy={}",
         init_count, lock_count, trylock_count, unlock_count, destroy_count
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -335,8 +351,8 @@ fn pthread_mutex_function_distribution() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_mutex_modes_valid() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_modes_valid() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
 
     for case in &fixture.cases {
         assert!(
@@ -346,6 +362,7 @@ fn pthread_mutex_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -353,8 +370,8 @@ fn pthread_mutex_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_mutex_case_count_stable() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_case_count_stable() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
 
     // This test ensures we don't accidentally remove test cases
     // Update this count when intentionally adding/removing cases
@@ -372,6 +389,7 @@ fn pthread_mutex_case_count_stable() {
         "pthread_mutex fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -379,8 +397,8 @@ fn pthread_mutex_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_mutex_has_posix_references() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_has_posix_references() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
 
     for case in &fixture.cases {
         assert!(
@@ -390,11 +408,12 @@ fn pthread_mutex_has_posix_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn pthread_mutex_covers_alias_symbols() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_covers_alias_symbols() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     for pattern in ["alias_mutex_trylock", "alias_mutex_unlock"] {
@@ -404,11 +423,12 @@ fn pthread_mutex_covers_alias_symbols() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn pthread_mutex_fixture_executes_via_isolated_harness() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_fixture_executes_via_isolated_harness() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
 
     for case in fixture.cases {
         let expected_output = case
@@ -441,11 +461,12 @@ fn pthread_mutex_fixture_executes_via_isolated_harness() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn pthread_mutex_alias_symbols_match_canonical_behavior() {
-    let fixture = load_fixture("pthread_mutex");
+fn pthread_mutex_alias_symbols_match_canonical_behavior() -> TestResult {
+    let fixture = load_fixture("pthread_mutex")?;
 
     let canonical_trylock = fixture
         .cases
@@ -495,4 +516,5 @@ fn pthread_mutex_alias_symbols_match_canonical_behavior() {
             "alias unlock output drifted from canonical symbol in {mode}"
         );
     }
+    Ok(())
 }
