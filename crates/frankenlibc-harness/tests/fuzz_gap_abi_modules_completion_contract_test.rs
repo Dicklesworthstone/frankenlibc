@@ -5,13 +5,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = crate_dir
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?;
+    let repo = workspace
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?;
+    Ok(repo.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -90,7 +92,7 @@ fn read_jsonl(path: &Path) -> TestResult<Vec<Value>> {
 
 #[test]
 fn manifest_binds_required_fuzz_gap_modules() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -167,7 +169,7 @@ fn manifest_binds_required_fuzz_gap_modules() -> TestResult {
 
 #[test]
 fn checker_emits_fuzz_gap_completion_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -237,7 +239,7 @@ fn checker_emits_fuzz_gap_completion_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_fuzz_target() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_target")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_module_fuzz_coverage"][0]["targets"]
@@ -276,7 +278,7 @@ fn checker_rejects_missing_required_fuzz_target() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_source_anchor() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_anchor")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_module_fuzz_coverage"][0]["targets"][0]["required_text"]
@@ -311,7 +313,7 @@ fn checker_rejects_missing_source_anchor() -> TestResult {
 
 #[test]
 fn checker_rejects_unimplemented_telemetry_event() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "bad_telemetry")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["telemetry_contract"]["required_events"]
