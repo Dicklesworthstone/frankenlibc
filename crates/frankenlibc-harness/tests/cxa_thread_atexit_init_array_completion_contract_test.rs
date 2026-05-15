@@ -2,19 +2,22 @@
 
 use serde_json::Value;
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates_dir = manifest
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or_else(|| io::Error::other("manifest should have a crates parent"))?;
+    let root = crates_dir
         .parent()
-        .expect("workspace has root parent")
-        .to_path_buf()
+        .ok_or_else(|| io::Error::other("manifest should live under the workspace root"))?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -84,23 +87,32 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn manifest_invariant_ids(manifest: &Value) -> BTreeSet<String> {
-    manifest["completion_debt_evidence"]["required_source_invariants"]
+fn manifest_invariant_ids(manifest: &Value) -> TestResult<BTreeSet<String>> {
+    let invariants = manifest["completion_debt_evidence"]["required_source_invariants"]
         .as_array()
-        .expect("required_source_invariants should be an array")
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "required_source_invariants should be an array",
+            )
+        })?;
+    invariants
         .iter()
-        .map(|entry| {
-            entry["id"]
-                .as_str()
-                .expect("invariant id should be a string")
-                .to_string()
+        .map(|entry| -> TestResult<String> {
+            let id = entry["id"].as_str().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invariant id should be a string",
+                )
+            })?;
+            Ok(id.to_string())
         })
         .collect()
 }
 
 #[test]
 fn manifest_binds_cxa_thread_atexit_init_array_completion_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -127,7 +139,7 @@ fn manifest_binds_cxa_thread_atexit_init_array_completion_evidence() -> TestResu
     );
 
     assert_eq!(
-        manifest_invariant_ids(&manifest),
+        manifest_invariant_ids(&manifest)?,
         BTreeSet::from([
             "host-cxa-cache-is-atomic-not-oncelock".to_string(),
             "host-cxa-resolver-has-reentry-escape".to_string(),
@@ -136,13 +148,25 @@ fn manifest_binds_cxa_thread_atexit_init_array_completion_evidence() -> TestResu
         ])
     );
 
-    let command_text = evidence["conformance_primary"]["required_commands"]
+    let required_commands = evidence["conformance_primary"]["required_commands"]
         .as_array()
-        .expect("required_commands should be an array")
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "required_commands should be an array",
+            )
+        })?
         .iter()
-        .filter_map(Value::as_str)
-        .collect::<Vec<_>>()
-        .join("\n");
+        .map(|value| {
+            value.as_str().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "required command should be string",
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let command_text = required_commands.join("\n");
     assert!(command_text.contains("rch exec --"));
     for command in command_text.lines().filter(|line| line.contains("cargo ")) {
         assert!(
@@ -156,7 +180,7 @@ fn manifest_binds_cxa_thread_atexit_init_array_completion_evidence() -> TestResu
 
 #[test]
 fn checker_validates_atomic_resolver_and_reentry_guard() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "positive")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -186,7 +210,7 @@ fn checker_validates_atomic_resolver_and_reentry_guard() -> TestResult {
 
 #[test]
 fn checker_rejects_once_lock_regression() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "once_lock_regression")?;
     let fake_impl = out_dir.join("startup_abi_once_lock_regression.rs");
     let original_impl =
@@ -219,7 +243,7 @@ fn checker_rejects_once_lock_regression() -> TestResult {
     assert_eq!(report["status"].as_str(), Some("fail"));
     let errors = report["errors"]
         .as_array()
-        .expect("errors should be an array")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "errors should be an array"))?
         .iter()
         .filter_map(Value::as_str)
         .collect::<Vec<_>>()
