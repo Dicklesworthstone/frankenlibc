@@ -1,7 +1,7 @@
 //! Completion-contract tests for bd-w2c3.2.2.1 standalone policy evidence.
 
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, btree_map::Entry};
 use std::error::Error;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -255,13 +255,31 @@ fn manifest_binds_standalone_unit_and_e2e_items() -> TestResult {
                 );
             }
         }
-        for test_ref in section["test_refs"].as_array().unwrap() {
-            let source = test_ref["source"].as_str().unwrap_or_default();
-            let name = test_ref["name"].as_str().unwrap_or_default();
-            let rel = source_paths[source].as_str().unwrap_or_default();
-            let source_text = source_texts
-                .entry(source.to_string())
-                .or_insert_with(|| std::fs::read_to_string(root.join(rel)).unwrap());
+        let test_refs = section["test_refs"]
+            .as_array()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "test_refs missing"))?;
+        for test_ref in test_refs {
+            let source = test_ref["source"].as_str().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "test_ref source missing")
+            })?;
+            let name = test_ref["name"].as_str().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "test_ref name missing")
+            })?;
+            let rel = source_paths
+                .get(source)
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("source path missing for {source}"),
+                    )
+                })?;
+            let source_text = match source_texts.entry(source.to_string()) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => entry.insert(std::fs::read_to_string(
+                    workspace_relative_path(&root, rel)?,
+                )?),
+            };
             assert!(
                 function_exists(source_text, name),
                 "test ref should exist: {rel}::{name}"
@@ -352,9 +370,29 @@ fn manifest_matches_standalone_policy_sources() -> TestResult {
         .as_object()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source_anchors missing"))?;
     for (source, anchors) in source_anchors {
-        let rel = source_paths[source].as_str().unwrap_or_default();
-        let text = std::fs::read_to_string(root.join(rel))?;
-        for anchor in anchors.as_array().unwrap().iter().filter_map(Value::as_str) {
+        let rel = source_paths
+            .get(source)
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("source path missing for {source}"),
+                )
+            })?;
+        let text = std::fs::read_to_string(workspace_relative_path(&root, rel)?)?;
+        let anchor_list = anchors.as_array().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("anchors missing for {source}"),
+            )
+        })?;
+        for anchor in anchor_list {
+            let anchor = anchor.as_str().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("anchor must be string for {source}"),
+                )
+            })?;
             assert!(text.contains(anchor), "{rel} missing anchor {anchor}");
         }
     }
