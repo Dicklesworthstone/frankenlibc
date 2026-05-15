@@ -26,11 +26,11 @@ const EXPECTED_EVENTS: [&str; 5] = [
     "track8_completion_contract_validated",
 ];
 
-fn checker_lock() -> std::sync::MutexGuard<'static, ()> {
+fn checker_lock() -> io::Result<std::sync::MutexGuard<'static, ()>> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("checker lock poisoned")
+        .map_err(|_| io::Error::other("checker lock poisoned"))
 }
 
 fn workspace_root() -> io::Result<PathBuf> {
@@ -295,7 +295,7 @@ fn manifest_binds_all_track8_completion_evidence() -> TestResult {
 
 #[test]
 fn checker_emits_track8_completion_report_and_jsonl() -> TestResult {
-    let _lock = checker_lock();
+    let _lock = checker_lock()?;
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "valid")?;
     let output = run_checker(&root, &root.join(CONTRACT_REL), &out_dir)?;
@@ -357,7 +357,7 @@ fn checker_emits_track8_completion_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_fuzz_phase2_binding() -> TestResult {
-    let _lock = checker_lock();
+    let _lock = checker_lock()?;
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "missing-fuzz-phase2")?;
     let mut manifest = read_json(&root.join(CONTRACT_REL))?;
@@ -383,7 +383,7 @@ fn checker_rejects_missing_fuzz_phase2_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_underbound_conformance_coverage() -> TestResult {
-    let _lock = checker_lock();
+    let _lock = checker_lock()?;
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "underbound-conformance")?;
     let mut manifest = read_json(&root.join(CONTRACT_REL))?;
@@ -416,7 +416,7 @@ fn checker_rejects_underbound_conformance_coverage() -> TestResult {
 
 #[test]
 fn checker_rejects_local_cargo_validation_command() -> TestResult {
-    let _lock = checker_lock();
+    let _lock = checker_lock()?;
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "local-cargo")?;
     let mut manifest = read_json(&root.join(CONTRACT_REL))?;
