@@ -11,6 +11,9 @@
 //! - loader parse, symbol lookup, undefined-symbol iteration
 //! - relocation application with missing and present resolvers
 //!
+//! Seed files can use `seedhex:` followed by hex bytes to force normalized
+//! loader branch choices that are awkward to represent in text fixtures.
+//!
 //! Bead: bd-hnec
 
 use libfuzzer_sys::fuzz_target;
@@ -34,6 +37,7 @@ const SECTION_HEADER_COUNT: usize = 4;
 const SYMBOL_COUNT: usize = 3;
 const RELOCATION_COUNT: usize = 3;
 const DYNSTR: &[u8] = b"\0alpha\0beta\0gamma\0";
+const SEED_HEX_PREFIX: &[u8] = b"seedhex:";
 
 const ELF_HEADER_SIZE: usize = Elf64Header::SIZE;
 const PROGRAM_HEADER_SIZE: usize = elf::program::Elf64ProgramHeader::SIZE;
@@ -76,15 +80,63 @@ struct SectionHeaderSpec {
 }
 
 fuzz_target!(|data: &[u8]| {
-    if data.is_empty() || data.len() > MAX_INPUT {
+    if data.is_empty() {
         return;
     }
 
-    fuzz_raw_views(data);
+    if data.len() > (MAX_INPUT * 2) + SEED_HEX_PREFIX.len() + 1 {
+        return;
+    }
 
+    if let Some(seed) = decode_seed_hex(data) {
+        fuzz_seed(&seed);
+        return;
+    }
+
+    if data.len() > MAX_INPUT {
+        return;
+    }
+
+    fuzz_seed(data);
+});
+
+fn fuzz_seed(data: &[u8]) {
+    fuzz_raw_views(data);
     let image = build_normalized_elf_image(data);
     fuzz_normalized_loader(data, &image);
-});
+}
+
+fn decode_seed_hex(data: &[u8]) -> Option<Vec<u8>> {
+    let payload = data.strip_prefix(SEED_HEX_PREFIX)?;
+    let payload = trim_seed_newline(payload);
+    if payload.is_empty() || !payload.len().is_multiple_of(2) || payload.len() / 2 > MAX_INPUT {
+        return None;
+    }
+
+    let mut seed = Vec::with_capacity(payload.len() / 2);
+    for pair in payload.chunks_exact(2) {
+        let [high, low] = pair else {
+            return None;
+        };
+        let high = hex_nibble(*high)?;
+        let low = hex_nibble(*low)?;
+        seed.push((high << 4) | low);
+    }
+    Some(seed)
+}
+
+fn trim_seed_newline(data: &[u8]) -> &[u8] {
+    data.strip_suffix(b"\n").unwrap_or(data)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
 
 fn fuzz_raw_views(data: &[u8]) {
     let name = &data[..data.len().min(64)];
