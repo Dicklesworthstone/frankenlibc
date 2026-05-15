@@ -223,18 +223,17 @@ fn parse_constraint_rejects_malformed_sentences() {
 }
 
 #[test]
-fn parse_constraint_accepts_eq_and_ne_forms() {
-    let eq = parse_constraint("replacement_levels.current_level == L1")
-        .expect("valid eq sentence must parse");
+fn parse_constraint_accepts_eq_and_ne_forms() -> TestResult {
+    let eq = parse_constraint("replacement_levels.current_level == L1")?;
     assert_eq!(eq.artifact_key, "replacement_levels");
     assert_eq!(eq.field_path, "current_level");
     assert_eq!(eq.op, ConstraintOp::Eq);
     assert_eq!(eq.expected, "L1");
 
-    let ne = parse_constraint("replacement_levels.release_tag_policy.current_release_level != L1")
-        .expect("valid ne sentence must parse");
+    let ne = parse_constraint("replacement_levels.release_tag_policy.current_release_level != L1")?;
     assert_eq!(ne.artifact_key, "replacement_levels");
     assert_eq!(ne.field_path, "release_tag_policy.current_release_level");
     assert_eq!(ne.op, ConstraintOp::Ne);
     assert_eq!(ne.expected, "L1");
+    Ok(())
 }
