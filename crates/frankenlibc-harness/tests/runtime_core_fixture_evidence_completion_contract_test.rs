@@ -5,13 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?
+        .to_path_buf();
+    Ok(root)
 }
 
 fn load_json(path: &Path) -> TestResult<Value> {
@@ -92,7 +93,7 @@ fn source_texts(root: &Path, manifest: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_unit_conformance_and_telemetry_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -161,7 +162,7 @@ fn manifest_binds_unit_conformance_and_telemetry_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_existing_runtime_core_fixture_gate() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -189,7 +190,7 @@ fn checker_validates_existing_runtime_core_fixture_gate() -> TestResult {
 
 #[test]
 fn checker_emits_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -242,7 +243,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_gap_id() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_gap")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_source_contract"]["expected_gap_ids"]
@@ -278,7 +279,7 @@ fn checker_rejects_missing_required_gap_id() -> TestResult {
 
 #[test]
 fn checker_rejects_local_cargo_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "local_cargo")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["missing_item_bindings"][0]["required_commands"][0] = Value::String(
@@ -314,7 +315,7 @@ fn checker_rejects_local_cargo_command() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_event() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_event")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["telemetry_contract"]["required_events"]
