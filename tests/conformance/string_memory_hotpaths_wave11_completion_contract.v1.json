@@ -94,13 +94,13 @@
     "expected_fixture_case_count": 24,
     "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture",
     "expected_coverage": {
-      "string_target_covered": 113,
-      "string_target_uncovered": 33,
-      "string_current_coverage_pct": 77.4,
-      "total_target_covered": 559,
-      "total_target_uncovered": 3560,
-      "per_symbol_symbols_with_fixtures": 557,
-      "per_symbol_total_cases": 1592
+      "string_target_covered": 146,
+      "string_target_uncovered": 0,
+      "string_current_coverage_pct": 100.0,
+      "total_target_covered": 1126,
+      "total_target_uncovered": 2993,
+      "per_symbol_symbols_with_fixtures": 1124,
+      "per_symbol_total_cases": 2702
     },
     "required_positive_tests": [
       "contract_binds_string_wave11_sources",
