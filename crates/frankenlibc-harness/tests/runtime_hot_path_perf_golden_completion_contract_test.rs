@@ -5,13 +5,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent must have repo parent")?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -80,7 +80,7 @@ fn log_records(path: &Path) -> TestResult<Vec<Value>> {
 
 #[test]
 fn manifest_binds_runtime_hot_path_golden_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -157,7 +157,7 @@ fn manifest_binds_runtime_hot_path_golden_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_runtime_hot_path_perf_golden_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "valid")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -190,7 +190,7 @@ fn checker_validates_runtime_hot_path_perf_golden_contract() -> TestResult {
 
 #[test]
 fn checker_emits_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -240,7 +240,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_snapshot_hash_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "hash_drift")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["golden_primary"]["expected_sha256"] =
@@ -278,7 +278,7 @@ fn checker_rejects_snapshot_hash_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_budget_target_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "budget_drift")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_golden_contract"]["perf_targets_ns"]["strict_hot_path_max"] = json!(21);
@@ -311,7 +311,7 @@ fn checker_rejects_budget_target_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_snapshot_gate_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_snapshot_gate")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["source_artifacts"]
