@@ -8,13 +8,15 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates_dir = manifest_dir
         .parent()
-        .unwrap()
+        .ok_or_else(|| format!("{} has no parent directory", manifest_dir.display()))?;
+    let repo_root = crates_dir
         .parent()
-        .unwrap()
-        .to_path_buf()
+        .ok_or_else(|| format!("{} has no parent directory", crates_dir.display()))?;
+    Ok(repo_root.to_path_buf())
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,12 +48,12 @@ struct FixtureCase {
     notes: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,17 +127,18 @@ fn execute_case_via_harness(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_gnu_extensions_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/pthread_gnu_extensions.json");
+fn pthread_gnu_extensions_fixture_exists() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/pthread_gnu_extensions.json");
     assert!(
         path.exists(),
         "pthread_gnu_extensions.json fixture must exist"
     );
+    Ok(())
 }
 
 #[test]
-fn pthread_gnu_extensions_fixture_valid_schema() {
-    let fixture = load_fixture("pthread_gnu_extensions");
+fn pthread_gnu_extensions_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("pthread_gnu_extensions")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "pthread/gnu_extensions");
@@ -154,6 +157,8 @@ fn pthread_gnu_extensions_fixture_valid_schema() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,8 +166,8 @@ fn pthread_gnu_extensions_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_gnu_extensions_covers_clockwait() {
-    let fixture = load_fixture("pthread_gnu_extensions");
+fn pthread_gnu_extensions_covers_clockwait() -> Result<(), String> {
+    let fixture = load_fixture("pthread_gnu_extensions")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // pthread_cond_clockwait cases
@@ -181,11 +186,13 @@ fn pthread_gnu_extensions_covers_clockwait() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_gnu_extensions_covers_timedjoin() {
-    let fixture = load_fixture("pthread_gnu_extensions");
+fn pthread_gnu_extensions_covers_timedjoin() -> Result<(), String> {
+    let fixture = load_fixture("pthread_gnu_extensions")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // pthread_timedjoin_np cases
@@ -205,11 +212,13 @@ fn pthread_gnu_extensions_covers_timedjoin() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_gnu_extensions_covers_tryjoin() {
-    let fixture = load_fixture("pthread_gnu_extensions");
+fn pthread_gnu_extensions_covers_tryjoin() -> Result<(), String> {
+    let fixture = load_fixture("pthread_gnu_extensions")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // pthread_tryjoin_np cases
@@ -228,11 +237,13 @@ fn pthread_gnu_extensions_covers_tryjoin() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_gnu_extensions_covers_clockjoin() {
-    let fixture = load_fixture("pthread_gnu_extensions");
+fn pthread_gnu_extensions_covers_clockjoin() -> Result<(), String> {
+    let fixture = load_fixture("pthread_gnu_extensions")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // pthread_clockjoin_np cases
@@ -252,11 +263,13 @@ fn pthread_gnu_extensions_covers_clockjoin() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 #[test]
-fn pthread_gnu_extensions_covers_getattr_np() {
-    let fixture = load_fixture("pthread_gnu_extensions");
+fn pthread_gnu_extensions_covers_getattr_np() -> Result<(), String> {
+    let fixture = load_fixture("pthread_gnu_extensions")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     // pthread_getattr_np cases
@@ -275,6 +288,8 @@ fn pthread_gnu_extensions_covers_getattr_np() {
             pattern
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -282,8 +297,8 @@ fn pthread_gnu_extensions_covers_getattr_np() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_gnu_extensions_error_codes_valid() {
-    let fixture = load_fixture("pthread_gnu_extensions");
+fn pthread_gnu_extensions_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("pthread_gnu_extensions")?;
 
     // Valid POSIX/Linux error codes that should appear
     let valid_errno_values = [
@@ -304,6 +319,8 @@ fn pthread_gnu_extensions_error_codes_valid() {
             valid_errno_values
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,8 +328,8 @@ fn pthread_gnu_extensions_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_gnu_extensions_function_distribution() {
-    let fixture = load_fixture("pthread_gnu_extensions");
+fn pthread_gnu_extensions_function_distribution() -> Result<(), String> {
+    let fixture = load_fixture("pthread_gnu_extensions")?;
 
     let mut clockwait_count = 0;
     let mut timedjoin_count = 0;
@@ -327,7 +344,9 @@ fn pthread_gnu_extensions_function_distribution() {
             "pthread_tryjoin_np" => tryjoin_count += 1,
             "pthread_clockjoin_np" => clockjoin_count += 1,
             "pthread_getattr_np" => getattr_count += 1,
-            f => panic!("Unexpected function in fixture: {}", f),
+            function => {
+                return Err(format!("unexpected function in fixture: {function}"));
+            }
         }
     }
 
@@ -362,6 +381,8 @@ fn pthread_gnu_extensions_function_distribution() {
         "pthread GNU extensions coverage: clockwait={}, timedjoin={}, tryjoin={}, clockjoin={}, getattr={}",
         clockwait_count, timedjoin_count, tryjoin_count, clockjoin_count, getattr_count
     );
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -369,8 +390,8 @@ fn pthread_gnu_extensions_function_distribution() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_gnu_extensions_modes_valid() {
-    let fixture = load_fixture("pthread_gnu_extensions");
+fn pthread_gnu_extensions_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("pthread_gnu_extensions")?;
 
     for case in &fixture.cases {
         assert!(
@@ -380,6 +401,8 @@ fn pthread_gnu_extensions_modes_valid() {
             case.mode
         );
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -387,8 +410,8 @@ fn pthread_gnu_extensions_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn pthread_gnu_extensions_case_count_stable() {
-    let fixture = load_fixture("pthread_gnu_extensions");
+fn pthread_gnu_extensions_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("pthread_gnu_extensions")?;
 
     // This test ensures we don't accidentally remove test cases
     // Update this count when intentionally adding/removing cases
@@ -406,11 +429,13 @@ fn pthread_gnu_extensions_case_count_stable() {
         "pthread_gnu_extensions fixture has {} test cases",
         fixture.cases.len()
     );
+
+    Ok(())
 }
 
 #[test]
-fn pthread_gnu_extensions_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("pthread_gnu_extensions");
+fn pthread_gnu_extensions_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("pthread_gnu_extensions")?;
     let case_filter = std::env::var("FRANKENLIBC_GNU_PTHREAD_CASE_FILTER").ok();
     let mode_filter = std::env::var("FRANKENLIBC_GNU_PTHREAD_MODE_FILTER").ok();
 
@@ -424,7 +449,7 @@ fn pthread_gnu_extensions_fixture_cases_match_execute_fixture_case() {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -438,13 +463,13 @@ fn pthread_gnu_extensions_fixture_cases_match_execute_fixture_case() {
             {
                 continue;
             }
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -457,4 +482,6 @@ fn pthread_gnu_extensions_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+
+    Ok(())
 }
