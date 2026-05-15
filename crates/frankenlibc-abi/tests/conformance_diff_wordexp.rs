@@ -3,9 +3,9 @@
 //! Differential conformance harness for POSIX `wordexp(3)`.
 //!
 //! Diffs fl's native wordexp against glibc on simple field-splitting,
-//! variable expansion, quotes, and the WRDE_NOCMD command-substitution
-//! gate. Filed under [bd-xn6p8] follow-up — extending host-libc parity
-//! coverage.
+//! variable expansion, quote/escape handling, bad-character detection,
+//! and the WRDE_NOCMD command-substitution gate. Filed under [bd-xn6p8]
+//! follow-up — extending host-libc parity coverage.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
@@ -15,6 +15,8 @@ unsafe extern "C" {
     fn wordexp(words: *const c_char, pwordexp: *mut c_void, flags: c_int) -> c_int;
     fn wordfree(pwordexp: *mut c_void);
 }
+
+const WRDE_NOCMD: c_int = 1 << 2;
 
 #[derive(Debug)]
 struct Divergence {
@@ -71,8 +73,16 @@ const CASES: &[(&str, c_int)] = &[
     ("a\tb\tc", 0),            // tab-separated
     ("    leading spaces", 0), // collapses
     ("trailing\t", 0),         // trailing whitespace
-    ("`id`", 4),               // WRDE_NOCMD = 4 — forbidden command substitution
-    ("$(id)", 4),              // forbidden $()
+    ("'a;b'", 0),              // bad char quoted literally
+    ("\"a;b\"", 0),            // bad char double-quoted literally
+    ("a\\;b", 0),              // bad char escaped literally
+    ("(", 0),                  // unquoted bad char
+    ("{", 0),                  // unquoted bad char
+    ("`id`", WRDE_NOCMD),      // forbidden command substitution
+    ("$(id)", WRDE_NOCMD),     // forbidden $()
+    ("'$(echo hi)'", WRDE_NOCMD),
+    ("'`echo hi`'", WRDE_NOCMD),
+    ("\"$(echo hi)\"", WRDE_NOCMD),
 ];
 
 #[test]
@@ -144,6 +154,6 @@ fn diff_wordexp_simple_cases() {
 #[test]
 fn wordexp_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libc wordexp\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",
+        "{{\"family\":\"libc wordexp\",\"reference\":\"glibc\",\"functions\":2,\"corpus_cases\":19,\"divergences\":0}}",
     );
 }

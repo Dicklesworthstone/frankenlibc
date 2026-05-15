@@ -4,8 +4,8 @@
 //! wordexp is the most security-sensitive expansion entry point:
 //! it turns an arbitrary input string into shell tokens, and historically
 //! has been the source of command-injection CVEs (CVE-2014-7817 etc).
-//! Our impl rejects command substitution outright, so the security gate
-//! is: "any input containing $(...) or `...` returns WRDE_CMDSUB, never 0".
+//! Our impl rejects command substitution outright, so the security gate is:
+//! "unescaped $(...) or `...` outside single quotes never returns success".
 //!
 //! Bead: bd-bb2vb
 
@@ -75,10 +75,9 @@ fuzz_target!(|input: WordexpFuzzInput| {
         "wordexp returned {rc}, expected 0 or one of WRDE_*",
     );
 
-    // Security gate: any input containing $(...) or `...` MUST be
-    // rejected with WRDE_CMDSUB, never 0. Our impl rejects command
-    // substitution unconditionally; this fuzz target enforces that
-    // contract.
+    // Security gate: unescaped command-substitution syntax outside single
+    // quotes must never succeed. Inputs with an earlier syntax/bad-character
+    // error may fail before WRDE_CMDSUB, so the invariant is non-success.
     let bytes = input.words.as_slice();
     let has_cmd_sub = contains_command_substitution(bytes);
     if has_cmd_sub {
