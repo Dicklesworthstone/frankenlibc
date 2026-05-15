@@ -115,16 +115,21 @@
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
       "expected_order": ["startup_policy_gate", "thread_local_errno_ready", "pthread_thread_start", "tls_destructor_registration"],
-      "actual_order": [],
+      "actual_order": ["startup_policy_gate", "thread_local_errno_ready", "pthread_thread_start", "tls_destructor_registration"],
       "expected_status": "required",
-      "actual_status": "blocked",
-      "promotion_decision": "claim_blocked",
+      "actual_status": "pass",
+      "promotion_decision": "satisfied",
+      "evidence_generated_at_utc": "2026-05-15T15:26:00Z",
       "artifact_refs": [
+        "tests/conformance/fixtures/startup_ops.json",
         "tests/conformance/fixtures/pthread_tls_keys.json",
+        "crates/frankenlibc-harness/tests/startup_ops_conformance_test.rs",
         "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs",
+        "crates/frankenlibc-core/src/pthread/thread.rs",
         "crates/frankenlibc-core/src/pthread/tls.rs"
       ],
       "check_commands": [
+        "cargo test -p frankenlibc-harness --test startup_ops_conformance_test",
         "cargo test -p frankenlibc-harness --test pthread_tls_keys_conformance_test"
       ],
       "failure_signature": "l1_tls_initialization_not_proven"
@@ -329,9 +334,9 @@
   ],
   "summary": {
     "required_row_count": 11,
-    "satisfied_row_count": 5,
-    "blocked_row_count": 6,
+    "satisfied_row_count": 6,
+    "blocked_row_count": 5,
     "current_gate_status": "blocked",
-    "blocker_reason": "Constructor/destructor, init/fini array, process TLS initialization, atexit/on_exit, and errno/TLS isolation evidence remain explicit L1 blockers."
+    "blocker_reason": "Constructor/destructor, init/fini array, atexit/on_exit, and errno/TLS isolation evidence remain explicit L1 blockers."
   }
 }

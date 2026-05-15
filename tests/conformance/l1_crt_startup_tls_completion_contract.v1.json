@@ -75,7 +75,6 @@
       "failure_diagnostics"
     ],
     "required_blocked_rows": [
-      "tls_initialization",
       "constructors",
       "destructors",
       "atexit_on_exit",
@@ -104,8 +103,8 @@
     ],
     "minimum_l1_expectations": {
       "proof_row_count": 11,
-      "satisfied_row_count": 5,
-      "blocked_row_count": 6,
+      "satisfied_row_count": 6,
+      "blocked_row_count": 5,
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
       "claim_policy_status": "blocked",
