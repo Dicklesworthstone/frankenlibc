@@ -11,13 +11,18 @@ type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 static CHECKER_LOCK: Mutex<()> = Mutex::new(());
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn workspace_root() -> TestResult<PathBuf> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates_dir = manifest_dir.parent().ok_or_else(|| {
+        test_error(format!(
+            "{} has no parent directory",
+            manifest_dir.display()
+        ))
+    })?;
+    let root = crates_dir
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .ok_or_else(|| test_error(format!("{} has no parent directory", crates_dir.display())))?;
+    Ok(root.to_path_buf())
 }
 
 fn manifest_path(root: &Path) -> PathBuf {
@@ -124,7 +129,7 @@ fn failure_signature(report: &serde_json::Value) -> String {
 
 #[test]
 fn manifest_binds_bd66s_completion_items() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = load_json(&manifest_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -159,7 +164,7 @@ fn manifest_binds_bd66s_completion_items() -> TestResult {
 
 #[test]
 fn checker_accepts_contract_and_emits_report_log() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let _guard = CHECKER_LOCK.lock().map_err(|_| "checker lock poisoned")?;
     let out_dir = unique_output_dir(&root, "pass")?;
     let output = run_checker(&root, &manifest_path(&root), &out_dir)?;
@@ -203,7 +208,7 @@ fn checker_accepts_contract_and_emits_report_log() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_unit_binding() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut manifest = load_json(&manifest_path(&root))?;
     manifest["unit_primary"]["required_tests"]
         .as_array_mut()
@@ -221,7 +226,7 @@ fn checker_rejects_missing_unit_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_e2e_scenario() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut manifest = load_json(&manifest_path(&root))?;
     manifest["e2e_primary"]["required_scenarios"]
         .as_array_mut()
@@ -239,7 +244,7 @@ fn checker_rejects_missing_e2e_scenario() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_event() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut manifest = load_json(&manifest_path(&root))?;
     manifest["telemetry_primary"]["required_events"]
         .as_array_mut()
