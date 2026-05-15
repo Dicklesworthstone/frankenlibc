@@ -1,24 +1,31 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+type TestResult = Result<(), String>;
+
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest_dir
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .and_then(Path::parent)
+        .ok_or_else(|| {
+            format!(
+                "failed to derive workspace root from {}",
+                manifest_dir.display()
+            )
+        })?;
+    Ok(root.to_path_buf())
 }
 
-fn load_json(path: &Path) -> serde_json::Value {
+fn load_json(path: &Path) -> Result<serde_json::Value, String> {
     let content = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
-fn canonical_json(value: &serde_json::Value) -> String {
-    serde_json::to_string(value).expect("serialize canonical json")
+fn canonical_json(value: &serde_json::Value) -> Result<String, String> {
+    serde_json::to_string(value).map_err(|err| format!("failed to serialize canonical JSON: {err}"))
 }
 
 fn sha256_str(data: &str) -> String {
@@ -33,26 +40,28 @@ fn hex_digest(bytes: &[u8]) -> String {
 }
 
 #[test]
-fn iconv_table_generation_gate_script_passes() {
-    let root = repo_root();
+fn iconv_table_generation_gate_script_passes() -> TestResult {
+    let root = repo_root()?;
+    let script = root.join("scripts/check_iconv_table_generation.sh");
     let output = Command::new("bash")
-        .arg(root.join("scripts/check_iconv_table_generation.sh"))
+        .arg(&script)
         .current_dir(&root)
         .output()
-        .expect("failed to run iconv table generation gate");
+        .map_err(|err| format!("failed to run {}: {err}", script.display()))?;
     assert!(
         output.status.success(),
         "iconv table generation gate failed\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    Ok(())
 }
 
 #[test]
-fn iconv_table_pack_schema_is_locked() {
-    let root = repo_root();
-    let pack = load_json(&root.join("tests/conformance/iconv_table_pack.v1.json"));
-    let checksums = load_json(&root.join("tests/conformance/iconv_table_checksums.v1.json"));
+fn iconv_table_pack_schema_is_locked() -> TestResult {
+    let root = repo_root()?;
+    let pack = load_json(&root.join("tests/conformance/iconv_table_pack.v1.json"))?;
+    let checksums = load_json(&root.join("tests/conformance/iconv_table_checksums.v1.json"))?;
 
     assert_eq!(pack["schema_version"].as_str(), Some("v1"));
     assert_eq!(pack["bead"].as_str(), Some("bd-13ya"));
@@ -61,7 +70,7 @@ fn iconv_table_pack_schema_is_locked() {
 
     let tables = pack["included_codec_tables"]
         .as_array()
-        .expect("included_codec_tables must be array");
+        .ok_or_else(|| String::from("included_codec_tables must be array"))?;
     assert_eq!(
         tables.len(),
         4,
@@ -77,32 +86,35 @@ fn iconv_table_pack_schema_is_locked() {
             "missing codec table for {canonical}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn iconv_table_checksums_are_consistent() {
-    let root = repo_root();
-    let pack = load_json(&root.join("tests/conformance/iconv_table_pack.v1.json"));
-    let checksums = load_json(&root.join("tests/conformance/iconv_table_checksums.v1.json"));
+fn iconv_table_checksums_are_consistent() -> TestResult {
+    let root = repo_root()?;
+    let pack = load_json(&root.join("tests/conformance/iconv_table_pack.v1.json"))?;
+    let checksums = load_json(&root.join("tests/conformance/iconv_table_checksums.v1.json"))?;
 
     let tables = pack["included_codec_tables"]
         .as_array()
-        .expect("included_codec_tables must be array");
+        .ok_or_else(|| String::from("included_codec_tables must be array"))?;
     let checksum_map = checksums["codec_table_sha256"]
         .as_object()
-        .expect("codec_table_sha256 must be object");
+        .ok_or_else(|| String::from("codec_table_sha256 must be object"))?;
 
     for row in tables {
-        let canonical = row["canonical"].as_str().expect("canonical must be string");
+        let canonical = row["canonical"]
+            .as_str()
+            .ok_or_else(|| String::from("canonical must be string"))?;
         let recorded_table_digest = row["table_sha256"]
             .as_str()
-            .expect("table_sha256 must be string");
+            .ok_or_else(|| format!("{canonical} table_sha256 must be string"))?;
 
         let mut body = row.clone();
         body.as_object_mut()
-            .expect("table row must be object")
+            .ok_or_else(|| format!("{canonical} table row must be object"))?
             .remove("table_sha256");
-        let recomputed = sha256_str(&canonical_json(&body));
+        let recomputed = sha256_str(&canonical_json(&body)?);
         assert_eq!(
             recorded_table_digest, recomputed,
             "table_sha256 drift for codec {canonical}"
@@ -118,13 +130,16 @@ fn iconv_table_checksums_are_consistent() {
     }
 
     let mut pack_body = pack.clone();
-    let recorded_pack_digest = pack_body
-        .as_object_mut()
-        .expect("pack must be object")
-        .remove("table_pack_sha256")
-        .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .expect("table_pack_sha256 missing");
-    let recomputed_pack_digest = sha256_str(&canonical_json(&pack_body));
+    let recorded_pack_digest = {
+        let pack_object = pack_body
+            .as_object_mut()
+            .ok_or_else(|| String::from("pack must be object"))?;
+        pack_object
+            .remove("table_pack_sha256")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+            .ok_or_else(|| String::from("table_pack_sha256 missing"))?
+    };
+    let recomputed_pack_digest = sha256_str(&canonical_json(&pack_body)?);
     assert_eq!(recorded_pack_digest, recomputed_pack_digest);
     assert_eq!(
         checksums["table_pack_sha256"].as_str(),
@@ -132,16 +147,20 @@ fn iconv_table_checksums_are_consistent() {
     );
 
     let mut checksums_body = checksums.clone();
-    let recorded_checksums_digest = checksums_body
-        .as_object_mut()
-        .expect("checksums must be object")
-        .remove("checksums_sha256")
-        .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .expect("checksums_sha256 missing");
+    let recorded_checksums_digest = {
+        let checksums_object = checksums_body
+            .as_object_mut()
+            .ok_or_else(|| String::from("checksums must be object"))?;
+        checksums_object
+            .remove("checksums_sha256")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+            .ok_or_else(|| String::from("checksums_sha256 missing"))?
+    };
     checksums_body
         .as_object_mut()
-        .expect("checksums must be object")
+        .ok_or_else(|| String::from("checksums must be object"))?
         .remove("artifact_paths");
-    let recomputed_checksums_digest = sha256_str(&canonical_json(&checksums_body));
+    let recomputed_checksums_digest = sha256_str(&canonical_json(&checksums_body)?);
     assert_eq!(recorded_checksums_digest, recomputed_checksums_digest);
+    Ok(())
 }
