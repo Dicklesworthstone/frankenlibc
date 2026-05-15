@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-15T16:57:52Z",
-  "report_hash": "c81af4b959e010ea",
+  "generated_at": "2026-05-15T17:25:39Z",
+  "report_hash": "267aef580a1b5d29",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 1136,
-    "symbols_without_fixtures": 2983,
-    "fixture_coverage_pct": 27.6,
-    "implemented_coverage_pct": 26.6,
-    "total_fixture_files": 124,
-    "total_cases": 2726,
+    "symbols_with_fixtures": 1148,
+    "symbols_without_fixtures": 2971,
+    "fixture_coverage_pct": 27.9,
+    "implemented_coverage_pct": 26.7,
+    "total_fixture_files": 125,
+    "total_cases": 2750,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 681,
-    "symbols_with_errno_checks": 1133,
-    "total_quality_issues": 3407,
-    "uncovered_action_count": 2983
+    "symbols_with_edge_cases": 682,
+    "symbols_with_errno_checks": 1145,
+    "total_quality_issues": 3415,
+    "uncovered_action_count": 2971
   },
   "fixture_file_analyses": [
     {
@@ -948,6 +948,14 @@
     },
     {
       "file": "unistd_process_filesystem_wave11.json",
+      "family": "unistd/process-filesystem",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave12.json",
       "family": "unistd/process-filesystem",
       "valid": true,
       "total_cases": 24,
@@ -32901,12 +32909,19 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -33017,52 +33032,80 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "fsmount",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "fsopen",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "fspick",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "O1",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "fsqrt",
@@ -33099,27 +33142,39 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "fstat64",
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -33127,27 +33182,39 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "fstatat64",
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -33155,27 +33222,39 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "fstatfs64",
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -33183,13 +33262,20 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_process_filesystem_wave12.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "fstatvfs64",
@@ -77146,41 +77232,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "fsconfig",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fsetxattr",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fsmount",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fsopen",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fspick",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fsqrt",
       "status": "Implemented",
       "module": "math_abi",
@@ -77191,55 +77242,6 @@
       "symbol": "fsqrtl",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fstat",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fstat64",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fstatat",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fstatat64",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fstatfs",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fstatfs64",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "fstatvfs",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

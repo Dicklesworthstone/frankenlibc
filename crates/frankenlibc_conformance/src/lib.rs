@@ -879,7 +879,19 @@ pub fn execute_fixture_case(
         | "forkpty"
         | "fpathconf"
         | "freeifaddrs"
-        | "fremovexattr" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        | "fremovexattr"
+        | "fsconfig"
+        | "fsetxattr"
+        | "fsmount"
+        | "fsopen"
+        | "fspick"
+        | "fstat"
+        | "fstat64"
+        | "fstatat"
+        | "fstatat64"
+        | "fstatfs"
+        | "fstatfs64"
+        | "fstatvfs" => execute_unistd_process_filesystem_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
         | "_IO_peekc_locked" | "_IO_putc" | "_IO_puts" | "_IO_seekoff" | "_IO_seekpos"
@@ -19533,6 +19545,18 @@ fn execute_unistd_process_filesystem_case(
         "fpathconf" => fpathconf_fixture_actual()?,
         "freeifaddrs" => freeifaddrs_fixture_actual()?,
         "fremovexattr" => fremovexattr_fixture_actual()?,
+        "fsconfig" => fsconfig_fixture_actual()?,
+        "fsetxattr" => fsetxattr_fixture_actual()?,
+        "fsmount" => fsmount_fixture_actual()?,
+        "fsopen" => fsopen_fixture_actual()?,
+        "fspick" => fspick_fixture_actual()?,
+        "fstat" => fstat_fixture_actual()?,
+        "fstat64" => fstat64_fixture_actual()?,
+        "fstatat" => fstatat_fixture_actual()?,
+        "fstatat64" => fstatat64_fixture_actual()?,
+        "fstatfs" => fstatfs_fixture_actual()?,
+        "fstatfs64" => fstatfs64_fixture_actual()?,
+        "fstatvfs" => fstatvfs_fixture_actual()?,
         other => {
             return Err(format!(
                 "unsupported unistd process/filesystem fixture: {other}"
@@ -21564,6 +21588,95 @@ fn fremovexattr_fixture_actual() -> Result<String, String> {
     poll_event_loop_reset_errno();
     let rc = unsafe { frankenlibc_abi::unistd_abi::fremovexattr(-1, name.as_ptr()) };
     Ok(invalid_fd_error_result("FREMOVEXATTR_INVALID_FD", rc))
+}
+
+fn fsconfig_fixture_actual() -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::fsconfig(-1, 0, std::ptr::null(), std::ptr::null(), 0)
+    };
+    Ok(invalid_fd_error_result("FSCONFIG_NULL_KEY", rc))
+}
+
+fn fsetxattr_fixture_actual() -> Result<String, String> {
+    let name = CString::new("user.frankenlibc.fixture").map_err(|err| err.to_string())?;
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::fsetxattr(-1, name.as_ptr(), std::ptr::null(), 0, 0)
+    };
+    Ok(invalid_fd_error_result("FSETXATTR_INVALID_FD", rc))
+}
+
+fn fsmount_fixture_actual() -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    let fd = unsafe { frankenlibc_abi::unistd_abi::fsmount(-1, 0, 0) };
+    Ok(poll_event_loop_fd_class("FSMOUNT_PERMISSION_GATE", fd))
+}
+
+fn fsopen_fixture_actual() -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    let fd = unsafe { frankenlibc_abi::unistd_abi::fsopen(std::ptr::null(), 0) };
+    Ok(poll_event_loop_fd_class("FSOPEN_PERMISSION_GATE", fd))
+}
+
+fn fspick_fixture_actual() -> Result<String, String> {
+    poll_event_loop_reset_errno();
+    let fd = unsafe { frankenlibc_abi::unistd_abi::fspick(libc::AT_FDCWD, std::ptr::null(), 0) };
+    Ok(poll_event_loop_fd_class("FSPICK_PERMISSION_GATE", fd))
+}
+
+fn fstat_fixture_actual() -> Result<String, String> {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::fstat(-1, stat.as_mut_ptr()) };
+    Ok(invalid_fd_error_result("FSTAT_INVALID_FD", rc))
+}
+
+fn fstat64_fixture_actual() -> Result<String, String> {
+    let mut stat = [0u8; 256];
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::fstat64(-1, stat.as_mut_ptr().cast()) };
+    Ok(invalid_fd_error_result("FSTAT64_INVALID_FD", rc))
+}
+
+fn fstatat_fixture_actual() -> Result<String, String> {
+    let path = CString::new("frankenlibc-fixture-relative").map_err(|err| err.to_string())?;
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    poll_event_loop_reset_errno();
+    let rc =
+        unsafe { frankenlibc_abi::unistd_abi::fstatat(-1, path.as_ptr(), stat.as_mut_ptr(), 0) };
+    Ok(invalid_fd_error_result("FSTATAT_INVALID_DIRFD", rc))
+}
+
+fn fstatat64_fixture_actual() -> Result<String, String> {
+    let path = CString::new("frankenlibc-fixture-relative").map_err(|err| err.to_string())?;
+    let mut stat = [0u8; 256];
+    poll_event_loop_reset_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::fstatat64(-1, path.as_ptr(), stat.as_mut_ptr().cast(), 0)
+    };
+    Ok(invalid_fd_error_result("FSTATAT64_INVALID_DIRFD", rc))
+}
+
+fn fstatfs_fixture_actual() -> Result<String, String> {
+    let mut statfs = [0u8; 256];
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::fstatfs(-1, statfs.as_mut_ptr().cast()) };
+    Ok(invalid_fd_error_result("FSTATFS_INVALID_FD", rc))
+}
+
+fn fstatfs64_fixture_actual() -> Result<String, String> {
+    let mut statfs = [0u8; 256];
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::fstatfs64(-1, statfs.as_mut_ptr().cast()) };
+    Ok(invalid_fd_error_result("FSTATFS64_INVALID_FD", rc))
+}
+
+fn fstatvfs_fixture_actual() -> Result<String, String> {
+    let mut statvfs = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
+    poll_event_loop_reset_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::fstatvfs(-1, statvfs.as_mut_ptr()) };
+    Ok(invalid_fd_error_result("FSTATVFS_INVALID_FD", rc))
 }
 
 fn wait_for_aio_completion(cb: &FixtureAiocb) -> c_int {
@@ -32195,6 +32308,41 @@ mod tests {
         );
         let fixture: FixtureSetLite = serde_json::from_str(raw)
             .expect("unistd_process_filesystem_wave11 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn unistd_process_filesystem_wave12_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!(
+            "../../../tests/conformance/fixtures/unistd_process_filesystem_wave12.json"
+        );
+        let fixture: FixtureSetLite = serde_json::from_str(raw)
+            .expect("unistd_process_filesystem_wave12 fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

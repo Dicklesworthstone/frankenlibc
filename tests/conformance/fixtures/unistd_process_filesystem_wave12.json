@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-15T17:12:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-12 fs-context, fd-xattr, fd-stat, fd-statfs, and fd-statvfs symbols. Outputs classify invalid fsconfig argument shape, unprivileged mount API permission gates, invalid file descriptors, and invalid directory descriptors without recording raw file descriptors, filesystem paths, xattr payloads, mount namespaces, stat buffers, filesystem identifiers, or ambient file state.",
+  "spec_reference": "Linux fsconfig null key argument failure contract; Linux fsetxattr invalid descriptor contract; Linux fsmount/fsopen/fspick unprivileged mount API permission-gate contracts; POSIX fstat/fstat64 invalid descriptor contracts; POSIX fstatat/fstatat64 invalid directory descriptor contracts; Linux fstatfs/fstatfs64 invalid descriptor contracts; and POSIX fstatvfs invalid descriptor contract.",
+  "campaign": {
+    "bead": "tracker-blocked-unistd-wave12",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-12-unistd-process-filesystem-fscontext-statfs-statvfs",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture",
+    "first_wave_symbols": [
+      "fsconfig",
+      "fsetxattr",
+      "fsmount",
+      "fsopen",
+      "fspick",
+      "fstat",
+      "fstat64",
+      "fstatat",
+      "fstatat64",
+      "fstatfs",
+      "fstatfs64",
+      "fstatvfs"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "fsconfig_null_key_strict",
+      "function": "fsconfig",
+      "spec_section": "Linux fsconfig null key argument failure",
+      "inputs": {
+        "symbol": "fsconfig",
+        "scenario": "null_key_set_flag_without_mount_state_capture",
+        "expected": "FSCONFIG_NULL_KEY_ERROR_EINVAL",
+        "oracle_source": "FrankenLibC fsconfig null key errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fsconfig;mode=strict;expected=FSCONFIG_NULL_KEY_ERROR_EINVAL;actual=FSCONFIG_NULL_KEY_ERROR_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "fsconfig_null_key_hardened",
+      "function": "fsconfig",
+      "spec_section": "Linux fsconfig null key argument failure",
+      "inputs": {
+        "symbol": "fsconfig",
+        "scenario": "null_key_set_flag_without_mount_state_capture",
+        "expected": "FSCONFIG_NULL_KEY_ERROR_EINVAL",
+        "oracle_source": "FrankenLibC fsconfig null key errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fsconfig;mode=hardened;expected=FSCONFIG_NULL_KEY_ERROR_EINVAL;actual=FSCONFIG_NULL_KEY_ERROR_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "fsetxattr_invalid_fd_strict",
+      "function": "fsetxattr",
+      "spec_section": "Linux fsetxattr invalid descriptor failure",
+      "inputs": {
+        "symbol": "fsetxattr",
+        "scenario": "invalid_fd_without_xattr_payload_capture",
+        "expected": "FSETXATTR_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fsetxattr invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fsetxattr;mode=strict;expected=FSETXATTR_INVALID_FD_ERROR_EBADF;actual=FSETXATTR_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fsetxattr_invalid_fd_hardened",
+      "function": "fsetxattr",
+      "spec_section": "Linux fsetxattr invalid descriptor failure",
+      "inputs": {
+        "symbol": "fsetxattr",
+        "scenario": "invalid_fd_without_xattr_payload_capture",
+        "expected": "FSETXATTR_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fsetxattr invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fsetxattr;mode=hardened;expected=FSETXATTR_INVALID_FD_ERROR_EBADF;actual=FSETXATTR_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "fsmount_permission_gate_strict",
+      "function": "fsmount",
+      "spec_section": "Linux fsmount unprivileged permission gate",
+      "inputs": {
+        "symbol": "fsmount",
+        "scenario": "unprivileged_mount_request_without_mount_creation",
+        "expected": "FSMOUNT_PERMISSION_GATE_ERROR_EPERM",
+        "oracle_source": "FrankenLibC fsmount unprivileged errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fsmount;mode=strict;expected=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;actual=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "expected_errno": 1,
+      "mode": "strict"
+    },
+    {
+      "name": "fsmount_permission_gate_hardened",
+      "function": "fsmount",
+      "spec_section": "Linux fsmount unprivileged permission gate",
+      "inputs": {
+        "symbol": "fsmount",
+        "scenario": "unprivileged_mount_request_without_mount_creation",
+        "expected": "FSMOUNT_PERMISSION_GATE_ERROR_EPERM",
+        "oracle_source": "FrankenLibC fsmount unprivileged errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fsmount;mode=hardened;expected=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;actual=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "expected_errno": 1,
+      "mode": "hardened"
+    },
+    {
+      "name": "fsopen_permission_gate_strict",
+      "function": "fsopen",
+      "spec_section": "Linux fsopen unprivileged permission gate",
+      "inputs": {
+        "symbol": "fsopen",
+        "scenario": "unprivileged_fsopen_without_fs_type_capture",
+        "expected": "FSOPEN_PERMISSION_GATE_ERROR_EPERM",
+        "oracle_source": "FrankenLibC fsopen unprivileged errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fsopen;mode=strict;expected=FSOPEN_PERMISSION_GATE_ERROR_EPERM;actual=FSOPEN_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "expected_errno": 1,
+      "mode": "strict"
+    },
+    {
+      "name": "fsopen_permission_gate_hardened",
+      "function": "fsopen",
+      "spec_section": "Linux fsopen unprivileged permission gate",
+      "inputs": {
+        "symbol": "fsopen",
+        "scenario": "unprivileged_fsopen_without_fs_type_capture",
+        "expected": "FSOPEN_PERMISSION_GATE_ERROR_EPERM",
+        "oracle_source": "FrankenLibC fsopen unprivileged errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fsopen;mode=hardened;expected=FSOPEN_PERMISSION_GATE_ERROR_EPERM;actual=FSOPEN_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "expected_errno": 1,
+      "mode": "hardened"
+    },
+    {
+      "name": "fspick_permission_gate_strict",
+      "function": "fspick",
+      "spec_section": "Linux fspick unprivileged permission gate",
+      "inputs": {
+        "symbol": "fspick",
+        "scenario": "unprivileged_fspick_without_mount_tree_capture",
+        "expected": "FSPICK_PERMISSION_GATE_ERROR_EPERM",
+        "oracle_source": "FrankenLibC fspick unprivileged errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fspick;mode=strict;expected=FSPICK_PERMISSION_GATE_ERROR_EPERM;actual=FSPICK_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "expected_errno": 1,
+      "mode": "strict"
+    },
+    {
+      "name": "fspick_permission_gate_hardened",
+      "function": "fspick",
+      "spec_section": "Linux fspick unprivileged permission gate",
+      "inputs": {
+        "symbol": "fspick",
+        "scenario": "unprivileged_fspick_without_mount_tree_capture",
+        "expected": "FSPICK_PERMISSION_GATE_ERROR_EPERM",
+        "oracle_source": "FrankenLibC fspick unprivileged errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fspick;mode=hardened;expected=FSPICK_PERMISSION_GATE_ERROR_EPERM;actual=FSPICK_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "expected_errno": 1,
+      "mode": "hardened"
+    },
+    {
+      "name": "fstat_invalid_fd_strict",
+      "function": "fstat",
+      "spec_section": "POSIX fstat invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstat",
+        "scenario": "invalid_fd_without_stat_buffer_capture",
+        "expected": "FSTAT_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstat invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstat;mode=strict;expected=FSTAT_INVALID_FD_ERROR_EBADF;actual=FSTAT_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fstat_invalid_fd_hardened",
+      "function": "fstat",
+      "spec_section": "POSIX fstat invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstat",
+        "scenario": "invalid_fd_without_stat_buffer_capture",
+        "expected": "FSTAT_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstat invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstat;mode=hardened;expected=FSTAT_INVALID_FD_ERROR_EBADF;actual=FSTAT_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "fstat64_invalid_fd_strict",
+      "function": "fstat64",
+      "spec_section": "POSIX fstat64 invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstat64",
+        "scenario": "invalid_fd_without_stat64_buffer_capture",
+        "expected": "FSTAT64_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstat64 invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstat64;mode=strict;expected=FSTAT64_INVALID_FD_ERROR_EBADF;actual=FSTAT64_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fstat64_invalid_fd_hardened",
+      "function": "fstat64",
+      "spec_section": "POSIX fstat64 invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstat64",
+        "scenario": "invalid_fd_without_stat64_buffer_capture",
+        "expected": "FSTAT64_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstat64 invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstat64;mode=hardened;expected=FSTAT64_INVALID_FD_ERROR_EBADF;actual=FSTAT64_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "fstatat_invalid_dirfd_strict",
+      "function": "fstatat",
+      "spec_section": "POSIX fstatat invalid directory descriptor failure",
+      "inputs": {
+        "symbol": "fstatat",
+        "scenario": "invalid_dirfd_relative_path_without_path_capture",
+        "expected": "FSTATAT_INVALID_DIRFD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatat invalid dirfd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatat;mode=strict;expected=FSTATAT_INVALID_DIRFD_ERROR_EBADF;actual=FSTATAT_INVALID_DIRFD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fstatat_invalid_dirfd_hardened",
+      "function": "fstatat",
+      "spec_section": "POSIX fstatat invalid directory descriptor failure",
+      "inputs": {
+        "symbol": "fstatat",
+        "scenario": "invalid_dirfd_relative_path_without_path_capture",
+        "expected": "FSTATAT_INVALID_DIRFD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatat invalid dirfd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatat;mode=hardened;expected=FSTATAT_INVALID_DIRFD_ERROR_EBADF;actual=FSTATAT_INVALID_DIRFD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "fstatat64_invalid_dirfd_strict",
+      "function": "fstatat64",
+      "spec_section": "POSIX fstatat64 invalid directory descriptor failure",
+      "inputs": {
+        "symbol": "fstatat64",
+        "scenario": "invalid_dirfd_relative_path_without_path_capture",
+        "expected": "FSTATAT64_INVALID_DIRFD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatat64 invalid dirfd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatat64;mode=strict;expected=FSTATAT64_INVALID_DIRFD_ERROR_EBADF;actual=FSTATAT64_INVALID_DIRFD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fstatat64_invalid_dirfd_hardened",
+      "function": "fstatat64",
+      "spec_section": "POSIX fstatat64 invalid directory descriptor failure",
+      "inputs": {
+        "symbol": "fstatat64",
+        "scenario": "invalid_dirfd_relative_path_without_path_capture",
+        "expected": "FSTATAT64_INVALID_DIRFD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatat64 invalid dirfd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatat64;mode=hardened;expected=FSTATAT64_INVALID_DIRFD_ERROR_EBADF;actual=FSTATAT64_INVALID_DIRFD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "fstatfs_invalid_fd_strict",
+      "function": "fstatfs",
+      "spec_section": "Linux fstatfs invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstatfs",
+        "scenario": "invalid_fd_without_statfs_buffer_capture",
+        "expected": "FSTATFS_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatfs invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatfs;mode=strict;expected=FSTATFS_INVALID_FD_ERROR_EBADF;actual=FSTATFS_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fstatfs_invalid_fd_hardened",
+      "function": "fstatfs",
+      "spec_section": "Linux fstatfs invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstatfs",
+        "scenario": "invalid_fd_without_statfs_buffer_capture",
+        "expected": "FSTATFS_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatfs invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatfs;mode=hardened;expected=FSTATFS_INVALID_FD_ERROR_EBADF;actual=FSTATFS_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "fstatfs64_invalid_fd_strict",
+      "function": "fstatfs64",
+      "spec_section": "Linux fstatfs64 invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstatfs64",
+        "scenario": "invalid_fd_without_statfs64_buffer_capture",
+        "expected": "FSTATFS64_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatfs64 invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatfs64;mode=strict;expected=FSTATFS64_INVALID_FD_ERROR_EBADF;actual=FSTATFS64_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fstatfs64_invalid_fd_hardened",
+      "function": "fstatfs64",
+      "spec_section": "Linux fstatfs64 invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstatfs64",
+        "scenario": "invalid_fd_without_statfs64_buffer_capture",
+        "expected": "FSTATFS64_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatfs64 invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatfs64;mode=hardened;expected=FSTATFS64_INVALID_FD_ERROR_EBADF;actual=FSTATFS64_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "fstatvfs_invalid_fd_strict",
+      "function": "fstatvfs",
+      "spec_section": "POSIX fstatvfs invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstatvfs",
+        "scenario": "invalid_fd_without_statvfs_buffer_capture",
+        "expected": "FSTATVFS_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatvfs invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatvfs;mode=strict;expected=FSTATVFS_INVALID_FD_ERROR_EBADF;actual=FSTATVFS_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fstatvfs_invalid_fd_hardened",
+      "function": "fstatvfs",
+      "spec_section": "POSIX fstatvfs invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstatvfs",
+        "scenario": "invalid_fd_without_statvfs_buffer_capture",
+        "expected": "FSTATVFS_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatvfs invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatvfs;mode=hardened;expected=FSTATVFS_INVALID_FD_ERROR_EBADF;actual=FSTATVFS_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    }
+  ]
+}
