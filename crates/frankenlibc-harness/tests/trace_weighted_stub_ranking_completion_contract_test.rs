@@ -8,18 +8,28 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenlibc_harness::structured_log::validate_log_line;
+use serde_json::Value;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 static CHECKER_LOCK: Mutex<()> = Mutex::new(());
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn test_error(message: impl Into<String>) -> Box<dyn Error> {
+    Box::new(std::io::Error::other(message.into()))
+}
+
+fn workspace_root() -> TestResult<PathBuf> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates_dir = manifest_dir.parent().ok_or_else(|| {
+        test_error(format!(
+            "{} has no parent directory",
+            manifest_dir.display()
+        ))
+    })?;
+    let root = crates_dir
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .ok_or_else(|| test_error(format!("{} has no parent directory", crates_dir.display())))?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -30,11 +40,11 @@ fn checker_path(root: &Path) -> PathBuf {
     root.join("scripts/check_trace_weighted_stub_ranking_completion_contract.sh")
 }
 
-fn read_json(path: &Path) -> TestResult<serde_json::Value> {
+fn read_json(path: &Path) -> TestResult<Value> {
     Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
 }
 
-fn write_json(path: &Path, value: &serde_json::Value) -> TestResult {
+fn write_json(path: &Path, value: &Value) -> TestResult {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -42,7 +52,7 @@ fn write_json(path: &Path, value: &serde_json::Value) -> TestResult {
     Ok(())
 }
 
-fn read_jsonl(path: &Path) -> TestResult<Vec<serde_json::Value>> {
+fn read_jsonl(path: &Path) -> TestResult<Vec<Value>> {
     std::fs::read_to_string(path)?
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -92,18 +102,34 @@ fn run_passing_checker(root: &Path, label: &str) -> TestResult<PathBuf> {
     Ok(out_dir)
 }
 
-fn string_set(value: &serde_json::Value) -> BTreeSet<String> {
+fn json_array<'a>(value: &'a Value, label: &str) -> TestResult<&'a Vec<Value>> {
     value
         .as_array()
-        .unwrap()
+        .ok_or_else(|| test_error(format!("{label} should be an array")))
+}
+
+fn json_array_mut<'a>(value: &'a mut Value, label: &str) -> TestResult<&'a mut Vec<Value>> {
+    value
+        .as_array_mut()
+        .ok_or_else(|| test_error(format!("{label} should be a mutable array")))
+}
+
+fn json_str<'a>(value: &'a Value, label: &str) -> TestResult<&'a str> {
+    value
+        .as_str()
+        .ok_or_else(|| test_error(format!("{label} should be a string")))
+}
+
+fn string_set(value: &Value, label: &str) -> TestResult<BTreeSet<String>> {
+    json_array(value, label)?
         .iter()
-        .map(|value| value.as_str().unwrap().to_string())
+        .map(|value| json_str(value, label).map(str::to_string))
         .collect()
 }
 
 #[test]
 fn manifest_binds_all_bd1x32_completion_items() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let contract = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -120,17 +146,13 @@ fn manifest_binds_all_bd1x32_completion_items() -> TestResult {
     assert_eq!(evidence["original_bead"].as_str(), Some("bd-1x3.2"));
     assert_eq!(evidence["next_audit_score_threshold"].as_u64(), Some(900));
 
-    let missing_items: BTreeSet<String> = evidence["missing_item_bindings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|binding| {
-            binding["missing_item_id"]
-                .as_str()
-                .expect("missing item id")
-                .to_string()
-        })
-        .collect();
+    let missing_items: BTreeSet<String> = json_array(
+        &evidence["missing_item_bindings"],
+        "completion_debt_evidence.missing_item_bindings",
+    )?
+    .iter()
+    .map(|binding| json_str(&binding["missing_item_id"], "missing item id").map(str::to_string))
+    .collect::<TestResult<_>>()?;
     assert_eq!(
         missing_items,
         BTreeSet::from([
@@ -143,10 +165,11 @@ fn manifest_binds_all_bd1x32_completion_items() -> TestResult {
     );
 
     assert!(
-        evidence["unit_primary"]["required_test_refs"]
-            .as_array()
-            .unwrap()
-            .len()
+        json_array(
+            &evidence["unit_primary"]["required_test_refs"],
+            "unit_primary.required_test_refs"
+        )?
+        .len()
             >= 8
     );
     assert_eq!(
@@ -154,10 +177,11 @@ fn manifest_binds_all_bd1x32_completion_items() -> TestResult {
         Some(10)
     );
     assert_eq!(
-        evidence["fuzz_primary"]["deterministic_seed_replay"]
-            .as_array()
-            .unwrap()
-            .len(),
+        json_array(
+            &evidence["fuzz_primary"]["deterministic_seed_replay"],
+            "fuzz_primary.deterministic_seed_replay",
+        )?
+        .len(),
         10
     );
     assert_eq!(
@@ -165,7 +189,10 @@ fn manifest_binds_all_bd1x32_completion_items() -> TestResult {
         Some(40)
     );
 
-    let telemetry_events = string_set(&evidence["telemetry_primary"]["required_events"]);
+    let telemetry_events = string_set(
+        &evidence["telemetry_primary"]["required_events"],
+        "telemetry_primary.required_events",
+    )?;
     for required in [
         "trace_weighted_stub_ranking_completion.source_ref",
         "trace_weighted_stub_ranking_completion.missing_item_bound",
@@ -182,7 +209,7 @@ fn manifest_binds_all_bd1x32_completion_items() -> TestResult {
 
 #[test]
 fn checker_passes_and_emits_report_log() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let out_dir = run_passing_checker(&root, "pass")?;
     let report =
         read_json(&out_dir.join("trace_weighted_stub_ranking_completion_contract.report.json"))?;
@@ -191,7 +218,10 @@ fn checker_passes_and_emits_report_log() -> TestResult {
         report["event"].as_str(),
         Some("trace_weighted_stub_ranking_completion.validated")
     );
-    assert_eq!(report["missing_items"].as_array().unwrap().len(), 5);
+    assert_eq!(
+        json_array(&report["missing_items"], "report.missing_items")?.len(),
+        5
+    );
     assert!(report["unit_test_ref_count"].as_u64().unwrap_or_default() >= 8);
     assert!(report["e2e_artifact_count"].as_u64().unwrap_or_default() >= 6);
     assert_eq!(
@@ -239,12 +269,13 @@ fn checker_passes_and_emits_report_log() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_fuzz_seed_binding() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut contract = read_json(&contract_path(&root))?;
-    contract["completion_debt_evidence"]["fuzz_primary"]["deterministic_seed_replay"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|seed| seed["seed_id"].as_str() != Some("wave_plan_top_n_mismatch"));
+    json_array_mut(
+        &mut contract["completion_debt_evidence"]["fuzz_primary"]["deterministic_seed_replay"],
+        "fuzz_primary.deterministic_seed_replay",
+    )?
+    .retain(|seed| seed["seed_id"].as_str() != Some("wave_plan_top_n_mismatch"));
 
     let out_dir = unique_out_dir(&root, "missing-fuzz-seed")?;
     let tampered = out_dir.join("contract.json");
@@ -266,14 +297,15 @@ fn checker_rejects_missing_fuzz_seed_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_event_binding() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut contract = read_json(&contract_path(&root))?;
-    contract["completion_debt_evidence"]["telemetry_primary"]["required_events"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|event| {
-            event.as_str() != Some("trace_weighted_stub_ranking_completion.telemetry_bound")
-        });
+    json_array_mut(
+        &mut contract["completion_debt_evidence"]["telemetry_primary"]["required_events"],
+        "telemetry_primary.required_events",
+    )?
+    .retain(|event| {
+        event.as_str() != Some("trace_weighted_stub_ranking_completion.telemetry_bound")
+    });
 
     let out_dir = unique_out_dir(&root, "missing-telemetry-event")?;
     let tampered = out_dir.join("contract.json");
