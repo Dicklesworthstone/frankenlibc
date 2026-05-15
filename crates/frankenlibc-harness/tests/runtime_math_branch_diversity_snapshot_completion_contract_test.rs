@@ -6,13 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?
         .parent()
-        .expect("workspace parent has repo root")
-        .to_path_buf()
+        .ok_or("workspace parent must have repo root")?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -78,12 +78,16 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
-    value
-        .as_array()
-        .expect("expected array")
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    let values = value.as_array().ok_or("value must be an array")?;
+    values
         .iter()
-        .map(|item| item.as_str().expect("expected string").to_string())
+        .map(|item| {
+            Ok(item
+                .as_str()
+                .ok_or("array item must be a string")?
+                .to_string())
+        })
         .collect()
 }
 
@@ -97,7 +101,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_branch_diversity_snapshot_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -110,7 +114,7 @@ fn manifest_binds_branch_diversity_snapshot_completion_items() -> TestResult {
         Some("bd-5vr.7.1")
     );
     assert_eq!(
-        string_set(&manifest["completion_debt_evidence"]["missing_items_closed"]),
+        string_set(&manifest["completion_debt_evidence"]["missing_items_closed"])?,
         BTreeSet::from([
             "tests.unit.primary".to_string(),
             "tests.e2e.primary".to_string(),
@@ -157,8 +161,13 @@ fn manifest_binds_branch_diversity_snapshot_completion_items() -> TestResult {
             .as_array()
             .ok_or("e2e required test refs must be array")?
             .iter()
-            .map(|entry| entry["name"].as_str().expect("test name").to_string())
-            .collect();
+            .map(|entry| {
+                Ok(entry["name"]
+                    .as_str()
+                    .ok_or("e2e test ref name must be string")?
+                    .to_string())
+            })
+            .collect::<TestResult<_>>()?;
     for name in [
         "e2e_branch_diversity_healthy_with_balanced_family_mix",
         "e2e_snapshot_captures_schema_version_and_core_fields",
@@ -173,8 +182,13 @@ fn manifest_binds_branch_diversity_snapshot_completion_items() -> TestResult {
             .as_array()
             .ok_or("golden required test refs must be array")?
             .iter()
-            .map(|entry| entry["name"].as_str().expect("test name").to_string())
-            .collect();
+            .map(|entry| {
+                Ok(entry["name"]
+                    .as_str()
+                    .ok_or("golden test ref name must be string")?
+                    .to_string())
+            })
+            .collect::<TestResult<_>>()?;
     for name in [
         "e2e_snapshot_serialization_contains_all_core_fields",
         "e2e_snapshot_golden_replay_field_stability",
@@ -188,7 +202,7 @@ fn manifest_binds_branch_diversity_snapshot_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_branch_diversity_snapshot_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "valid")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -216,8 +230,13 @@ fn checker_validates_branch_diversity_snapshot_contract_and_emits_report_log() -
     )?;
     let events: BTreeSet<_> = rows
         .iter()
-        .map(|row| row["event"].as_str().unwrap().to_string())
-        .collect();
+        .map(|row| {
+            Ok(row["event"]
+                .as_str()
+                .ok_or("log row event must be string")?
+                .to_string())
+        })
+        .collect::<TestResult<_>>()?;
     for event in [
         "runtime_math_branch_snapshot_unit_bindings_verified",
         "runtime_math_branch_snapshot_e2e_bindings_verified",
@@ -250,12 +269,12 @@ fn checker_validates_branch_diversity_snapshot_contract_and_emits_report_log() -
 
 #[test]
 fn checker_rejects_missing_branch_diversity_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-branch")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let refs = manifest["completion_debt_evidence"]["e2e_primary"]["required_test_refs"]
         .as_array_mut()
-        .expect("e2e refs array");
+        .ok_or("e2e refs must be a mutable array")?;
     refs.retain(|entry| {
         entry["name"].as_str() != Some("e2e_branch_diversity_healthy_with_balanced_family_mix")
     });
@@ -280,12 +299,12 @@ fn checker_rejects_missing_branch_diversity_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_golden_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-golden")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let refs = manifest["completion_debt_evidence"]["golden_primary"]["required_test_refs"]
         .as_array_mut()
-        .expect("golden refs array");
+        .ok_or("golden refs must be a mutable array")?;
     refs.retain(|entry| {
         entry["name"].as_str() != Some("e2e_snapshot_golden_replay_field_stability")
     });
@@ -310,7 +329,7 @@ fn checker_rejects_missing_golden_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_golden_hash_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "hash-drift")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_runtime_math_branch_snapshot_contract"]["golden_snapshot"]["expected_sha256"] =
@@ -336,7 +355,7 @@ fn checker_rejects_golden_hash_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_non_rch_cargo_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "non-rch")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["e2e_primary"]["required_commands"][0] =
