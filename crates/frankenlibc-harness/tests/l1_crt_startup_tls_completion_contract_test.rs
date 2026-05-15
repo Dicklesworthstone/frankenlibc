@@ -293,21 +293,31 @@ fn manifest_binds_unit_e2e_conformance_and_telemetry_evidence() -> TestResult {
     );
 
     let expectations = &evidence["minimum_l1_expectations"];
+    let summary = &matrix["summary"];
+    let required_row_count = summary["required_row_count"]
+        .as_u64()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "required_row_count"))?;
+    let satisfied_row_count = summary["satisfied_row_count"]
+        .as_u64()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "satisfied_row_count"))?;
+    let blocked_row_count = summary["blocked_row_count"]
+        .as_u64()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "blocked_row_count"))?;
     assert_eq!(
         expectations["proof_row_count"].as_u64(),
-        Some(matrix["summary"]["required_row_count"].as_u64().unwrap())
+        Some(required_row_count)
     );
     assert_eq!(
         expectations["satisfied_row_count"].as_u64(),
-        Some(matrix["summary"]["satisfied_row_count"].as_u64().unwrap())
+        Some(satisfied_row_count)
     );
     assert_eq!(
         expectations["blocked_row_count"].as_u64(),
-        Some(matrix["summary"]["blocked_row_count"].as_u64().unwrap())
+        Some(blocked_row_count)
     );
     assert_eq!(
         expectations["current_gate_status"].as_str(),
-        matrix["summary"]["current_gate_status"].as_str()
+        summary["current_gate_status"].as_str()
     );
 
     let sources = source_texts(&root, &manifest)?;
