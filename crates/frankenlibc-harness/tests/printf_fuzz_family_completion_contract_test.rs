@@ -1,18 +1,21 @@
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates_dir = manifest
         .parent()
-        .expect("crate directory has workspace parent")
-        .parent()
-        .expect("workspace has root parent")
-        .to_path_buf()
+        .ok_or_else(|| io::Error::other("frankenlibc-harness manifest should have a parent"))?;
+    let root = crates_dir.parent().ok_or_else(|| {
+        io::Error::other("frankenlibc-harness manifest should live below workspace root")
+    })?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -77,23 +80,25 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn target_names(manifest: &Value) -> BTreeSet<String> {
-    manifest["required_targets"]
+fn target_names(manifest: &Value) -> TestResult<BTreeSet<String>> {
+    let targets = manifest["required_targets"]
         .as_array()
-        .expect("required_targets should be an array")
-        .iter()
-        .map(|entry| {
+        .ok_or("required_targets should be an array")?;
+    let mut names = BTreeSet::new();
+    for entry in targets {
+        names.insert(
             entry["target"]
                 .as_str()
-                .expect("target should be a string")
-                .to_string()
-        })
-        .collect()
+                .ok_or("target should be a string")?
+                .to_string(),
+        );
+    }
+    Ok(names)
 }
 
 #[test]
 fn manifest_binds_printf_fuzz_family_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -106,7 +111,7 @@ fn manifest_binds_printf_fuzz_family_completion_items() -> TestResult {
         Some("bd-1oz.3.1")
     );
     assert_eq!(
-        target_names(&manifest),
+        target_names(&manifest)?,
         BTreeSet::from([
             "fuzz_asprintf".to_string(),
             "fuzz_printf".to_string(),
@@ -116,7 +121,7 @@ fn manifest_binds_printf_fuzz_family_completion_items() -> TestResult {
 
     let missing_items: BTreeSet<_> = manifest["missing_item_bindings"]
         .as_array()
-        .expect("missing_item_bindings should be an array")
+        .ok_or("missing_item_bindings should be an array")?
         .iter()
         .filter_map(|entry| entry["id"].as_str())
         .collect();
@@ -131,10 +136,10 @@ fn manifest_binds_printf_fuzz_family_completion_items() -> TestResult {
 
     let source_artifacts = manifest["source_artifacts"]
         .as_array()
-        .expect("source_artifacts should be an array");
+        .ok_or("source_artifacts should be an array")?;
     assert_eq!(source_artifacts.len(), 7);
     for artifact in source_artifacts {
-        let path = artifact["path"].as_str().expect("artifact path");
+        let path = artifact["path"].as_str().ok_or("artifact path")?;
         assert!(root.join(path).is_file(), "missing artifact {path}");
     }
 
@@ -143,7 +148,7 @@ fn manifest_binds_printf_fuzz_family_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_printf_fuzz_family_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "positive")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -155,7 +160,7 @@ fn checker_validates_printf_fuzz_family_contract() -> TestResult {
     assert_eq!(report["required_targets"].as_array().map(Vec::len), Some(3));
     let events: BTreeSet<_> = report["events"]
         .as_array()
-        .expect("events should be an array")
+        .ok_or("events should be an array")?
         .iter()
         .filter_map(Value::as_str)
         .collect();
@@ -179,7 +184,7 @@ fn checker_validates_printf_fuzz_family_contract() -> TestResult {
 
 #[test]
 fn nightly_runner_lists_only_printf_family_targets() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let output = Command::new("bash")
         .arg("scripts/fuzz_nightly.sh")
         .arg("--target-group")
@@ -205,12 +210,12 @@ fn nightly_runner_lists_only_printf_family_targets() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_runner_target_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_runner_target")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let targets = manifest["required_targets"]
         .as_array_mut()
-        .expect("required_targets should be mutable");
+        .ok_or("required_targets should be mutable")?;
     targets.retain(|entry| entry["target"].as_str() != Some("fuzz_asprintf"));
 
     let mutated = out_dir.join("missing_runner_target.contract.json");
@@ -232,16 +237,16 @@ fn checker_rejects_missing_runner_target_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_corpus_seed_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_seed")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let targets = manifest["required_targets"]
         .as_array_mut()
-        .expect("required_targets should be mutable");
+        .ok_or("required_targets should be mutable")?;
     let printf = targets
         .iter_mut()
         .find(|entry| entry["target"].as_str() == Some("fuzz_printf"))
-        .expect("fuzz_printf target should exist");
+        .ok_or("fuzz_printf target should exist")?;
     printf["corpus"]["required_seeds"] = json!(["seed_does_not_exist"]);
 
     let mutated = out_dir.join("missing_seed.contract.json");
