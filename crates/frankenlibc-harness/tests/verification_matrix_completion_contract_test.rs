@@ -283,9 +283,21 @@ fn manifest_binds_unit_e2e_and_telemetry_evidence() -> TestResult {
 
     let expectations = &evidence["minimum_expectations"];
     assert_eq!(expectations["matrix_version"], matrix["matrix_version"]);
+    let matrix_entries = matrix["entries"].as_array().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "matrix entries should be an array",
+        )
+    })?;
+    let matrix_entry_count = u64::try_from(matrix_entries.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "matrix entry count should fit in u64",
+        )
+    })?;
     assert_eq!(
         expectations["entry_count"].as_u64(),
-        Some(matrix["entries"].as_array().unwrap().len() as u64)
+        Some(matrix_entry_count)
     );
     assert_eq!(
         expectations["total_critique_beads"].as_u64(),
@@ -355,7 +367,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
     );
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-id3.1"));
     assert_eq!(report["status"].as_str(), Some("pass"));
-    assert_eq!(report["summary"]["entry_count"].as_u64(), Some(118));
+    assert_eq!(report["summary"]["entry_count"].as_u64(), Some(119));
     assert_eq!(
         report["summary"]["verification_gate_status"].as_str(),
         Some("pass")
@@ -405,14 +417,14 @@ fn checker_validates_dashboard_and_rows() -> TestResult {
     let report = read_json(&out_dir.join("verification_matrix_completion_contract.report.json"))?;
     let summary = &report["summary"];
 
-    assert_eq!(summary["entry_count"].as_u64(), Some(118));
-    assert_eq!(summary["total_critique_beads"].as_u64(), Some(118));
-    assert_eq!(summary["by_coverage_status"]["complete"].as_u64(), Some(41));
+    assert_eq!(summary["entry_count"].as_u64(), Some(119));
+    assert_eq!(summary["total_critique_beads"].as_u64(), Some(119));
+    assert_eq!(summary["by_coverage_status"]["complete"].as_u64(), Some(42));
     assert_eq!(summary["by_coverage_status"]["partial"].as_u64(), Some(1));
     assert_eq!(summary["by_coverage_status"]["missing"].as_u64(), Some(76));
-    assert_eq!(summary["unit_required"].as_u64(), Some(118));
-    assert_eq!(summary["e2e_required"].as_u64(), Some(58));
-    assert_eq!(summary["structured_logs_required"].as_u64(), Some(115));
+    assert_eq!(summary["unit_required"].as_u64(), Some(119));
+    assert_eq!(summary["e2e_required"].as_u64(), Some(59));
+    assert_eq!(summary["structured_logs_required"].as_u64(), Some(116));
     assert_eq!(summary["row_contract_errors"].as_u64(), Some(0));
     Ok(())
 }
