@@ -956,14 +956,27 @@ fn l1_objective_gate_consumes_current_crt_startup_tls_matrix() {
         .collect();
     assert_eq!(
         blocked_obligations,
-        vec!["promotion_claim_control"],
-        "only explicit claim promotion control should block the L1 objective gate"
+        Vec::<&str>::new(),
+        "L1 objective gate should have no blocked obligations after explicit claim promotion"
     );
-    assert_eq!(objective_gate["status"].as_str(), Some("blocked"));
-    assert_eq!(levels["current_level"].as_str(), Some("L0"));
+    let promotion_obligation = obligations
+        .iter()
+        .find(|entry| entry["id"].as_str() == Some("promotion_claim_control"))
+        .expect("L1 objective gate should bind explicit promotion control");
+    assert_eq!(promotion_obligation["outcome"].as_str(), Some("pass"));
+    assert_eq!(
+        promotion_obligation["actual"]["current_level"].as_str(),
+        Some("L1")
+    );
+    assert_eq!(
+        promotion_obligation["actual"]["release_tag_policy.current_release_level"].as_str(),
+        Some("L1")
+    );
+    assert_eq!(objective_gate["status"].as_str(), Some("pass"));
+    assert_eq!(levels["current_level"].as_str(), Some("L1"));
     assert_eq!(
         levels["release_tag_policy"]["current_release_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
 }
 

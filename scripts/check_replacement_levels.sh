@@ -852,24 +852,41 @@ def validate_l1_objective_gate_consistency(levels: dict, objective_gate: dict, l
             )
 
     promotion = find_obligation(objective_gate, "promotion_claim_control")
+    release_policy = levels.get("release_tag_policy", {})
+    current_level = levels.get("current_level")
+    release_level = release_policy.get("current_release_level")
+    promotion_is_complete = current_level == "L1" and release_level == "L1"
     if not promotion:
         failures.append("objective_gate missing promotion_claim_control obligation")
-    elif promotion.get("outcome") != "blocked":
-        failures.append("promotion_claim_control must remain blocked until current_level and release tag policy are promoted together")
+    else:
+        actual = promotion.get("actual", {})
+        if actual.get("current_level") != current_level:
+            failures.append("promotion_claim_control.actual.current_level must match current_level")
+        if actual.get("release_tag_policy.current_release_level") != release_level:
+            failures.append(
+                "promotion_claim_control.actual.release_tag_policy.current_release_level must match release_tag_policy.current_release_level"
+            )
+        expected_promotion_outcome = "pass" if promotion_is_complete else "blocked"
+        if promotion.get("outcome") != expected_promotion_outcome:
+            failures.append(
+                "promotion_claim_control outcome must pass only when current_level and release tag policy are promoted together to L1"
+            )
 
     blocked_obligations = [
         obligation.get("id", "<missing>")
         for obligation in objective_gate.get("obligations", [])
         if isinstance(obligation, dict) and obligation.get("outcome") == "blocked"
     ]
-    if blocked_obligations != ["promotion_claim_control"]:
+    expected_blocked = [] if promotion_is_complete else ["promotion_claim_control"]
+    if blocked_obligations != expected_blocked:
         failures.append(
-            f"only promotion_claim_control may remain blocked after CRT/startup/TLS proof rows pass, got {blocked_obligations}"
+            f"objective gate blocked obligations mismatch: expected {expected_blocked}, got {blocked_obligations}"
         )
-    if objective_gate.get("status") != "blocked":
-        failures.append("objective_gate.status must remain blocked while promotion_claim_control is blocked")
-    if levels.get("current_level") != "L0":
-        failures.append("current_level must remain L0 until the explicit promotion bead updates release claims")
+    expected_objective_status = "pass" if promotion_is_complete else "blocked"
+    if objective_gate.get("status") != expected_objective_status:
+        failures.append(
+            f"objective_gate.status must be {expected_objective_status} for the current promotion-control state"
+        )
     return failures
 
 

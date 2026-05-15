@@ -189,7 +189,7 @@ These invariants are meant to hold as the codebase grows:
 
 Current source of truth: `tests/conformance/support_matrix_maintenance_report.v1.json`.
 
-Declared replacement level claim: **L0 — Interpose**.
+Declared replacement level claim: **L1 — Hardened Interpose**.
 
 | Status | Count | % | Meaning |
 |---|---:|---:|---|

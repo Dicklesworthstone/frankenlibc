@@ -49,8 +49,8 @@
       },
       "objective_gate": {
         "bead": "bd-gtf.4",
-        "status": "blocked",
-        "status_reason": "The evidence bundle is green, but FrankenLibC still claims L0 until current_level and release_tag_policy.current_release_level are promoted together under explicit claim-control.",
+        "status": "pass",
+        "status_reason": "The L1 evidence bundle is green and current_level plus release_tag_policy.current_release_level are promoted together under explicit claim-control.",
         "required_log_fields": [
           "trace_id",
           "level",
@@ -160,10 +160,10 @@
               "release_tag_policy.current_release_level": "L1"
             },
             "actual": {
-              "current_level": "L0",
-              "release_tag_policy.current_release_level": "L0"
+              "current_level": "L1",
+              "release_tag_policy.current_release_level": "L1"
             },
-            "outcome": "blocked"
+            "outcome": "pass"
           },
           {
             "id": "crt_startup_tls_proof_matrix",
@@ -197,10 +197,8 @@
           ]
         }
       },
-      "blockers": [
-        "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate."
-      ],
-      "status": "in_progress"
+      "blockers": [],
+      "status": "achieved"
     },
     {
       "level": "L2",
@@ -262,7 +260,7 @@
       "status": "roadmap"
     }
   ],
-  "current_level": "L0",
+  "current_level": "L1",
   "current_assessment": {
     "total_symbols": 4119,
     "implemented": 3705,
@@ -285,8 +283,8 @@
       "L2": "-L2",
       "L3": "-L3"
     },
-    "current_release_level": "L0",
-    "current_release_tag_example": "v0.1.0-L0"
+    "current_release_level": "L1",
+    "current_release_tag_example": "v0.1.0-L1"
   },
   "transition_requirements": {
     "L0_to_L1": [
