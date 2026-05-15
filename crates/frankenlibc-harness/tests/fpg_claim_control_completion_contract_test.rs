@@ -124,10 +124,10 @@ fn mutated_contract(
     root: &Path,
     out_dir: &Path,
     label: &str,
-    mutator: impl FnOnce(&mut Value),
+    mutator: impl FnOnce(&mut Value) -> TestResult,
 ) -> TestResult<PathBuf> {
     let mut manifest = read_json(&contract_path(root))?;
-    mutator(&mut manifest);
+    mutator(&mut manifest)?;
     let path = out_dir.join(format!("{label}.contract.json"));
     write_json(&path, &manifest)?;
     Ok(path)
@@ -180,7 +180,10 @@ fn manifest_binds_fpg_claim_control_conformance_item() -> TestResult {
         .collect();
     assert_eq!(expected_ids, required_ids);
 
-    for artifact in manifest["source_artifacts"].as_array().unwrap() {
+    let source_artifacts = manifest["source_artifacts"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source_artifacts missing"))?;
+    for artifact in source_artifacts {
         let path = artifact["path"]
             .as_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "artifact path missing"))?;
@@ -237,6 +240,7 @@ fn checker_rejects_missing_conformance_binding() -> TestResult {
     let out_dir = unique_output_dir(&root, "missing-conformance")?;
     let bad_contract = mutated_contract(&root, &out_dir, "missing-conformance", |manifest| {
         manifest["completion_debt_evidence"]["missing_item_bindings"] = Value::Array(Vec::new());
+        Ok(())
     })?;
 
     let output = run_checker(&root, &bad_contract, &out_dir)?;
@@ -253,8 +257,9 @@ fn checker_rejects_gap_id_drift() -> TestResult {
     let bad_contract = mutated_contract(&root, &out_dir, "gap-id-drift", |manifest| {
         let ids = manifest["fpg_claim_control_contract"]["expected_gap_ids"]
             .as_array_mut()
-            .expect("expected_gap_ids should be an array");
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "expected_gap_ids array"))?;
         ids.retain(|id| id.as_str() != Some("fp-macro-targets-fa7a23e18f01"));
+        Ok(())
     })?;
 
     let output = run_checker(&root, &bad_contract, &out_dir)?;
