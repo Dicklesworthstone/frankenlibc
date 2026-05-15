@@ -2624,6 +2624,7 @@ unsafe fn parse_getopt_long(
     optspec: &[u8],
     longopts: *const libc::option,
     longindex: *mut c_int,
+    long_only: bool,
 ) -> Option<c_int> {
     if argc <= 0 || argv.is_null() || longopts.is_null() {
         return None;
@@ -2649,22 +2650,25 @@ unsafe fn parse_getopt_long(
         unsafe { set_abi_errno(errno::EINVAL) };
         return Some(-1);
     };
-    if !current_bytes.starts_with(b"--") {
-        return None;
-    }
-    if current_bytes.len() == 2 {
-        unsafe {
-            libc_optind += 1;
-            GETOPT_NEXTCHAR = None;
+    let prefix_len = if current_bytes.starts_with(b"--") {
+        if current_bytes.len() == 2 {
+            unsafe {
+                libc_optind += 1;
+                GETOPT_NEXTCHAR = None;
+            }
+            return Some(-1);
         }
-        return Some(-1);
-    }
-
-    let body = &current_bytes[2..];
+        2
+    } else if long_only && current_bytes.starts_with(b"-") && current_bytes.len() > 1 {
+        1
+    } else {
+        return None;
+    };
+    let body = &current_bytes[prefix_len..];
     let split_idx = body.iter().position(|&b| b == b'=').unwrap_or(body.len());
     let name = &body[..split_idx];
     let inline_value = if split_idx < body.len() {
-        unsafe { current.add(2 + split_idx + 1) }
+        unsafe { current.add(prefix_len + split_idx + 1) }
     } else {
         std::ptr::null()
     };
@@ -2750,6 +2754,10 @@ unsafe fn parse_getopt_long(
             return Some(unsafe { (*opt_ptr).val });
         }
         idx += 1;
+    }
+
+    if prefix_len == 1 {
+        return None;
     }
 
     unsafe {
@@ -2876,7 +2884,7 @@ pub unsafe extern "C" fn getopt_long(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     };
-    let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex) } {
+    let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, false) } {
         Some(value) => value,
         None => unsafe { parse_getopt_short(argc, argv, &optspec) },
     };
@@ -2891,7 +2899,8 @@ pub unsafe extern "C" fn getopt_long(
 
 /// GNU `getopt_long_only` — like getopt_long but '-' also triggers long option matching.
 ///
-/// When a single-dash argument doesn't match a short option, it's tried as a long option.
+/// Single-dash arguments are tried as long options first; if no long option matches,
+/// parsing falls back to the short-option scanner.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getopt_long_only(
     argc: c_int,
@@ -2900,9 +2909,40 @@ pub unsafe extern "C" fn getopt_long_only(
     longopts: *const libc::option,
     longindex: *mut c_int,
 ) -> c_int {
-    // Same as getopt_long for our purposes — the difference is that single-dash
-    // options are tried as long options first, which our parse_getopt_long handles.
-    unsafe { getopt_long(argc, argv, optstring, longopts, longindex) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        argv as usize,
+        argc.max(0) as usize,
+        false,
+        argv.is_null() || optstring.is_null(),
+        argc.clamp(0, u16::MAX as c_int) as u16,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
+    }
+    if argv.is_null() || optstring.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
+    }
+    let Some(optspec) = (unsafe { read_c_string_bytes(optstring) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
+    };
+    let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, true) } {
+        Some(value) => value,
+        None => unsafe { parse_getopt_short(argc, argv, &optspec) },
+    };
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(12, argc.max(0) as usize),
+        rc == (b'?' as c_int) || rc == (b':' as c_int),
+    );
+    rc
 }
 
 // ---------------------------------------------------------------------------

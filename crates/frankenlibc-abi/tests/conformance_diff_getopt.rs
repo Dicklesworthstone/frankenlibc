@@ -308,8 +308,88 @@ fn conformance_getopt_long_optional_arg_and_flag_return() {
 }
 
 #[test]
+fn conformance_getopt_long_only_single_dash_long_options() {
+    let _g = OPT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let name_color = CString::new("color").unwrap();
+    let name_output = CString::new("output").unwrap();
+    let opts = [
+        LongOpt {
+            name: name_color.as_ptr(),
+            has_arg: OPTIONAL_ARGUMENT,
+            flag: std::ptr::null_mut(),
+            val: b'c' as c_int,
+        },
+        LongOpt {
+            name: name_output.as_ptr(),
+            has_arg: REQUIRED_ARGUMENT,
+            flag: std::ptr::null_mut(),
+            val: b'o' as c_int,
+        },
+        LongOpt {
+            name: std::ptr::null(),
+            has_arg: 0,
+            flag: std::ptr::null_mut(),
+            val: 0,
+        },
+    ];
+    let optstr = CString::new("x").unwrap();
+
+    let run = |args: &[&str]| -> Vec<(c_int, Option<String>, c_int)> {
+        let (_keep, argv) = build_argv(args);
+        let argc = (argv.len() - 1) as c_int;
+        unsafe {
+            optind = 1;
+            optarg = std::ptr::null_mut();
+            opterr = 0;
+        }
+        let mut out = Vec::new();
+        loop {
+            let mut idx: c_int = -1;
+            let r = unsafe {
+                fl::getopt_long_only(
+                    argc,
+                    argv.as_ptr(),
+                    optstr.as_ptr(),
+                    opts.as_ptr() as *const _,
+                    &mut idx,
+                )
+            };
+            if r == -1 {
+                break;
+            }
+            let arg = unsafe { optarg };
+            let s = if arg.is_null() {
+                None
+            } else {
+                Some(
+                    unsafe { CStr::from_ptr(arg) }
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            };
+            out.push((r, s, idx));
+            if out.len() > 32 {
+                break;
+            }
+        }
+        out
+    };
+
+    assert_eq!(
+        run(&["prog", "-color=always", "-output=file.txt", "-x", "-color",]),
+        vec![
+            (b'c' as c_int, Some("always".to_string()), 0),
+            (b'o' as c_int, Some("file.txt".to_string()), 1),
+            (b'x' as c_int, None, -1),
+            (b'c' as c_int, None, 0),
+        ]
+    );
+}
+
+#[test]
 fn getopt_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"unistd.h(getopt+getopt_long)\",\"reference\":\"POSIX/GNU\",\"functions\":2,\"test_type\":\"conformance\",\"long_option_cases\":5}}",
+        "{{\"family\":\"unistd.h(getopt+getopt_long+getopt_long_only)\",\"reference\":\"POSIX/GNU\",\"functions\":3,\"test_type\":\"conformance\",\"long_option_cases\":9}}",
     );
 }
